@@ -6,16 +6,10 @@
 
 目标不是只生成三份形式上的 Markdown，而是生成一套真正可用于后续实现、评审、交接、验收和归档的 Spec 资产。
 
-本规范基于以下两个示例总结而成：
-
-- 成熟功能示例：`specs/000-Sepc示例/ad-site-management`
-- 规范抽象示例：`specs/000-Sepc示例/sepc-creation-lifecycle-management`
-
 后续 AI IDE 创建新 Spec 时，应同时参考：
 
 1. 本规范文档
-2. 成熟示例 `ad-site-management`
-3. 规范示例 `sepc-creation-lifecycle-management`
+2. 模板示例 `/Users/jackson/Code/FamilyClaw/specs/000-Spec规范/Spec模板`
 
 ---
 
