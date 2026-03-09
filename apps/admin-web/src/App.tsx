@@ -3,18 +3,34 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import { useHousehold } from "./state/household";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { HouseholdPage } from "./pages/HouseholdPage";
+import { MemberPreferencesPermissionsPage } from "./pages/MemberPreferencesPermissionsPage";
+import { MemberRelationshipsPage } from "./pages/MemberRelationshipsPage";
 import { MembersPage } from "./pages/MembersPage";
 import { RoomsDevicesPage } from "./pages/RoomsDevicesPage";
 
 const navItems = [
   { to: "/", label: "家庭管理" },
   { to: "/members", label: "成员管理" },
+  { to: "/member-relationships", label: "成员关系" },
+  { to: "/member-settings", label: "偏好与权限" },
   { to: "/spaces", label: "房间与设备" },
   { to: "/audit-logs", label: "审计日志" },
 ];
 
 export default function App() {
-  const { household } = useHousehold();
+  const {
+    household,
+    households,
+    householdsLoading,
+    currentHouseholdId,
+    refreshHousehold,
+    setCurrentHouseholdId,
+  } = useHousehold();
+
+  async function handleSwitchHousehold(nextHouseholdId: string) {
+    setCurrentHouseholdId(nextHouseholdId);
+    await refreshHousehold(nextHouseholdId);
+  }
 
   return (
     <div className="app-shell">
@@ -47,12 +63,30 @@ export default function App() {
             <span>当前家庭</span>
             <strong>{household?.name ?? "未选择"}</strong>
             <small>{household?.id ?? "请先创建或加载家庭"}</small>
+            <div className="household-switcher">
+              <select
+                value={currentHouseholdId}
+                onChange={(event) => {
+                  void handleSwitchHousehold(event.target.value);
+                }}
+                disabled={householdsLoading || households.length === 0}
+              >
+                <option value="">请选择家庭</option>
+                {households.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </header>
 
         <Routes>
           <Route path="/" element={<HouseholdPage />} />
           <Route path="/members" element={<MembersPage />} />
+          <Route path="/member-relationships" element={<MemberRelationshipsPage />} />
+          <Route path="/member-settings" element={<MemberPreferencesPermissionsPage />} />
           <Route path="/spaces" element={<RoomsDevicesPage />} />
           <Route path="/audit-logs" element={<AuditLogsPage />} />
         </Routes>
@@ -60,4 +94,3 @@ export default function App() {
     </div>
   );
 }
-

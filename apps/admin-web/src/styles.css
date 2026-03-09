@@ -167,6 +167,14 @@ pre {
   color: #6c7b98;
 }
 
+.household-switcher {
+  margin-top: 0.8rem;
+}
+
+.household-switcher select {
+  min-width: 100%;
+}
+
 .page-grid {
   display: grid;
   gap: 1rem;
@@ -227,6 +235,16 @@ pre {
   margin-bottom: 0.3rem;
 }
 
+.summary-card strong,
+.summary-card small {
+  display: block;
+}
+
+.summary-card small {
+  margin-top: 0.35rem;
+  color: #667694;
+}
+
 .chip-list {
   display: flex;
   flex-wrap: wrap;
@@ -269,6 +287,44 @@ pre {
 .table-actions {
   display: flex;
   gap: 0.5rem;
+}
+
+.member-config-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.json-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.json-field textarea {
+  min-height: 148px;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+}
+
+.section-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.rule-builder {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  align-items: end;
+  margin-bottom: 1rem;
 }
 
 .sync-summary {
@@ -341,4 +397,3 @@ pre {
     width: 100%;
   }
 }
-

@@ -14,9 +14,12 @@ const STORAGE_KEY = "familyclaw.currentHouseholdId";
 
 type HouseholdContextValue = {
   household: Household | null;
+  households: Household[];
+  householdsLoading: boolean;
   currentHouseholdId: string;
   setCurrentHouseholdId: (value: string) => void;
   refreshHousehold: (householdId?: string) => Promise<void>;
+  refreshHouseholds: () => Promise<void>;
 };
 
 const HouseholdContext = createContext<HouseholdContextValue | undefined>(undefined);
@@ -26,6 +29,21 @@ export function HouseholdProvider({ children }: PropsWithChildren) {
     () => window.localStorage.getItem(STORAGE_KEY) ?? "",
   );
   const [household, setHousehold] = useState<Household | null>(null);
+  const [households, setHouseholds] = useState<Household[]>([]);
+  const [householdsLoading, setHouseholdsLoading] = useState(false);
+
+  async function refreshHouseholds() {
+    setHouseholdsLoading(true);
+    try {
+      const response = await api.listHouseholds();
+      setHouseholds(response.items);
+      if (!currentHouseholdId && response.items.length > 0) {
+        setCurrentHouseholdId(response.items[0].id);
+      }
+    } finally {
+      setHouseholdsLoading(false);
+    }
+  }
 
   async function refreshHousehold(householdId = currentHouseholdId) {
     if (!householdId) {
@@ -48,6 +66,10 @@ export function HouseholdProvider({ children }: PropsWithChildren) {
   }
 
   useEffect(() => {
+    refreshHouseholds().catch(() => setHouseholds([]));
+  }, []);
+
+  useEffect(() => {
     if (!currentHouseholdId) {
       return;
     }
@@ -58,11 +80,14 @@ export function HouseholdProvider({ children }: PropsWithChildren) {
   const value = useMemo<HouseholdContextValue>(
     () => ({
       household,
+      households,
+      householdsLoading,
       currentHouseholdId,
       setCurrentHouseholdId,
       refreshHousehold,
+      refreshHouseholds,
     }),
-    [household, currentHouseholdId],
+    [household, households, householdsLoading, currentHouseholdId],
   );
 
   return <HouseholdContext.Provider value={value}>{children}</HouseholdContext.Provider>;
@@ -75,4 +100,3 @@ export function useHousehold() {
   }
   return context;
 }
-

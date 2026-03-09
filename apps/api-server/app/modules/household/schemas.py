@@ -18,3 +18,9 @@ class HouseholdRead(BaseModel):
     created_at: str
     updated_at: str
 
+
+class HouseholdListResponse(BaseModel):
+    items: list[HouseholdRead]
+    page: int
+    page_size: int
+    total: int

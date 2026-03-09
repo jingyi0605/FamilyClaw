@@ -23,6 +23,48 @@ export type Member = {
   updated_at: string;
 };
 
+export type MemberRelationship = {
+  id: string;
+  household_id: string;
+  source_member_id: string;
+  target_member_id: string;
+  relation_type: "spouse" | "parent" | "child" | "guardian" | "caregiver";
+  visibility_scope: "public" | "family" | "private";
+  delegation_scope: "none" | "reminder" | "health" | "device";
+  created_at: string;
+};
+
+export type MemberPreference = {
+  member_id: string;
+  preferred_name: string | null;
+  light_preference: unknown | null;
+  climate_preference: unknown | null;
+  content_preference: unknown | null;
+  reminder_channel_preference: unknown | null;
+  sleep_schedule: unknown | null;
+  updated_at: string;
+};
+
+export type MemberPermissionRule = {
+  resource_type: "memory" | "health" | "device" | "photo" | "scenario";
+  resource_scope: "self" | "children" | "family" | "public";
+  action: "read" | "write" | "execute" | "manage";
+  effect: "allow" | "deny";
+};
+
+export type MemberPermission = MemberPermissionRule & {
+  id: string;
+  household_id: string;
+  member_id: string;
+  created_at: string;
+};
+
+export type MemberPermissionListResponse = {
+  member_id: string;
+  household_id: string;
+  items: MemberPermission[];
+};
+
 export type Room = {
   id: string;
   household_id: string;
@@ -75,4 +117,3 @@ export type HomeAssistantSyncResponse = {
   devices: Device[];
   failures: { entity_id: string | null; reason: string }[];
 };
-

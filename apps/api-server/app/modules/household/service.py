@@ -1,4 +1,5 @@
 from fastapi import HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.utils import new_uuid
@@ -27,3 +28,25 @@ def get_household_or_404(db: Session, household_id: str) -> Household:
         )
     return household
 
+
+def list_households(
+    db: Session,
+    *,
+    page: int,
+    page_size: int,
+    status_value: str | None = None,
+) -> tuple[list[Household], int]:
+    filters = []
+    if status_value:
+        filters.append(Household.status == status_value)
+
+    total = db.scalar(select(func.count()).select_from(Household).where(*filters)) or 0
+    statement = (
+        select(Household)
+        .where(*filters)
+        .order_by(Household.created_at.desc(), Household.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    households = list(db.scalars(statement).all())
+    return households, total
