@@ -1,0 +1,2 @@
+"""Permission module."""
+

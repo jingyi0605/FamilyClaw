@@ -1,0 +1,2 @@
+"""Household module."""
+

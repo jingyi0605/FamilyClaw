@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "familyclaw-api-server"
+version = "0.1.0"
+description = "FamilyClaw API server for household foundation and member center"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn>=0.34,<1.0",
+  "sqlalchemy>=2.0,<3.0",
+  "alembic>=1.16,<2.0",
+  "pydantic-settings>=2.6,<3.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
