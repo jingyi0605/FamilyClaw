@@ -2,15 +2,17 @@
  * 首页 - 可编辑家庭仪表盘
  * 支持卡片添加、移除、拖拽排列
  * ============================================================ */
-import { useState, useRef, useCallback, type DragEvent } from 'react';
+import { useState, useRef, useCallback, useEffect, type DragEvent } from 'react';
 import { 
   CloudSun, BarChart2, Home, Users, ClipboardList, Zap, Bot, Smartphone, 
-  Droplets, Wind, Thermometer, Umbrella, CloudRain, Sun,
+  Droplets, Wind, Thermometer, Umbrella, Sun,
   MessageSquareText, BookOpenText, Settings, ShieldCheck, Airplay, Lightbulb, Lock, User
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { useHouseholdContext } from '../state/household';
 import { Card, StatCard, EmptyState } from '../components/base';
+import { api } from '../lib/api';
+import type { ContextOverviewMemberState, ContextOverviewRead, Device, Member, ReminderOverviewRead, Room } from '../lib/types';
 
 /* ---- 所有可用的仪表盘卡片类型 ---- */
 type CardType = 'weather' | 'stats' | 'rooms' | 'members' | 'events' | 'quickActions' | 'aiSummary' | 'devices';
@@ -45,37 +47,158 @@ function getStoredLayout(): CardType[] {
   return DEFAULT_LAYOUT;
 }
 
-/* ---- 模拟数据 ---- */
-const MOCK_ROOMS = [
-  { id: '1', name: '客厅', type: '生活区', devices: 5, active: true, temp: '24°C' },
-  { id: '2', name: '主卧', type: '卧室', devices: 3, active: false, temp: '22°C' },
-  { id: '3', name: '厨房', type: '功能区', devices: 4, active: true, temp: '25°C' },
-  { id: '4', name: '书房', type: '工作区', devices: 2, active: false, temp: '23°C' },
-];
+type DashboardData = {
+  overview: ContextOverviewRead | null;
+  rooms: Room[];
+  members: Member[];
+  devices: Device[];
+  reminders: ReminderOverviewRead | null;
+  errors: string[];
+};
 
-const MOCK_MEMBERS = [
-  { id: '1', name: '爸爸', avatar: <User size={20} />, status: 'home', role: '管理员' },
-  { id: '2', name: '妈妈', avatar: <User size={20} />, status: 'home', role: '成员' },
-  { id: '3', name: '小明', avatar: <User size={20} />, status: 'away', role: '成员' },
-  { id: '4', name: '奶奶', avatar: <User size={20} />, status: 'home', role: '成员' },
-];
+type DashboardRoomCard = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  secondary: string;
+  deviceCount: number;
+};
 
-const MOCK_EVENTS = [
-  { id: '1', time: '10 分钟前', icon: <Lightbulb size={16} />, text: '客厅灯光已自动调节' },
-  { id: '2', time: '30 分钟前', icon: <ClipboardList size={16} />, text: '提醒：奶奶该吃药了' },
-  { id: '3', time: '1 小时前', icon: <Home size={16} />, text: '小明离开了家' },
-  { id: '4', time: '2 小时前', icon: <Bot size={16} />, text: 'AI 助手回答了关于晚餐的问题' },
-];
+type DashboardMemberCard = {
+  id: string;
+  name: string;
+  roleLabel: string;
+  badgeStatus: 'home' | 'away' | 'resting';
+};
 
-const MOCK_DEVICES = [
-  { name: '客厅主灯', status: 'on', icon: <Lightbulb size={16} /> },
-  { name: '空调', status: 'on', icon: <Airplay size={16} /> },
-  { name: '门锁', status: 'locked', icon: <Lock size={16} /> },
-  { name: '扫地机', status: 'off', icon: <Bot size={16} /> },
-];
+function formatMode(mode: ContextOverviewRead['home_mode'] | undefined) {
+  switch (mode) {
+    case 'home': return '居家模式';
+    case 'away': return '离家模式';
+    case 'night': return '夜间模式';
+    case 'sleep': return '睡眠模式';
+    case 'custom': return '自定义模式';
+    default: return '未设置';
+  }
+}
 
-/* ---- 天气卡片组件 ---- */
-function WeatherCard() {
+function formatPrivacyMode(mode: ContextOverviewRead['privacy_mode'] | undefined) {
+  switch (mode) {
+    case 'balanced': return '平衡保护';
+    case 'strict': return '严格保护';
+    case 'care': return '关怀优先';
+    default: return '未设置';
+  }
+}
+
+function formatAutomationLevel(level: ContextOverviewRead['automation_level'] | undefined) {
+  switch (level) {
+    case 'manual': return '手动优先';
+    case 'assisted': return '辅助自动';
+    case 'automatic': return '自动优先';
+    default: return '未设置';
+  }
+}
+
+function formatHomeAssistantStatus(status: ContextOverviewRead['home_assistant_status'] | undefined) {
+  switch (status) {
+    case 'healthy': return '连接健康';
+    case 'degraded': return '部分降级';
+    case 'offline': return '连接离线';
+    default: return '未知';
+  }
+}
+
+function formatRole(role: Member['role'] | ContextOverviewMemberState['role']) {
+  switch (role) {
+    case 'admin': return '管理员';
+    case 'adult': return '成人';
+    case 'child': return '儿童';
+    case 'elder': return '长辈';
+    case 'guest': return '访客';
+  }
+}
+
+function getMemberBadgeStatus(memberState: ContextOverviewMemberState | null) {
+  if (!memberState) return 'away' as const;
+  if (memberState.presence === 'away') return 'away' as const;
+  if (memberState.activity === 'resting' || memberState.activity === 'sleeping') return 'resting' as const;
+  return 'home' as const;
+}
+
+function formatRelativeTime(value: string | null | undefined) {
+  if (!value) {
+    return '刚刚';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const diffMinutes = Math.max(1, Math.round((Date.now() - date.getTime()) / 60000));
+  if (diffMinutes < 60) return `${diffMinutes} 分钟前`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} 小时前`;
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays} 天前`;
+}
+
+function buildDashboardData(
+  overview: ContextOverviewRead | null,
+  rooms: Room[],
+  members: Member[],
+  devices: Device[],
+  reminders: ReminderOverviewRead | null,
+  errors: string[],
+): DashboardData {
+  return { overview, rooms, members, devices, reminders, errors };
+}
+
+function getRoomCards(data: DashboardData): DashboardRoomCard[] {
+  if (data.overview?.room_occupancy.length) {
+    return data.overview.room_occupancy.map(room => ({
+      id: room.room_id,
+      name: room.name,
+      isActive: room.occupant_count > 0 || room.online_device_count > 0,
+      secondary: room.privacy_level === 'sensitive' ? '隐私区域' : room.room_type,
+      deviceCount: room.device_count,
+    }));
+  }
+
+  return data.rooms.map(room => ({
+    id: room.id,
+    name: room.name,
+    isActive: false,
+    secondary: room.privacy_level === 'sensitive' ? '隐私区域' : room.room_type,
+    deviceCount: 0,
+  }));
+}
+
+function getMemberCards(data: DashboardData): DashboardMemberCard[] {
+  if (data.overview?.member_states.length) {
+    return data.overview.member_states.map(member => ({
+      id: member.member_id,
+      name: member.name,
+      roleLabel: formatRole(member.role),
+      badgeStatus: getMemberBadgeStatus(member),
+    }));
+  }
+
+  return data.members.map(member => ({
+    id: member.id,
+    name: member.name,
+    roleLabel: formatRole(member.role),
+    badgeStatus: 'away',
+  }));
+}
+
+/* ---- 家庭状态卡片组件 ---- */
+function WeatherCard({ data }: { data: DashboardData }) {
+  const membersAtHome = data.overview?.member_states.filter(item => item.presence === 'home').length ?? 0;
+  const onlineDevices = data.overview?.device_summary.active ?? data.devices.filter(item => item.status === 'active').length;
+  const reminderCount = data.reminders?.pending_runs ?? 0;
+
   return (
     <Card className="dashboard-card weather-card animate-card">
       <div className="weather-card__main">
@@ -86,111 +209,133 @@ function WeatherCard() {
           </span>
         </div>
         <div className="weather-card__temp">
-          <span className="weather-temp-value">24°</span>
-          <span className="weather-temp-desc">多云转晴</span>
+          <span className="weather-temp-value">{formatMode(data.overview?.home_mode)}</span>
+          <span className="weather-temp-desc">{formatHomeAssistantStatus(data.overview?.home_assistant_status)}</span>
         </div>
       </div>
       <div className="weather-card__details">
         <div className="weather-detail">
           <span className="weather-detail__icon"><Droplets size={16} /></span>
-          <span>湿度 65%</span>
+          <span>隐私 {formatPrivacyMode(data.overview?.privacy_mode)}</span>
         </div>
         <div className="weather-detail">
           <span className="weather-detail__icon"><Wind size={16} /></span>
-          <span>东南风 3级</span>
+          <span>自动化 {formatAutomationLevel(data.overview?.automation_level)}</span>
         </div>
         <div className="weather-detail">
           <span className="weather-detail__icon"><Thermometer size={16} /></span>
-          <span>体感 26°</span>
+          <span>{data.overview?.quiet_hours_enabled ? `安静时段 ${data.overview.quiet_hours_start}-${data.overview.quiet_hours_end}` : '未开启安静时段'}</span>
         </div>
         <div className="weather-detail">
           <span className="weather-detail__icon"><Umbrella size={16} /></span>
-          <span>降水概率 10%</span>
+          <span>{data.overview?.guest_mode_enabled ? '访客模式已开启' : '访客模式未开启'}</span>
         </div>
       </div>
       <div className="weather-card__forecast">
-        {['明天', '后天', '大后天'].map((day, i) => {
-          const icons = [<CloudSun size={20} />, <CloudRain size={20} />, <Sun size={20} />];
-          return (
-            <div key={day} className="weather-forecast-item">
-              <span className="weather-forecast-day">{day}</span>
-              <span className="weather-forecast-icon">{icons[i]}</span>
-              <span className="weather-forecast-temp">{[23, 20, 26][i]}°</span>
-            </div>
-          );
-        })}
+        <div className="weather-forecast-item">
+          <span className="weather-forecast-day">在家成员</span>
+          <span className="weather-forecast-icon"><Users size={20} /></span>
+          <span className="weather-forecast-temp">{membersAtHome}</span>
+        </div>
+        <div className="weather-forecast-item">
+          <span className="weather-forecast-day">在线设备</span>
+          <span className="weather-forecast-icon"><Smartphone size={20} /></span>
+          <span className="weather-forecast-temp">{onlineDevices}</span>
+        </div>
+        <div className="weather-forecast-item">
+          <span className="weather-forecast-day">待处理提醒</span>
+          <span className="weather-forecast-icon"><ClipboardList size={20} /></span>
+          <span className="weather-forecast-temp">{reminderCount}</span>
+        </div>
       </div>
     </Card>
   );
 }
 
 /* ---- AI 摘要卡片 ---- */
-function AiSummaryCard() {
+function AiSummaryCard({ data }: { data: DashboardData }) {
+  const insightMessages = data.overview?.insights.slice(0, 2).map(item => item.message) ?? [];
+  const summaryText = insightMessages.length > 0
+    ? insightMessages.join(' ') 
+    : '当前还没有新的家庭洞察，系统会在拿到更多上下文后更新这里。';
+
   return (
     <Card className="dashboard-card ai-summary-card animate-card">
       <div className="ai-summary-card__header">
         <span className="ai-summary-card__icon pulse-glow"><Bot size={24} className="text-brand-primary" /></span>
         <h3>AI 今日摘要</h3>
       </div>
-      <p className="ai-summary-card__text">
-        今天家里一切正常。奶奶按时服了药，小明下午三点出门了。客厅温度维持在 24°C，空气质量良好。
-        晚餐建议：考虑到奶奶的饮食偏好和妈妈的健康计划，推荐清蒸鱼配时令蔬菜。
-      </p>
+      <p className="ai-summary-card__text">{summaryText}</p>
       <div className="ai-summary-card__tags">
-        <span className="ai-tag flex items-center gap-1"><ClipboardList size={12} /> 3 条待处理提醒</span>
-        <span className="ai-tag flex items-center gap-1"><BookOpenText size={12} /> 2 条新记忆</span>
-        <span className="ai-tag flex items-center gap-1"><ShieldCheck size={12} /> 无异常</span>
+        <span className="ai-tag flex items-center gap-1"><ClipboardList size={12} /> {data.reminders?.pending_runs ?? 0} 条待处理提醒</span>
+        <span className="ai-tag flex items-center gap-1"><BookOpenText size={12} /> {data.overview?.member_states.length ?? 0} 位成员已纳入上下文</span>
+        <span className="ai-tag flex items-center gap-1"><ShieldCheck size={12} /> {data.overview?.insights.filter(item => item.tone === 'warning' || item.tone === 'danger').length ?? 0} 条需关注洞察</span>
       </div>
     </Card>
   );
 }
 
 /* ---- 设备状态卡片 ---- */
-function DevicesCard() {
+function DevicesCard({ data }: { data: DashboardData }) {
+  const topDevices = data.devices.slice(0, 4);
+
   return (
     <Card className="dashboard-card animate-card">
       <h3 className="dashboard-card__title flex items-center gap-2"><Smartphone size={20} /> 设备状态</h3>
       <div className="device-status-grid">
-        {MOCK_DEVICES.map((d, i) => (
-          <div key={i} className={`device-status-item ${d.status === 'off' ? 'device-status-item--off' : ''}`}>
-            <span className="device-status-icon">{d.icon}</span>
-            <span className="device-status-name">{d.name}</span>
-            <span className={`device-status-dot ${d.status !== 'off' ? 'device-status-dot--on' : ''}`} />
-          </div>
-        ))}
+        {topDevices.length > 0 ? topDevices.map(device => {
+          const isOff = device.status !== 'active';
+          const icon = device.device_type === 'lock'
+            ? <Lock size={16} />
+            : device.device_type === 'ac'
+              ? <Airplay size={16} />
+              : device.device_type === 'light'
+                ? <Lightbulb size={16} />
+                : <Bot size={16} />;
+
+          return (
+            <div key={device.id} className={`device-status-item ${isOff ? 'device-status-item--off' : ''}`}>
+              <span className="device-status-icon">{icon}</span>
+              <span className="device-status-name">{device.name}</span>
+              <span className={`device-status-dot ${!isOff ? 'device-status-dot--on' : ''}`} />
+            </div>
+          );
+        }) : <div className="text-text-secondary">当前家庭还没有可展示的设备。</div>}
       </div>
     </Card>
   );
 }
 
 /* ---- 渲染单个仪表盘卡片 ---- */
-function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t']) {
+function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'], data: DashboardData, loading: boolean) {
   switch (type) {
     case 'weather':
-      return <WeatherCard />;
+      return <WeatherCard data={data} />;
     case 'stats':
       return (
         <div className="stats-grid animate-card">
-          <StatCard icon={<Users size={24} />} label={t('home.membersAtHome')} value={3} color="var(--brand-primary)" />
-          <StatCard icon={<Home size={24} />} label={t('home.activeRooms')} value={2} color="var(--color-success)" />
-          <StatCard icon={<Smartphone size={24} />} label={t('home.devicesOnline')} value={12} color="var(--color-info)" />
-          <StatCard icon={<ShieldCheck size={24} />} label={t('home.alerts')} value={1} color="var(--color-warning)" />
+          <StatCard icon={<Users size={24} />} label={t('home.membersAtHome')} value={data.overview?.member_states.filter(item => item.presence === 'home').length ?? 0} color="var(--brand-primary)" />
+          <StatCard icon={<Home size={24} />} label={t('home.activeRooms')} value={data.overview?.room_occupancy.filter(item => item.occupant_count > 0 || item.online_device_count > 0).length ?? data.rooms.length} color="var(--color-success)" />
+          <StatCard icon={<Smartphone size={24} />} label={t('home.devicesOnline')} value={data.overview?.device_summary.active ?? data.devices.filter(item => item.status === 'active').length} color="var(--color-info)" />
+          <StatCard icon={<ShieldCheck size={24} />} label={t('home.alerts')} value={(data.reminders?.pending_runs ?? 0) + (data.overview?.insights.filter(item => item.tone === 'warning' || item.tone === 'danger').length ?? 0)} color="var(--color-warning)" />
         </div>
       );
     case 'rooms':
+      const roomCards = getRoomCards(data).slice(0, 4);
+
       return (
         <Card className="dashboard-card animate-card">
           <h3 className="dashboard-card__title flex items-center gap-2"><Home size={20} /> {t('home.roomStatus')}</h3>
           <div className="room-cards">
-            {MOCK_ROOMS.map(room => (
+            {loading ? <div className="text-text-secondary">正在加载房间状态...</div> : roomCards.map(room => (
               <div key={room.id} className="mini-room-card">
                 <div className="mini-room-card__header">
                   <span className="mini-room-card__name">{room.name}</span>
-                  <span className={`status-dot ${room.active ? 'status-dot--active' : ''}`} />
+                  <span className={`status-dot ${room.isActive ? 'status-dot--active' : ''}`} />
                 </div>
                 <div className="mini-room-card__meta">
-                  <span>{room.temp}</span>
-                  <span>{room.devices} 设备</span>
+                  <span>{room.secondary}</span>
+                  <span>{room.deviceCount} 设备</span>
                 </div>
               </div>
             ))}
@@ -198,19 +343,21 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'])
         </Card>
       );
     case 'members':
+      const memberCards = getMemberCards(data).slice(0, 4);
+
       return (
         <Card className="dashboard-card animate-card">
           <h3 className="dashboard-card__title flex items-center gap-2"><Users size={20} /> {t('home.memberStatus')}</h3>
           <div className="member-cards">
-            {MOCK_MEMBERS.map(member => (
+            {loading ? <div className="text-text-secondary">正在加载成员状态...</div> : memberCards.map(member => (
               <div key={member.id} className="mini-member-card">
-                <span className="mini-member-card__avatar">{member.avatar}</span>
+                <span className="mini-member-card__avatar"><User size={20} /></span>
                 <div className="mini-member-card__info">
                   <span className="mini-member-card__name">{member.name}</span>
-                  <span className="mini-member-card__role">{member.role}</span>
+                  <span className="mini-member-card__role">{member.roleLabel}</span>
                 </div>
-                <span className={`member-status-badge member-status-badge--${member.status}`}>
-                  {member.status === 'home' ? t('member.atHome') : t('member.away')}
+                <span className={`member-status-badge member-status-badge--${member.badgeStatus}`}>
+                  {member.badgeStatus === 'resting' ? t('member.resting') : member.badgeStatus === 'home' ? t('member.atHome') : t('member.away')}
                 </span>
               </div>
             ))}
@@ -218,17 +365,31 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'])
         </Card>
       );
     case 'events':
+      const reminderEvents = data.reminders?.items.slice(0, 3).map(item => ({
+        id: item.task_id,
+        time: formatRelativeTime(item.latest_run_planned_at ?? item.next_trigger_at),
+        icon: <ClipboardList size={16} />,
+        text: item.latest_ack_action === 'done' ? `${item.title} 已完成` : `${item.title} 待处理`,
+      })) ?? [];
+      const insightEvents = data.overview?.insights.slice(0, 3).map(item => ({
+        id: item.code,
+        time: formatRelativeTime(data.overview?.generated_at),
+        icon: item.tone === 'danger' ? <ShieldCheck size={16} /> : <Lightbulb size={16} />,
+        text: item.message,
+      })) ?? [];
+      const recentEvents = [...insightEvents, ...reminderEvents].slice(0, 5);
+
       return (
         <Card className="dashboard-card animate-card">
           <h3 className="dashboard-card__title flex items-center gap-2"><ClipboardList size={20} /> {t('home.recentEvents')}</h3>
           <div className="event-list">
-            {MOCK_EVENTS.map(ev => (
+            {loading ? <div className="text-text-secondary">正在加载最近事件...</div> : recentEvents.length > 0 ? recentEvents.map(ev => (
               <div key={ev.id} className="event-item">
                 <span className="event-item__icon">{ev.icon}</span>
                 <span className="event-item__text">{ev.text}</span>
                 <span className="event-item__time">{ev.time}</span>
               </div>
-            ))}
+            )) : <div className="text-text-secondary">{t('home.noEventsHint')}</div>}
           </div>
         </Card>
       );
@@ -245,9 +406,9 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'])
         </Card>
       );
     case 'aiSummary':
-      return <AiSummaryCard />;
+      return <AiSummaryCard data={data} />;
     case 'devices':
-      return <DevicesCard />;
+      return <DevicesCard data={data} />;
     default:
       return null;
   }
@@ -256,7 +417,7 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'])
 /* ---- 首页主组件 ---- */
 export function HomePage() {
   const { t } = useI18n();
-  const { currentHousehold } = useHouseholdContext();
+  const { currentHousehold, currentHouseholdId } = useHouseholdContext();
   const familyName = currentHousehold?.name ?? '';
 
   const [layout, setLayout] = useState<CardType[]>(getStoredLayout);
@@ -264,6 +425,53 @@ export function HomePage() {
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const dragRef = useRef<number | null>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardData>(() => buildDashboardData(null, [], [], [], null, []));
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!currentHouseholdId) {
+      setDashboardData(buildDashboardData(null, [], [], [], null, []));
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadDashboard = async () => {
+      setLoading(true);
+
+      const [overviewResult, roomsResult, membersResult, devicesResult, remindersResult] = await Promise.allSettled([
+        api.getContextOverview(currentHouseholdId),
+        api.listRooms(currentHouseholdId),
+        api.listMembers(currentHouseholdId),
+        api.listDevices(currentHouseholdId),
+        api.getReminderOverview(currentHouseholdId),
+      ]);
+
+      if (cancelled) {
+        return;
+      }
+
+      const errors = [overviewResult, roomsResult, membersResult, devicesResult, remindersResult]
+        .filter(result => result.status === 'rejected')
+        .map(result => result.reason instanceof Error ? result.reason.message : '数据加载失败');
+
+      setDashboardData(buildDashboardData(
+        overviewResult.status === 'fulfilled' ? overviewResult.value : null,
+        roomsResult.status === 'fulfilled' ? roomsResult.value.items : [],
+        membersResult.status === 'fulfilled' ? membersResult.value.items : [],
+        devicesResult.status === 'fulfilled' ? devicesResult.value.items : [],
+        remindersResult.status === 'fulfilled' ? remindersResult.value : null,
+        errors,
+      ));
+      setLoading(false);
+    };
+
+    void loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentHouseholdId]);
 
   /* 保存布局 */
   const saveLayout = useCallback((newLayout: CardType[]) => {
@@ -328,6 +536,9 @@ export function HomePage() {
             {t('home.welcome')}，{familyName} <Home size={32} className="text-brand-primary" />
           </h1>
           <p className="welcome-banner__sub">{t('home.greeting')}</p>
+          {dashboardData.errors.length > 0 && (
+            <p className="text-text-secondary">部分卡片加载失败，页面已自动降级显示可用数据。</p>
+          )}
         </div>
         <div className="welcome-banner__right">
           <div className="welcome-banner__time">
@@ -379,7 +590,7 @@ export function HomePage() {
                   <button className="remove-card-btn" onClick={() => removeCard(idx)}>✕</button>
                 </div>
               )}
-              {renderDashboardCard(type, t)}
+              {renderDashboardCard(type, t, dashboardData, loading)}
             </div>
           );
         })}
