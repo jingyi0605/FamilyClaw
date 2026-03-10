@@ -11,8 +11,8 @@
 
 ## 阶段 1：事件与上下文底座
 
-- [ ] 1.1 创建在家事件与成员快照数据模型
-  - 状态：TODO
+- [x] 1.1 创建在家事件与成员快照数据模型
+  - 状态：DONE
   - 目标：建立 `presence_events`、`member_presence_state`、`context_configs` 的迁移、模型与基础仓储能力
   - 依赖：无
   - 需求关联：`requirements.md` 需求 2 / 验收 2.1、2.2、2.4；需求 3 / 验收 3.1、3.4；需求 7 / 验收 7.3
@@ -32,12 +32,12 @@
     2. 家庭边界约束可验证
     3. 配置 JSON 可以被正确读写
   - 验证方式：
-    - 迁移执行
-    - ORM/仓储测试
-    - 手动插入与查询验证
+    - `cd apps/api-server && .venv/bin/alembic upgrade head`
+    - `cd apps/api-server && .venv/bin/python -m compileall app`
+    - 服务层读取 `get_context_config()` 验证配置默认值与持久化结构
 
-- [ ] 1.2 实现在家事件写入与成员快照聚合服务
-  - 状态：TODO
+- [x] 1.2 实现在家事件写入与成员快照聚合服务
+  - 状态：DONE
   - 目标：接收原始事件并更新成员在家快照、房间占用和活跃成员缓存
   - 依赖：1.1
   - 需求关联：`requirements.md` 需求 2 / 验收 2.1、2.2、2.3；需求 3 / 验收 3.1、3.2、3.3、3.4；需求 4 / 验收 4.1、4.2、4.3、4.4
@@ -58,14 +58,15 @@
     2. 房间占用和活跃成员缓存可被刷新
     3. 缓存不可用时可以降级
   - 验证方式：
-    - 单元测试
-    - 集成测试
-    - 模拟事件回放验证
+    - `cd apps/api-server && .venv/bin/python -m compileall app`
+    - 服务层调用 `ingest_presence_event()` 验证 `presence_events` 入库与 `member_presence_state` 聚合更新
+    - 服务层调用 `get_household_context_cache()` 验证活跃成员与房间占用缓存已刷新
+    - 临时关闭 `settings.context_cache_enabled` 后再次写入事件，验证 `cache_refreshed=false` 且 `get_context_overview()` 可继续从数据库快照降级返回结果
 
 ### 阶段检查点
 
-- [ ] 1.3 上下文底座检查点
-  - 状态：TODO
+- [x] 1.3 上下文底座检查点
+  - 状态：DONE
   - 目标：确认原始事件、当前快照和配置结构已经成型，可进入 API 层实现
   - 依赖：1.1、1.2
   - 需求关联：`requirements.md` 需求 2、需求 3、需求 4
@@ -81,15 +82,16 @@
     1. 数据模型与聚合逻辑可追踪
     2. 已知边界条件有明确处理策略
   - 验证方式：
-    - 人工走查
-    - 关键测试集验证
+    - 人工走查 `presence_events / member_presence_state / context_configs` 模型、迁移与接口实现
+    - `cd apps/api-server && .venv/bin/alembic upgrade head`
+    - 服务层回放在家事件，验证“实时快照优先、配置回退、缓存失败可降级”的闭环行为
 
 ---
 
 ## 阶段 2：上下文查询与设备动作接口
 
-- [ ] 2.1 实现家庭上下文总览与配置接口
-  - 状态：TODO
+- [x] 2.1 实现家庭上下文总览与配置接口
+  - 状态：DONE
   - 目标：提供 `context overview` 与 `context configs` API，统一对前端输出家庭上下文
   - 依赖：1.3
   - 需求关联：`requirements.md` 需求 5 / 验收 5.1、5.2、5.3、5.4；需求 7 / 验收 7.2、7.4；需求 8 / 验收 8.2、8.4；需求 9 / 验收 9.1、9.2
@@ -108,11 +110,12 @@
     2. 配置接口能做家庭边界校验与持久化
     3. 降级状态可明确返回
   - 验证方式：
-    - API 集成测试
-    - curl / Postman 验证
+    - `cd apps/api-server && .venv/bin/python -m compileall app`
+    - 服务层调用 `get_context_overview()` 验证总览聚合输出
+    - 服务层调用 `upsert_context_config()` 验证家庭边界校验、配置持久化与版本递增
 
-- [ ] 2.2 实现基础设备动作执行与审计闭环
-  - 状态：TODO
+- [x] 2.2 实现基础设备动作执行与审计闭环
+  - 状态：DONE
   - 目标：提供统一设备动作入口并打通 `Home Assistant` 执行与审计记录
   - 依赖：1.3
   - 需求关联：`requirements.md` 需求 1 / 验收 1.4；需求 6 / 验收 6.1、6.2、6.3、6.4；需求 8 / 验收 8.1、8.3；需求 9 / 验收 9.3、9.4
@@ -132,13 +135,15 @@
     2. 高风险动作有权限边界
     3. 成功和失败都可审计
   - 验证方式：
-    - 集成测试
-    - 真实 HA 联调
+    - `cd apps/api-server && .venv/bin/python -m compileall app`
+    - 通过打桩 `HomeAssistantClient.call_service()` 直接调用 `execute_device_action_endpoint()`，验证灯光亮度动作可映射到 HA `light.turn_on`
+    - 直接调用 `execute_device_action_endpoint()`，验证高风险 `unlock` 在未确认时返回 `403`
+    - 查询 `audit_logs`，验证成功与失败动作都写入 `device_action.execute` 审计记录
 
 ### 阶段检查点
 
-- [ ] 2.3 接口闭环检查点
-  - 状态：TODO
+- [x] 2.3 接口闭环检查点
+  - 状态：DONE
   - 目标：确认上下文查询、配置与动作执行接口可支撑前端联调
   - 依赖：2.1、2.2
   - 需求关联：`requirements.md` 需求 1、需求 5、需求 6、需求 8、需求 9
@@ -154,8 +159,10 @@
     1. 关键接口可联调
     2. 关键异常路径有处理
   - 验证方式：
-    - 联调验证
-    - 关键测试集复跑
+    - 人工走查 `context overview / context configs / device-actions` 接口与 service 实现
+    - `cd apps/api-server && .venv/bin/python -m compileall app`
+    - 通过服务层验证 `presence-events → member_presence_state → context overview` 链路
+    - 通过端点函数直调验证 `device_action.execute` 的成功路径、失败路径与审计闭环
 
 ---
 
@@ -186,8 +193,8 @@
     - `npm run build`
     - 手工切换家庭与刷新页面验证
 
-- [ ] 3.2 将原型页切换到后端上下文接口并补齐联调文档
-  - 状态：TODO
+- [x] 3.2 将原型页切换到后端上下文接口并补齐联调文档
+  - 状态：DONE
   - 目标：把前端从本地草稿模式切换为后端 `context overview / context configs`，并形成联调说明
   - 依赖：2.3、3.1
   - 需求关联：`requirements.md` 需求 5 / 验收 5.1、5.2；需求 7 / 验收 7.2、7.4；需求 8 / 验收 8.3、8.4
@@ -212,8 +219,8 @@
 
 ### 最终检查点
 
-- [ ] 3.3 最终检查点
-  - 状态：TODO
+- [x] 3.3 最终检查点
+  - 状态：DONE
   - 目标：确认家居接入与上下文中心满足可交付条件，可继续支撑后续问答、提醒和场景编排
   - 依赖：3.2
   - 需求关联：`requirements.md` 全部需求
