@@ -108,6 +108,7 @@ export const api = {
     household_id: string;
     name: string;
     nickname?: string | null;
+    gender?: 'male' | 'female' | null;
     role: Member['role'];
     age_group?: Member['age_group'];
     phone?: string | null;
@@ -115,6 +116,12 @@ export const api = {
   }) {
     return request<Member>('/members', {
       method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  updateMember(memberId: string, payload: Partial<Member>) {
+    return request<Member>(`/members/${encodeURIComponent(memberId)}`, {
+      method: 'PATCH',
       body: JSON.stringify(payload),
     });
   },
@@ -126,12 +133,18 @@ export const api = {
     source_member_id: string;
     target_member_id: string;
     relation_type: MemberRelationship['relation_type'];
+    reverse_relation_type?: MemberRelationship['relation_type'] | null;
     visibility_scope: MemberRelationship['visibility_scope'];
     delegation_scope: MemberRelationship['delegation_scope'];
   }) {
     return request<MemberRelationship>('/member-relationships', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  },
+  deleteMemberRelationship(relationshipId: string) {
+    return request<void>(`/member-relationships/${encodeURIComponent(relationshipId)}`, {
+      method: 'DELETE',
     });
   },
   listMemberRelationships(householdId: string) {

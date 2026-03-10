@@ -60,6 +60,7 @@ def create_member(db: Session, payload: MemberCreate) -> Member:
         household_id=payload.household_id,
         name=payload.name,
         nickname=payload.nickname,
+        gender=payload.gender,
         role=payload.role,
         age_group=payload.age_group,
         birthday=payload.birthday.isoformat() if payload.birthday else None,

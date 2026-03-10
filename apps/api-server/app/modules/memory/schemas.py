@@ -144,7 +144,7 @@ class MemoryQueryRequest(BaseModel):
     status: MemoryStatus | None = None
     visibility: MemoryVisibility | None = None
     query: str | None = Field(default=None, max_length=200)
-    limit: int = Field(default=10, ge=1, le=50)
+    limit: int = Field(default=10, ge=1, le=500)
 
 
 class MemoryQueryHit(BaseModel):

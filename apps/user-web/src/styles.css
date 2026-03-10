@@ -1577,6 +1577,113 @@ input, select, textarea {
   border-top: 1px solid var(--divider);
 }
 
+.memory-revision-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.memory-revision-item {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  background: var(--bg-surface);
+}
+
+.memory-revision-item__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+}
+
+.memory-revision-item__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.memory-revision-item__summary strong {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.memory-revision-item__summary span {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.memory-revision-diff {
+  margin-top: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.memory-revision-diff__row {
+  display: grid;
+  gap: var(--spacing-xs);
+}
+
+.memory-revision-diff__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.memory-revision-diff__values {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: var(--spacing-sm);
+  align-items: stretch;
+}
+
+.memory-revision-diff__card {
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-light);
+}
+
+.memory-revision-diff__card--before {
+  background: rgba(244, 67, 54, 0.08);
+  border-color: rgba(244, 67, 54, 0.16);
+}
+
+.memory-revision-diff__card--after {
+  background: rgba(46, 125, 50, 0.08);
+  border-color: rgba(46, 125, 50, 0.16);
+}
+
+.memory-revision-diff__caption {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.memory-revision-diff__card p {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.memory-revision-diff__arrow {
+  align-self: center;
+  color: var(--text-tertiary);
+  font-size: 1.1rem;
+}
+
+.memory-revision-diff__empty {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
 .memory-detail__empty {
   display: flex;
   align-items: center;
@@ -2497,6 +2604,19 @@ body::before {
     display: none;
   }
 
+  .memory-revision-item__top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .memory-revision-diff__values {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-revision-diff__arrow {
+    display: none;
+  }
+
   .theme-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -2613,5 +2733,213 @@ body::before {
   .memory-cat-btn {
     white-space: nowrap;
     flex-shrink: 0;
+  }
+}
+
+/* ============================================================
+ * 关系图谱 & 关系卡片
+ * ============================================================ */
+
+/* 图谱容器 */
+.relationship-graph-card {
+  padding: var(--spacing-md) !important;
+}
+
+.relationship-graph {
+  position: relative;
+}
+
+.relationship-graph__svg {
+  width: 100%;
+  height: auto;
+  min-height: 300px;
+  max-height: 480px;
+}
+
+.relationship-graph__hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-md);
+  min-height: 200px;
+  color: var(--text-secondary);
+}
+
+.relationship-graph__icon {
+  font-size: 2.5rem;
+  opacity: 0.5;
+}
+
+.graph-legend {
+  text-align: center;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  margin-top: var(--spacing-sm);
+}
+
+/* 节点 */
+.graph-node {
+  transition: opacity 0.3s ease;
+}
+
+.graph-node__circle {
+  fill: var(--bg-card);
+  stroke: var(--brand-primary);
+  stroke-width: 2.5;
+  transition: fill 0.2s, stroke 0.2s, stroke-width 0.2s;
+}
+
+.graph-node--selected .graph-node__circle {
+  fill: var(--brand-primary-light);
+  stroke: var(--brand-primary);
+  stroke-width: 3.5;
+}
+
+.graph-node--dim {
+  opacity: 0.25;
+}
+
+.graph-node__emoji {
+  font-size: 20px;
+  pointer-events: none;
+}
+
+.graph-node__name {
+  font-size: 12px;
+  fill: var(--text-primary);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* 边/连线 */
+.graph-edge {
+  stroke: var(--border);
+  stroke-width: 2;
+  transition: stroke 0.3s, stroke-width 0.3s, opacity 0.3s;
+}
+
+.graph-edge--highlight {
+  stroke: var(--brand-primary);
+  stroke-width: 3;
+}
+
+.graph-edge--dim {
+  opacity: 0.15;
+}
+
+/* 边标签 */
+.graph-edge-label-bg {
+  fill: var(--bg-surface);
+  opacity: 0.9;
+  transition: opacity 0.3s;
+}
+
+.graph-edge-label-bg--dim {
+  opacity: 0.15;
+}
+
+.graph-edge-label {
+  font-size: 11px;
+  fill: var(--text-secondary);
+  transition: fill 0.3s, opacity 0.3s;
+}
+
+.graph-edge-label--highlight {
+  fill: var(--brand-primary);
+  font-weight: 600;
+}
+
+.graph-edge-label--dim {
+  opacity: 0.15;
+}
+
+/* 关系分组 */
+.relation-group {
+  margin-bottom: var(--spacing-lg);
+}
+
+.relation-group__title {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--spacing-sm);
+  padding-left: var(--spacing-xs);
+}
+
+/* 关系列表 */
+.relation-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+/* 关系卡片 */
+.relation-card__pair {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex: 1;
+}
+
+.relation-card__arrow {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.relation-card__label {
+  font-weight: 600;
+  color: var(--brand-primary);
+}
+
+.relation-card__name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.relation-card--compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-sm) var(--spacing-md) !important;
+  gap: var(--spacing-md);
+}
+
+/* 创建表单 */
+.relationship-create-form .form-group {
+  margin-bottom: var(--spacing-md);
+}
+
+/* 按钮变体 */
+.btn--danger {
+  background: var(--color-danger, #ef4444);
+  color: #fff;
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  transition: all var(--transition);
+}
+
+.btn--danger:hover {
+  opacity: 0.85;
+}
+
+.btn--danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn--small {
+  padding: 4px 12px;
+  font-size: var(--font-size-xs);
+}
+
+@media (max-width: 768px) {
+  .relationship-graph__svg {
+    min-height: 240px;
   }
 }

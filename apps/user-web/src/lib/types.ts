@@ -20,6 +20,7 @@ export type Member = {
   household_id: string;
   name: string;
   nickname: string | null;
+  gender: 'male' | 'female' | null;
   role: 'admin' | 'adult' | 'child' | 'elder' | 'guest';
   age_group: 'toddler' | 'child' | 'teen' | 'adult' | 'elder' | null;
   birthday: string | null;
@@ -30,12 +31,22 @@ export type Member = {
   updated_at: string;
 };
 
+export type RelationType =
+  | 'husband' | 'wife' | 'spouse'
+  | 'father' | 'mother' | 'son' | 'daughter' | 'parent' | 'child'
+  | 'older_brother' | 'older_sister' | 'younger_brother' | 'younger_sister'
+  | 'grandfather_paternal' | 'grandmother_paternal'
+  | 'grandfather_maternal' | 'grandmother_maternal'
+  | 'grandson' | 'granddaughter'
+  | 'guardian' | 'ward'
+  | 'caregiver';
+
 export type MemberRelationship = {
   id: string;
   household_id: string;
   source_member_id: string;
   target_member_id: string;
-  relation_type: 'spouse' | 'parent' | 'child' | 'guardian' | 'caregiver';
+  relation_type: RelationType;
   visibility_scope: 'public' | 'family' | 'private';
   delegation_scope: 'none' | 'reminder' | 'health' | 'device';
   created_at: string;

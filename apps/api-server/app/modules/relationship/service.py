@@ -6,7 +6,7 @@ from app.db.utils import new_uuid
 from app.modules.household.models import Household
 from app.modules.member.models import Member
 from app.modules.relationship.models import MemberRelationship
-from app.modules.relationship.schemas import MemberRelationshipCreate
+from app.modules.relationship.schemas import MemberRelationshipCreate, get_reverse_relation
 
 
 def _ensure_household_exists(db: Session, household_id: str) -> None:
@@ -41,19 +41,20 @@ def create_relationship(db: Session, payload: MemberRelationshipCreate) -> Membe
             detail="source member and target member must be different",
         )
 
-    _get_member_in_household_or_400(
+    source_member = _get_member_in_household_or_400(
         db,
         payload.source_member_id,
         payload.household_id,
         "source member",
     )
-    _get_member_in_household_or_400(
+    target_member = _get_member_in_household_or_400(
         db,
         payload.target_member_id,
         payload.household_id,
         "target member",
     )
 
+    # 创建正向关系
     relationship = MemberRelationship(
         id=new_uuid(),
         household_id=payload.household_id,
@@ -64,7 +65,73 @@ def create_relationship(db: Session, payload: MemberRelationshipCreate) -> Membe
         delegation_scope=payload.delegation_scope,
     )
     db.add(relationship)
+
+    # 自动创建反向关系
+    reverse_type = payload.reverse_relation_type
+    if reverse_type is None:
+        reverse_type = get_reverse_relation(payload.relation_type, source_member.gender)
+
+    if reverse_type is not None:
+        # 检查反向关系是否已存在（避免重复）
+        existing_reverse = db.scalar(
+            select(MemberRelationship).where(
+                MemberRelationship.household_id == payload.household_id,
+                MemberRelationship.source_member_id == payload.target_member_id,
+                MemberRelationship.target_member_id == payload.source_member_id,
+                MemberRelationship.relation_type == reverse_type,
+            )
+        )
+        if existing_reverse is None:
+            reverse_relationship = MemberRelationship(
+                id=new_uuid(),
+                household_id=payload.household_id,
+                source_member_id=payload.target_member_id,
+                target_member_id=payload.source_member_id,
+                relation_type=reverse_type,
+                visibility_scope=payload.visibility_scope,
+                delegation_scope=payload.delegation_scope,
+            )
+            db.add(reverse_relationship)
+
     return relationship
+
+
+def delete_relationship(db: Session, relationship_id: str) -> None:
+    """删除指定关系，同时找到并删除对应的反向关系。"""
+    relationship = db.get(MemberRelationship, relationship_id)
+    if relationship is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="relationship not found",
+        )
+
+    reverse_type = get_reverse_relation(relationship.relation_type, None)
+
+    # 尝试找到反向关系并删除
+    if reverse_type is not None:
+        reverse = db.scalar(
+            select(MemberRelationship).where(
+                MemberRelationship.household_id == relationship.household_id,
+                MemberRelationship.source_member_id == relationship.target_member_id,
+                MemberRelationship.target_member_id == relationship.source_member_id,
+                MemberRelationship.relation_type == reverse_type,
+            )
+        )
+        if reverse is not None:
+            db.delete(reverse)
+    else:
+        # 如果不能精确找到反向类型，尝试找任意反向记录
+        reverse = db.scalar(
+            select(MemberRelationship).where(
+                MemberRelationship.household_id == relationship.household_id,
+                MemberRelationship.source_member_id == relationship.target_member_id,
+                MemberRelationship.target_member_id == relationship.source_member_id,
+            )
+        )
+        if reverse is not None:
+            db.delete(reverse)
+
+    db.delete(relationship)
 
 
 def list_relationships(
@@ -97,4 +164,3 @@ def list_relationships(
     )
     items = list(db.scalars(statement).all())
     return items, total
-

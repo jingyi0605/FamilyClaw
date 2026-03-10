@@ -72,16 +72,118 @@ function getDetailContent(card: MemoryCard) {
   return '暂无详情内容';
 }
 
-function formatRevisionJson(value: string | null) {
+const REVISION_FIELD_LABELS: Record<string, string> = {
+  title: '标题',
+  summary: '摘要',
+  visibility: '可见范围',
+  status: '状态',
+  importance: '重要度',
+  confidence: '置信度',
+  subject_member_id: '主体成员',
+  source_event_id: '来源事件',
+  effective_at: '生效时间',
+  last_observed_at: '最近观察时间',
+  invalidated_at: '失效时间',
+  content: '结构化内容',
+  related_members: '关联成员',
+};
+
+const REVISION_VISIBLE_FIELDS = [
+  'title',
+  'summary',
+  'visibility',
+  'status',
+  'importance',
+  'confidence',
+  'subject_member_id',
+  'source_event_id',
+  'effective_at',
+  'last_observed_at',
+  'invalidated_at',
+  'content',
+  'related_members',
+] as const;
+
+function parseRevisionSnapshot(value: string | null) {
   if (!value) {
-    return '无';
+    return null;
   }
 
   try {
-    return JSON.stringify(JSON.parse(value), null, 2);
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return parsed && typeof parsed === 'object' ? parsed : null;
   } catch {
+    return null;
+  }
+}
+
+function formatRevisionValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '空';
+  }
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+  if (typeof value === 'boolean') {
+    return value ? '是' : '否';
+  }
+  if (typeof value === 'string') {
     return value;
   }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return '空';
+    }
+    return value
+      .map(item => {
+        if (item && typeof item === 'object') {
+          const memberId = 'member_id' in item ? String(item.member_id) : '';
+          const relationRole = 'relation_role' in item ? String(item.relation_role) : '';
+          return [memberId, relationRole].filter(Boolean).join(' · ');
+        }
+        return String(item);
+      })
+      .join('、');
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .slice(0, 4)
+      .map(([key, nestedValue]) => `${key}: ${formatRevisionValue(nestedValue)}`)
+      .join('；');
+  }
+  return String(value);
+}
+
+function collectRevisionChanges(revision: MemoryCardRevision): Array<{
+  field: string;
+  label: string;
+  beforeText: string;
+  afterText: string;
+}> {
+  const before = parseRevisionSnapshot(revision.before_json);
+  const after = parseRevisionSnapshot(revision.after_json);
+
+  return REVISION_VISIBLE_FIELDS.flatMap(field => {
+    const beforeValue = before?.[field];
+    const afterValue = after?.[field];
+    const beforeText = formatRevisionValue(beforeValue);
+    const afterText = formatRevisionValue(afterValue);
+
+    if (revision.action !== 'create' && beforeText === afterText) {
+      return [];
+    }
+
+    if (revision.action === 'delete' && after === null && beforeValue === undefined) {
+      return [];
+    }
+
+    return [{
+      field,
+      label: REVISION_FIELD_LABELS[field] ?? field,
+      beforeText,
+      afterText,
+    }];
+  });
 }
 
 export function MemoriesPage() {
@@ -351,28 +453,44 @@ export function MemoriesPage() {
                 <div className="detail-field">
                   <label>修订历史</label>
                   {revisionsLoading ? <p>正在加载修订历史...</p> : revisionError ? <p>{revisionError}</p> : revisions.length > 0 ? (
-                    <div>
+                    <div className="memory-revision-list">
                       {revisions.slice(0, 5).map(revision => {
                         const isExpanded = expandedRevisionId === revision.id;
+                        const changes = collectRevisionChanges(revision);
 
                         return (
-                          <div key={revision.id} style={{ marginBottom: '0.75rem', padding: '0.75rem', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
-                              <p>#{revision.revision_no} · {revision.action} · {revision.reason ?? '无原因'} · {formatRelativeTime(revision.created_at)}</p>
+                          <div key={revision.id} className="memory-revision-item">
+                            <div className="memory-revision-item__top">
+                              <div className="memory-revision-item__summary">
+                                <strong>#{revision.revision_no} · {revision.action}</strong>
+                                <span>{revision.reason ?? '无原因'} · {formatRelativeTime(revision.created_at)}</span>
+                              </div>
                               <button className="btn btn--outline btn--sm" type="button" onClick={() => setExpandedRevisionId(current => current === revision.id ? null : revision.id)}>
                                 {isExpanded ? '收起' : '展开'}
                               </button>
                             </div>
                             {isExpanded && (
-                              <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.75rem' }}>
-                                <div>
-                                  <label style={{ display: 'block', marginBottom: '0.35rem' }}>变更前</label>
-                                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--bg-muted)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>{formatRevisionJson(revision.before_json)}</pre>
-                                </div>
-                                <div>
-                                  <label style={{ display: 'block', marginBottom: '0.35rem' }}>变更后</label>
-                                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--bg-muted)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>{formatRevisionJson(revision.after_json)}</pre>
-                                </div>
+                              <div className="memory-revision-diff">
+                                {changes.length > 0 ? changes.map(change => (
+                                  <div key={`${revision.id}-${change.field}`} className="memory-revision-diff__row">
+                                    <span className="memory-revision-diff__label">{change.label}</span>
+                                    <div className="memory-revision-diff__values">
+                                      <div className="memory-revision-diff__card memory-revision-diff__card--before">
+                                        <span className="memory-revision-diff__caption">变更前</span>
+                                        <p>{change.beforeText}</p>
+                                      </div>
+                                      <span className="memory-revision-diff__arrow">→</span>
+                                      <div className="memory-revision-diff__card memory-revision-diff__card--after">
+                                        <span className="memory-revision-diff__caption">变更后</span>
+                                        <p>{change.afterText}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )) : (
+                                  <div className="memory-revision-diff__empty">
+                                    这次修订没有可展示的字段差异，可能主要变更了内部元数据。
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

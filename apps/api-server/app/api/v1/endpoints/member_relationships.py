@@ -14,7 +14,7 @@ from app.modules.relationship.schemas import (
     MemberRelationshipRead,
     RelationType,
 )
-from app.modules.relationship.service import create_relationship, list_relationships
+from app.modules.relationship.service import create_relationship, delete_relationship, list_relationships
 
 router = APIRouter(prefix="/member-relationships", tags=["member-relationships"])
 
@@ -73,3 +73,26 @@ def list_member_relationships_endpoint(
         total=total,
     )
 
+
+@router.delete("/{relationship_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_member_relationship_endpoint(
+    relationship_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> None:
+    delete_relationship(db, relationship_id)
+    write_audit_log(
+        db,
+        household_id="",
+        actor=actor,
+        action="member_relationship.delete",
+        target_type="member_relationship",
+        target_id=relationship_id,
+        result="success",
+        details={"relationship_id": relationship_id},
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc

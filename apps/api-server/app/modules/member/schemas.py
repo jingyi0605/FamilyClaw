@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 MemberRole = Literal["admin", "adult", "child", "elder", "guest"]
 MemberAgeGroup = Literal["toddler", "child", "teen", "adult", "elder"]
+MemberGender = Literal["male", "female"]
 MemberStatus = Literal["active", "inactive"]
 
 
@@ -12,6 +13,7 @@ class MemberCreate(BaseModel):
     household_id: str = Field(min_length=1)
     name: str = Field(min_length=1, max_length=100)
     nickname: str | None = Field(default=None, max_length=100)
+    gender: MemberGender | None = None
     role: MemberRole
     age_group: MemberAgeGroup | None = None
     birthday: date | None = None
@@ -22,6 +24,7 @@ class MemberCreate(BaseModel):
 class MemberUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     nickname: str | None = Field(default=None, max_length=100)
+    gender: MemberGender | None = None
     role: MemberRole | None = None
     age_group: MemberAgeGroup | None = None
     birthday: date | None = None
@@ -37,6 +40,7 @@ class MemberRead(BaseModel):
     household_id: str
     name: str
     nickname: str | None
+    gender: MemberGender | None
     role: MemberRole
     age_group: MemberAgeGroup | None
     birthday: date | None

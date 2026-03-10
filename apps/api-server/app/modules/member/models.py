@@ -17,6 +17,7 @@ class Member(Base):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(10), nullable=True)
     role: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     age_group: Mapped[str | None] = mapped_column(String(30), nullable=True)
     birthday: Mapped[str | None] = mapped_column(String(10), nullable=True)
