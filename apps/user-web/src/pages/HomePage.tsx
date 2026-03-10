@@ -12,6 +12,7 @@ import { useI18n } from '../i18n';
 import { useHouseholdContext } from '../state/household';
 import { Card, StatCard, EmptyState } from '../components/base';
 import { api } from '../lib/api';
+import { formatRoomType } from '../lib/roomTypes';
 import type { ContextOverviewMemberState, ContextOverviewRead, Device, Member, ReminderOverviewRead, Room } from '../lib/types';
 
 /* ---- 所有可用的仪表盘卡片类型 ---- */
@@ -70,19 +71,6 @@ type DashboardMemberCard = {
   roleLabel: string;
   badgeStatus: 'home' | 'away' | 'resting';
 };
-
-function formatRoomType(roomType: Room['room_type']) {
-  switch (roomType) {
-    case 'living_room': return '客厅';
-    case 'bedroom': return '卧室';
-    case 'study': return '书房';
-    case 'entrance': return '玄关';
-    case 'kitchen': return '厨房';
-    case 'bathroom': return '卫生间';
-    case 'gym': return '健身房';
-    case 'garage': return '车库';
-  }
-}
 
 function formatMode(mode: ContextOverviewRead['home_mode'] | undefined) {
   switch (mode) {

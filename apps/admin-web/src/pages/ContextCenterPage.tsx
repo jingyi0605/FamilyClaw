@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageSection } from "../components/PageSection";
 import { StatusMessage } from "../components/StatusMessage";
+import { formatRoomType } from "../lib/roomTypes";
 import {
   ACTIVITY_LABELS,
   AUTOMATION_LEVEL_LABELS,
@@ -126,27 +127,6 @@ function formatRole(role: Member["role"]) {
       return "长辈";
     case "guest":
       return "访客";
-  }
-}
-
-function formatRoomType(roomType: Room["room_type"]) {
-  switch (roomType) {
-    case "living_room":
-      return "客厅";
-    case "bedroom":
-      return "卧室";
-    case "study":
-      return "书房";
-    case "entrance":
-      return "玄关";
-    case "kitchen":
-      return "厨房";
-    case "bathroom":
-      return "卫生间";
-    case "gym":
-      return "健身房";
-    case "garage":
-      return "车库";
   }
 }
 

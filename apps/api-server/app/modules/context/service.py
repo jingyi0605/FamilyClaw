@@ -125,11 +125,11 @@ def _default_member_highlight(member: Member) -> str:
 
 def _default_member_room_id(member: Member, rooms: list[Room]) -> str | None:
     return {
-        "admin": _find_room_id_by_type(rooms, ["study", "living_room", "bedroom"]),
-        "adult": _find_room_id_by_type(rooms, ["living_room", "study", "bedroom"]),
-        "child": _find_room_id_by_type(rooms, ["bedroom", "living_room"]),
-        "elder": _find_room_id_by_type(rooms, ["living_room", "bedroom"]),
-        "guest": _find_room_id_by_type(rooms, ["entrance", "living_room"]),
+        "admin": _find_room_id_by_type(rooms, ["study", "living_room", "dining_room", "bedroom"]),
+        "adult": _find_room_id_by_type(rooms, ["living_room", "dining_room", "study", "bedroom"]),
+        "child": _find_room_id_by_type(rooms, ["kids_room", "bedroom", "living_room"]),
+        "elder": _find_room_id_by_type(rooms, ["living_room", "bedroom", "balcony"]),
+        "guest": _find_room_id_by_type(rooms, ["entrance", "living_room", "dining_room"]),
     }.get(member.role, rooms[0].id if rooms else None)
 
 
@@ -150,7 +150,7 @@ def _build_default_member_state(member: Member, rooms: list[Room]) -> ContextCon
 def _default_room_scene_preset(room: Room) -> RoomScenePreset:
     if room.room_type == "living_room":
         return "welcome"
-    if room.room_type in {"bedroom", "bathroom"}:
+    if room.room_type in {"bedroom", "bathroom", "kids_room"}:
         return "rest"
     if room.room_type in {"study", "gym"}:
         return "focus"
@@ -158,9 +158,9 @@ def _default_room_scene_preset(room: Room) -> RoomScenePreset:
 
 
 def _default_climate_policy(room: Room) -> ClimatePolicy:
-    if room.room_type in {"bedroom", "study", "gym"}:
+    if room.room_type in {"bedroom", "study", "gym", "kids_room"}:
         return "follow_member"
-    if room.room_type in {"entrance", "bathroom", "garage"}:
+    if room.room_type in {"entrance", "bathroom", "garage", "storage_room"}:
         return "manual"
     return "follow_room"
 

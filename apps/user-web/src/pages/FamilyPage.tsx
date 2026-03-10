@@ -1,12 +1,13 @@
 /* ============================================================
  * 家庭页 - 包含概览/房间/成员/关系四个子路由
  * ============================================================ */
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { PageHeader, Card, Section } from '../components/base';
 import { useHouseholdContext } from '../state/household';
 import { api } from '../lib/api';
+import { formatRoomType, ROOM_TYPE_OPTIONS } from '../lib/roomTypes';
 import type {
   ContextOverviewRead,
   Device,
@@ -67,19 +68,6 @@ function formatPrivacyMode(mode: ContextOverviewRead['privacy_mode'] | undefined
     case 'strict': return '严格保护';
     case 'care': return '关怀优先';
     default: return '-';
-  }
-}
-
-function formatRoomType(roomType: Room['room_type']) {
-  switch (roomType) {
-    case 'living_room': return '客厅';
-    case 'bedroom': return '卧室';
-    case 'study': return '书房';
-    case 'entrance': return '玄关';
-    case 'kitchen': return '厨房';
-    case 'bathroom': return '卫生间';
-    case 'gym': return '健身房';
-    case 'garage': return '车库';
   }
 }
 
@@ -677,14 +665,9 @@ export function FamilyRooms() {
               <div className="form-group">
                 <label>房间类型</label>
                 <select className="form-select" value={createForm.room_type} onChange={event => setCreateForm(current => ({ ...current, room_type: event.target.value as Room['room_type'] }))}>
-                  <option value="living_room">客厅</option>
-                  <option value="bedroom">卧室</option>
-                  <option value="study">书房</option>
-                  <option value="entrance">玄关</option>
-                  <option value="kitchen">厨房</option>
-                  <option value="bathroom">卫生间</option>
-                  <option value="gym">健身房</option>
-                  <option value="garage">车库</option>
+                  {ROOM_TYPE_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </div>
               <div className="form-group">
@@ -1813,6 +1796,680 @@ function RelationshipGraph({ members, relationships, selectedMemberId, onSelectM
   );
 }
 
+const DYNAMIC_GRAPH_WIDTH = 760;
+const DYNAMIC_GRAPH_HEIGHT = 520;
+const DYNAMIC_GRAPH_CENTER = { x: DYNAMIC_GRAPH_WIDTH / 2, y: DYNAMIC_GRAPH_HEIGHT / 2 };
+const DYNAMIC_GRAPH_PADDING = 56;
+const DYNAMIC_GRAPH_NODE_RADIUS = 30;
+
+type DynamicGraphNode = {
+  id: string;
+  name: string;
+  role: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+};
+
+type DynamicGraphEdge = {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  relationType: string;
+};
+
+type DynamicGraphPoint = {
+  x: number;
+  y: number;
+};
+
+type GraphViewport = {
+  scale: number;
+  x: number;
+  y: number;
+};
+
+function clampGraphValue(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function clampGraphPoint(point: DynamicGraphPoint): DynamicGraphPoint {
+  return {
+    x: clampGraphValue(point.x, DYNAMIC_GRAPH_PADDING, DYNAMIC_GRAPH_WIDTH - DYNAMIC_GRAPH_PADDING),
+    y: clampGraphValue(point.y, DYNAMIC_GRAPH_PADDING, DYNAMIC_GRAPH_HEIGHT - DYNAMIC_GRAPH_PADDING),
+  };
+}
+
+function normalizeViewport(nextViewport: GraphViewport): GraphViewport {
+  const scale = clampGraphValue(nextViewport.scale, 0.65, 2.2);
+  const scaledWidth = DYNAMIC_GRAPH_WIDTH * scale;
+  const scaledHeight = DYNAMIC_GRAPH_HEIGHT * scale;
+
+  const x = scaledWidth <= DYNAMIC_GRAPH_WIDTH
+    ? (DYNAMIC_GRAPH_WIDTH - scaledWidth) / 2
+    : clampGraphValue(nextViewport.x, DYNAMIC_GRAPH_WIDTH - scaledWidth - 48, 48);
+  const y = scaledHeight <= DYNAMIC_GRAPH_HEIGHT
+    ? (DYNAMIC_GRAPH_HEIGHT - scaledHeight) / 2
+    : clampGraphValue(nextViewport.y, DYNAMIC_GRAPH_HEIGHT - scaledHeight - 48, 48);
+
+  return { scale, x, y };
+}
+
+function hashGraphEdge(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33 + value.charCodeAt(index)) % 10007;
+  }
+  return hash;
+}
+
+function getGraphUnitVector(from: DynamicGraphPoint, to: DynamicGraphPoint) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy) || 1;
+  return {
+    x: dx / distance,
+    y: dy / distance,
+    distance,
+  };
+}
+
+function getQuadraticCurvePoint(
+  start: DynamicGraphPoint,
+  control: DynamicGraphPoint,
+  end: DynamicGraphPoint,
+  t: number,
+): DynamicGraphPoint {
+  const oneMinusT = 1 - t;
+  return {
+    x: oneMinusT * oneMinusT * start.x + 2 * oneMinusT * t * control.x + t * t * end.x,
+    y: oneMinusT * oneMinusT * start.y + 2 * oneMinusT * t * control.y + t * t * end.y,
+  };
+}
+
+function getQuadraticCurveNormal(
+  start: DynamicGraphPoint,
+  control: DynamicGraphPoint,
+  end: DynamicGraphPoint,
+  t: number,
+): DynamicGraphPoint {
+  const derivative = {
+    x: 2 * (1 - t) * (control.x - start.x) + 2 * t * (end.x - control.x),
+    y: 2 * (1 - t) * (control.y - start.y) + 2 * t * (end.y - control.y),
+  };
+  const length = Math.hypot(derivative.x, derivative.y) || 1;
+  return {
+    x: -derivative.y / length,
+    y: derivative.x / length,
+  };
+}
+
+function getDynamicEdgeGeometry(source: DynamicGraphPoint, target: DynamicGraphPoint, edgeId: string) {
+  const direction = getGraphUnitVector(source, target);
+  const start = {
+    x: source.x + direction.x * DYNAMIC_GRAPH_NODE_RADIUS,
+    y: source.y + direction.y * DYNAMIC_GRAPH_NODE_RADIUS,
+  };
+  const end = {
+    x: target.x - direction.x * DYNAMIC_GRAPH_NODE_RADIUS,
+    y: target.y - direction.y * DYNAMIC_GRAPH_NODE_RADIUS,
+  };
+  const midpoint = {
+    x: (start.x + end.x) / 2,
+    y: (start.y + end.y) / 2,
+  };
+  const perpendicular = {
+    x: -direction.y,
+    y: direction.x,
+  };
+  const sign = hashGraphEdge(edgeId) % 2 === 0 ? 1 : -1;
+  const curvature = clampGraphValue(direction.distance * 0.18, 24, 72);
+  const control = {
+    x: midpoint.x + perpendicular.x * curvature * sign,
+    y: midpoint.y + perpendicular.y * curvature * sign,
+  };
+  const labelBase = getQuadraticCurvePoint(start, control, end, 0.5);
+  const labelNormal = getQuadraticCurveNormal(start, control, end, 0.5);
+
+  return {
+    path: `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`,
+    labelAnchor: {
+      x: labelBase.x + labelNormal.x * 18,
+      y: labelBase.y + labelNormal.y * 18,
+    },
+  };
+}
+
+function buildDynamicGraphData(
+  members: Member[],
+  relationships: MemberRelationship[],
+): { nodes: DynamicGraphNode[]; edges: DynamicGraphEdge[] } {
+  const angle = (2 * Math.PI) / Math.max(members.length, 1);
+  const radius = Math.min(210, 80 + members.length * 24);
+  const memberMap = new Map(members.map(member => [member.id, member] as const));
+  const relationshipMap = new Map<string, MemberRelationship>(relationships.map(relationship => [
+    `${relationship.source_member_id}|${relationship.target_member_id}`,
+    relationship,
+  ] as const));
+
+  const nodes: DynamicGraphNode[] = members.map((member, index) => {
+    const seed = hashGraphEdge(`${member.id}-${index}`);
+    const angleJitter = ((((seed % 100) / 100) - 0.5) * Math.PI) / 2.4;
+    const radiusScale = 0.62 + (((Math.floor(seed / 100) % 100) / 100) * 0.42);
+    const offsetX = ((((Math.floor(seed / 10000) % 100) / 100) - 0.5) * 34);
+    const offsetY = ((((Math.floor(seed / 1000000) % 100) / 100) - 0.5) * 28);
+    const point = clampGraphPoint({
+      x: DYNAMIC_GRAPH_CENTER.x + radius * radiusScale * Math.cos(angle * index - Math.PI / 2 + angleJitter) + offsetX,
+      y: DYNAMIC_GRAPH_CENTER.y + radius * radiusScale * Math.sin(angle * index - Math.PI / 2 + angleJitter) + offsetY,
+    });
+
+    return {
+      id: member.id,
+      name: member.name,
+      role: member.role,
+      x: point.x,
+      y: point.y,
+      vx: 0,
+      vy: 0,
+    };
+  });
+
+  const edgeSet = new Set<string>();
+  const edges: DynamicGraphEdge[] = [];
+  for (const relationship of relationships) {
+    const key = `${relationship.source_member_id}|${relationship.target_member_id}`;
+    const reverseKey = `${relationship.target_member_id}|${relationship.source_member_id}` as const;
+    if (edgeSet.has(key) || edgeSet.has(reverseKey)) {
+      continue;
+    }
+
+    edgeSet.add(key);
+    edges.push({
+      id: [relationship.source_member_id, relationship.target_member_id].sort().join('|'),
+      source: relationship.source_member_id,
+      target: relationship.target_member_id,
+      label: getRelationCategoryLabel(
+        relationship,
+        relationshipMap.get(reverseKey),
+        memberMap.get(relationship.source_member_id),
+        memberMap.get(relationship.target_member_id),
+      ),
+      relationType: relationship.relation_type,
+    });
+  }
+
+  return { nodes, edges };
+}
+
+function DynamicRelationshipGraph({ members, relationships, selectedMemberId, onSelectMember }: {
+  members: Member[];
+  relationships: MemberRelationship[];
+  selectedMemberId: string | null;
+  onSelectMember: (id: string | null) => void;
+}) {
+  const { nodes, edges } = useMemo(
+    () => buildDynamicGraphData(members, relationships),
+    [members, relationships],
+  );
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const positionsRef = useRef<Record<string, DynamicGraphPoint>>({});
+  const dragMovedRef = useRef(false);
+  const viewportRef = useRef<GraphViewport>({
+    scale: 1,
+    x: 0,
+    y: 0,
+  });
+  const [positions, setPositions] = useState<Record<string, DynamicGraphPoint>>({});
+  const [fixedNodes, setFixedNodes] = useState<Record<string, DynamicGraphPoint>>({});
+  const [dragState, setDragState] = useState<{ nodeId: string; offsetX: number; offsetY: number } | null>(null);
+  const [panState, setPanState] = useState<{ startClientX: number; startClientY: number; startX: number; startY: number } | null>(null);
+  const [viewport, setViewport] = useState<GraphViewport>(() => normalizeViewport({
+    scale: 1,
+    x: 0,
+    y: 0,
+  }));
+
+  useEffect(() => {
+    positionsRef.current = positions;
+  }, [positions]);
+
+  useEffect(() => {
+    viewportRef.current = viewport;
+  }, [viewport]);
+
+  useEffect(() => {
+    const nextPositions = Object.fromEntries(
+      nodes.map(node => {
+        const currentPosition = positionsRef.current[node.id];
+        const nextPosition = fixedNodes[node.id] ?? currentPosition ?? { x: node.x, y: node.y };
+        return [
+          node.id,
+          clampGraphPoint(nextPosition),
+        ];
+      }),
+    );
+    positionsRef.current = nextPositions;
+    setPositions(nextPositions);
+  }, [nodes, fixedNodes]);
+
+  useEffect(() => {
+    if (nodes.length === 0) {
+      return;
+    }
+
+    const simNodes = nodes.map(node => {
+      const currentPosition = positionsRef.current[node.id] ?? { x: node.x, y: node.y };
+      const fixedPosition = fixedNodes[node.id];
+      return {
+        ...node,
+        x: fixedPosition?.x ?? currentPosition.x,
+        y: fixedPosition?.y ?? currentPosition.y,
+      };
+    });
+    const nodeMap = Object.fromEntries(simNodes.map(node => [node.id, node]));
+
+    let frame = 0;
+    let iterations = 0;
+    const maxIterations = 180;
+
+    function tick() {
+      for (const node of simNodes) {
+        if (fixedNodes[node.id]) {
+          node.x = fixedNodes[node.id].x;
+          node.y = fixedNodes[node.id].y;
+          node.vx = 0;
+          node.vy = 0;
+          continue;
+        }
+
+        node.vx *= 0.86;
+        node.vy *= 0.86;
+      }
+
+      for (let i = 0; i < simNodes.length; i += 1) {
+        for (let j = i + 1; j < simNodes.length; j += 1) {
+          const a = simNodes[i];
+          const b = simNodes[j];
+          let dx = b.x - a.x;
+          let dy = b.y - a.y;
+          const distance = Math.hypot(dx, dy) || 1;
+          const minDistance = 140;
+          if (distance >= minDistance) {
+            continue;
+          }
+
+          const force = (minDistance - distance) * 0.035;
+          dx /= distance;
+          dy /= distance;
+          if (!fixedNodes[a.id]) {
+            a.vx -= dx * force;
+            a.vy -= dy * force;
+          }
+          if (!fixedNodes[b.id]) {
+            b.vx += dx * force;
+            b.vy += dy * force;
+          }
+        }
+      }
+
+      for (const edge of edges) {
+        const source = nodeMap[edge.source];
+        const target = nodeMap[edge.target];
+        if (!source || !target) {
+          continue;
+        }
+
+        let dx = target.x - source.x;
+        let dy = target.y - source.y;
+        const distance = Math.hypot(dx, dy) || 1;
+        const idealDistance = clampGraphValue(120 + edges.length * 2, 130, 190);
+        const force = (distance - idealDistance) * 0.008;
+        dx /= distance;
+        dy /= distance;
+        if (!fixedNodes[source.id]) {
+          source.vx += dx * force;
+          source.vy += dy * force;
+        }
+        if (!fixedNodes[target.id]) {
+          target.vx -= dx * force;
+          target.vy -= dy * force;
+        }
+      }
+
+      for (const node of simNodes) {
+        if (fixedNodes[node.id]) {
+          continue;
+        }
+
+        node.vx += (DYNAMIC_GRAPH_CENTER.x - node.x) * 0.0016;
+        node.vy += (DYNAMIC_GRAPH_CENTER.y - node.y) * 0.0016;
+        node.x = clampGraphValue(node.x + node.vx, DYNAMIC_GRAPH_PADDING, DYNAMIC_GRAPH_WIDTH - DYNAMIC_GRAPH_PADDING);
+        node.y = clampGraphValue(node.y + node.vy, DYNAMIC_GRAPH_PADDING, DYNAMIC_GRAPH_HEIGHT - DYNAMIC_GRAPH_PADDING);
+      }
+
+      iterations += 1;
+      const nextPositions = Object.fromEntries(
+        simNodes.map(node => [node.id, clampGraphPoint({ x: node.x, y: node.y })]),
+      );
+      positionsRef.current = nextPositions;
+      setPositions(nextPositions);
+
+      if (iterations < maxIterations) {
+        frame = requestAnimationFrame(tick);
+      }
+    }
+
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [nodes, edges, fixedNodes]);
+
+  useEffect(() => {
+    if (!dragState) {
+      return;
+    }
+
+    const activeDragState = dragState;
+
+    function toGraphPoint(clientX: number, clientY: number) {
+      const svg = svgRef.current;
+      if (!svg) {
+        return null;
+      }
+
+      const point = svg.createSVGPoint();
+      point.x = clientX;
+      point.y = clientY;
+      const matrix = svg.getScreenCTM();
+      if (!matrix) {
+        return null;
+      }
+
+      const transformed = point.matrixTransform(matrix.inverse());
+      const activeViewport = viewportRef.current;
+      return clampGraphPoint({
+        x: (transformed.x - activeViewport.x) / activeViewport.scale - activeDragState.offsetX,
+        y: (transformed.y - activeViewport.y) / activeViewport.scale - activeDragState.offsetY,
+      });
+    }
+
+    function handlePointerMove(event: PointerEvent) {
+      const nextPoint = toGraphPoint(event.clientX, event.clientY);
+      if (!nextPoint) {
+        return;
+      }
+
+      dragMovedRef.current = true;
+      positionsRef.current = {
+        ...positionsRef.current,
+        [activeDragState.nodeId]: nextPoint,
+      };
+      setPositions(current => ({
+        ...current,
+        [activeDragState.nodeId]: nextPoint,
+      }));
+    }
+
+    function handlePointerUp() {
+      const finalPoint = positionsRef.current[activeDragState.nodeId];
+      if (finalPoint) {
+        setFixedNodes(current => ({
+          ...current,
+          [activeDragState.nodeId]: finalPoint,
+        }));
+      }
+      setDragState(null);
+    }
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [dragState]);
+
+  useEffect(() => {
+    if (!panState) {
+      return;
+    }
+
+    const activePan = panState;
+
+    function handlePointerMove(event: PointerEvent) {
+      dragMovedRef.current = true;
+      setViewport(normalizeViewport({
+        scale: viewportRef.current.scale,
+        x: activePan.startX + (event.clientX - activePan.startClientX),
+        y: activePan.startY + (event.clientY - activePan.startClientY),
+      }));
+    }
+
+    function handlePointerUp() {
+      setPanState(null);
+    }
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [panState]);
+
+  const getPos = (id: string) => positions[id] ?? nodes.find(node => node.id === id) ?? DYNAMIC_GRAPH_CENTER;
+
+  function zoomGraph(nextScale: number, focusPoint: DynamicGraphPoint = DYNAMIC_GRAPH_CENTER) {
+    const currentViewport = viewportRef.current;
+    const normalizedScale = clampGraphValue(nextScale, 0.65, 2.2);
+    const graphFocusX = (focusPoint.x - currentViewport.x) / currentViewport.scale;
+    const graphFocusY = (focusPoint.y - currentViewport.y) / currentViewport.scale;
+    setViewport(normalizeViewport({
+      scale: normalizedScale,
+      x: focusPoint.x - graphFocusX * normalizedScale,
+      y: focusPoint.y - graphFocusY * normalizedScale,
+    }));
+  }
+
+  function resetViewport() {
+    setViewport(normalizeViewport({
+      scale: 1,
+      x: 0,
+      y: 0,
+    }));
+  }
+
+  const roleEmoji = (role: string) => {
+    switch (role) {
+      case 'elder': return '👵';
+      case 'child': return '🧒';
+      case 'guest': return '🧑‍🤝‍🧑';
+      default: return '🧑';
+    }
+  };
+
+  return (
+    <div
+      className={`relationship-graph${dragState || panState ? ' relationship-graph--dragging' : ''}`}
+      onClick={() => {
+        if (dragMovedRef.current) {
+          dragMovedRef.current = false;
+          return;
+        }
+        onSelectMember(null);
+      }}
+    >
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${DYNAMIC_GRAPH_WIDTH} ${DYNAMIC_GRAPH_HEIGHT}`}
+        className="relationship-graph__svg"
+        onWheel={event => {
+          event.preventDefault();
+          const svg = svgRef.current;
+          if (!svg) {
+            return;
+          }
+
+          const point = svg.createSVGPoint();
+          point.x = event.clientX;
+          point.y = event.clientY;
+          const matrix = svg.getScreenCTM();
+          if (!matrix) {
+            return;
+          }
+
+          const transformed = point.matrixTransform(matrix.inverse());
+          const scaleFactor = event.deltaY < 0 ? 1.12 : 0.9;
+          zoomGraph(viewportRef.current.scale * scaleFactor, { x: transformed.x, y: transformed.y });
+        }}
+        onPointerDown={event => {
+          const target = event.target as SVGElement;
+          if (target.closest('.graph-node')) {
+            return;
+          }
+
+          dragMovedRef.current = false;
+          setPanState({
+            startClientX: event.clientX,
+            startClientY: event.clientY,
+            startX: viewportRef.current.x,
+            startY: viewportRef.current.y,
+          });
+        }}
+      >
+        <defs>
+          <filter id="node-shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.15" />
+          </filter>
+          <pattern id="graph-grid" width="28" height="28" patternUnits="userSpaceOnUse">
+            <path d="M 28 0 L 0 0 0 28" fill="none" className="graph-grid__line" />
+          </pattern>
+        </defs>
+        <rect x="0" y="0" width={DYNAMIC_GRAPH_WIDTH} height={DYNAMIC_GRAPH_HEIGHT} className="graph-grid" />
+        <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`}>
+        {edges.map(edge => {
+          const source = getPos(edge.source);
+          const target = getPos(edge.target);
+          const geometry = getDynamicEdgeGeometry(source, target, edge.id);
+          const isHighlighted = selectedMemberId && (edge.source === selectedMemberId || edge.target === selectedMemberId);
+          const isDimmed = selectedMemberId && !isHighlighted;
+          const label = selectedMemberId && isHighlighted
+            ? getEdgeLabelForPerspective(edge, selectedMemberId, relationships)
+            : edge.label;
+          const labelWidth = Math.max(48, label.length * 16);
+
+          return (
+            <g key={edge.id}>
+              <path
+                d={geometry.path}
+                className={`graph-edge ${isHighlighted ? 'graph-edge--highlight' : ''} ${isDimmed ? 'graph-edge--dim' : ''}`}
+              />
+              <rect
+                x={geometry.labelAnchor.x - labelWidth / 2}
+                y={geometry.labelAnchor.y - 12}
+                width={labelWidth}
+                height={24}
+                rx={6}
+                className={`graph-edge-label-bg ${isDimmed ? 'graph-edge-label-bg--dim' : ''}`}
+              />
+              <text
+                x={geometry.labelAnchor.x}
+                y={geometry.labelAnchor.y + 4}
+                textAnchor="middle"
+                className={`graph-edge-label ${isHighlighted ? 'graph-edge-label--highlight' : ''} ${isDimmed ? 'graph-edge-label--dim' : ''}`}
+              >
+                {label}
+              </text>
+            </g>
+          );
+        })}
+
+        {nodes.map(node => {
+          const pos = getPos(node.id);
+          const isSelected = selectedMemberId === node.id;
+          const isConnected = selectedMemberId && edges.some(edge => (
+            (edge.source === selectedMemberId || edge.target === selectedMemberId)
+            && (edge.source === node.id || edge.target === node.id)
+          ));
+          const isDimmed = selectedMemberId && !isSelected && !isConnected;
+          const isFixed = Boolean(fixedNodes[node.id]);
+
+          return (
+            <g
+              key={node.id}
+              transform={`translate(${pos.x},${pos.y})`}
+              className={`graph-node ${isSelected ? 'graph-node--selected' : ''} ${isFixed ? 'graph-node--fixed' : ''} ${isDimmed ? 'graph-node--dim' : ''}`}
+              onPointerDown={event => {
+                event.stopPropagation();
+                const svg = svgRef.current;
+                if (!svg) {
+                  return;
+                }
+
+                dragMovedRef.current = false;
+                const point = svg.createSVGPoint();
+                point.x = event.clientX;
+                point.y = event.clientY;
+                const matrix = svg.getScreenCTM();
+                if (!matrix) {
+                  return;
+                }
+
+                const transformed = point.matrixTransform(matrix.inverse());
+                const activeViewport = viewportRef.current;
+                setDragState({
+                  nodeId: node.id,
+                  offsetX: (transformed.x - activeViewport.x) / activeViewport.scale - pos.x,
+                  offsetY: (transformed.y - activeViewport.y) / activeViewport.scale - pos.y,
+                });
+              }}
+              onDoubleClick={event => {
+                event.stopPropagation();
+                setFixedNodes(current => {
+                  const next = { ...current };
+                  delete next[node.id];
+                  return next;
+                });
+              }}
+              onClick={event => {
+                event.stopPropagation();
+                if (dragMovedRef.current) {
+                  dragMovedRef.current = false;
+                  return;
+                }
+                onSelectMember(isSelected ? null : node.id);
+              }}
+              style={{ cursor: dragState?.nodeId === node.id ? 'grabbing' : 'grab' }}
+            >
+              <circle r={28} className="graph-node__circle" filter="url(#node-shadow)" />
+              <text y={4} textAnchor="middle" className="graph-node__emoji">{roleEmoji(node.role)}</text>
+              <text y={46} textAnchor="middle" className="graph-node__name">{node.name}</text>
+              {isFixed && <circle r={33} className="graph-node__pin" />}
+            </g>
+          );
+        })}
+        </g>
+      </svg>
+      <div className="relationship-graph__toolbar">
+        <button className="relationship-graph__toolbtn" type="button" onClick={() => zoomGraph(viewport.scale * 1.12)}>
+          ＋
+        </button>
+        <button className="relationship-graph__toolbtn" type="button" onClick={() => zoomGraph(viewport.scale * 0.9)}>
+          －
+        </button>
+        <button className="relationship-graph__toolbtn relationship-graph__toolbtn--wide" type="button" onClick={resetViewport}>
+          重置
+        </button>
+        <span className="relationship-graph__zoom">{Math.round(viewport.scale * 100)}%</span>
+      </div>
+      <div className="graph-legend">
+        🔗 拖拽节点可整理图谱，双击节点可取消固定；点击成员切换关系视角，点击空白取消选中。
+      </div>
+    </div>
+  );
+}
+
 export function FamilyRelationships() {
   const { t } = useI18n();
   const { relationships, members, loading, refreshWorkspace } = useFamilyWorkspace();
@@ -1889,7 +2546,7 @@ export function FamilyRelationships() {
       {/* 关系图谱 */}
       <Card className="relationship-graph-card">
         {members.length >= 2 && relationships.length > 0 ? (
-          <RelationshipGraph
+          <DynamicRelationshipGraph
             members={members}
             relationships={relationships}
             selectedMemberId={selectedMemberId}

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PageSection } from "../components/PageSection";
 import { StatusMessage } from "../components/StatusMessage";
 import { api } from "../lib/api";
+import { formatRoomType } from "../lib/roomTypes";
 import { useHousehold } from "../state/household";
 import type {
   MemoryCard,
@@ -15,27 +16,6 @@ import type {
   Member,
   Room,
 } from "../types";
-
-function formatRoomType(roomType: Room["room_type"]) {
-  switch (roomType) {
-    case "living_room":
-      return "客厅";
-    case "bedroom":
-      return "卧室";
-    case "study":
-      return "书房";
-    case "entrance":
-      return "玄关";
-    case "kitchen":
-      return "厨房";
-    case "bathroom":
-      return "卫生间";
-    case "gym":
-      return "健身房";
-    case "garage":
-      return "车库";
-  }
-}
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error && error.message.trim()) {

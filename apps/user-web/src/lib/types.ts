@@ -1,3 +1,5 @@
+import type { RoomType } from './roomTypes';
+
 export type Household = {
   id: string;
   name: string;
@@ -68,7 +70,7 @@ export type Room = {
   id: string;
   household_id: string;
   name: string;
-  room_type: 'living_room' | 'bedroom' | 'study' | 'entrance' | 'kitchen' | 'bathroom' | 'gym' | 'garage';
+  room_type: RoomType;
   privacy_level: 'public' | 'private' | 'sensitive';
   created_at: string;
 };

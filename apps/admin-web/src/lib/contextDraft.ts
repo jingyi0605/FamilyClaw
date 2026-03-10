@@ -262,40 +262,39 @@ function getDefaultScenePreset(room: Room): RoomScenePreset {
     case "living_room":
       return "welcome";
     case "bedroom":
+    case "bathroom":
+    case "kids_room":
       return "rest";
     case "study":
-      return "focus";
-    case "entrance":
-      return "auto";
-    case "kitchen":
-      return "auto";
-    case "bathroom":
-      return "rest";
     case "gym":
       return "focus";
+    case "entrance":
+    case "kitchen":
     case "garage":
+    case "dining_room":
+    case "balcony":
+    case "storage_room":
       return "auto";
   }
 }
 
 function getDefaultClimatePolicy(room: Room): ClimatePolicy {
   switch (room.room_type) {
-    case "living_room":
-      return "follow_room";
     case "bedroom":
-      return "follow_member";
     case "study":
+    case "gym":
+    case "kids_room":
       return "follow_member";
     case "entrance":
-      return "manual";
-    case "kitchen":
-      return "follow_room";
     case "bathroom":
-      return "manual";
-    case "gym":
-      return "follow_member";
     case "garage":
+    case "storage_room":
       return "manual";
+    case "living_room":
+    case "kitchen":
+    case "dining_room":
+    case "balcony":
+      return "follow_room";
   }
 }
 

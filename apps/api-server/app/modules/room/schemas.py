@@ -2,7 +2,20 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-RoomType = Literal["living_room", "bedroom", "study", "entrance", "kitchen", "bathroom", "gym", "garage"]
+RoomType = Literal[
+    "living_room",
+    "bedroom",
+    "study",
+    "entrance",
+    "kitchen",
+    "bathroom",
+    "gym",
+    "garage",
+    "dining_room",
+    "balcony",
+    "kids_room",
+    "storage_room",
+]
 PrivacyLevel = Literal["public", "private", "sensitive"]
 
 
