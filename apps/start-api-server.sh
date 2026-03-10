@@ -6,7 +6,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 API_DIR="${PROJECT_ROOT}/apps/api-server"
 VENV_DIR="${API_DIR}/.venv"
-PYTHON_BIN="${PYTHON_BIN:-python3.11}"
+# Windows 使用 Scripts 目录，Unix 使用 bin 目录
+if [[ "${OSTYPE}" == "msys" || "${OSTYPE}" == "win32" ]]; then
+  VENV_BIN_DIR="Scripts"
+else
+  VENV_BIN_DIR="bin"
+fi
+# 默认使用 python3.11，若不存在则回退到 python（兼容 Windows）
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if command -v python3.11 >/dev/null 2>&1; then
+    PYTHON_BIN="python3.11"
+  else
+    PYTHON_BIN="python"
+  fi
+fi
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8000}"
 RELOAD_DIR="${RELOAD_DIR:-app}"
@@ -28,7 +41,7 @@ ensure_python() {
 }
 
 ensure_venv() {
-  if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+  if [[ ! -x "${VENV_DIR}/${VENV_BIN_DIR}/python" && ! -x "${VENV_DIR}/${VENV_BIN_DIR}/python.exe" ]]; then
     log "创建虚拟环境 ${VENV_DIR}"
     "${PYTHON_BIN}" -m venv "${VENV_DIR}"
   fi
@@ -36,7 +49,7 @@ ensure_venv() {
 
 activate_venv() {
   # shellcheck disable=SC1091
-  source "${VENV_DIR}/bin/activate"
+  source "${VENV_DIR}/${VENV_BIN_DIR}/activate"
 }
 
 current_dep_hash() {
