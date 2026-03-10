@@ -84,6 +84,9 @@ class QaMemorySummary(BaseModel):
     status: str = "unavailable"
     summary: str = "记忆中心暂未接入，当前只使用上下文、提醒和场景数据回答。"
     last_updated_at: str | None = None
+    query: str | None = None
+    items: list[QaFactReference] = Field(default_factory=list)
+    degraded: bool = False
 
 
 class QaPermissionScope(BaseModel):

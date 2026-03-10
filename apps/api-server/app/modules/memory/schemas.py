@@ -179,6 +179,36 @@ class MemoryHotSummaryRead(BaseModel):
     recent_event_highlights: list[str] = Field(default_factory=list)
 
 
+class MemoryContextPreviewRequest(BaseModel):
+    household_id: str = Field(min_length=1)
+    requester_member_id: str | None = Field(default=None, min_length=1)
+    capability: str = Field(default="family_qa", min_length=1, max_length=50)
+    question: str | None = Field(default=None, max_length=500)
+
+
+class MemoryContextLiveSummary(BaseModel):
+    active_member_name: str | None = None
+    active_member_id: str | None = None
+    pending_reminders: int = Field(default=0, ge=0)
+    running_scenes: int = Field(default=0, ge=0)
+    visible_member_count: int = Field(default=0, ge=0)
+    room_count: int = Field(default=0, ge=0)
+    degraded: bool = False
+
+
+class MemoryContextBundleRead(BaseModel):
+    household_id: str
+    requester_member_id: str | None = None
+    capability: str
+    question: str | None = None
+    generated_at: str
+    live_summary: MemoryContextLiveSummary
+    hot_summary: MemoryHotSummaryRead
+    query_result: MemoryQueryResponse
+    masked_sections: list[str] = Field(default_factory=list)
+    degraded: bool = False
+
+
 class MemoryDebugOverviewRead(BaseModel):
     household_id: str
     total_events: int

@@ -418,6 +418,29 @@ export type MemoryHotSummaryRead = {
   recent_event_highlights: string[];
 };
 
+export type MemoryContextLiveSummary = {
+  active_member_name: string | null;
+  active_member_id: string | null;
+  pending_reminders: number;
+  running_scenes: number;
+  visible_member_count: number;
+  room_count: number;
+  degraded: boolean;
+};
+
+export type MemoryContextBundleRead = {
+  household_id: string;
+  requester_member_id: string | null;
+  capability: string;
+  question: string | null;
+  generated_at: string;
+  live_summary: MemoryContextLiveSummary;
+  hot_summary: MemoryHotSummaryRead;
+  query_result: MemoryQueryResponse;
+  masked_sections: string[];
+  degraded: boolean;
+};
+
 export type ReminderTask = {
   id: string;
   household_id: string;

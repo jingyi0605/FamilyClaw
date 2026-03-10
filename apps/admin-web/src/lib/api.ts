@@ -16,6 +16,7 @@ import type {
   HomeAssistantSyncResponse,
   Household,
   MemoryCard,
+  MemoryContextBundleRead,
   MemoryCardRevision,
   MemoryDebugOverviewRead,
   MemoryEventRecord,
@@ -326,6 +327,17 @@ export const api = {
       params.set("requester_member_id", requesterMemberId);
     }
     return request<MemoryHotSummaryRead>(`/memories/hot-summary?${params.toString()}`);
+  },
+  previewMemoryContextBundle(payload: {
+    household_id: string;
+    requester_member_id?: string | null;
+    capability?: string;
+    question?: string | null;
+  }) {
+    return request<MemoryContextBundleRead>("/memories/context-bundle/preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
   createManualMemoryCard(payload: {
     household_id: string;

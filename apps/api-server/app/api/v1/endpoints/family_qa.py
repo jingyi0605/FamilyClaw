@@ -24,7 +24,7 @@ def query_family_qa_endpoint(
 ) -> FamilyQaQueryResponse:
     payload = _normalize_query_payload(payload, actor)
     try:
-        result = query_family_qa(db, payload)
+        result = query_family_qa(db, payload, actor)
         if payload.requester_member_id is not None:
             write_audit_log(
                 db,
@@ -68,6 +68,7 @@ def list_family_qa_suggestions_endpoint(
         db,
         household_id=household_id,
         requester_member_id=payload_requester_id,
+        actor=actor,
     )
 
 

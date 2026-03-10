@@ -3,10 +3,12 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import ActorContext
 from app.db.utils import load_json
 from app.modules.context.service import get_context_overview
 from app.modules.device.models import Device
 from app.modules.family_qa.schemas import (
+    QaFactReference,
     QaFactDeviceState,
     QaFactViewRead,
     QaMemorySummary,
@@ -16,6 +18,7 @@ from app.modules.family_qa.schemas import (
     QaSceneFactItem,
     QaSceneSummary,
 )
+from app.modules.memory.context_engine import build_memory_context_bundle
 from app.modules.household.models import Household
 from app.modules.member.models import Member
 from app.modules.permission.models import MemberPermission
@@ -29,6 +32,8 @@ def build_qa_fact_view(
     *,
     household_id: str,
     requester_member_id: str | None = None,
+    actor: ActorContext | None = None,
+    question: str | None = None,
 ) -> QaFactViewRead:
     if db.get(Household, household_id) is None:
         raise ValueError("household not found")
@@ -171,10 +176,90 @@ def build_qa_fact_view(
             running_executions=sum(1 for execution in executions if execution.status in {"planned", "running"}),
             recent_items=scene_items,
         ),
-        memory_summary=QaMemorySummary(),
+        memory_summary=_build_memory_summary(
+            db,
+            household_id=household_id,
+            requester_member_id=requester_member_id,
+            actor=actor,
+            question=question,
+        ),
         permission_scope=permission_scope,
     )
     return trim_qa_fact_view(fact_view)
+
+
+def _build_memory_summary(
+    db: Session,
+    *,
+    household_id: str,
+    requester_member_id: str | None,
+    actor: ActorContext | None,
+    question: str | None,
+) -> QaMemorySummary:
+    effective_actor = actor or ActorContext(role="admin", actor_type="admin", actor_id=None)
+    bundle = build_memory_context_bundle(
+        db,
+        household_id=household_id,
+        actor=effective_actor,
+        requester_member_id=requester_member_id,
+        question=question,
+        capability="family_qa",
+    )
+    items = [
+        QaFactReference(
+            type=f"memory_{hit.card.memory_type}",
+            label=hit.card.title,
+            source="memory_cards",
+            occurred_at=hit.card.updated_at,
+            visibility=hit.card.visibility,
+            inferred=False,
+            extra={
+                "memory_id": hit.card.id,
+                "memory_type": hit.card.memory_type,
+                "score": hit.score,
+                "matched_terms": hit.matched_terms,
+                "summary": hit.card.summary,
+                "subject_member_id": hit.card.subject_member_id,
+            },
+        )
+        for hit in bundle.query_result.items
+    ]
+    if items:
+        summary = f"已命中 {len(items)} 条长期记忆，可用于补充回答。"
+        status = "available"
+        last_updated_at = max((item.occurred_at for item in items if item.occurred_at), default=None)
+    elif bundle.hot_summary.top_memories:
+        items = [
+            QaFactReference(
+                type=f"memory_{item.memory_type}",
+                label=item.title,
+                source="memory_hot_summary",
+                occurred_at=item.updated_at,
+                visibility="family",
+                inferred=True,
+                extra={
+                    "memory_id": item.memory_id,
+                    "memory_type": item.memory_type,
+                    "summary": item.summary,
+                },
+            )
+            for item in bundle.hot_summary.top_memories
+        ]
+        summary = f"当前没有直接命中的问题记忆，但已有 {len(bundle.hot_summary.top_memories)} 条热记忆可参考。"
+        status = "hot_summary_only"
+        last_updated_at = bundle.hot_summary.generated_at
+    else:
+        summary = "当前没有可用的长期记忆命中。"
+        status = "empty"
+        last_updated_at = bundle.generated_at
+    return QaMemorySummary(
+        status=status,
+        summary=summary,
+        last_updated_at=last_updated_at,
+        query=question,
+        items=items,
+        degraded=bundle.degraded,
+    )
 
 
 def trim_qa_fact_view(fact_view: QaFactViewRead) -> QaFactViewRead:

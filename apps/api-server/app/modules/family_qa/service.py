@@ -1,6 +1,7 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import ActorContext
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.family_qa import repository
 from app.modules.family_qa.fact_view_service import build_qa_fact_view
@@ -60,7 +61,7 @@ def list_query_logs(
     return [_to_query_log_read(row) for row in rows]
 
 
-def query_family_qa(db: Session, payload: FamilyQaQueryRequest) -> FamilyQaQueryResponse:
+def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorContext) -> FamilyQaQueryResponse:
     _ensure_household_exists(db, payload.household_id)
     _validate_requester_member(db, payload.household_id, payload.requester_member_id)
 
@@ -68,6 +69,8 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest) -> FamilyQaQuery
         db,
         household_id=payload.household_id,
         requester_member_id=payload.requester_member_id,
+        actor=actor,
+        question=payload.question,
     )
     answer_type, answer_text, confidence, facts, suggestions = _answer_from_fact_view(
         fact_view,
@@ -135,6 +138,7 @@ def list_family_qa_suggestions(
     *,
     household_id: str,
     requester_member_id: str | None = None,
+    actor: ActorContext,
 ) -> FamilyQaSuggestionsResponse:
     _ensure_household_exists(db, household_id)
     _validate_requester_member(db, household_id, requester_member_id)
@@ -142,6 +146,8 @@ def list_family_qa_suggestions(
         db,
         household_id=household_id,
         requester_member_id=requester_member_id,
+        actor=actor,
+        question=None,
     )
     items: list[FamilyQaSuggestionItem] = []
     if fact_view.active_member is not None:
@@ -177,6 +183,23 @@ def list_family_qa_suggestions(
                 question=f"{first_device.name} 现在是什么状态？",
                 answer_type="device_status",
                 reason="当前有可查询设备",
+            )
+        )
+    if fact_view.memory_summary.items:
+        first_memory = fact_view.memory_summary.items[0]
+        items.append(
+            FamilyQaSuggestionItem(
+                question=f"记得 {first_memory.label} 吗？",
+                answer_type="memory_recall",
+                reason="长期记忆已经命中，可以直接问记忆类问题",
+            )
+        )
+    elif fact_view.memory_summary.status == "hot_summary_only":
+        items.append(
+            FamilyQaSuggestionItem(
+                question="最近家里记住了什么？",
+                answer_type="memory_recall",
+                reason="当前已有热记忆摘要",
             )
         )
     if not items:
@@ -236,8 +259,19 @@ def _answer_from_fact_view(
 ) -> tuple[str, str, float, list[QaFactReference], list[str]]:
     normalized_question = question.strip().lower()
 
+    if fact_view.memory_summary.items and _should_answer_from_memory(normalized_question):
+        top_item = fact_view.memory_summary.items[0]
+        memory_summary = str(top_item.extra.get("summary") or top_item.label)
+        answer = f"根据当前家庭长期记忆，{memory_summary}。"
+        facts = fact_view.memory_summary.items[:3]
+        return "memory_recall", answer, 0.89, facts, ["查看记忆详情", "纠正这条记忆"]
+
     for member_state in fact_view.member_states:
-        if member_state.name and member_state.name.lower() in normalized_question:
+        if (
+            member_state.name
+            and member_state.name.lower() in normalized_question
+            and not _contains_any_keyword(normalized_question, ["喜欢", "偏好", "习惯", "记得", "以前", "关系", "记住", "回忆"])
+        ):
             room_name = member_state.current_room_name or "未知房间"
             answer = f"{member_state.name} 当前状态是 {member_state.presence}，位置是 {room_name}。"
             facts = [
@@ -256,7 +290,7 @@ def _answer_from_fact_view(
             ]
             return "member_status", answer, 0.93, facts, ["查看家庭上下文", "查看房间状态"]
 
-    if any(keyword in normalized_question for keyword in ["提醒", "吃药", "服药", "课程", "安排"]):
+    if _contains_any_keyword(normalized_question, ["提醒", "吃药", "服药", "课程", "安排"]):
         if fact_view.reminder_summary.recent_items:
             reminder = fact_view.reminder_summary.recent_items[0]
             answer = (
@@ -280,7 +314,7 @@ def _answer_from_fact_view(
             return "reminder_status", answer, 0.9, facts, ["查看提醒详情", "手动再次提醒"]
         return "reminder_status", "当前没有可用的提醒记录。", 0.45, [], ["创建提醒", "查看提醒总览"]
 
-    if any(keyword in normalized_question for keyword in ["场景", "回家", "睡前", "模式"]):
+    if _contains_any_keyword(normalized_question, ["场景", "回家", "睡前", "模式"]):
         if fact_view.scene_summary.recent_items:
             scene = fact_view.scene_summary.recent_items[0]
             answer = f"{scene.name} 最近一次执行状态是 {scene.last_execution_status or '未执行'}。"
@@ -301,7 +335,7 @@ def _answer_from_fact_view(
             return "scene_status", answer, 0.88, facts, ["查看场景详情", "手动触发场景"]
         return "scene_status", "当前没有场景执行记录。", 0.4, [], ["查看场景模板"]
 
-    if any(keyword in normalized_question for keyword in ["灯", "空调", "窗帘", "门锁", "设备"]):
+    if _contains_any_keyword(normalized_question, ["灯", "空调", "窗帘", "门锁", "设备"]):
         if fact_view.device_states:
             device = fact_view.device_states[0]
             answer = f"{device.name} 当前状态是 {device.status}。"
@@ -324,6 +358,8 @@ def _answer_from_fact_view(
     summary_parts = []
     if fact_view.active_member is not None:
         summary_parts.append(f"当前活跃成员是 {fact_view.active_member.name}")
+    if fact_view.memory_summary.status in {"available", "hot_summary_only"}:
+        summary_parts.append(fact_view.memory_summary.summary)
     summary_parts.append(f"当前有 {fact_view.reminder_summary.pending_runs} 个待处理提醒")
     summary_parts.append(f"当前有 {fact_view.scene_summary.running_executions} 个场景正在运行")
     answer = "；".join(summary_parts) + "。"
@@ -339,3 +375,17 @@ def _answer_from_fact_view(
             )
         )
     return "general", answer, 0.72, facts, ["谁在家", "最近提醒", "最近场景"]
+
+
+def _contains_any_keyword(question: str, keywords: list[str]) -> bool:
+    for keyword in keywords:
+        if keyword in question:
+            return True
+    return False
+
+
+def _should_answer_from_memory(question: str) -> bool:
+    return _contains_any_keyword(
+        question,
+        ["喜欢", "偏好", "习惯", "记得", "记住", "回忆", "上次", "以前", "关系", "不吃", "联系方式", "生日", "温度"],
+    )

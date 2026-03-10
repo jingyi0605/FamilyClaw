@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import { useHousehold } from "../state/household";
 import type {
   MemoryCard,
+  MemoryContextBundleRead,
   MemoryCardRevision,
   MemoryDebugOverviewRead,
   MemoryEventRecord,
@@ -53,6 +54,7 @@ export function MemoryCenterPage() {
   const [revisions, setRevisions] = useState<MemoryCardRevision[]>([]);
   const [hotSummary, setHotSummary] = useState<MemoryHotSummaryRead | null>(null);
   const [queryHits, setQueryHits] = useState<MemoryQueryHit[]>([]);
+  const [contextBundle, setContextBundle] = useState<MemoryContextBundleRead | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selectedCardId, setSelectedCardId] = useState("");
@@ -324,7 +326,7 @@ export function MemoryCenterPage() {
       return;
     }
     try {
-      const [queryResponse, hotSummaryResponse] = await Promise.all([
+      const [queryResponse, hotSummaryResponse, bundleResponse] = await Promise.all([
         api.queryMemoryCards({
           household_id: householdId,
           requester_member_id: queryForm.requester_member_id || null,
@@ -336,9 +338,16 @@ export function MemoryCenterPage() {
           limit: Number(queryForm.limit),
         }),
         api.getMemoryHotSummary(householdId, queryForm.requester_member_id || null),
+        api.previewMemoryContextBundle({
+          household_id: householdId,
+          requester_member_id: queryForm.requester_member_id || null,
+          capability: "family_qa",
+          question: queryForm.query || null,
+        }),
       ]);
       setQueryHits(queryResponse.items);
       setHotSummary(hotSummaryResponse);
+      setContextBundle(bundleResponse);
       setMessage({ tone: "success", text: `检索完成，命中 ${queryResponse.total} 条记忆。` });
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
@@ -576,6 +585,31 @@ export function MemoryCenterPage() {
               ) : null}
             </tbody>
           </table>
+        </div>
+
+        <div className="json-grid">
+          <div className="service-card">
+            <h4>Context Engine 预览</h4>
+            {contextBundle ? (
+              <>
+                <p className="muted">
+                  能力：{contextBundle.capability} · 生成时间：{formatDateTime(contextBundle.generated_at)}
+                </p>
+                <ul className="fact-list">
+                  <li>活跃成员：{contextBundle.live_summary.active_member_name ?? "暂无"}</li>
+                  <li>可见成员数：{contextBundle.live_summary.visible_member_count}</li>
+                  <li>可见房间数：{contextBundle.live_summary.room_count}</li>
+                  <li>记忆命中数：{contextBundle.query_result.total}</li>
+                </ul>
+              </>
+            ) : (
+              <p className="muted">先执行一次检索，才能看到 Context Engine 预览。</p>
+            )}
+          </div>
+          <div className="service-card">
+            <h4>Context Bundle JSON</h4>
+            {contextBundle ? <pre>{stringifyJson(contextBundle)}</pre> : <p className="muted">暂无预览数据。</p>}
+          </div>
         </div>
       </PageSection>
 

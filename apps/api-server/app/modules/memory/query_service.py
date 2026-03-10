@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from threading import Lock
 
 from sqlalchemy.orm import Session
@@ -159,14 +160,44 @@ def _score_card(card, query: str | None, member_id: str | None) -> tuple[int, li
         score += 3
 
     if query:
-        tokens = [token.strip().lower() for token in query.split() if token.strip()]
-        if len(tokens) == 1 and " " not in query.strip():
-            tokens = tokens or [query.strip().lower()]
+        tokens = _extract_query_terms(query)
         for token in tokens:
             if token and token in searchable_text:
                 score += 25
                 matched_terms.append(token)
     return score, matched_terms
+
+
+def _extract_query_terms(query: str) -> list[str]:
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return []
+
+    terms: list[str] = [normalized_query]
+    parts = [part.strip() for part in re.split(r"[\s,，。！？?、;；:：]+", normalized_query) if part.strip()]
+    terms.extend(parts)
+
+    chinese_chunks = re.findall(r"[\u4e00-\u9fff]{2,}", normalized_query)
+    for chunk in chinese_chunks:
+        terms.append(chunk)
+        if len(chunk) >= 2:
+            for index in range(len(chunk) - 1):
+                terms.append(chunk[index : index + 2])
+
+    unique_terms: list[str] = []
+    seen: set[str] = set()
+    stop_terms = {"什么", "一下", "请问", "吗", "呢", "呀", "最近"}
+    for term in terms:
+        cleaned = term.strip()
+        if len(cleaned) < 2:
+            continue
+        if cleaned in stop_terms:
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        unique_terms.append(cleaned)
+    return unique_terms
 
 
 def query_memory_cards(

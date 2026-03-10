@@ -8,6 +8,8 @@ from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
 from app.modules.memory.schemas import (
     MemoryCardCorrectionPayload,
+    MemoryContextBundleRead,
+    MemoryContextPreviewRequest,
     MemoryHotSummaryRead,
     MemoryQueryRequest,
     MemoryQueryResponse,
@@ -20,6 +22,7 @@ from app.modules.memory.schemas import (
     MemoryCardRevisionListResponse,
     MemoryDebugOverviewRead,
 )
+from app.modules.memory.context_engine import build_memory_context_bundle
 from app.modules.memory.query_service import get_memory_hot_summary, query_memory_cards
 from app.modules.memory.service import (
     correct_memory_card,
@@ -193,6 +196,25 @@ def query_memory_cards_endpoint(
     if actor.role != "admin":
         normalized_payload = payload.model_copy(update={"requester_member_id": actor.actor_id})
     return query_memory_cards(db, payload=normalized_payload, actor=actor)
+
+
+@router.post("/context-bundle/preview", response_model=MemoryContextBundleRead)
+def preview_memory_context_bundle_endpoint(
+    payload: MemoryContextPreviewRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> MemoryContextBundleRead:
+    normalized_requester_member_id = payload.requester_member_id
+    if actor.role != "admin":
+        normalized_requester_member_id = actor.actor_id
+    return build_memory_context_bundle(
+        db,
+        household_id=payload.household_id,
+        actor=actor,
+        requester_member_id=normalized_requester_member_id,
+        question=payload.question,
+        capability=payload.capability,
+    )
 
 
 @router.post("/cards/{memory_id}/corrections", response_model=MemoryCardRead)
