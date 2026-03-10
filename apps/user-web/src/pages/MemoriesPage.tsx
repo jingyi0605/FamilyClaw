@@ -6,7 +6,7 @@ import { useI18n, type MessageKey } from '../i18n';
 import { PageHeader, Card, EmptyState } from '../components/base';
 import { useHouseholdContext } from '../state/household';
 import { api } from '../lib/api';
-import type { MemoryCard, MemoryStatus, MemoryType, MemoryVisibility } from '../lib/types';
+import type { MemoryCard, MemoryCardRevision, MemoryStatus, MemoryType, MemoryVisibility } from '../lib/types';
 
 type MemoryFilterType = 'all' | 'fact' | 'event' | 'preference' | 'relation';
 
@@ -69,6 +69,18 @@ function getDetailContent(card: MemoryCard) {
   return '暂无详情内容';
 }
 
+function formatRevisionJson(value: string | null) {
+  if (!value) {
+    return '无';
+  }
+
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
 export function MemoriesPage() {
   const { t } = useI18n();
   const { currentHouseholdId } = useHouseholdContext();
@@ -80,6 +92,9 @@ export function MemoriesPage() {
   const [error, setError] = useState('');
   const [actionStatus, setActionStatus] = useState('');
   const [editingDraft, setEditingDraft] = useState({ title: '', summary: '' });
+  const [revisions, setRevisions] = useState<MemoryCardRevision[]>([]);
+  const [revisionsLoading, setRevisionsLoading] = useState(false);
+  const [expandedRevisionId, setExpandedRevisionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentHouseholdId) {
@@ -133,6 +148,42 @@ export function MemoriesPage() {
     if (selectedMemory) {
       setEditingDraft({ title: selectedMemory.title, summary: selectedMemory.summary });
     }
+  }, [selectedMemory?.id]);
+
+  useEffect(() => {
+    if (!selectedMemory) {
+      setRevisions([]);
+      setExpandedRevisionId(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadRevisions = async () => {
+      setRevisionsLoading(true);
+      try {
+        const result = await api.listMemoryCardRevisions(selectedMemory.id);
+        if (!cancelled) {
+          setRevisions(result.items);
+          setExpandedRevisionId(result.items[0]?.id ?? null);
+        }
+      } catch {
+        if (!cancelled) {
+          setRevisions([]);
+          setExpandedRevisionId(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setRevisionsLoading(false);
+        }
+      }
+    };
+
+    void loadRevisions();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedMemory?.id]);
 
   async function refreshCurrentList() {
@@ -289,6 +340,39 @@ export function MemoriesPage() {
                 <div className="detail-field">
                   <label>{t('memory.updatedAt')}</label>
                   <p>{formatRelativeTime(selectedMemory.updated_at)}</p>
+                </div>
+                <div className="detail-field">
+                  <label>修订历史</label>
+                  {revisionsLoading ? <p>正在加载修订历史...</p> : revisions.length > 0 ? (
+                    <div>
+                      {revisions.slice(0, 5).map(revision => {
+                        const isExpanded = expandedRevisionId === revision.id;
+
+                        return (
+                          <div key={revision.id} style={{ marginBottom: '0.75rem', padding: '0.75rem', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
+                              <p>#{revision.revision_no} · {revision.action} · {revision.reason ?? '无原因'} · {formatRelativeTime(revision.created_at)}</p>
+                              <button className="btn btn--outline btn--sm" type="button" onClick={() => setExpandedRevisionId(current => current === revision.id ? null : revision.id)}>
+                                {isExpanded ? '收起' : '展开'}
+                              </button>
+                            </div>
+                            {isExpanded && (
+                              <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.75rem' }}>
+                                <div>
+                                  <label style={{ display: 'block', marginBottom: '0.35rem' }}>变更前</label>
+                                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--bg-muted)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>{formatRevisionJson(revision.before_json)}</pre>
+                                </div>
+                                <div>
+                                  <label style={{ display: 'block', marginBottom: '0.35rem' }}>变更后</label>
+                                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--bg-muted)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>{formatRevisionJson(revision.after_json)}</pre>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : <p>当前还没有修订历史。</p>}
                 </div>
               </div>
               <div className="memory-detail__actions">

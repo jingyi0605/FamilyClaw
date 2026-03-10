@@ -294,7 +294,7 @@
 
 - [ ] 2.2 做家庭、房间、成员和关系管理页
   - 状态：IN_PROGRESS
-  - 当前进度：家庭概览 / 房间 / 成员 / 关系页面已切到真实读接口（`households / context/overview / rooms / members / devices / member-relationships / member-preferences`），成员偏好支持保守降级。编辑按钮暂时保留占位，下一步再补最小可用表单和写接口。
+  - 当前进度：家庭概览 / 房间 / 成员 / 关系页面已切到真实读接口（`households / context/overview / rooms / members / devices / member-relationships / member-preferences`）；新增房间 / 成员 / 关系已接到现有写接口；成员偏好也已接到现有 `member-preferences/{member_id}` upsert 接口。更复杂的成员权限和房间编辑仍待后续补。
   - 这一步到底做什么：把家庭结构管理从调试台迁出来，做成用户能用的产品页。
   - 做完你能看到什么：用户前端能直接维护家庭、房间、成员和关系。
   - 先依赖什么：2.1
@@ -319,7 +319,7 @@
 
 - [ ] 2.3 做设备、HA 和 AI 易用配置页
   - 状态：IN_PROGRESS
-  - 当前进度：设置页二级导航和 6 个子页面骨架已完成；主题切换、语言切换、长辈模式已可工作；设备与集成页已切到真实 API（`context/overview / devices / rooms / devices/sync/ha`）；AI 配置已接入真实的隐私级别字段，通知偏好已接入真实的免打扰开关和时段（`context/configs`）。其余像助手称呼、回复语气、通知方式、通知范围等字段，后端还没有稳定的用户态配置承载，当前已在页面里明确提示，不做假映射。
+  - 当前进度：设置页二级导航和 6 个子页面骨架已完成；主题切换、语言切换、长辈模式已可工作；设备与集成页已切到真实 API（`context/overview / devices / rooms / devices/sync/ha`）；AI 配置已接入真实的隐私级别字段，并继续接入了 `voice_fast_path_enabled / guest_mode_enabled / child_protection_enabled / elder_care_watch_enabled` 这些家庭服务开关；通知偏好已接入真实的免打扰开关和时段（`context/configs`）。其余像助手称呼、回复语气、通知方式、通知范围等字段，后端还没有稳定的用户态配置承载，当前已在页面里明确提示，不做假映射。
   - 这一步到底做什么：把设备、HA、AI 这些完整配置能力收进 `设置` 入口，但全部换成用户看得懂的话。
   - 做完你能看到什么：用户在 `设置` 里就能完成设备、HA、AI 配置，但不会看到一堆开发者术语。
   - 先依赖什么：2.2
@@ -394,7 +394,7 @@
 
 - [ ] 3.2 做家庭记忆列表、详情和纠错管理
   - 状态：IN_PROGRESS
-  - 当前进度：记忆页已切到真实 `memories/cards`，支持分类切换、搜索、列表和详情抽屉，能展示来源、可见范围、状态和更新时间。纠错 / 失效 / 删除已接到现有 `memories/cards/{id}/corrections` 接口；当前仍缺修订历史和更细的权限提示。
+  - 当前进度：记忆页已切到真实 `memories/cards`，支持分类切换、搜索、列表和详情抽屉，能展示来源、可见范围、状态和更新时间。纠错 / 失效 / 删除已接到现有 `memories/cards/{id}/corrections` 接口，修订历史也已接到现有 `memories/cards/{id}/revisions`，并支持展开查看 `before / after` 详情。当前仍缺更细的权限提示和更友好的编辑交互。
   - 这一步到底做什么：把家庭记忆做成可查、可改、可控的页面，而不是黑盒存储。
   - 做完你能看到什么：用户能查看来源、纠错、失效标记和可见范围。
   - 先依赖什么：3.1
@@ -418,7 +418,8 @@
   - 对应设计：`design.md` §2.3.4、§3.6、§4.9、§5.4、§6.3
 
 - [ ] 3.3 打通助手到提醒、场景和记忆的快捷动作
-  - 状态：TODO
+  - 状态：IN_PROGRESS
+  - 当前进度：助手页里的“转为提醒”“写入记忆”已经接到现有 `reminders` 和 `memories/cards/manual` 接口，并补了前端确认表单；家庭页也已经补上基于现有接口的新增房间、成员、关系表单（`rooms / members / member-relationships`）。场景动作和页面跳转还没接。
   - 这一步到底做什么：让助手回答不是停在一段文字，而是能继续转成家庭服务动作。
   - 做完你能看到什么：用户可以把回答转成提醒、写入记忆或跳转相关家庭页面。
   - 先依赖什么：3.1、3.2

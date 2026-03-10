@@ -16,6 +16,7 @@ function useContextConfigSettings() {
   const [config, setConfig] = useState<ContextConfigRead | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [status, setStatus] = useState('');
 
   useEffect(() => {
     if (!currentHouseholdId) {
@@ -28,6 +29,7 @@ function useContextConfigSettings() {
     const loadConfig = async () => {
       setLoading(true);
       setError('');
+      setStatus('');
       try {
         const result = await api.getContextConfig(currentHouseholdId);
         if (!cancelled) {
@@ -58,6 +60,7 @@ function useContextConfigSettings() {
 
     setLoading(true);
     setError('');
+    setStatus('');
     try {
       const result = await api.updateContextConfig(currentHouseholdId, {
         home_mode: config.home_mode,
@@ -77,6 +80,7 @@ function useContextConfigSettings() {
         ...patch,
       });
       setConfig(result);
+      setStatus('设置已保存。');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存设置失败');
     } finally {
@@ -84,7 +88,7 @@ function useContextConfigSettings() {
     }
   }
 
-  return { config, loading, error, savePatch };
+  return { config, loading, error, status, savePatch };
 }
 
 /* ---- 设置布局 ---- */
@@ -163,7 +167,7 @@ export function SettingsAppearance() {
 /* ---- AI 配置 ---- */
 export function SettingsAi() {
   const { t } = useI18n();
-  const { config, loading, error, savePatch } = useContextConfigSettings();
+  const { config, loading, error, status, savePatch } = useContextConfigSettings();
 
   const privacyValue = config?.privacy_mode ?? 'balanced';
 
@@ -205,6 +209,15 @@ export function SettingsAi() {
             <ToggleSwitch checked={false} label={t('settings.ai.suggestScene')} description={t('settings.ai.suggestSceneDesc')} />
           </div>
 
+          <Section title="家庭服务开关" className="section--embedded">
+            <div className="settings-toggles">
+              <ToggleSwitch checked={config?.voice_fast_path_enabled ?? false} label="语音快通道" description="开启后，系统会优先走更快的语音响应链路。" onChange={value => void savePatch({ voice_fast_path_enabled: value })} />
+              <ToggleSwitch checked={config?.guest_mode_enabled ?? false} label="访客模式" description="开启后，访客相关提示和家庭上下文会用更保守的展示方式。" onChange={value => void savePatch({ guest_mode_enabled: value })} />
+              <ToggleSwitch checked={config?.child_protection_enabled ?? false} label="儿童保护" description="开启后，系统会对儿童相关提醒和内容给出更严格的边界。" onChange={value => void savePatch({ child_protection_enabled: value })} />
+              <ToggleSwitch checked={config?.elder_care_watch_enabled ?? false} label="长辈关怀" description="开启后，系统会更关注长辈提醒和异常状态。" onChange={value => void savePatch({ elder_care_watch_enabled: value })} />
+            </div>
+          </Section>
+
           <div className="form-group">
             <label>{t('settings.ai.privacyLevel')}</label>
             <select className="form-select" value={privacyValue} onChange={event => void savePatch({ privacy_mode: event.target.value as ContextConfigRead['privacy_mode'] })} disabled={loading || !config}>
@@ -218,6 +231,7 @@ export function SettingsAi() {
           <span>🧩</span> 当前已接入真实字段：隐私级别。助手称呼、回复语气、长度和记忆策略，后端还没有稳定的用户态配置字段，先保留产品骨架。
         </div>
         {error && <div className="settings-note"><span>⚠️</span> {error}</div>}
+        {status && <div className="settings-note"><span>✅</span> {status}</div>}
         <div className="settings-note">
           <span>ℹ️</span> {t('settings.ai.advancedNote')}
         </div>
@@ -265,7 +279,7 @@ export function SettingsLanguage() {
 /* ---- 通知偏好 ---- */
 export function SettingsNotifications() {
   const { t } = useI18n();
-  const { config, loading, error, savePatch } = useContextConfigSettings();
+  const { config, loading, error, status, savePatch } = useContextConfigSettings();
 
   return (
     <div className="settings-page">
@@ -295,6 +309,7 @@ export function SettingsNotifications() {
           <span>🧩</span> 当前已接入真实字段：免打扰开关和时段。通知方式、通知范围还没有对应的后端产品字段，先保留说明，不乱写映射。
         </div>
         {error && <div className="settings-note"><span>⚠️</span> {error}</div>}
+        {status && <div className="settings-note"><span>✅</span> {status}</div>}
       </Section>
     </div>
   );

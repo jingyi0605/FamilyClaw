@@ -25,6 +25,8 @@ const familyTabs = [
   { to: '/family/relationships', labelKey: 'family.relationships' as const },
 ];
 
+const noopRefreshWorkspace = async () => {};
+
 type FamilyWorkspaceValue = {
   household: Household | null;
   overview: ContextOverviewRead | null;
@@ -35,6 +37,7 @@ type FamilyWorkspaceValue = {
   preferencesByMemberId: Record<string, MemberPreference>;
   loading: boolean;
   errors: string[];
+  refreshWorkspace: () => Promise<void>;
 };
 
 const FamilyWorkspaceContext = createContext<FamilyWorkspaceValue | null>(null);
@@ -160,11 +163,13 @@ export function FamilyLayout() {
     preferencesByMemberId: {},
     loading: false,
     errors: [],
+    refreshWorkspace: noopRefreshWorkspace,
   });
 
-  useEffect(() => {
+  const refreshWorkspace = useMemo(() => async () => {
     if (!currentHouseholdId) {
-      setWorkspace({
+      setWorkspace(current => ({
+        ...current,
         household: null,
         overview: null,
         rooms: [],
@@ -174,71 +179,59 @@ export function FamilyLayout() {
         preferencesByMemberId: {},
         loading: false,
         errors: [],
-      });
+      }));
       return;
     }
 
-    let cancelled = false;
+    setWorkspace(current => ({ ...current, loading: true, errors: [] }));
 
-    const loadWorkspace = async () => {
-      setWorkspace(current => ({ ...current, loading: true, errors: [] }));
+    const [householdResult, overviewResult, roomsResult, membersResult, devicesResult, relationshipsResult] = await Promise.allSettled([
+      api.getHousehold(currentHouseholdId),
+      api.getContextOverview(currentHouseholdId),
+      api.listRooms(currentHouseholdId),
+      api.listMembers(currentHouseholdId),
+      api.listDevices(currentHouseholdId),
+      api.listMemberRelationships(currentHouseholdId),
+    ]);
 
-      const [householdResult, overviewResult, roomsResult, membersResult, devicesResult, relationshipsResult] = await Promise.allSettled([
-        api.getHousehold(currentHouseholdId),
-        api.getContextOverview(currentHouseholdId),
-        api.listRooms(currentHouseholdId),
-        api.listMembers(currentHouseholdId),
-        api.listDevices(currentHouseholdId),
-        api.listMemberRelationships(currentHouseholdId),
-      ]);
-
-      const members = membersResult.status === 'fulfilled' ? membersResult.value.items : [];
-      const preferenceResults = await Promise.allSettled(
-        members.map(member => api.getMemberPreferences(member.id)),
-      );
-
-      if (cancelled) {
-        return;
+    const members = membersResult.status === 'fulfilled' ? membersResult.value.items : [];
+    const preferenceResults = await Promise.allSettled(members.map(member => api.getMemberPreferences(member.id)));
+    const preferencesByMemberId = preferenceResults.reduce<Record<string, MemberPreference>>((acc, result) => {
+      if (result.status === 'fulfilled') {
+        acc[result.value.member_id] = result.value;
       }
+      return acc;
+    }, {});
 
-      const preferencesByMemberId = preferenceResults.reduce<Record<string, MemberPreference>>((acc, result) => {
-        if (result.status === 'fulfilled') {
-          acc[result.value.member_id] = result.value;
-        }
-        return acc;
-      }, {});
+    const errors = [householdResult, overviewResult, roomsResult, membersResult, devicesResult, relationshipsResult]
+      .filter(result => result.status === 'rejected')
+      .map(result => result.reason instanceof Error ? result.reason.message : '家庭数据加载失败');
 
-      const errors = [householdResult, overviewResult, roomsResult, membersResult, devicesResult, relationshipsResult]
-        .filter(result => result.status === 'rejected')
-        .map(result => result.reason instanceof Error ? result.reason.message : '家庭数据加载失败');
+    preferenceResults.forEach(result => {
+      if (result.status === 'rejected') {
+        errors.push(result.reason instanceof Error ? result.reason.message : '成员偏好加载失败');
+      }
+    });
 
-      preferenceResults.forEach(result => {
-        if (result.status === 'rejected') {
-          errors.push(result.reason instanceof Error ? result.reason.message : '成员偏好加载失败');
-        }
-      });
-
-      setWorkspace({
-        household: householdResult.status === 'fulfilled' ? householdResult.value : null,
-        overview: overviewResult.status === 'fulfilled' ? overviewResult.value : null,
-        rooms: roomsResult.status === 'fulfilled' ? roomsResult.value.items : [],
-        members,
-        devices: devicesResult.status === 'fulfilled' ? devicesResult.value.items : [],
-        relationships: relationshipsResult.status === 'fulfilled' ? relationshipsResult.value.items : [],
-        preferencesByMemberId,
-        loading: false,
-        errors,
-      });
-    };
-
-    void loadWorkspace();
-
-    return () => {
-      cancelled = true;
-    };
+    setWorkspace(current => ({
+      ...current,
+      household: householdResult.status === 'fulfilled' ? householdResult.value : null,
+      overview: overviewResult.status === 'fulfilled' ? overviewResult.value : null,
+      rooms: roomsResult.status === 'fulfilled' ? roomsResult.value.items : [],
+      members,
+      devices: devicesResult.status === 'fulfilled' ? devicesResult.value.items : [],
+      relationships: relationshipsResult.status === 'fulfilled' ? relationshipsResult.value.items : [],
+      preferencesByMemberId,
+      loading: false,
+      errors,
+    }));
   }, [currentHouseholdId]);
 
-  const value = useMemo(() => workspace, [workspace]);
+  useEffect(() => {
+    void refreshWorkspace();
+  }, [refreshWorkspace]);
+
+  const value = useMemo(() => ({ ...workspace, refreshWorkspace }), [workspace, refreshWorkspace]);
 
   return (
     <FamilyWorkspaceContext.Provider value={value}>
@@ -312,7 +305,11 @@ export function FamilyOverview() {
 /* ---- 房间页 ---- */
 export function FamilyRooms() {
   const { t } = useI18n();
-  const { rooms, overview, devices, loading } = useFamilyWorkspace();
+  const { rooms, overview, devices, loading, refreshWorkspace } = useFamilyWorkspace();
+  const { currentHouseholdId } = useHouseholdContext();
+  const [createForm, setCreateForm] = useState({ name: '', room_type: 'living_room' as Room['room_type'], privacy_level: 'public' as Room['privacy_level'] });
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
 
   const roomCards = rooms.map(room => {
     const roomOverview = overview?.room_occupancy.find(item => item.room_id === room.id);
@@ -329,8 +326,52 @@ export function FamilyRooms() {
     };
   });
 
+  async function handleCreateRoom(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!currentHouseholdId) {
+      setError('请先选择家庭。');
+      return;
+    }
+    try {
+      setError('');
+      await api.createRoom({ household_id: currentHouseholdId, ...createForm });
+      setCreateForm({ name: '', room_type: 'living_room', privacy_level: 'public' });
+      await refreshWorkspace();
+      setStatus('房间已创建。');
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : '创建房间失败');
+    }
+  }
+
   return (
     <div className="family-rooms">
+      <Card className="room-detail-card" style={{ marginBottom: '1rem' }}>
+        <form className="settings-form" onSubmit={handleCreateRoom}>
+          <div className="form-group">
+            <label>房间名称</label>
+            <input className="form-input" value={createForm.name} onChange={event => setCreateForm(current => ({ ...current, name: event.target.value }))} required />
+          </div>
+          <div className="form-group">
+            <label>房间类型</label>
+            <select className="form-select" value={createForm.room_type} onChange={event => setCreateForm(current => ({ ...current, room_type: event.target.value as Room['room_type'] }))}>
+              <option value="living_room">客厅</option>
+              <option value="bedroom">卧室</option>
+              <option value="study">书房</option>
+              <option value="entrance">玄关</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>隐私等级</label>
+            <select className="form-select" value={createForm.privacy_level} onChange={event => setCreateForm(current => ({ ...current, privacy_level: event.target.value as Room['privacy_level'] }))}>
+              <option value="public">公共</option>
+              <option value="private">私密</option>
+              <option value="sensitive">敏感</option>
+            </select>
+          </div>
+          <button className="btn btn--primary" type="submit">新建房间</button>
+          {(status || error) && <div className="text-text-secondary">{error || status}</div>}
+        </form>
+      </Card>
       <div className="room-grid">
         {loading && roomCards.length === 0 ? <div className="text-text-secondary">正在加载房间数据...</div> : roomCards.map(room => (
           <Card key={room.id} className="room-detail-card">
@@ -356,10 +397,116 @@ export function FamilyRooms() {
 /* ---- 成员页 ---- */
 export function FamilyMembers() {
   const { t } = useI18n();
-  const { members, overview, preferencesByMemberId, loading } = useFamilyWorkspace();
+  const { members, overview, preferencesByMemberId, loading, refreshWorkspace } = useFamilyWorkspace();
+  const { currentHouseholdId } = useHouseholdContext();
+  const [createForm, setCreateForm] = useState({ name: '', nickname: '', role: 'adult' as Member['role'], age_group: 'adult' as NonNullable<Member['age_group']>, phone: '', guardian_member_id: '' });
+  const [editingPreferencesMemberId, setEditingPreferencesMemberId] = useState<string | null>(null);
+  const [preferencesDraft, setPreferencesDraft] = useState({ preferred_name: '', reminder_channel: '', sleep_start: '', sleep_end: '' });
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+
+  async function handleCreateMember(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!currentHouseholdId) {
+      setError('请先选择家庭。');
+      return;
+    }
+
+    try {
+      setError('');
+      await api.createMember({
+        household_id: currentHouseholdId,
+        name: createForm.name,
+        nickname: createForm.nickname || null,
+        role: createForm.role,
+        age_group: createForm.age_group,
+        phone: createForm.phone || null,
+        guardian_member_id: createForm.guardian_member_id || null,
+      });
+      setCreateForm({ name: '', nickname: '', role: 'adult', age_group: 'adult', phone: '', guardian_member_id: '' });
+      await refreshWorkspace();
+      setStatus('成员已创建。');
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : '创建成员失败');
+    }
+  }
+
+  function openPreferencesEditor(member: Member) {
+    const preference = preferencesByMemberId[member.id];
+    const sleepSchedule = preference?.sleep_schedule;
+    const sleepStart = sleepSchedule && typeof sleepSchedule === 'object' && 'start' in sleepSchedule ? String((sleepSchedule as { start?: unknown }).start ?? '') : '';
+    const sleepEnd = sleepSchedule && typeof sleepSchedule === 'object' && 'end' in sleepSchedule ? String((sleepSchedule as { end?: unknown }).end ?? '') : '';
+
+    setEditingPreferencesMemberId(member.id);
+    setPreferencesDraft({
+      preferred_name: preference?.preferred_name ?? member.nickname ?? '',
+      reminder_channel: preference?.reminder_channel_preference ? JSON.stringify(preference.reminder_channel_preference) : '',
+      sleep_start: sleepStart,
+      sleep_end: sleepEnd,
+    });
+    setStatus('');
+    setError('');
+  }
+
+  async function handleSavePreferences() {
+    if (!editingPreferencesMemberId) {
+      return;
+    }
+
+    try {
+      setError('');
+      await api.upsertMemberPreferences(editingPreferencesMemberId, {
+        preferred_name: preferencesDraft.preferred_name || null,
+        light_preference: null,
+        climate_preference: null,
+        content_preference: null,
+        reminder_channel_preference: preferencesDraft.reminder_channel ? { note: preferencesDraft.reminder_channel } : null,
+        sleep_schedule: preferencesDraft.sleep_start || preferencesDraft.sleep_end ? { start: preferencesDraft.sleep_start, end: preferencesDraft.sleep_end } : null,
+      });
+      await refreshWorkspace();
+      setEditingPreferencesMemberId(null);
+      setStatus('成员偏好已保存。');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : '保存成员偏好失败');
+    }
+  }
 
   return (
     <div className="family-members">
+      <Card className="member-detail-card" style={{ marginBottom: '1rem' }}>
+        <form className="settings-form" onSubmit={handleCreateMember}>
+          <div className="form-group">
+            <label>姓名</label>
+            <input className="form-input" value={createForm.name} onChange={event => setCreateForm(current => ({ ...current, name: event.target.value }))} required />
+          </div>
+          <div className="form-group">
+            <label>昵称</label>
+            <input className="form-input" value={createForm.nickname} onChange={event => setCreateForm(current => ({ ...current, nickname: event.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label>角色</label>
+            <select className="form-select" value={createForm.role} onChange={event => setCreateForm(current => ({ ...current, role: event.target.value as Member['role'] }))}>
+              <option value="admin">管理员</option>
+              <option value="adult">成人</option>
+              <option value="child">儿童</option>
+              <option value="elder">长辈</option>
+              <option value="guest">访客</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>年龄分组</label>
+            <select className="form-select" value={createForm.age_group} onChange={event => setCreateForm(current => ({ ...current, age_group: event.target.value as NonNullable<Member['age_group']> }))}>
+              <option value="adult">成人</option>
+              <option value="child">儿童</option>
+              <option value="teen">青少年</option>
+              <option value="toddler">幼儿</option>
+              <option value="elder">长辈</option>
+            </select>
+          </div>
+          <button className="btn btn--primary" type="submit">新增成员</button>
+          {(status || error) && <div className="text-text-secondary">{error || status}</div>}
+        </form>
+      </Card>
       <div className="member-detail-grid">
         {loading && members.length === 0 ? <div className="text-text-secondary">正在加载成员数据...</div> : members.map(member => {
           const status = getMemberStatus(member.id, overview);
@@ -381,12 +528,38 @@ export function FamilyMembers() {
               <p className="member-detail-card__prefs">{formatPreferenceSummary(preferencesByMemberId[member.id])}</p>
               <div className="member-detail-card__actions">
                 <button className="card-action-btn" disabled>{t('member.edit')}</button>
-                <button className="card-action-btn" disabled>{t('member.preferences')}</button>
+                <button className="card-action-btn" onClick={() => openPreferencesEditor(member)}>{t('member.preferences')}</button>
               </div>
             </Card>
           );
         })}
       </div>
+      {editingPreferencesMemberId && (
+        <Card className="member-detail-card" style={{ marginTop: '1rem' }}>
+          <div className="settings-form">
+            <div className="form-group">
+              <label>偏好称呼</label>
+              <input className="form-input" value={preferencesDraft.preferred_name} onChange={event => setPreferencesDraft(current => ({ ...current, preferred_name: event.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label>提醒方式备注</label>
+              <input className="form-input" value={preferencesDraft.reminder_channel} onChange={event => setPreferencesDraft(current => ({ ...current, reminder_channel: event.target.value }))} placeholder="例如：语音+站内消息" />
+            </div>
+            <div className="form-group">
+              <label>作息开始</label>
+              <input className="form-input" value={preferencesDraft.sleep_start} onChange={event => setPreferencesDraft(current => ({ ...current, sleep_start: event.target.value }))} placeholder="22:00" />
+            </div>
+            <div className="form-group">
+              <label>作息结束</label>
+              <input className="form-input" value={preferencesDraft.sleep_end} onChange={event => setPreferencesDraft(current => ({ ...current, sleep_end: event.target.value }))} placeholder="07:00" />
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button className="btn btn--primary" type="button" onClick={() => void handleSavePreferences()}>{t('common.save')}</button>
+              <button className="btn btn--outline" type="button" onClick={() => setEditingPreferencesMemberId(null)}>{t('common.cancel')}</button>
+            </div>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -394,13 +567,35 @@ export function FamilyMembers() {
 /* ---- 关系页 ---- */
 export function FamilyRelationships() {
   const { t } = useI18n();
-  const { relationships, members, loading } = useFamilyWorkspace();
+  const { relationships, members, loading, refreshWorkspace } = useFamilyWorkspace();
+  const { currentHouseholdId } = useHouseholdContext();
+  const [createForm, setCreateForm] = useState({ source_member_id: '', target_member_id: '', relation_type: 'guardian' as MemberRelationship['relation_type'], visibility_scope: 'family' as MemberRelationship['visibility_scope'], delegation_scope: 'none' as MemberRelationship['delegation_scope'] });
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
 
   const memberNameMap = Object.fromEntries(members.map(member => [member.id, member.name]));
 
   const caregivingRelations = relationships.filter(item => item.relation_type === 'caregiver');
   const guardianshipRelations = relationships.filter(item => item.relation_type === 'guardian' || item.relation_type === 'parent' || item.relation_type === 'child');
   const otherRelations = relationships.filter(item => !caregivingRelations.includes(item) && !guardianshipRelations.includes(item));
+
+  async function handleCreateRelationship(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!currentHouseholdId || !createForm.source_member_id || !createForm.target_member_id) {
+      setError('请先选择关系双方成员。');
+      return;
+    }
+
+    try {
+      setError('');
+      await api.createMemberRelationship({ household_id: currentHouseholdId, ...createForm });
+      setCreateForm({ source_member_id: '', target_member_id: '', relation_type: 'guardian', visibility_scope: 'family', delegation_scope: 'none' });
+      await refreshWorkspace();
+      setStatus('关系已创建。');
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : '创建关系失败');
+    }
+  }
 
   const renderRelationCards = (items: MemberRelationship[]) => (
     <div className="relation-list">
@@ -426,6 +621,36 @@ export function FamilyRelationships() {
 
   return (
     <div className="family-relationships">
+      <Card className="relation-card" style={{ marginBottom: '1rem' }}>
+        <form className="settings-form" onSubmit={handleCreateRelationship}>
+          <div className="form-group">
+            <label>发起成员</label>
+            <select className="form-select" value={createForm.source_member_id} onChange={event => setCreateForm(current => ({ ...current, source_member_id: event.target.value }))}>
+              <option value="">请选择</option>
+              {members.map(member => <option key={member.id} value={member.id}>{member.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>目标成员</label>
+            <select className="form-select" value={createForm.target_member_id} onChange={event => setCreateForm(current => ({ ...current, target_member_id: event.target.value }))}>
+              <option value="">请选择</option>
+              {members.map(member => <option key={member.id} value={member.id}>{member.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>关系类型</label>
+            <select className="form-select" value={createForm.relation_type} onChange={event => setCreateForm(current => ({ ...current, relation_type: event.target.value as MemberRelationship['relation_type'] }))}>
+              <option value="guardian">监护</option>
+              <option value="caregiver">照护</option>
+              <option value="parent">父母</option>
+              <option value="child">子女</option>
+              <option value="spouse">伴侣</option>
+            </select>
+          </div>
+          <button className="btn btn--primary" type="submit">新增关系</button>
+          {(status || error) && <div className="text-text-secondary">{error || status}</div>}
+        </form>
+      </Card>
       <Card className="relationship-graph-placeholder">
         <div className="relationship-graph__hint">
           <span className="relationship-graph__icon">🔗</span>

@@ -7,6 +7,7 @@ import type {
   HomeAssistantSyncResponse,
   Household,
   MemoryCard,
+  MemoryCardRevision,
   MemoryType,
   MemberPreference,
   MemberRelationship,
@@ -89,17 +90,64 @@ export const api = {
   getHousehold(householdId: string) {
     return request<Household>(`/households/${encodeURIComponent(householdId)}`);
   },
+  createRoom(payload: {
+    household_id: string;
+    name: string;
+    room_type: Room['room_type'];
+    privacy_level: Room['privacy_level'];
+  }) {
+    return request<Room>('/rooms', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
   listRooms(householdId: string) {
     return request<PaginatedResponse<Room>>(`/rooms?household_id=${encodeURIComponent(householdId)}&page_size=100`);
   },
+  createMember(payload: {
+    household_id: string;
+    name: string;
+    nickname?: string | null;
+    role: Member['role'];
+    age_group?: Member['age_group'];
+    phone?: string | null;
+    guardian_member_id?: string | null;
+  }) {
+    return request<Member>('/members', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
   listMembers(householdId: string) {
     return request<PaginatedResponse<Member>>(`/members?household_id=${encodeURIComponent(householdId)}&page_size=100`);
+  },
+  createMemberRelationship(payload: {
+    household_id: string;
+    source_member_id: string;
+    target_member_id: string;
+    relation_type: MemberRelationship['relation_type'];
+    visibility_scope: MemberRelationship['visibility_scope'];
+    delegation_scope: MemberRelationship['delegation_scope'];
+  }) {
+    return request<MemberRelationship>('/member-relationships', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   },
   listMemberRelationships(householdId: string) {
     return request<PaginatedResponse<MemberRelationship>>(`/member-relationships?household_id=${encodeURIComponent(householdId)}&page_size=100`);
   },
   getMemberPreferences(memberId: string) {
     return request<MemberPreference>(`/member-preferences/${encodeURIComponent(memberId)}`);
+  },
+  upsertMemberPreferences(
+    memberId: string,
+    payload: Omit<MemberPreference, 'member_id' | 'updated_at'>,
+  ) {
+    return request<MemberPreference>(`/member-preferences/${encodeURIComponent(memberId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
   },
   listDevices(householdId: string) {
     return request<PaginatedResponse<Device>>(`/devices?household_id=${encodeURIComponent(householdId)}&page_size=100`);
@@ -170,6 +218,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+  listMemoryCardRevisions(memoryId: string) {
+    return request<{ items: MemoryCardRevision[] }>(`/memories/cards/${encodeURIComponent(memoryId)}/revisions`);
   },
   correctMemoryCard(memoryId: string, payload: {
     action: 'correct' | 'invalidate' | 'delete';

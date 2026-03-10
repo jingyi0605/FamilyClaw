@@ -57,6 +57,11 @@ export function AssistantPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [actionStatus, setActionStatus] = useState('');
+  const [actionDraft, setActionDraft] = useState<
+    | { type: 'reminder'; message: Message; title: string; description: string; triggerAt: string }
+    | { type: 'memory'; message: Message; title: string; summary: string }
+    | null
+  >(null);
 
   useEffect(() => {
     if (!currentHouseholdId) {
@@ -211,65 +216,76 @@ export function AssistantPage() {
     }
   }
 
-  async function handleCreateReminder(message: Message) {
-    if (!currentHouseholdId) {
-      setError('当前还没有选中的家庭，无法创建提醒。');
-      return;
-    }
-
-    try {
-      setActionStatus('');
-      const now = new Date();
-      const triggerAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
-      await api.createReminderTask({
-        household_id: currentHouseholdId,
-        owner_member_id: null,
-        title: `助手建议：${message.content.slice(0, 18)}`,
-        description: message.content,
-        reminder_type: 'family',
-        target_member_ids: [],
-        preferred_room_ids: [],
-        schedule_kind: 'once',
-        schedule_rule: { trigger_at: triggerAt },
-        priority: 'normal',
-        delivery_channels: ['in_app'],
-        ack_required: false,
-        escalation_policy: {},
-        enabled: true,
-        updated_by: 'user-web',
-      });
-      setActionStatus('已用这条回答创建提醒。');
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : '创建提醒失败');
-    }
+  function openReminderDraft(message: Message) {
+    const now = new Date();
+    const triggerAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString().slice(0, 16);
+    setActionDraft({
+      type: 'reminder',
+      message,
+      title: `助手建议：${message.content.slice(0, 18)}`,
+      description: message.content,
+      triggerAt,
+    });
+    setError('');
   }
 
-  async function handleSaveMemory(message: Message) {
-    if (!currentHouseholdId) {
-      setError('当前还没有选中的家庭，无法写入记忆。');
+  function openMemoryDraft(message: Message) {
+    setActionDraft({
+      type: 'memory',
+      message,
+      title: `助手记录：${message.content.slice(0, 18)}`,
+      summary: message.content,
+    });
+    setError('');
+  }
+
+  async function submitActionDraft() {
+    if (!currentHouseholdId || !actionDraft) {
       return;
     }
 
     try {
       setActionStatus('');
-      await api.createManualMemoryCard({
-        household_id: currentHouseholdId,
-        memory_type: 'fact',
-        title: `助手记录：${message.content.slice(0, 18)}`,
-        summary: message.content,
-        content: {
-          source: 'assistant_answer',
-          facts: message.facts ?? [],
-        },
-        visibility: 'family',
-        status: 'active',
-        importance: 3,
-        confidence: 0.8,
-        reason: '由用户在助手页手动保存',
-      });
-      setActionStatus('已把这条回答写入家庭记忆。');
+      if (actionDraft.type === 'reminder') {
+        await api.createReminderTask({
+          household_id: currentHouseholdId,
+          owner_member_id: null,
+          title: actionDraft.title,
+          description: actionDraft.description,
+          reminder_type: 'family',
+          target_member_ids: [],
+          preferred_room_ids: [],
+          schedule_kind: 'once',
+          schedule_rule: { trigger_at: new Date(actionDraft.triggerAt).toISOString() },
+          priority: 'normal',
+          delivery_channels: ['in_app'],
+          ack_required: false,
+          escalation_policy: {},
+          enabled: true,
+          updated_by: 'user-web',
+        });
+        setActionStatus('已用这条回答创建提醒。');
+      } else {
+        await api.createManualMemoryCard({
+          household_id: currentHouseholdId,
+          memory_type: 'fact',
+          title: actionDraft.title,
+          summary: actionDraft.summary,
+          content: {
+            source: 'assistant_answer',
+            facts: actionDraft.message.facts ?? [],
+          },
+          visibility: 'family',
+          status: 'active',
+          importance: 3,
+          confidence: 0.8,
+          reason: '由用户在助手页手动保存',
+        });
+        setActionStatus('已把这条回答写入家庭记忆。');
+      }
+      setActionDraft(null);
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : '写入记忆失败');
+      setError(actionError instanceof Error ? actionError.message : '提交动作失败');
     }
   }
 
@@ -334,8 +350,8 @@ export function AssistantPage() {
                   {msg.role === 'assistant' && (
                     <div className="message__actions">
                       <button className="msg-action-btn" onClick={() => void submitQuestion(`继续追问：${msg.content.slice(0, 40)}`)}>{t('assistant.askFollow')}</button>
-                      <button className="msg-action-btn" onClick={() => void handleCreateReminder(msg)}>{t('assistant.toReminder')}</button>
-                      <button className="msg-action-btn" onClick={() => void handleSaveMemory(msg)}>{t('assistant.toMemory')}</button>
+                       <button className="msg-action-btn" onClick={() => openReminderDraft(msg)}>{t('assistant.toReminder')}</button>
+                       <button className="msg-action-btn" onClick={() => openMemoryDraft(msg)}>{t('assistant.toMemory')}</button>
                       {(msg.suggestions ?? []).slice(0, 2).map(suggestion => (
                         <button key={suggestion} className="msg-action-btn" onClick={() => void submitQuestion(suggestion)}>{suggestion}</button>
                       ))}
@@ -364,6 +380,43 @@ export function AssistantPage() {
               </button>
             </div>
             {(error || actionStatus) && <div className="text-text-secondary" style={{ marginTop: '0.75rem' }}>{error || actionStatus}</div>}
+            {actionDraft && (
+              <div style={{ marginTop: '1rem' }}>
+                <div className="settings-form">
+                  {actionDraft.type === 'reminder' ? (
+                    <>
+                      <div className="form-group">
+                        <label>提醒标题</label>
+                        <input className="form-input" value={actionDraft.title} onChange={event => setActionDraft(current => current && current.type === 'reminder' ? { ...current, title: event.target.value } : current)} />
+                      </div>
+                      <div className="form-group">
+                        <label>提醒内容</label>
+                        <textarea className="form-input" rows={4} value={actionDraft.description} onChange={event => setActionDraft(current => current && current.type === 'reminder' ? { ...current, description: event.target.value } : current)} />
+                      </div>
+                      <div className="form-group">
+                        <label>提醒时间</label>
+                        <input className="form-input" type="datetime-local" value={actionDraft.triggerAt} onChange={event => setActionDraft(current => current && current.type === 'reminder' ? { ...current, triggerAt: event.target.value } : current)} />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="form-group">
+                        <label>记忆标题</label>
+                        <input className="form-input" value={actionDraft.title} onChange={event => setActionDraft(current => current && current.type === 'memory' ? { ...current, title: event.target.value } : current)} />
+                      </div>
+                      <div className="form-group">
+                        <label>记忆摘要</label>
+                        <textarea className="form-input" rows={4} value={actionDraft.summary} onChange={event => setActionDraft(current => current && current.type === 'memory' ? { ...current, summary: event.target.value } : current)} />
+                      </div>
+                    </>
+                  )}
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button className="btn btn--primary" type="button" onClick={() => void submitActionDraft()}>{t('common.confirm')}</button>
+                    <button className="btn btn--outline" type="button" onClick={() => setActionDraft(null)}>{t('common.cancel')}</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <EmptyState icon="💬" title={t('assistant.noSessions')} description={t('assistant.noSessionsHint')} action={<button className="btn btn--primary" onClick={handleNewChat}>{t('assistant.newChat')}</button>} />

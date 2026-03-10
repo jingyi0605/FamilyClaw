@@ -302,3 +302,16 @@ export type MemoryCard = {
     relation_role: string;
   }>;
 };
+
+export type MemoryCardRevision = {
+  id: string;
+  memory_id: string;
+  revision_no: number;
+  action: string;
+  before_json: string | null;
+  after_json: string | null;
+  reason: string | null;
+  actor_type: string;
+  actor_id: string | null;
+  created_at: string;
+};
