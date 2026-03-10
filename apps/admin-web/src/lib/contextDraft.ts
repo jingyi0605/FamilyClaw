@@ -267,6 +267,14 @@ function getDefaultScenePreset(room: Room): RoomScenePreset {
       return "focus";
     case "entrance":
       return "auto";
+    case "kitchen":
+      return "auto";
+    case "bathroom":
+      return "rest";
+    case "gym":
+      return "focus";
+    case "garage":
+      return "auto";
   }
 }
 
@@ -279,6 +287,14 @@ function getDefaultClimatePolicy(room: Room): ClimatePolicy {
     case "study":
       return "follow_member";
     case "entrance":
+      return "manual";
+    case "kitchen":
+      return "follow_room";
+    case "bathroom":
+      return "manual";
+    case "gym":
+      return "follow_member";
+    case "garage":
       return "manual";
   }
 }

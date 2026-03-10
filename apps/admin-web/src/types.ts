@@ -13,6 +13,7 @@ export type Member = {
   household_id: string;
   name: string;
   nickname: string | null;
+  gender?: "male" | "female" | null;
   role: "admin" | "adult" | "child" | "elder" | "guest";
   age_group: "toddler" | "child" | "teen" | "adult" | "elder" | null;
   birthday: string | null;
@@ -28,7 +29,29 @@ export type MemberRelationship = {
   household_id: string;
   source_member_id: string;
   target_member_id: string;
-  relation_type: "spouse" | "parent" | "child" | "guardian" | "caregiver";
+  relation_type:
+    | "husband"
+    | "wife"
+    | "spouse"
+    | "father"
+    | "mother"
+    | "son"
+    | "daughter"
+    | "parent"
+    | "child"
+    | "older_brother"
+    | "older_sister"
+    | "younger_brother"
+    | "younger_sister"
+    | "grandfather_paternal"
+    | "grandmother_paternal"
+    | "grandfather_maternal"
+    | "grandmother_maternal"
+    | "grandson"
+    | "granddaughter"
+    | "guardian"
+    | "ward"
+    | "caregiver";
   visibility_scope: "public" | "family" | "private";
   delegation_scope: "none" | "reminder" | "health" | "device";
   created_at: string;
@@ -42,6 +65,7 @@ export type MemberPreference = {
   content_preference: unknown | null;
   reminder_channel_preference: unknown | null;
   sleep_schedule: unknown | null;
+  birthday_is_lunar?: boolean;
   updated_at: string | null;
 };
 
@@ -69,7 +93,7 @@ export type Room = {
   id: string;
   household_id: string;
   name: string;
-  room_type: "living_room" | "bedroom" | "study" | "entrance";
+  room_type: "living_room" | "bedroom" | "study" | "entrance" | "kitchen" | "bathroom" | "gym" | "garage";
   privacy_level: "public" | "private" | "sensitive";
   created_at: string;
 };

@@ -139,6 +139,14 @@ function formatRoomType(roomType: Room["room_type"]) {
       return "书房";
     case "entrance":
       return "玄关";
+    case "kitchen":
+      return "厨房";
+    case "bathroom":
+      return "卫生间";
+    case "gym":
+      return "健身房";
+    case "garage":
+      return "车库";
   }
 }
 

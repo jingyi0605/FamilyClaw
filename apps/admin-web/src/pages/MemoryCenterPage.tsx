@@ -16,6 +16,27 @@ import type {
   Room,
 } from "../types";
 
+function formatRoomType(roomType: Room["room_type"]) {
+  switch (roomType) {
+    case "living_room":
+      return "客厅";
+    case "bedroom":
+      return "卧室";
+    case "study":
+      return "书房";
+    case "entrance":
+      return "玄关";
+    case "kitchen":
+      return "厨房";
+    case "bathroom":
+      return "卫生间";
+    case "gym":
+      return "健身房";
+    case "garage":
+      return "车库";
+  }
+}
+
 function getErrorMessage(error: unknown) {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
@@ -663,7 +684,7 @@ export function MemoryCenterPage() {
                 <option value="">不关联房间</option>
                 {rooms.map((room) => (
                   <option key={room.id} value={room.id}>
-                    {room.name} · {room.room_type}
+                    {room.name} · {formatRoomType(room.room_type)}
                   </option>
                 ))}
               </select>

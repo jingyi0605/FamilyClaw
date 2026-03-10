@@ -76,6 +76,10 @@ function formatRoomType(roomType: Room['room_type']) {
     case 'bedroom': return '卧室';
     case 'study': return '书房';
     case 'entrance': return '玄关';
+    case 'kitchen': return '厨房';
+    case 'bathroom': return '卫生间';
+    case 'gym': return '健身房';
+    case 'garage': return '车库';
   }
 }
 
@@ -677,6 +681,10 @@ export function FamilyRooms() {
                   <option value="bedroom">卧室</option>
                   <option value="study">书房</option>
                   <option value="entrance">玄关</option>
+                  <option value="kitchen">厨房</option>
+                  <option value="bathroom">卫生间</option>
+                  <option value="gym">健身房</option>
+                  <option value="garage">车库</option>
                 </select>
               </div>
               <div className="form-group">

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
@@ -12,6 +12,8 @@ from app.api.dependencies import ActorContext
 from app.db.utils import dump_json, load_json, utc_now_iso
 from app.modules.context.models import ContextConfig
 from app.modules.context.schemas import (
+    ActivityStatus,
+    ClimatePolicy,
     ContextConfigMemberState,
     ContextConfigRead,
     ContextConfigRoomSetting,
@@ -23,6 +25,8 @@ from app.modules.context.schemas import (
     ContextOverviewRead,
     ContextOverviewRoomOccupancy,
     ContextOverviewRoomOccupant,
+    PresenceStatus,
+    RoomScenePreset,
 )
 from app.modules.device.models import Device
 from app.modules.household.service import get_household_or_404
@@ -71,7 +75,7 @@ def _find_room_id_by_type(rooms: list[Room], room_types: list[str]) -> str | Non
     return rooms[0].id if rooms else None
 
 
-def _default_member_presence(member: Member) -> str:
+def _default_member_presence(member: Member) -> PresenceStatus:
     if member.status != "active":
         return "away"
     if member.role == "guest":
@@ -79,14 +83,14 @@ def _default_member_presence(member: Member) -> str:
     return "home"
 
 
-def _default_member_activity(member: Member) -> str:
-    return {
-        "admin": "focused",
-        "adult": "active",
-        "child": "resting",
-        "elder": "idle",
-        "guest": "idle",
-    }.get(member.role, "idle")
+def _default_member_activity(member: Member) -> ActivityStatus:
+    if member.role == "admin":
+        return "focused"
+    if member.role == "adult":
+        return "active"
+    if member.role == "child":
+        return "resting"
+    return "idle"
 
 
 def _default_member_confidence(member: Member) -> int:
@@ -131,10 +135,11 @@ def _default_member_room_id(member: Member, rooms: list[Room]) -> str | None:
 
 def _build_default_member_state(member: Member, rooms: list[Room]) -> ContextConfigMemberState:
     presence = _default_member_presence(member)
+    activity: ActivityStatus = "idle" if presence == "away" else _default_member_activity(member)
     return ContextConfigMemberState(
         member_id=member.id,
         presence=presence,
-        activity="idle" if presence == "away" else _default_member_activity(member),
+        activity=activity,
         current_room_id=None if presence == "away" else _default_member_room_id(member, rooms),
         confidence=_default_member_confidence(member),
         last_seen_minutes=_default_last_seen_minutes(member),
@@ -142,22 +147,22 @@ def _build_default_member_state(member: Member, rooms: list[Room]) -> ContextCon
     )
 
 
-def _default_room_scene_preset(room: Room) -> str:
-    return {
-        "living_room": "welcome",
-        "bedroom": "rest",
-        "study": "focus",
-        "entrance": "auto",
-    }.get(room.room_type, "auto")
+def _default_room_scene_preset(room: Room) -> RoomScenePreset:
+    if room.room_type == "living_room":
+        return "welcome"
+    if room.room_type in {"bedroom", "bathroom"}:
+        return "rest"
+    if room.room_type in {"study", "gym"}:
+        return "focus"
+    return "auto"
 
 
-def _default_climate_policy(room: Room) -> str:
-    return {
-        "living_room": "follow_room",
-        "bedroom": "follow_member",
-        "study": "follow_member",
-        "entrance": "manual",
-    }.get(room.room_type, "follow_room")
+def _default_climate_policy(room: Room) -> ClimatePolicy:
+    if room.room_type in {"bedroom", "study", "gym"}:
+        return "follow_member"
+    if room.room_type in {"entrance", "bathroom", "garage"}:
+        return "manual"
+    return "follow_room"
 
 
 def _build_default_room_setting(room: Room) -> ContextConfigRoomSetting:
@@ -440,11 +445,10 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
 
         if presence_state is not None:
             live_snapshot_count += 1
-            presence = (
-                presence_state.status
-                if presence_state.status in {"home", "away", "unknown"}
-                else "unknown"
-            )
+            if presence_state.status in {"home", "away", "unknown"}:
+                presence: PresenceStatus = cast(PresenceStatus, presence_state.status)
+            else:
+                presence = "unknown"
             current_room_id = presence_state.current_room_id if presence == "home" else None
             current_room = room_by_id.get(current_room_id) if current_room_id else None
             overview_member_states.append(

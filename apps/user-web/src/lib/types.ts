@@ -68,7 +68,7 @@ export type Room = {
   id: string;
   household_id: string;
   name: string;
-  room_type: 'living_room' | 'bedroom' | 'study' | 'entrance';
+  room_type: 'living_room' | 'bedroom' | 'study' | 'entrance' | 'kitchen' | 'bathroom' | 'gym' | 'garage';
   privacy_level: 'public' | 'private' | 'sensitive';
   created_at: string;
 };

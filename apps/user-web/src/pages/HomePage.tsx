@@ -71,6 +71,19 @@ type DashboardMemberCard = {
   badgeStatus: 'home' | 'away' | 'resting';
 };
 
+function formatRoomType(roomType: Room['room_type']) {
+  switch (roomType) {
+    case 'living_room': return '客厅';
+    case 'bedroom': return '卧室';
+    case 'study': return '书房';
+    case 'entrance': return '玄关';
+    case 'kitchen': return '厨房';
+    case 'bathroom': return '卫生间';
+    case 'gym': return '健身房';
+    case 'garage': return '车库';
+  }
+}
+
 function formatMode(mode: ContextOverviewRead['home_mode'] | undefined) {
   switch (mode) {
     case 'home': return '居家模式';
@@ -161,7 +174,7 @@ function getRoomCards(data: DashboardData): DashboardRoomCard[] {
       id: room.room_id,
       name: room.name,
       isActive: room.occupant_count > 0 || room.online_device_count > 0,
-      secondary: room.privacy_level === 'sensitive' ? '隐私区域' : room.room_type,
+      secondary: room.privacy_level === 'sensitive' ? '隐私区域' : formatRoomType(room.room_type),
       deviceCount: room.device_count,
     }));
   }
@@ -170,7 +183,7 @@ function getRoomCards(data: DashboardData): DashboardRoomCard[] {
     id: room.id,
     name: room.name,
     isActive: false,
-    secondary: room.privacy_level === 'sensitive' ? '隐私区域' : room.room_type,
+    secondary: room.privacy_level === 'sensitive' ? '隐私区域' : formatRoomType(room.room_type),
     deviceCount: 0,
   }));
 }

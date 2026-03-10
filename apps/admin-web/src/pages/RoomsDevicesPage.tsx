@@ -12,6 +12,27 @@ const defaultRoomForm = {
   privacy_level: "public" as Room["privacy_level"],
 };
 
+function formatRoomType(roomType: Room["room_type"]) {
+  switch (roomType) {
+    case "living_room":
+      return "客厅";
+    case "bedroom":
+      return "卧室";
+    case "study":
+      return "书房";
+    case "entrance":
+      return "玄关";
+    case "kitchen":
+      return "厨房";
+    case "bathroom":
+      return "卫生间";
+    case "gym":
+      return "健身房";
+    case "garage":
+      return "车库";
+  }
+}
+
 export function RoomsDevicesPage() {
   const { household } = useHousehold();
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -133,10 +154,14 @@ export function RoomsDevicesPage() {
                 }))
               }
             >
-              <option value="living_room">living_room</option>
-              <option value="bedroom">bedroom</option>
-              <option value="study">study</option>
-              <option value="entrance">entrance</option>
+              <option value="living_room">客厅</option>
+              <option value="bedroom">卧室</option>
+              <option value="study">书房</option>
+              <option value="entrance">玄关</option>
+              <option value="kitchen">厨房</option>
+              <option value="bathroom">卫生间</option>
+              <option value="gym">健身房</option>
+              <option value="garage">车库</option>
             </select>
           </label>
           <label>
@@ -162,7 +187,7 @@ export function RoomsDevicesPage() {
         <div className="chip-list">
           {rooms.map((room) => (
             <span key={room.id} className="chip">
-              {room.name} · {room.room_type} · {room.privacy_level}
+              {room.name} · {formatRoomType(room.room_type)} · {room.privacy_level}
             </span>
           ))}
         </div>
