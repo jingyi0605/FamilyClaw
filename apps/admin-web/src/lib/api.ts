@@ -15,6 +15,11 @@ import type {
   FamilyQaSuggestionsResponse,
   HomeAssistantSyncResponse,
   Household,
+  MemoryCard,
+  MemoryCardRevision,
+  MemoryDebugOverviewRead,
+  MemoryEventRecord,
+  MemoryEventWriteResponse,
   Member,
   MemberPermissionListResponse,
   MemberPermissionRule,
@@ -261,6 +266,87 @@ export const api = {
       params.set("requester_member_id", requesterMemberId);
     }
     return request<FamilyQaSuggestionsResponse>(`/family-qa/suggestions?${params.toString()}`);
+  },
+  getMemoryDebugOverview(householdId: string) {
+    return request<MemoryDebugOverviewRead>(
+      `/memories/overview?household_id=${encodeURIComponent(householdId)}`,
+    );
+  },
+  listMemoryEvents(householdId: string, processingStatus?: string) {
+    const params = new URLSearchParams({ household_id: householdId });
+    if (processingStatus) {
+      params.set("processing_status", processingStatus);
+    }
+    return request<PaginatedResponse<MemoryEventRecord>>(`/memories/events?${params.toString()}`);
+  },
+  ingestMemoryEvent(payload: {
+    household_id: string;
+    event_type: string;
+    source_type: string;
+    source_ref?: string | null;
+    subject_member_id?: string | null;
+    room_id?: string | null;
+    payload?: Record<string, unknown>;
+    dedupe_key?: string | null;
+    generate_memory_card?: boolean;
+    occurred_at?: string | null;
+  }) {
+    return request<MemoryEventWriteResponse>("/memories/events", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  listMemoryCards(householdId: string, memoryType?: string) {
+    const params = new URLSearchParams({ household_id: householdId });
+    if (memoryType) {
+      params.set("memory_type", memoryType);
+    }
+    return request<PaginatedResponse<MemoryCard>>(`/memories/cards?${params.toString()}`);
+  },
+  createManualMemoryCard(payload: {
+    household_id: string;
+    memory_type: MemoryCard["memory_type"];
+    title: string;
+    summary: string;
+    content?: Record<string, unknown>;
+    status?: MemoryCard["status"];
+    visibility?: MemoryCard["visibility"];
+    importance?: number;
+    confidence?: number;
+    subject_member_id?: string | null;
+    source_event_id?: string | null;
+    dedupe_key?: string | null;
+    effective_at?: string | null;
+    last_observed_at?: string | null;
+    related_members?: { member_id: string; relation_role: "subject" | "participant" | "mentioned" | "owner" }[];
+    reason?: string | null;
+  }) {
+    return request<MemoryCard>("/memories/cards/manual", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  listMemoryCardRevisions(memoryId: string) {
+    return request<{ items: MemoryCardRevision[] }>(`/memories/cards/${encodeURIComponent(memoryId)}/revisions`);
+  },
+  correctMemoryCard(
+    memoryId: string,
+    payload: {
+      action: "correct" | "invalidate" | "delete";
+      title?: string | null;
+      summary?: string | null;
+      content?: Record<string, unknown> | null;
+      visibility?: MemoryCard["visibility"] | null;
+      status?: MemoryCard["status"] | null;
+      importance?: number | null;
+      confidence?: number | null;
+      reason?: string | null;
+    },
+  ) {
+    return request<MemoryCard>(`/memories/cards/${encodeURIComponent(memoryId)}/corrections`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
   listReminderTasks(householdId: string, enabled?: boolean) {
     const params = new URLSearchParams({ household_id: householdId });

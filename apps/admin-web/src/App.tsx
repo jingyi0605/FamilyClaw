@@ -4,6 +4,7 @@ import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { AiProviderConfigPage } from "./pages/AiProviderConfigPage";
 import { ContextCenterPage } from "./pages/ContextCenterPage";
 import { HouseholdPage } from "./pages/HouseholdPage";
+import { MemoryCenterPage } from "./pages/MemoryCenterPage";
 import { MemberPreferencesPermissionsPage } from "./pages/MemberPreferencesPermissionsPage";
 import { MemberRelationshipsPage } from "./pages/MemberRelationshipsPage";
 import { MembersPage } from "./pages/MembersPage";
@@ -60,6 +61,12 @@ const navItems: NavItem[] = [
     label: "房间与设备",
     title: "房间与设备管理",
     description: "维护房间主数据、设备归属和 HA 同步结果。",
+  },
+  {
+    to: "/memory-center",
+    label: "记忆中心",
+    title: "家庭长期记忆中心",
+    description: "查看事件流水、手动写入记忆卡，并验证长期记忆底层骨架。",
   },
   {
     to: "/service-center",
@@ -160,6 +167,7 @@ export default function App() {
         <Routes>
           <Route path="/ai-provider-config" element={<AiProviderConfigPage />} />
           <Route path="/context-center" element={<ContextCenterPage />} />
+          <Route path="/memory-center" element={<MemoryCenterPage />} />
           <Route path="/service-center" element={<ServiceCenterPage />} />
           <Route path="/" element={<HouseholdPage />} />
           <Route path="/members" element={<MembersPage />} />

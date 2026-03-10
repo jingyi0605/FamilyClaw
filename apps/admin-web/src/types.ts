@@ -293,6 +293,99 @@ export type FamilyQaSuggestionsResponse = {
   items: FamilyQaSuggestionItem[];
 };
 
+export type MemoryEventProcessingStatus = "pending" | "processed" | "failed" | "ignored";
+export type MemoryType = "fact" | "event" | "preference" | "relation" | "growth";
+export type MemoryStatus = "active" | "pending_review" | "invalidated" | "deleted";
+export type MemoryVisibility = "public" | "family" | "private" | "sensitive";
+export type MemoryRelationRole = "subject" | "participant" | "mentioned" | "owner";
+
+export type MemoryEventRecord = {
+  id: string;
+  household_id: string;
+  event_type: string;
+  source_type: string;
+  source_ref: string | null;
+  subject_member_id: string | null;
+  room_id: string | null;
+  payload: Record<string, unknown> | null;
+  dedupe_key: string | null;
+  processing_status: MemoryEventProcessingStatus;
+  generate_memory_card: boolean;
+  failure_reason: string | null;
+  occurred_at: string;
+  created_at: string;
+  processed_at: string | null;
+};
+
+export type MemoryEventWriteResponse = {
+  event_id: string;
+  accepted: boolean;
+  duplicate_detected: boolean;
+  processing_status: MemoryEventProcessingStatus;
+};
+
+export type MemoryCardMemberLink = {
+  member_id: string;
+  relation_role: MemoryRelationRole;
+};
+
+export type MemoryCard = {
+  id: string;
+  household_id: string;
+  memory_type: MemoryType;
+  title: string;
+  summary: string;
+  normalized_text: string | null;
+  content: Record<string, unknown> | null;
+  status: MemoryStatus;
+  visibility: MemoryVisibility;
+  importance: number;
+  confidence: number;
+  subject_member_id: string | null;
+  source_event_id: string | null;
+  dedupe_key: string | null;
+  effective_at: string | null;
+  last_observed_at: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  invalidated_at: string | null;
+  related_members: {
+    memory_id: string;
+    member_id: string;
+    relation_role: string;
+  }[];
+};
+
+export type MemoryCardRevision = {
+  id: string;
+  memory_id: string;
+  revision_no: number;
+  action: string;
+  before_json: string | null;
+  after_json: string | null;
+  reason: string | null;
+  actor_type: string;
+  actor_id: string | null;
+  created_at: string;
+};
+
+export type MemoryDebugOverviewRead = {
+  household_id: string;
+  total_events: number;
+  pending_events: number;
+  processed_events: number;
+  failed_events: number;
+  ignored_events: number;
+  total_cards: number;
+  active_cards: number;
+  pending_cards: number;
+  invalidated_cards: number;
+  deleted_cards: number;
+  latest_event_at: string | null;
+  latest_card_at: string | null;
+};
+
 export type ReminderTask = {
   id: string;
   household_id: string;

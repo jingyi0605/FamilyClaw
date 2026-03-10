@@ -5,6 +5,7 @@ from app.modules.device.models import Device, DeviceBinding
 from app.modules.family_qa.models import QaQueryLog
 from app.modules.household.models import Household
 from app.modules.member.models import Member, MemberPreference
+from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember, MemoryCardRevision
 from app.modules.permission.models import MemberPermission
 from app.modules.presence.models import MemberPresenceState, PresenceEvent
 from app.modules.reminder.models import ReminderAckEvent, ReminderDeliveryAttempt, ReminderRun, ReminderTask
@@ -24,8 +25,12 @@ __all__ = [
     "Member",
     "MemberPermission",
     "MemberPreference",
+    "MemoryCard",
+    "MemoryCardMember",
+    "MemoryCardRevision",
     "MemberPresenceState",
     "MemberRelationship",
+    "EventRecord",
     "PresenceEvent",
     "QaQueryLog",
     "ReminderAckEvent",

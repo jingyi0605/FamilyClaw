@@ -12,6 +12,7 @@ from app.api.v1.endpoints.member_permissions import router as member_permissions
 from app.api.v1.endpoints.member_preferences import router as member_preferences_router
 from app.api.v1.endpoints.member_relationships import router as member_relationships_router
 from app.api.v1.endpoints.members import router as members_router
+from app.api.v1.endpoints.memories import router as memories_router
 from app.api.v1.endpoints.reminders import router as reminders_router
 from app.api.v1.endpoints.reminders import run_router as reminder_runs_router
 from app.api.v1.endpoints.rooms import router as rooms_router
@@ -30,6 +31,7 @@ router.include_router(member_relationships_router)
 router.include_router(member_preferences_router)
 router.include_router(member_permissions_router)
 router.include_router(members_router)
+router.include_router(memories_router)
 router.include_router(reminders_router)
 router.include_router(reminder_runs_router)
 router.include_router(rooms_router)
