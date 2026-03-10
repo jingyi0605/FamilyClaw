@@ -1,14 +1,21 @@
+from app.modules.ai_gateway.models import AiCapabilityRoute, AiModelCallLog, AiProviderProfile
 from app.modules.audit.models import AuditLog
 from app.modules.context.models import ContextConfig
 from app.modules.device.models import Device, DeviceBinding
+from app.modules.family_qa.models import QaQueryLog
 from app.modules.household.models import Household
 from app.modules.member.models import Member, MemberPreference
 from app.modules.permission.models import MemberPermission
 from app.modules.presence.models import MemberPresenceState, PresenceEvent
+from app.modules.reminder.models import ReminderAckEvent, ReminderDeliveryAttempt, ReminderRun, ReminderTask
 from app.modules.relationship.models import MemberRelationship
+from app.modules.scene.models import SceneExecution, SceneExecutionStep, SceneTemplate
 from app.modules.room.models import Room
 
 __all__ = [
+    "AiCapabilityRoute",
+    "AiModelCallLog",
+    "AiProviderProfile",
     "AuditLog",
     "ContextConfig",
     "Device",
@@ -20,5 +27,13 @@ __all__ = [
     "MemberPresenceState",
     "MemberRelationship",
     "PresenceEvent",
+    "QaQueryLog",
+    "ReminderAckEvent",
+    "ReminderDeliveryAttempt",
+    "ReminderRun",
+    "ReminderTask",
     "Room",
+    "SceneExecution",
+    "SceneExecutionStep",
+    "SceneTemplate",
 ]
