@@ -1156,6 +1156,16 @@ input, select, textarea {
   background: var(--bg-card-hover);
 }
 
+/* --- Mobile Specific Assistant Styles --- */
+
+.assistant-mobile-header {
+  display: none;
+}
+
+.assistant-sidebar-overlay {
+  display: none;
+}
+
 .session-item--active {
   background: var(--brand-primary-light);
 }
@@ -1205,6 +1215,7 @@ input, select, textarea {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
+  position: relative;
 }
 
 .message {
@@ -2455,9 +2466,62 @@ body::before {
     margin: calc(-1 * var(--spacing-md));
     height: calc(100vh - 60px); 
     /* Adjust for bottom nav */
+    position: relative;
+    overflow: hidden;
   }
 
-  .assistant-sidebar,
+  .assistant-mobile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-surface);
+    height: 60px; /* Fixed height for top header */
+    z-index: 10;
+  }
+
+  .assistant-mobile-title {
+    font-weight: 600;
+    font-size: var(--font-size-md);
+    color: var(--text-primary);
+  }
+
+  .assistant-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 280px;
+    height: 100%;
+    z-index: 50; /* Above nav and overlay */
+    background: var(--bg-surface);
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  .assistant-sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .assistant-sidebar-overlay {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 40; /* Below sidebar, above content */
+    backdrop-filter: blur(2px);
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
   .assistant-context {
     display: none;
   }
