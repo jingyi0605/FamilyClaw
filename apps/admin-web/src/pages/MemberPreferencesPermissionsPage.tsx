@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageSection } from "../components/PageSection";
 import { StatusMessage } from "../components/StatusMessage";
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { useHousehold } from "../state/household";
 import type { Member, MemberPermissionRule, MemberPreference } from "../types";
 
@@ -142,12 +142,7 @@ export function MemberPreferencesPermissionsPage() {
       setError("");
       try {
         const [preference, permissions] = await Promise.all([
-          api.getMemberPreferences(selectedMemberId).catch((err: unknown) => {
-            if (err instanceof ApiError && err.status === 404) {
-              return null;
-            }
-            throw err;
-          }),
+          api.getMemberPreferences(selectedMemberId),
           api.getMemberPermissions(selectedMemberId),
         ]);
 
@@ -187,7 +182,7 @@ export function MemberPreferencesPermissionsPage() {
         sleep_schedule: parseJsonField("作息偏好", preferenceForm.sleep_schedule),
       });
       setPreferenceForm(buildPreferenceForm(response));
-      setPreferenceUpdatedAt(response.updated_at);
+      setPreferenceUpdatedAt(response.updated_at ?? "");
       setStatus("成员偏好已保存。");
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存成员偏好失败");

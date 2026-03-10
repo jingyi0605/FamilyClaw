@@ -37,13 +37,19 @@ def upsert_member_preferences(
     return member, preference
 
 
-def get_member_preferences_or_404(db: Session, member_id: str) -> MemberPreferenceRead:
-    get_member_or_404(db, member_id)
+def get_member_preferences_or_default(db: Session, member_id: str) -> MemberPreferenceRead:
+    member = get_member_or_404(db, member_id)
     preference = db.get(MemberPreference, member_id)
     if preference is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="member preferences not found",
+        return MemberPreferenceRead(
+            member_id=member.id,
+            preferred_name=None,
+            light_preference=None,
+            climate_preference=None,
+            content_preference=None,
+            reminder_channel_preference=None,
+            sleep_schedule=None,
+            updated_at=None,
         )
 
     return MemberPreferenceRead(

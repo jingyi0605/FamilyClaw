@@ -313,7 +313,7 @@ X-Actor-Id: local-dev
 
 说明：
 
-- 当成员存在但偏好尚未创建时，当前返回 `404`
+- 当成员存在但偏好尚未创建时，返回字段为空的默认偏好对象，不再返回 `404`
 
 ### `PUT /api/v1/member-permissions/{member_id}`
 

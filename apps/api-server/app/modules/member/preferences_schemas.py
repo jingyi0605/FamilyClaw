@@ -14,5 +14,5 @@ class MemberPreferenceUpsert(BaseModel):
 
 class MemberPreferenceRead(MemberPreferenceUpsert):
     member_id: str
-    updated_at: str
+    updated_at: str | None = None
 

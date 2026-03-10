@@ -42,7 +42,7 @@ export type MemberPreference = {
   content_preference: unknown | null;
   reminder_channel_preference: unknown | null;
   sleep_schedule: unknown | null;
-  updated_at: string;
+  updated_at: string | null;
 };
 
 export type MemberPermissionRule = {

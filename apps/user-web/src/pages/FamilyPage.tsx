@@ -400,10 +400,35 @@ export function FamilyMembers() {
   const { members, overview, preferencesByMemberId, loading, refreshWorkspace } = useFamilyWorkspace();
   const { currentHouseholdId } = useHouseholdContext();
   const [createForm, setCreateForm] = useState({ name: '', nickname: '', gender: '' as '' | 'male' | 'female', role: 'adult' as Member['role'], age_group: 'adult' as NonNullable<Member['age_group']>, phone: '', guardian_member_id: '' });
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editingMemberDraft, setEditingMemberDraft] = useState({ nickname: '', gender: '' as '' | 'male' | 'female', role: 'adult' as Member['role'], age_group: 'adult' as NonNullable<Member['age_group']>, phone: '', status: 'active' as Member['status'], guardian_member_id: '' });
   const [editingPreferencesMemberId, setEditingPreferencesMemberId] = useState<string | null>(null);
   const [preferencesDraft, setPreferencesDraft] = useState({ preferred_name: '', reminder_channel: '', sleep_start: '', sleep_end: '' });
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [toastMessage, setToastMessage] = useState('');
+  const guardianCandidates = useMemo(
+    () => members.filter(member => member.id !== editingMemberId && (member.role === 'admin' || member.role === 'adult')),
+    [editingMemberId, members],
+  );
+  const sortedMembers = useMemo(
+    () => [...members].sort((left, right) => {
+      if (left.status !== right.status) {
+        return left.status === 'active' ? -1 : 1;
+      }
+      return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+    }),
+    [members],
+  );
+
+  useEffect(() => {
+    if (!toastMessage) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setToastMessage(''), 2200);
+    return () => window.clearTimeout(timer);
+  }, [toastMessage]);
 
   async function handleCreateMember(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -439,6 +464,7 @@ export function FamilyMembers() {
     const sleepEnd = sleepSchedule && typeof sleepSchedule === 'object' && 'end' in sleepSchedule ? String((sleepSchedule as { end?: unknown }).end ?? '') : '';
 
     setEditingPreferencesMemberId(member.id);
+    setEditingMemberId(null);
     setPreferencesDraft({
       preferred_name: preference?.preferred_name ?? member.nickname ?? '',
       reminder_channel: preference?.reminder_channel_preference ? JSON.stringify(preference.reminder_channel_preference) : '',
@@ -447,6 +473,71 @@ export function FamilyMembers() {
     });
     setStatus('');
     setError('');
+  }
+
+  function openMemberEditor(member: Member) {
+    setEditingPreferencesMemberId(null);
+    setEditingMemberId(member.id);
+    setEditingMemberDraft({
+      nickname: member.nickname ?? '',
+      gender: member.gender ?? '',
+      role: member.role,
+      age_group: member.age_group ?? 'adult',
+      phone: member.phone ?? '',
+      status: member.status,
+      guardian_member_id: member.guardian_member_id ?? '',
+    });
+    setStatus('');
+    setError('');
+  }
+
+  async function handleSaveMember() {
+    if (!editingMemberId) {
+      return;
+    }
+
+    try {
+      setError('');
+      await api.updateMember(editingMemberId, {
+        nickname: editingMemberDraft.nickname || null,
+        gender: editingMemberDraft.gender || null,
+        role: editingMemberDraft.role,
+        age_group: editingMemberDraft.age_group,
+        phone: editingMemberDraft.phone || null,
+        status: editingMemberDraft.status,
+        guardian_member_id: editingMemberDraft.guardian_member_id || null,
+      });
+      await refreshWorkspace();
+      setEditingMemberId(null);
+      setStatus('成员信息已保存。');
+      setToastMessage('成员信息已保存');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : '保存成员信息失败');
+    }
+  }
+
+  async function handleToggleMemberStatus(member: Member) {
+    const nextStatus: Member['status'] = member.status === 'active' ? 'inactive' : 'active';
+
+    if (nextStatus === 'inactive') {
+      const confirmed = window.confirm(`确认停用成员“${member.name}”吗？停用后该成员会保留在列表里，但状态会变成停用。`);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    try {
+      setError('');
+      await api.updateMember(member.id, { status: nextStatus });
+      await refreshWorkspace();
+      if (editingMemberId === member.id) {
+        setEditingMemberId(null);
+      }
+      setStatus(nextStatus === 'inactive' ? '成员已停用。' : '成员已启用。');
+      setToastMessage(nextStatus === 'inactive' ? '成员已停用' : '成员已启用');
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : `${nextStatus === 'inactive' ? '停用' : '启用'}成员失败`);
+    }
   }
 
   async function handleSavePreferences() {
@@ -467,6 +558,7 @@ export function FamilyMembers() {
       await refreshWorkspace();
       setEditingPreferencesMemberId(null);
       setStatus('成员偏好已保存。');
+      setToastMessage('成员偏好已保存');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存成员偏好失败');
     }
@@ -474,6 +566,7 @@ export function FamilyMembers() {
 
   return (
     <div className="family-members">
+      {toastMessage && <div className="page-toast">{toastMessage}</div>}
       <Card className="member-detail-card" style={{ marginBottom: '1rem' }}>
         <form className="settings-form" onSubmit={handleCreateMember}>
           <div className="form-group">
@@ -517,17 +610,22 @@ export function FamilyMembers() {
         </form>
       </Card>
       <div className="member-detail-grid">
-        {loading && members.length === 0 ? <div className="text-text-secondary">正在加载成员数据...</div> : members.map(member => {
+        {loading && sortedMembers.length === 0 ? <div className="text-text-secondary">正在加载成员数据...</div> : sortedMembers.map(member => {
           const status = getMemberStatus(member.id, overview);
+          const isEditingMember = editingMemberId === member.id;
+          const isInactiveMember = member.status === 'inactive';
 
           return (
-            <Card key={member.id} className="member-detail-card">
+            <Card key={member.id} className={`member-detail-card${isInactiveMember ? ' member-detail-card--inactive' : ''}`}>
               <div className="member-detail-card__top">
                 <div className="member-detail-card__avatar">
                   {member.role === 'elder' ? '👵' : member.role === 'child' ? '👦' : member.role === 'guest' ? '🧑' : '👨'}
                 </div>
                 <div className="member-detail-card__info">
-                  <h3 className="member-detail-card__name">{member.name}</h3>
+                  <div className="member-detail-card__name-row">
+                    <h3 className="member-detail-card__name">{member.name}</h3>
+                    {isInactiveMember && <span className="badge badge--inactive">已停用</span>}
+                  </div>
                   <span className="member-detail-card__role">{formatRole(member.role)}</span>
                 </div>
                 <span className={`badge badge--${status === 'home' ? 'success' : status === 'resting' ? 'warning' : 'secondary'}`}>
@@ -536,9 +634,72 @@ export function FamilyMembers() {
               </div>
               <p className="member-detail-card__prefs">{formatPreferenceSummary(preferencesByMemberId[member.id])}</p>
               <div className="member-detail-card__actions">
-                <button className="card-action-btn" disabled>{t('member.edit')}</button>
-                <button className="card-action-btn" onClick={() => openPreferencesEditor(member)}>{t('member.preferences')}</button>
+                <button className="card-action-btn" type="button" onClick={() => isEditingMember ? setEditingMemberId(null) : openMemberEditor(member)}>
+                  {isEditingMember ? t('common.cancel') : t('member.edit')}
+                </button>
+                <button className="card-action-btn" type="button" onClick={() => void handleToggleMemberStatus(member)}>
+                  {member.status === 'active' ? '停用成员' : '启用成员'}
+                </button>
+                <button className="card-action-btn" type="button" onClick={() => openPreferencesEditor(member)}>{t('member.preferences')}</button>
               </div>
+              {isEditingMember && (
+                <div className="settings-form" style={{ marginTop: '1rem' }}>
+                  <div className="form-group">
+                    <label>昵称</label>
+                    <input className="form-input" value={editingMemberDraft.nickname} onChange={event => setEditingMemberDraft(current => ({ ...current, nickname: event.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label>性别</label>
+                    <select className="form-select" value={editingMemberDraft.gender} onChange={event => setEditingMemberDraft(current => ({ ...current, gender: event.target.value as '' | 'male' | 'female' }))}>
+                      <option value="">未设置</option>
+                      <option value="male">男</option>
+                      <option value="female">女</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>角色</label>
+                    <select className="form-select" value={editingMemberDraft.role} onChange={event => setEditingMemberDraft(current => ({ ...current, role: event.target.value as Member['role'] }))}>
+                      <option value="admin">管理员</option>
+                      <option value="adult">成人</option>
+                      <option value="child">儿童</option>
+                      <option value="elder">长辈</option>
+                      <option value="guest">访客</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>年龄分组</label>
+                    <select className="form-select" value={editingMemberDraft.age_group} onChange={event => setEditingMemberDraft(current => ({ ...current, age_group: event.target.value as NonNullable<Member['age_group']> }))}>
+                      <option value="adult">成人</option>
+                      <option value="child">儿童</option>
+                      <option value="teen">青少年</option>
+                      <option value="toddler">幼儿</option>
+                      <option value="elder">长辈</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>手机号</label>
+                    <input className="form-input" value={editingMemberDraft.phone} onChange={event => setEditingMemberDraft(current => ({ ...current, phone: event.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label>状态</label>
+                    <select className="form-select" value={editingMemberDraft.status} onChange={event => setEditingMemberDraft(current => ({ ...current, status: event.target.value as Member['status'] }))}>
+                      <option value="active">启用</option>
+                      <option value="inactive">停用</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>监护人</label>
+                    <select className="form-select" value={editingMemberDraft.guardian_member_id} onChange={event => setEditingMemberDraft(current => ({ ...current, guardian_member_id: event.target.value }))}>
+                      <option value="">无</option>
+                      {guardianCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}（{formatRole(candidate.role)}）</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button className="btn btn--primary" type="button" onClick={() => void handleSaveMember()}>{t('common.save')}</button>
+                    <button className="btn btn--outline" type="button" onClick={() => setEditingMemberId(null)}>{t('common.cancel')}</button>
+                  </div>
+                </div>
+              )}
             </Card>
           );
         })}

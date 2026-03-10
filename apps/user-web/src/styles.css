@@ -889,6 +889,12 @@ input, select, textarea {
   color: var(--text-tertiary);
 }
 
+.badge--inactive {
+  background: color-mix(in srgb, var(--text-tertiary) 14%, white);
+  color: var(--text-secondary);
+  border: 1px solid color-mix(in srgb, var(--text-tertiary) 24%, transparent);
+}
+
 /* ---- 搜索输入 ---- */
 .search-input {
   width: 100%;
@@ -910,6 +916,21 @@ input, select, textarea {
   padding: var(--spacing-md) var(--spacing-lg);
   font-size: var(--font-size-md);
   border-radius: var(--radius-lg);
+}
+
+.page-toast {
+  position: sticky;
+  top: calc(var(--spacing-lg) + 4px);
+  z-index: 20;
+  width: fit-content;
+  max-width: min(100%, 420px);
+  margin: 0 0 var(--spacing-md) auto;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--brand-primary) 90%, black);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-sm);
 }
 
 /* ---- 家庭页 ---- */
@@ -1019,6 +1040,15 @@ input, select, textarea {
   margin-bottom: var(--spacing-md);
 }
 
+.member-detail-card--inactive {
+  opacity: 0.72;
+  filter: saturate(0.6);
+}
+
+.member-detail-card--inactive .member-detail-card__avatar {
+  background: color-mix(in srgb, var(--bg-input) 88%, var(--brand-primary-light));
+}
+
 .member-detail-card__avatar {
   font-size: 2rem;
   width: 52px;
@@ -1032,6 +1062,13 @@ input, select, textarea {
 
 .member-detail-card__info {
   flex: 1;
+}
+
+.member-detail-card__name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
 }
 
 .member-detail-card__name {
