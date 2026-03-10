@@ -3,6 +3,11 @@
  * 支持卡片添加、移除、拖拽排列
  * ============================================================ */
 import { useState, useRef, useCallback, type DragEvent } from 'react';
+import { 
+  CloudSun, BarChart2, Home, Users, ClipboardList, Zap, Bot, Smartphone, 
+  Droplets, Wind, Thermometer, Umbrella, CloudRain, Sun,
+  MessageSquareText, BookOpenText, Settings, ShieldCheck, Airplay, Lightbulb, Lock, User
+} from 'lucide-react';
 import { useI18n } from '../i18n';
 import { useHouseholdContext } from '../state/household';
 import { Card, StatCard, EmptyState } from '../components/base';
@@ -13,19 +18,19 @@ type CardType = 'weather' | 'stats' | 'rooms' | 'members' | 'events' | 'quickAct
 interface DashboardCard {
   type: CardType;
   label: string;
-  icon: string;
+  icon: React.ReactNode;
   width: 'half' | 'full';
 }
 
 const ALL_CARDS: Record<CardType, DashboardCard> = {
-  weather: { type: 'weather', label: '天气状态', icon: '🌤️', width: 'half' },
-  stats: { type: 'stats', label: '关键指标', icon: '📊', width: 'full' },
-  rooms: { type: 'rooms', label: '房间状态', icon: '🏠', width: 'half' },
-  members: { type: 'members', label: '成员状态', icon: '👥', width: 'half' },
-  events: { type: 'events', label: '最近事件', icon: '📋', width: 'half' },
-  quickActions: { type: 'quickActions', label: '快捷操作', icon: '⚡', width: 'half' },
-  aiSummary: { type: 'aiSummary', label: 'AI 今日摘要', icon: '🤖', width: 'full' },
-  devices: { type: 'devices', label: '设备状态', icon: '📱', width: 'half' },
+  weather: { type: 'weather', label: '天气状态', icon: <CloudSun size={18} />, width: 'half' },
+  stats: { type: 'stats', label: '关键指标', icon: <BarChart2 size={18} />, width: 'full' },
+  rooms: { type: 'rooms', label: '房间状态', icon: <Home size={18} />, width: 'half' },
+  members: { type: 'members', label: '成员状态', icon: <Users size={18} />, width: 'half' },
+  events: { type: 'events', label: '最近事件', icon: <ClipboardList size={18} />, width: 'half' },
+  quickActions: { type: 'quickActions', label: '快捷操作', icon: <Zap size={18} />, width: 'half' },
+  aiSummary: { type: 'aiSummary', label: 'AI 今日摘要', icon: <Bot size={18} />, width: 'full' },
+  devices: { type: 'devices', label: '设备状态', icon: <Smartphone size={18} />, width: 'half' },
 };
 
 const DEFAULT_LAYOUT: CardType[] = ['weather', 'stats', 'rooms', 'members', 'events', 'quickActions'];
@@ -49,24 +54,24 @@ const MOCK_ROOMS = [
 ];
 
 const MOCK_MEMBERS = [
-  { id: '1', name: '爸爸', avatar: '👨', status: 'home', role: '管理员' },
-  { id: '2', name: '妈妈', avatar: '👩', status: 'home', role: '成员' },
-  { id: '3', name: '小明', avatar: '👦', status: 'away', role: '成员' },
-  { id: '4', name: '奶奶', avatar: '👵', status: 'home', role: '成员' },
+  { id: '1', name: '爸爸', avatar: <User size={20} />, status: 'home', role: '管理员' },
+  { id: '2', name: '妈妈', avatar: <User size={20} />, status: 'home', role: '成员' },
+  { id: '3', name: '小明', avatar: <User size={20} />, status: 'away', role: '成员' },
+  { id: '4', name: '奶奶', avatar: <User size={20} />, status: 'home', role: '成员' },
 ];
 
 const MOCK_EVENTS = [
-  { id: '1', time: '10 分钟前', icon: '💡', text: '客厅灯光已自动调节' },
-  { id: '2', time: '30 分钟前', icon: '🔔', text: '提醒：奶奶该吃药了' },
-  { id: '3', time: '1 小时前', icon: '🏠', text: '小明离开了家' },
-  { id: '4', time: '2 小时前', icon: '🤖', text: 'AI 助手回答了关于晚餐的问题' },
+  { id: '1', time: '10 分钟前', icon: <Lightbulb size={16} />, text: '客厅灯光已自动调节' },
+  { id: '2', time: '30 分钟前', icon: <ClipboardList size={16} />, text: '提醒：奶奶该吃药了' },
+  { id: '3', time: '1 小时前', icon: <Home size={16} />, text: '小明离开了家' },
+  { id: '4', time: '2 小时前', icon: <Bot size={16} />, text: 'AI 助手回答了关于晚餐的问题' },
 ];
 
 const MOCK_DEVICES = [
-  { name: '客厅主灯', status: 'on', icon: '💡' },
-  { name: '空调', status: 'on', icon: '❄️' },
-  { name: '门锁', status: 'locked', icon: '🔒' },
-  { name: '扫地机', status: 'off', icon: '🤖' },
+  { name: '客厅主灯', status: 'on', icon: <Lightbulb size={16} /> },
+  { name: '空调', status: 'on', icon: <Airplay size={16} /> },
+  { name: '门锁', status: 'locked', icon: <Lock size={16} /> },
+  { name: '扫地机', status: 'off', icon: <Bot size={16} /> },
 ];
 
 /* ---- 天气卡片组件 ---- */
@@ -76,8 +81,8 @@ function WeatherCard() {
       <div className="weather-card__main">
         <div className="weather-card__icon-area">
           <span className="weather-icon-animated">
-            <span className="weather-sun">☀️</span>
-            <span className="weather-cloud">☁️</span>
+            <span className="weather-sun"><Sun size={48} className="text-warning" /></span>
+            <span className="weather-cloud"><CloudSun size={32} /></span>
           </span>
         </div>
         <div className="weather-card__temp">
@@ -87,30 +92,33 @@ function WeatherCard() {
       </div>
       <div className="weather-card__details">
         <div className="weather-detail">
-          <span className="weather-detail__icon">💧</span>
+          <span className="weather-detail__icon"><Droplets size={16} /></span>
           <span>湿度 65%</span>
         </div>
         <div className="weather-detail">
-          <span className="weather-detail__icon">🌬️</span>
+          <span className="weather-detail__icon"><Wind size={16} /></span>
           <span>东南风 3级</span>
         </div>
         <div className="weather-detail">
-          <span className="weather-detail__icon">🌡️</span>
+          <span className="weather-detail__icon"><Thermometer size={16} /></span>
           <span>体感 26°</span>
         </div>
         <div className="weather-detail">
-          <span className="weather-detail__icon">☔</span>
+          <span className="weather-detail__icon"><Umbrella size={16} /></span>
           <span>降水概率 10%</span>
         </div>
       </div>
       <div className="weather-card__forecast">
-        {['明天', '后天', '大后天'].map((day, i) => (
-          <div key={day} className="weather-forecast-item">
-            <span className="weather-forecast-day">{day}</span>
-            <span className="weather-forecast-icon">{['⛅', '🌧️', '☀️'][i]}</span>
-            <span className="weather-forecast-temp">{[23, 20, 26][i]}°</span>
-          </div>
-        ))}
+        {['明天', '后天', '大后天'].map((day, i) => {
+          const icons = [<CloudSun size={20} />, <CloudRain size={20} />, <Sun size={20} />];
+          return (
+            <div key={day} className="weather-forecast-item">
+              <span className="weather-forecast-day">{day}</span>
+              <span className="weather-forecast-icon">{icons[i]}</span>
+              <span className="weather-forecast-temp">{[23, 20, 26][i]}°</span>
+            </div>
+          );
+        })}
       </div>
     </Card>
   );
@@ -121,7 +129,7 @@ function AiSummaryCard() {
   return (
     <Card className="dashboard-card ai-summary-card animate-card">
       <div className="ai-summary-card__header">
-        <span className="ai-summary-card__icon pulse-glow">🤖</span>
+        <span className="ai-summary-card__icon pulse-glow"><Bot size={24} className="text-brand-primary" /></span>
         <h3>AI 今日摘要</h3>
       </div>
       <p className="ai-summary-card__text">
@@ -129,9 +137,9 @@ function AiSummaryCard() {
         晚餐建议：考虑到奶奶的饮食偏好和妈妈的健康计划，推荐清蒸鱼配时令蔬菜。
       </p>
       <div className="ai-summary-card__tags">
-        <span className="ai-tag">📌 3 条待处理提醒</span>
-        <span className="ai-tag">📝 2 条新记忆</span>
-        <span className="ai-tag">✅ 无异常</span>
+        <span className="ai-tag flex items-center gap-1"><ClipboardList size={12} /> 3 条待处理提醒</span>
+        <span className="ai-tag flex items-center gap-1"><BookOpenText size={12} /> 2 条新记忆</span>
+        <span className="ai-tag flex items-center gap-1"><ShieldCheck size={12} /> 无异常</span>
       </div>
     </Card>
   );
@@ -141,7 +149,7 @@ function AiSummaryCard() {
 function DevicesCard() {
   return (
     <Card className="dashboard-card animate-card">
-      <h3 className="dashboard-card__title">📱 设备状态</h3>
+      <h3 className="dashboard-card__title flex items-center gap-2"><Smartphone size={20} /> 设备状态</h3>
       <div className="device-status-grid">
         {MOCK_DEVICES.map((d, i) => (
           <div key={i} className={`device-status-item ${d.status === 'off' ? 'device-status-item--off' : ''}`}>
@@ -163,16 +171,16 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'])
     case 'stats':
       return (
         <div className="stats-grid animate-card">
-          <StatCard icon="👥" label={t('home.membersAtHome')} value={3} color="var(--brand-primary)" />
-          <StatCard icon="🏠" label={t('home.activeRooms')} value={2} color="var(--color-success)" />
-          <StatCard icon="📱" label={t('home.devicesOnline')} value={12} color="var(--color-info)" />
-          <StatCard icon="⚠️" label={t('home.alerts')} value={1} color="var(--color-warning)" />
+          <StatCard icon={<Users size={24} />} label={t('home.membersAtHome')} value={3} color="var(--brand-primary)" />
+          <StatCard icon={<Home size={24} />} label={t('home.activeRooms')} value={2} color="var(--color-success)" />
+          <StatCard icon={<Smartphone size={24} />} label={t('home.devicesOnline')} value={12} color="var(--color-info)" />
+          <StatCard icon={<ShieldCheck size={24} />} label={t('home.alerts')} value={1} color="var(--color-warning)" />
         </div>
       );
     case 'rooms':
       return (
         <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title">🏠 {t('home.roomStatus')}</h3>
+          <h3 className="dashboard-card__title flex items-center gap-2"><Home size={20} /> {t('home.roomStatus')}</h3>
           <div className="room-cards">
             {MOCK_ROOMS.map(room => (
               <div key={room.id} className="mini-room-card">
@@ -192,7 +200,7 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'])
     case 'members':
       return (
         <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title">👥 {t('home.memberStatus')}</h3>
+          <h3 className="dashboard-card__title flex items-center gap-2"><Users size={20} /> {t('home.memberStatus')}</h3>
           <div className="member-cards">
             {MOCK_MEMBERS.map(member => (
               <div key={member.id} className="mini-member-card">
@@ -212,7 +220,7 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'])
     case 'events':
       return (
         <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title">📋 {t('home.recentEvents')}</h3>
+          <h3 className="dashboard-card__title flex items-center gap-2"><ClipboardList size={20} /> {t('home.recentEvents')}</h3>
           <div className="event-list">
             {MOCK_EVENTS.map(ev => (
               <div key={ev.id} className="event-item">
@@ -227,12 +235,12 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'])
     case 'quickActions':
       return (
         <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title">⚡ {t('home.quickActions')}</h3>
+          <h3 className="dashboard-card__title flex items-center gap-2"><Zap size={20} /> {t('home.quickActions')}</h3>
           <div className="quick-actions">
-            <button className="quick-action-btn hover-lift">💬 {t('nav.assistant')}</button>
-            <button className="quick-action-btn hover-lift">📝 {t('nav.memories')}</button>
-            <button className="quick-action-btn hover-lift">⚙️ {t('nav.settings')}</button>
-            <button className="quick-action-btn hover-lift">👨‍👩‍👧‍👦 {t('nav.family')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2"><MessageSquareText size={16} /> {t('nav.assistant')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2"><BookOpenText size={16} /> {t('nav.memories')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2"><Settings size={16} /> {t('nav.settings')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2"><Users size={16} /> {t('nav.family')}</button>
           </div>
         </Card>
       );
@@ -316,8 +324,8 @@ export function HomePage() {
       {/* 欢迎区 */}
       <div className="welcome-banner">
         <div className="welcome-banner__text">
-          <h1 className="welcome-banner__title animate-slide-in">
-            {t('home.welcome')}，{familyName} 🐾
+          <h1 className="welcome-banner__title animate-slide-in flex items-center gap-3">
+            {t('home.welcome')}，{familyName} <Home size={32} className="text-brand-primary" />
           </h1>
           <p className="welcome-banner__sub">{t('home.greeting')}</p>
         </div>
@@ -379,12 +387,12 @@ export function HomePage() {
 
       {layout.length === 0 && (
         <EmptyState
-          icon="🏠"
+          icon={<Home size={64} className="text-text-tertiary opacity-50" />}
           title="仪表盘是空的"
           description={'点击"编辑仪表盘"来添加卡片'}
           action={
             <button className="btn btn--primary" onClick={() => setEditMode(true)}>
-              ✏️ 编辑仪表盘
+              编辑仪表盘
             </button>
           }
         />

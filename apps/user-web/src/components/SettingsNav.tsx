@@ -2,15 +2,16 @@
  * SettingsNav - 设置页二级侧边导航
  * ============================================================ */
 import { NavLink } from 'react-router-dom';
+import { Palette, Bot, Globe, Bell, HeartHandshake, Link as LinkIcon } from 'lucide-react';
 import { useI18n } from '../i18n';
 
 const settingsItems = [
-  { to: '/settings/appearance', icon: '🎨', labelKey: 'settings.appearance' as const, descKey: 'settings.appearanceDesc' as const },
-  { to: '/settings/ai', icon: '🤖', labelKey: 'settings.ai' as const, descKey: 'settings.aiDesc' as const },
-  { to: '/settings/language', icon: '🌐', labelKey: 'settings.language' as const, descKey: 'settings.languageDesc' as const },
-  { to: '/settings/notifications', icon: '🔔', labelKey: 'settings.notifications' as const, descKey: 'settings.notificationsDesc' as const },
-  { to: '/settings/accessibility', icon: '👴', labelKey: 'settings.accessibility' as const, descKey: 'settings.accessibilityDesc' as const },
-  { to: '/settings/integrations', icon: '🔌', labelKey: 'settings.integrations' as const, descKey: 'settings.integrationsDesc' as const },
+  { to: '/settings/appearance', icon: <Palette size={20} />, labelKey: 'settings.appearance' as const, descKey: 'settings.appearanceDesc' as const },
+  { to: '/settings/ai', icon: <Bot size={20} />, labelKey: 'settings.ai' as const, descKey: 'settings.aiDesc' as const },
+  { to: '/settings/language', icon: <Globe size={20} />, labelKey: 'settings.language' as const, descKey: 'settings.languageDesc' as const },
+  { to: '/settings/notifications', icon: <Bell size={20} />, labelKey: 'settings.notifications' as const, descKey: 'settings.notificationsDesc' as const },
+  { to: '/settings/accessibility', icon: <HeartHandshake size={20} />, labelKey: 'settings.accessibility' as const, descKey: 'settings.accessibilityDesc' as const },
+  { to: '/settings/integrations', icon: <LinkIcon size={20} />, labelKey: 'settings.integrations' as const, descKey: 'settings.integrationsDesc' as const },
 ];
 
 export function SettingsNav() {

@@ -2,15 +2,16 @@
  * ShellNav - 左侧主导航
  * ============================================================ */
 import { NavLink } from 'react-router-dom';
+import { Home, Users, MessageSquareText, BookOpenText, Settings } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { useHouseholdContext } from '../state/household';
 
 const navItems = [
-  { to: '/', icon: '🏠', labelKey: 'nav.home' as const, end: true },
-  { to: '/family', icon: '👨‍👩‍👧‍👦', labelKey: 'nav.family' as const },
-  { to: '/assistant', icon: '💬', labelKey: 'nav.assistant' as const },
-  { to: '/memories', icon: '📝', labelKey: 'nav.memories' as const },
-  { to: '/settings', icon: '⚙️', labelKey: 'nav.settings' as const },
+  { to: '/', icon: <Home size={20} strokeWidth={2.5} />, labelKey: 'nav.home' as const, end: true },
+  { to: '/family', icon: <Users size={20} strokeWidth={2.5} />, labelKey: 'nav.family' as const },
+  { to: '/assistant', icon: <MessageSquareText size={20} strokeWidth={2.5} />, labelKey: 'nav.assistant' as const },
+  { to: '/memories', icon: <BookOpenText size={20} strokeWidth={2.5} />, labelKey: 'nav.memories' as const },
+  { to: '/settings', icon: <Settings size={20} strokeWidth={2.5} />, labelKey: 'nav.settings' as const },
 ];
 
 export function ShellNav() {
@@ -20,7 +21,12 @@ export function ShellNav() {
   return (
     <aside className="shell-nav">
       <div className="shell-nav__brand">
-        <span className="shell-nav__logo">🐾</span>
+        <span className="shell-nav__logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-brand-primary">
+            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7Z" />
+            <circle cx="12" cy="9" r="2.5" />
+          </svg>
+        </span>
         <span className="shell-nav__name">FamilyClaw</span>
       </div>
 

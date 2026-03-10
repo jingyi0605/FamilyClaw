@@ -79,7 +79,7 @@ export function EmptyState({
   description,
   action,
 }: {
-  icon?: string;
+  icon?: ReactNode;
   title: string;
   description?: string;
   action?: ReactNode;
@@ -101,7 +101,7 @@ export function StatCard({
   value,
   color,
 }: {
-  icon: string;
+  icon: ReactNode;
   label: string;
   value: string | number;
   color?: string;
