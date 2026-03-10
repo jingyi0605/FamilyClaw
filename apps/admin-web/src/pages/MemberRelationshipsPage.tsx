@@ -3,6 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { PageSection } from "../components/PageSection";
 import { StatusMessage } from "../components/StatusMessage";
 import { api } from "../lib/api";
+import {
+  getRelationCategoryLabel,
+  getRelationDirectionLabel,
+  RELATION_TYPE_OPTIONS,
+} from "../lib/relationshipLabels";
 import { useHousehold } from "../state/household";
 import type { Member, MemberRelationship } from "../types";
 
@@ -56,6 +61,20 @@ export function MemberRelationshipsPage() {
         members.map((member) => [member.id, member.name] satisfies [string, string]),
       ),
     [members],
+  );
+  const memberMap = useMemo(
+    () => new Map(members.map((member) => [member.id, member] as const)),
+    [members],
+  );
+  const relationshipMap = useMemo(
+    () =>
+      new Map(
+        relationships.map((relationship) => [
+          `${relationship.source_member_id}|${relationship.target_member_id}`,
+          relationship,
+        ] as const),
+      ),
+    [relationships],
   );
 
   async function loadMembers() {
@@ -249,11 +268,11 @@ export function MemberRelationshipsPage() {
               }
               disabled={submitting}
             >
-              <option value="spouse">spouse</option>
-              <option value="parent">parent</option>
-              <option value="child">child</option>
-              <option value="guardian">guardian</option>
-              <option value="caregiver">caregiver</option>
+              {RELATION_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {`${option.label} (${option.value})`}
+                </option>
+              ))}
             </select>
           </label>
           <label>
@@ -351,11 +370,11 @@ export function MemberRelationshipsPage() {
               }
             >
               <option value="">全部</option>
-              <option value="spouse">spouse</option>
-              <option value="parent">parent</option>
-              <option value="child">child</option>
-              <option value="guardian">guardian</option>
-              <option value="caregiver">caregiver</option>
+              {RELATION_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {`${option.label} (${option.value})`}
+                </option>
+              ))}
             </select>
           </label>
           <button type="submit" disabled={relationshipsLoading}>
@@ -397,7 +416,23 @@ export function MemberRelationshipsPage() {
                 relationships.map((relationship) => (
                   <tr key={relationship.id}>
                     <td>{memberNameMap[relationship.source_member_id] ?? relationship.source_member_id}</td>
-                    <td>{relationship.relation_type}</td>
+                    <td>
+                      <div>
+                        {getRelationCategoryLabel(
+                          relationship,
+                          relationshipMap.get(
+                            `${relationship.target_member_id}|${relationship.source_member_id}`,
+                          ),
+                          memberMap.get(relationship.source_member_id),
+                          memberMap.get(relationship.target_member_id),
+                        )}
+                      </div>
+                      <small>
+                        {getRelationDirectionLabel(relationship.relation_type)}
+                        {" · "}
+                        {relationship.relation_type}
+                      </small>
+                    </td>
                     <td>{memberNameMap[relationship.target_member_id] ?? relationship.target_member_id}</td>
                     <td>{relationship.visibility_scope}</td>
                     <td>{relationship.delegation_scope}</td>

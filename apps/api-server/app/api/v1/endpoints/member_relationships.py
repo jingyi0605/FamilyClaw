@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -80,19 +80,22 @@ def delete_member_relationship_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> None:
-    delete_relationship(db, relationship_id)
-    write_audit_log(
-        db,
-        household_id="",
-        actor=actor,
-        action="member_relationship.delete",
-        target_type="member_relationship",
-        target_id=relationship_id,
-        result="success",
-        details={"relationship_id": relationship_id},
-    )
     try:
+        relationship = delete_relationship(db, relationship_id)
+        write_audit_log(
+            db,
+            household_id=relationship.household_id,
+            actor=actor,
+            action="member_relationship.delete",
+            target_type="member_relationship",
+            target_id=relationship_id,
+            result="success",
+            details={"relationship_id": relationship_id},
+        )
         db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc

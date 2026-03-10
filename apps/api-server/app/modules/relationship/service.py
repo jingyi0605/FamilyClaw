@@ -47,14 +47,13 @@ def create_relationship(db: Session, payload: MemberRelationshipCreate) -> Membe
         payload.household_id,
         "source member",
     )
-    target_member = _get_member_in_household_or_400(
+    _get_member_in_household_or_400(
         db,
         payload.target_member_id,
         payload.household_id,
         "target member",
     )
 
-    # 创建正向关系
     relationship = MemberRelationship(
         id=new_uuid(),
         household_id=payload.household_id,
@@ -66,13 +65,11 @@ def create_relationship(db: Session, payload: MemberRelationshipCreate) -> Membe
     )
     db.add(relationship)
 
-    # 自动创建反向关系
     reverse_type = payload.reverse_relation_type
     if reverse_type is None:
         reverse_type = get_reverse_relation(payload.relation_type, source_member.gender)
 
     if reverse_type is not None:
-        # 检查反向关系是否已存在（避免重复）
         existing_reverse = db.scalar(
             select(MemberRelationship).where(
                 MemberRelationship.household_id == payload.household_id,
@@ -96,8 +93,44 @@ def create_relationship(db: Session, payload: MemberRelationshipCreate) -> Membe
     return relationship
 
 
-def delete_relationship(db: Session, relationship_id: str) -> None:
-    """删除指定关系，同时找到并删除对应的反向关系。"""
+def _find_reverse_relationship(db: Session, relationship: MemberRelationship) -> MemberRelationship | None:
+    source_member = db.get(Member, relationship.source_member_id)
+    candidate_types: list[str] = []
+
+    for relation_type in (
+        get_reverse_relation(relationship.relation_type, source_member.gender if source_member else None),
+        get_reverse_relation(relationship.relation_type, None),
+    ):
+        if relation_type is not None and relation_type not in candidate_types:
+            candidate_types.append(relation_type)
+
+    for relation_type in candidate_types:
+        reverse = db.scalar(
+            select(MemberRelationship).where(
+                MemberRelationship.household_id == relationship.household_id,
+                MemberRelationship.source_member_id == relationship.target_member_id,
+                MemberRelationship.target_member_id == relationship.source_member_id,
+                MemberRelationship.relation_type == relation_type,
+            )
+        )
+        if reverse is not None:
+            return reverse
+
+    reverse_candidates = list(
+        db.scalars(
+            select(MemberRelationship).where(
+                MemberRelationship.household_id == relationship.household_id,
+                MemberRelationship.source_member_id == relationship.target_member_id,
+                MemberRelationship.target_member_id == relationship.source_member_id,
+            )
+        ).all()
+    )
+    if len(reverse_candidates) == 1:
+        return reverse_candidates[0]
+    return None
+
+
+def delete_relationship(db: Session, relationship_id: str) -> MemberRelationship:
     relationship = db.get(MemberRelationship, relationship_id)
     if relationship is None:
         raise HTTPException(
@@ -105,33 +138,12 @@ def delete_relationship(db: Session, relationship_id: str) -> None:
             detail="relationship not found",
         )
 
-    reverse_type = get_reverse_relation(relationship.relation_type, None)
-
-    # 尝试找到反向关系并删除
-    if reverse_type is not None:
-        reverse = db.scalar(
-            select(MemberRelationship).where(
-                MemberRelationship.household_id == relationship.household_id,
-                MemberRelationship.source_member_id == relationship.target_member_id,
-                MemberRelationship.target_member_id == relationship.source_member_id,
-                MemberRelationship.relation_type == reverse_type,
-            )
-        )
-        if reverse is not None:
-            db.delete(reverse)
-    else:
-        # 如果不能精确找到反向类型，尝试找任意反向记录
-        reverse = db.scalar(
-            select(MemberRelationship).where(
-                MemberRelationship.household_id == relationship.household_id,
-                MemberRelationship.source_member_id == relationship.target_member_id,
-                MemberRelationship.target_member_id == relationship.source_member_id,
-            )
-        )
-        if reverse is not None:
-            db.delete(reverse)
+    reverse = _find_reverse_relationship(db, relationship)
+    if reverse is not None:
+        db.delete(reverse)
 
     db.delete(relationship)
+    return relationship
 
 
 def list_relationships(

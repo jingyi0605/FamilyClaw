@@ -2929,13 +2929,72 @@ body::before {
 
 .relationship-graph {
   position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(circle at top, rgba(214, 120, 74, 0.08), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.94));
+}
+
+.relationship-graph--dragging {
+  cursor: grabbing;
+}
+
+.relationship-graph__toolbar {
+  position: absolute;
+  top: var(--spacing-md);
+  right: var(--spacing-md);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  z-index: 2;
+  padding: 0.35rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(207, 201, 196, 0.7);
+  box-shadow: 0 6px 18px rgba(54, 36, 24, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.relationship-graph__toolbtn {
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  border-radius: 999px;
+  background: rgba(214, 120, 74, 0.12);
+  color: var(--brand-primary);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.relationship-graph__toolbtn:hover {
+  background: rgba(214, 120, 74, 0.2);
+  transform: translateY(-1px);
+}
+
+.relationship-graph__toolbtn--wide {
+  width: auto;
+  padding: 0 0.8rem;
+  font-size: 0.875rem;
+}
+
+.relationship-graph__zoom {
+  min-width: 3rem;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
 }
 
 .relationship-graph__svg {
   width: 100%;
   height: auto;
   min-height: 300px;
-  max-height: 480px;
+  max-height: 560px;
+  display: block;
+  cursor: grab;
+  touch-action: none;
 }
 
 .relationship-graph__hint {
@@ -2963,6 +3022,15 @@ body::before {
   margin-top: var(--spacing-sm);
 }
 
+.graph-grid {
+  fill: url(#graph-grid);
+}
+
+.graph-grid__line {
+  stroke: rgba(207, 201, 196, 0.55);
+  stroke-width: 1;
+}
+
 /* 节点 */
 .graph-node {
   transition: opacity 0.3s ease;
@@ -2973,6 +3041,10 @@ body::before {
   stroke: var(--brand-primary);
   stroke-width: 2.5;
   transition: fill 0.2s, stroke 0.2s, stroke-width 0.2s;
+}
+
+.graph-node--fixed .graph-node__circle {
+  fill: rgba(214, 120, 74, 0.12);
 }
 
 .graph-node--selected .graph-node__circle {
@@ -2997,10 +3069,20 @@ body::before {
   pointer-events: none;
 }
 
+.graph-node__pin {
+  fill: none;
+  stroke: rgba(214, 120, 74, 0.32);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
 /* 边/连线 */
 .graph-edge {
   stroke: var(--border);
   stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
   transition: stroke 0.3s, stroke-width 0.3s, opacity 0.3s;
 }
 
@@ -3016,8 +3098,10 @@ body::before {
 /* 边标签 */
 .graph-edge-label-bg {
   fill: var(--bg-surface);
-  opacity: 0.9;
-  transition: opacity 0.3s;
+  opacity: 0.94;
+  stroke: rgba(207, 201, 196, 0.7);
+  stroke-width: 1;
+  transition: opacity 0.3s, stroke 0.3s;
 }
 
 .graph-edge-label-bg--dim {
