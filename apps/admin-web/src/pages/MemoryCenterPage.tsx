@@ -9,6 +9,8 @@ import type {
   MemoryCardRevision,
   MemoryDebugOverviewRead,
   MemoryEventRecord,
+  MemoryHotSummaryRead,
+  MemoryQueryHit,
   Member,
   Room,
 } from "../types";
@@ -49,6 +51,8 @@ export function MemoryCenterPage() {
   const [events, setEvents] = useState<MemoryEventRecord[]>([]);
   const [cards, setCards] = useState<MemoryCard[]>([]);
   const [revisions, setRevisions] = useState<MemoryCardRevision[]>([]);
+  const [hotSummary, setHotSummary] = useState<MemoryHotSummaryRead | null>(null);
+  const [queryHits, setQueryHits] = useState<MemoryQueryHit[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selectedCardId, setSelectedCardId] = useState("");
@@ -57,6 +61,15 @@ export function MemoryCenterPage() {
 
   const [eventTypeFilter, setEventTypeFilter] = useState("");
   const [cardTypeFilter, setCardTypeFilter] = useState("");
+  const [queryForm, setQueryForm] = useState({
+    requester_member_id: "",
+    member_id: "",
+    memory_type: "",
+    status: "",
+    visibility: "",
+    query: "",
+    limit: 8,
+  });
 
   const [eventForm, setEventForm] = useState({
     event_type: "member_fact_observed",
@@ -129,22 +142,26 @@ export function MemoryCenterPage() {
       setEvents([]);
       setCards([]);
       setRevisions([]);
+      setHotSummary(null);
+      setQueryHits([]);
       return;
     }
     setLoading(true);
     try {
-      const [overviewResponse, eventResponse, cardResponse, memberResponse, roomResponse] = await Promise.all([
+      const [overviewResponse, eventResponse, cardResponse, memberResponse, roomResponse, hotSummaryResponse] = await Promise.all([
         api.getMemoryDebugOverview(householdId),
         api.listMemoryEvents(householdId),
         api.listMemoryCards(householdId),
         api.listMembers(householdId),
         api.listRooms(householdId),
+        api.getMemoryHotSummary(householdId),
       ]);
       setOverview(overviewResponse);
       setEvents(eventResponse.items);
       setCards(cardResponse.items);
       setMembers(memberResponse.items);
       setRooms(roomResponse.items);
+      setHotSummary(hotSummaryResponse);
 
       const nextSelectedCardId =
         cardResponse.items.find((item) => item.id === selectedCardId)?.id ?? cardResponse.items[0]?.id ?? "";
@@ -155,6 +172,11 @@ export function MemoryCenterPage() {
       } else {
         setRevisions([]);
       }
+      const queryResponse = await api.queryMemoryCards({
+        household_id: householdId,
+        limit: 8,
+      });
+      setQueryHits(queryResponse.items);
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
     } finally {
@@ -296,6 +318,33 @@ export function MemoryCenterPage() {
     }
   }
 
+  async function handleSearchMemories() {
+    if (!householdId) {
+      setMessage({ tone: "error", text: "请先选择家庭。" });
+      return;
+    }
+    try {
+      const [queryResponse, hotSummaryResponse] = await Promise.all([
+        api.queryMemoryCards({
+          household_id: householdId,
+          requester_member_id: queryForm.requester_member_id || null,
+          member_id: queryForm.member_id || null,
+          memory_type: (queryForm.memory_type || null) as MemoryCard["memory_type"] | null,
+          status: (queryForm.status || null) as MemoryCard["status"] | null,
+          visibility: (queryForm.visibility || null) as MemoryCard["visibility"] | null,
+          query: queryForm.query || null,
+          limit: Number(queryForm.limit),
+        }),
+        api.getMemoryHotSummary(householdId, queryForm.requester_member_id || null),
+      ]);
+      setQueryHits(queryResponse.items);
+      setHotSummary(hotSummaryResponse);
+      setMessage({ tone: "success", text: `检索完成，命中 ${queryResponse.total} 条记忆。` });
+    } catch (error) {
+      setMessage({ tone: "error", text: getErrorMessage(error) });
+    }
+  }
+
   const filteredEvents = useMemo(
     () => events.filter((item) => (eventTypeFilter ? item.event_type.includes(eventTypeFilter) : true)),
     [events, eventTypeFilter],
@@ -343,6 +392,190 @@ export function MemoryCenterPage() {
         </div>
         <div className="inline-note">
           现在已经不是只有“事件落库”了。支持的事件会自动提炼成记忆卡；如果命中同一 `dedupe_key`，系统会更新旧卡并写 revision，而不是无脑新增重复卡。
+        </div>
+      </PageSection>
+
+      <PageSection
+        title="检索与热摘要"
+        description="这里验证 2.2：结构化筛选、关键词匹配、权限差异和热摘要刷新。"
+      >
+        <div className="json-grid">
+          <div className="service-card">
+            <label>
+              以哪个成员视角看
+              <select
+                value={queryForm.requester_member_id}
+                onChange={(event) =>
+                  setQueryForm((current) => ({ ...current, requester_member_id: event.target.value }))
+                }
+              >
+                <option value="">管理员视角</option>
+                {members.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name} · {member.role}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              主体成员筛选
+              <select
+                value={queryForm.member_id}
+                onChange={(event) => setQueryForm((current) => ({ ...current, member_id: event.target.value }))}
+              >
+                <option value="">全部成员</option>
+                {members.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              记忆类型
+              <select
+                value={queryForm.memory_type}
+                onChange={(event) => setQueryForm((current) => ({ ...current, memory_type: event.target.value }))}
+              >
+                <option value="">全部</option>
+                <option value="fact">事实</option>
+                <option value="event">事件</option>
+                <option value="preference">偏好</option>
+                <option value="relation">关系</option>
+                <option value="growth">成长</option>
+              </select>
+            </label>
+            <label>
+              状态
+              <select
+                value={queryForm.status}
+                onChange={(event) => setQueryForm((current) => ({ ...current, status: event.target.value }))}
+              >
+                <option value="">全部</option>
+                <option value="active">有效</option>
+                <option value="pending_review">待审</option>
+                <option value="invalidated">失效</option>
+                <option value="deleted">删除</option>
+              </select>
+            </label>
+            <label>
+              可见性
+              <select
+                value={queryForm.visibility}
+                onChange={(event) => setQueryForm((current) => ({ ...current, visibility: event.target.value }))}
+              >
+                <option value="">全部</option>
+                <option value="public">公开</option>
+                <option value="family">家庭</option>
+                <option value="private">私密</option>
+                <option value="sensitive">敏感</option>
+              </select>
+            </label>
+            <label>
+              关键词
+              <input
+                value={queryForm.query}
+                onChange={(event) => setQueryForm((current) => ({ ...current, query: event.target.value }))}
+                placeholder="例如：不吃辣 / 睡觉 22 度"
+              />
+            </label>
+            <label>
+              返回数量
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={queryForm.limit}
+                onChange={(event) => setQueryForm((current) => ({ ...current, limit: Number(event.target.value) }))}
+              />
+            </label>
+            <div className="button-row">
+              <button type="button" onClick={() => void handleSearchMemories()}>
+                执行检索
+              </button>
+            </div>
+          </div>
+
+          <div className="service-card">
+            <h4>热摘要</h4>
+            {hotSummary ? (
+              <>
+                <p className="muted">
+                  生成时间：{formatDateTime(hotSummary.generated_at)} · 可见记忆数：{hotSummary.total_visible_cards}
+                </p>
+                <ul className="fact-list">
+                  {hotSummary.top_memories.map((item) => (
+                    <li key={item.memory_id}>
+                      {item.title} · {item.memory_type} · {item.summary}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="muted">当前还没有热摘要。</p>
+            )}
+          </div>
+        </div>
+
+        <div className="json-grid">
+          <div className="service-card">
+            <h4>偏好高频摘要</h4>
+            {hotSummary?.preference_highlights.length ? (
+              <ul className="fact-list">
+                {hotSummary.preference_highlights.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">当前没有偏好高频摘要。</p>
+            )}
+          </div>
+          <div className="service-card">
+            <h4>事件高频摘要</h4>
+            {hotSummary?.recent_event_highlights.length ? (
+              <ul className="fact-list">
+                {hotSummary.recent_event_highlights.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">当前没有事件高频摘要。</p>
+            )}
+          </div>
+        </div>
+
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>分数</th>
+                <th>标题</th>
+                <th>类型</th>
+                <th>可见性</th>
+                <th>命中词</th>
+                <th>摘要</th>
+              </tr>
+            </thead>
+            <tbody>
+              {queryHits.map((item) => (
+                <tr key={item.card.id}>
+                  <td>{item.score}</td>
+                  <td>{item.card.title}</td>
+                  <td>{item.card.memory_type}</td>
+                  <td>{item.card.visibility}</td>
+                  <td>{item.matched_terms.join(", ") || "—"}</td>
+                  <td>{item.card.summary}</td>
+                </tr>
+              ))}
+              {queryHits.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="muted">
+                    当前没有检索结果。
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
       </PageSection>
 

@@ -386,6 +386,38 @@ export type MemoryDebugOverviewRead = {
   latest_card_at: string | null;
 };
 
+export type MemoryQueryHit = {
+  card: MemoryCard;
+  score: number;
+  matched_terms: string[];
+};
+
+export type MemoryQueryResponse = {
+  household_id: string;
+  requester_member_id: string | null;
+  total: number;
+  query: string | null;
+  items: MemoryQueryHit[];
+};
+
+export type MemoryHotSummaryItem = {
+  title: string;
+  memory_id: string;
+  memory_type: string;
+  summary: string;
+  updated_at: string;
+};
+
+export type MemoryHotSummaryRead = {
+  household_id: string;
+  requester_member_id: string | null;
+  generated_at: string;
+  total_visible_cards: number;
+  top_memories: MemoryHotSummaryItem[];
+  preference_highlights: string[];
+  recent_event_highlights: string[];
+};
+
 export type ReminderTask = {
   id: string;
   household_id: string;

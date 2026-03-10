@@ -20,6 +20,8 @@ import type {
   MemoryDebugOverviewRead,
   MemoryEventRecord,
   MemoryEventWriteResponse,
+  MemoryHotSummaryRead,
+  MemoryQueryResponse,
   Member,
   MemberPermissionListResponse,
   MemberPermissionRule,
@@ -302,6 +304,28 @@ export const api = {
       params.set("memory_type", memoryType);
     }
     return request<PaginatedResponse<MemoryCard>>(`/memories/cards?${params.toString()}`);
+  },
+  queryMemoryCards(payload: {
+    household_id: string;
+    requester_member_id?: string | null;
+    member_id?: string | null;
+    memory_type?: MemoryCard["memory_type"] | null;
+    status?: MemoryCard["status"] | null;
+    visibility?: MemoryCard["visibility"] | null;
+    query?: string | null;
+    limit?: number;
+  }) {
+    return request<MemoryQueryResponse>("/memories/query", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  getMemoryHotSummary(householdId: string, requesterMemberId?: string | null) {
+    const params = new URLSearchParams({ household_id: householdId });
+    if (requesterMemberId) {
+      params.set("requester_member_id", requesterMemberId);
+    }
+    return request<MemoryHotSummaryRead>(`/memories/hot-summary?${params.toString()}`);
   },
   createManualMemoryCard(payload: {
     household_id: string;
