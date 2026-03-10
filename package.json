@@ -1,0 +1,8 @@
+{
+  "name": "familyclaw-workspace",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
