@@ -9,3 +9,4 @@ dist/
 apps/api-server/data/*.db
 apps/api-server/data/*.db-*
 apps/api-server/data/*.sqlite3
+.augment-rag/
