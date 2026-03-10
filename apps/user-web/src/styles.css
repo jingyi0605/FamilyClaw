@@ -999,6 +999,11 @@ input, select, textarea {
   gap: var(--spacing-md);
 }
 
+.card-scroll-anchor {
+  position: relative;
+  top: -72px;
+}
+
 .room-detail-card__top {
   display: flex;
   align-items: center;
@@ -1027,10 +1032,105 @@ input, select, textarea {
   color: var(--color-success);
 }
 
+.meta-item--highlight {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+.birthday-kind-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.birthday-kind-badge--solar {
+  background: color-mix(in srgb, var(--color-success) 14%, white);
+  color: color-mix(in srgb, var(--color-success) 82%, black);
+}
+
+.birthday-kind-badge--lunar {
+  background: color-mix(in srgb, var(--brand-primary) 14%, white);
+  color: color-mix(in srgb, var(--brand-primary) 82%, black);
+}
+
 .member-detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: var(--spacing-md);
+}
+
+.member-page-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.member-page-toolbar__title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.member-page-toolbar__desc {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.member-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg);
+  background: rgba(20, 24, 28, 0.42);
+}
+
+.member-modal {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: var(--spacing-xl);
+  border-radius: var(--radius-xl);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.member-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.member-modal__header h3 {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.member-modal__header p {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.member-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.member-inline-toggle {
+  padding: 0;
+  border-bottom: none;
 }
 
 .member-detail-card__top {
@@ -1043,6 +1143,12 @@ input, select, textarea {
 .member-detail-card--inactive {
   opacity: 0.72;
   filter: saturate(0.6);
+}
+
+.member-detail-card--birthday-soon {
+  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--border));
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--color-warning) 18%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-warning-light) 48%, var(--bg-card)) 0%, var(--bg-card) 38%);
 }
 
 .member-detail-card--inactive .member-detail-card__avatar {
@@ -1071,6 +1177,13 @@ input, select, textarea {
   flex-wrap: wrap;
 }
 
+.member-detail-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm) var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
 .member-detail-card__name {
   font-size: var(--font-size-lg);
   font-weight: 600;
@@ -1091,6 +1204,23 @@ input, select, textarea {
 .member-detail-card__actions {
   display: flex;
   gap: var(--spacing-sm);
+}
+
+@media (max-width: 768px) {
+  .member-page-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .member-modal {
+    padding: var(--spacing-lg);
+  }
+
+  .member-modal__header,
+  .member-modal__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 /* 关系页 */
@@ -1866,6 +1996,21 @@ input, select, textarea {
 .form-select:focus {
   outline: none;
   border-color: var(--brand-primary);
+}
+
+.form-input--error,
+.form-select--error {
+  border-color: var(--color-danger);
+}
+
+.form-error {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+}
+
+.form-help {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
 }
 
 .settings-toggles {

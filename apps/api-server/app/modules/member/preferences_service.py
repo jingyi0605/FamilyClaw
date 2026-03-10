@@ -33,6 +33,7 @@ def upsert_member_preferences(
     preference.content_preference = dump_json(payload.content_preference)
     preference.reminder_channel_preference = dump_json(payload.reminder_channel_preference)
     preference.sleep_schedule = dump_json(payload.sleep_schedule)
+    preference.birthday_is_lunar = payload.birthday_is_lunar
     db.add(preference)
     return member, preference
 
@@ -49,6 +50,7 @@ def get_member_preferences_or_default(db: Session, member_id: str) -> MemberPref
             content_preference=None,
             reminder_channel_preference=None,
             sleep_schedule=None,
+            birthday_is_lunar=False,
             updated_at=None,
         )
 
@@ -60,6 +62,7 @@ def get_member_preferences_or_default(db: Session, member_id: str) -> MemberPref
         content_preference=load_json(preference.content_preference),
         reminder_channel_preference=load_json(preference.reminder_channel_preference),
         sleep_schedule=load_json(preference.sleep_schedule),
+        birthday_is_lunar=preference.birthday_is_lunar,
         updated_at=preference.updated_at,
     )
 

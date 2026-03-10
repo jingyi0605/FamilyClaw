@@ -52,5 +52,6 @@ class MemberPreference(Base):
     content_preference: Mapped[str | None] = mapped_column(Text, nullable=True)
     reminder_channel_preference: Mapped[str | None] = mapped_column(Text, nullable=True)
     sleep_schedule: Mapped[str | None] = mapped_column(Text, nullable=True)
+    birthday_is_lunar: Mapped[bool] = mapped_column(nullable=False, default=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
 

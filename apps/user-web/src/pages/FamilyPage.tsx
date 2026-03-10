@@ -115,6 +115,202 @@ function formatPreferenceSummary(preference: MemberPreference | undefined) {
   return parts.length > 0 ? parts.join(' · ') : '还没有成员偏好数据';
 }
 
+function validatePhoneNumber(value: string) {
+  if (!value.trim()) {
+    return '';
+  }
+
+  return /^[0-9+\-\s]{6,20}$/.test(value.trim()) ? '' : '请输入有效手机号，支持数字、空格、+ 和 -';
+}
+
+function roleNeedsGuardian(role: Member['role']) {
+  return role === 'child';
+}
+
+function getAllowedStatusOptions(role: Member['role']) {
+  if (role === 'admin') {
+    return [{ value: 'active' as const, label: '启用' }];
+  }
+
+  return [
+    { value: 'active' as const, label: '启用' },
+    { value: 'inactive' as const, label: '停用' },
+  ];
+}
+
+function inferAgeGroupFromBirthday(birthday: string): NonNullable<Member['age_group']> | null {
+  if (!birthday) {
+    return null;
+  }
+
+  const birthDate = new Date(`${birthday}T00:00:00`);
+  if (Number.isNaN(birthDate.getTime())) {
+    return null;
+  }
+
+  const now = new Date();
+  let age = now.getFullYear() - birthDate.getFullYear();
+  const hasBirthdayPassed =
+    now.getMonth() > birthDate.getMonth()
+    || (now.getMonth() === birthDate.getMonth() && now.getDate() >= birthDate.getDate());
+
+  if (!hasBirthdayPassed) {
+    age -= 1;
+  }
+
+  if (age <= 3) return 'toddler';
+  if (age <= 12) return 'child';
+  if (age <= 17) return 'teen';
+  if (age >= 65) return 'elder';
+  return 'adult';
+}
+
+function getAgeFromBirthday(birthday: string | null) {
+  if (!birthday) {
+    return null;
+  }
+
+  const birthDate = new Date(`${birthday}T00:00:00`);
+  if (Number.isNaN(birthDate.getTime())) {
+    return null;
+  }
+
+  const now = new Date();
+  let age = now.getFullYear() - birthDate.getFullYear();
+  const hasBirthdayPassed =
+    now.getMonth() > birthDate.getMonth()
+    || (now.getMonth() === birthDate.getMonth() && now.getDate() >= birthDate.getDate());
+
+  if (!hasBirthdayPassed) {
+    age -= 1;
+  }
+
+  return Math.max(age, 0);
+}
+
+function getBirthdayCountdownText(birthday: string | null) {
+  if (!birthday) {
+    return '未设置生日';
+  }
+
+  const birthDate = new Date(`${birthday}T00:00:00`);
+  if (Number.isNaN(birthDate.getTime())) {
+    return '生日格式无效';
+  }
+
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let nextBirthday = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
+  if (nextBirthday < startOfToday) {
+    nextBirthday = new Date(today.getFullYear() + 1, birthDate.getMonth(), birthDate.getDate());
+  }
+
+  const diffDays = Math.round((nextBirthday.getTime() - startOfToday.getTime()) / 86400000);
+  if (diffDays === 0) return '今天生日';
+  if (diffDays === 1) return '明天生日';
+  return `${diffDays} 天后生日`;
+}
+
+function getBirthdayCountdownDays(birthday: string | null) {
+  if (!birthday) {
+    return null;
+  }
+
+  const birthDate = new Date(`${birthday}T00:00:00`);
+  if (Number.isNaN(birthDate.getTime())) {
+    return null;
+  }
+
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let nextBirthday = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
+  if (nextBirthday < startOfToday) {
+    nextBirthday = new Date(today.getFullYear() + 1, birthDate.getMonth(), birthDate.getDate());
+  }
+
+  return Math.round((nextBirthday.getTime() - startOfToday.getTime()) / 86400000);
+}
+
+function getLunarMonthDayInfo(date: Date) {
+  const parts = new Intl.DateTimeFormat('zh-CN-u-ca-chinese', { month: 'long', day: 'numeric' }).formatToParts(date);
+  const month = parts.find(part => part.type === 'month')?.value;
+  const day = parts.find(part => part.type === 'day')?.value;
+  if (!month || !day) {
+    return null;
+  }
+
+  return {
+    month,
+    day,
+    isLeapMonth: month.startsWith('闰'),
+    key: `${month}|${day}`,
+  };
+}
+
+function getLunarBirthdayCountdownDays(birthday: string | null) {
+  if (!birthday) {
+    return null;
+  }
+
+  const birthDate = new Date(`${birthday}T00:00:00`);
+  if (Number.isNaN(birthDate.getTime())) {
+    return null;
+  }
+
+  const targetInfo = getLunarMonthDayInfo(birthDate);
+  if (!targetInfo) {
+    return null;
+  }
+
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  for (let offset = 0; offset <= 4000; offset += 1) {
+    const candidate = new Date(startOfToday);
+    candidate.setDate(startOfToday.getDate() + offset);
+    const candidateInfo = getLunarMonthDayInfo(candidate);
+    if (candidateInfo && candidateInfo.key === targetInfo.key && candidateInfo.isLeapMonth === targetInfo.isLeapMonth) {
+      return offset;
+    }
+  }
+
+  return null;
+}
+
+function formatBirthdayCountdown(days: number | null, isLunarBirthday: boolean) {
+  if (days === null) {
+    return isLunarBirthday ? '暂未匹配到下一个农历生日' : '未设置生日';
+  }
+
+  if (days === 0) return '今天生日';
+  if (days === 1) return '明天生日';
+  return `${days} 天后生日`;
+}
+
+function getMemberRoleOptions() {
+  return [
+    { value: 'admin' as const, label: '管理员' },
+    { value: 'adult' as const, label: '成人' },
+    { value: 'child' as const, label: '儿童' },
+    { value: 'elder' as const, label: '长辈' },
+    { value: 'guest' as const, label: '访客' },
+  ];
+}
+
+function getAgeGroupOptionsForRole(role: Member['role']) {
+  switch (role) {
+    case 'child':
+      return [
+        { value: 'toddler' as const, label: '幼儿' },
+        { value: 'child' as const, label: '儿童' },
+        { value: 'teen' as const, label: '青少年' },
+      ];
+    case 'elder':
+      return [{ value: 'elder' as const, label: '长辈' }];
+    default:
+      return [{ value: 'adult' as const, label: '成人' }];
+  }
+}
+
 function formatRelationType(type: MemberRelationship['relation_type']) {
   switch (type) {
     case 'caregiver': return '照护关系';
@@ -308,8 +504,12 @@ export function FamilyRooms() {
   const { rooms, overview, devices, loading, refreshWorkspace } = useFamilyWorkspace();
   const { currentHouseholdId } = useHouseholdContext();
   const [createForm, setCreateForm] = useState({ name: '', room_type: 'living_room' as Room['room_type'], privacy_level: 'public' as Room['privacy_level'] });
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createErrors, setCreateErrors] = useState<{ name?: string }>({});
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [toastMessage, setToastMessage] = useState('');
+  const [pendingScrollRoomId, setPendingScrollRoomId] = useState<string | null>(null);
 
   const roomCards = rooms.map(room => {
     const roomOverview = overview?.room_occupancy.find(item => item.room_id === room.id);
@@ -326,55 +526,109 @@ export function FamilyRooms() {
     };
   });
 
+  useEffect(() => {
+    if (!toastMessage) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setToastMessage(''), 2200);
+    return () => window.clearTimeout(timer);
+  }, [toastMessage]);
+
+  useEffect(() => {
+    if (!isCreateModalOpen) {
+      return;
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsCreateModalOpen(false);
+        setCreateErrors({});
+        setError('');
+      }
+    }
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [isCreateModalOpen]);
+
+  useEffect(() => {
+    if (!pendingScrollRoomId || !rooms.some(room => room.id === pendingScrollRoomId)) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const element = document.getElementById(`family-room-card-${pendingScrollRoomId}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setPendingScrollRoomId(null);
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [pendingScrollRoomId, rooms]);
+
+  function validateCreateRoomForm() {
+    const nextErrors: { name?: string } = {};
+
+    if (!createForm.name.trim()) {
+      nextErrors.name = '请输入房间名称';
+    }
+
+    setCreateErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
   async function handleCreateRoom(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentHouseholdId) {
       setError('请先选择家庭。');
       return;
     }
+    if (!validateCreateRoomForm()) {
+      return;
+    }
     try {
       setError('');
-      await api.createRoom({ household_id: currentHouseholdId, ...createForm });
+      const createdRoom = await api.createRoom({ household_id: currentHouseholdId, ...createForm, name: createForm.name.trim() });
       setCreateForm({ name: '', room_type: 'living_room', privacy_level: 'public' });
+      setCreateErrors({});
+      setIsCreateModalOpen(false);
+      setPendingScrollRoomId(createdRoom.id);
       await refreshWorkspace();
       setStatus('房间已创建。');
+      setToastMessage('房间已创建');
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : '创建房间失败');
     }
   }
 
+  function openCreateRoomModal() {
+    setError('');
+    setStatus('');
+    setCreateErrors({});
+    setIsCreateModalOpen(true);
+  }
+
+  function closeCreateRoomModal() {
+    setIsCreateModalOpen(false);
+    setError('');
+    setCreateErrors({});
+  }
+
   return (
     <div className="family-rooms">
-      <Card className="room-detail-card" style={{ marginBottom: '1rem' }}>
-        <form className="settings-form" onSubmit={handleCreateRoom}>
-          <div className="form-group">
-            <label>房间名称</label>
-            <input className="form-input" value={createForm.name} onChange={event => setCreateForm(current => ({ ...current, name: event.target.value }))} required />
-          </div>
-          <div className="form-group">
-            <label>房间类型</label>
-            <select className="form-select" value={createForm.room_type} onChange={event => setCreateForm(current => ({ ...current, room_type: event.target.value as Room['room_type'] }))}>
-              <option value="living_room">客厅</option>
-              <option value="bedroom">卧室</option>
-              <option value="study">书房</option>
-              <option value="entrance">玄关</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label>隐私等级</label>
-            <select className="form-select" value={createForm.privacy_level} onChange={event => setCreateForm(current => ({ ...current, privacy_level: event.target.value as Room['privacy_level'] }))}>
-              <option value="public">公共</option>
-              <option value="private">私密</option>
-              <option value="sensitive">敏感</option>
-            </select>
-          </div>
-          <button className="btn btn--primary" type="submit">新建房间</button>
-          {(status || error) && <div className="text-text-secondary">{error || status}</div>}
-        </form>
-      </Card>
+      {toastMessage && <div className="page-toast">{toastMessage}</div>}
+      <div className="member-page-toolbar">
+        <div>
+          <h2 className="member-page-toolbar__title">房间列表</h2>
+          <p className="member-page-toolbar__desc">在这里查看家庭空间，并按需补充新的房间。</p>
+        </div>
+        <button className="btn btn--primary" type="button" onClick={openCreateRoomModal}>新增房间</button>
+      </div>
+      {(status || error) && <div className="text-text-secondary" style={{ marginBottom: '1rem' }}>{error || status}</div>}
       <div className="room-grid">
         {loading && roomCards.length === 0 ? <div className="text-text-secondary">正在加载房间数据...</div> : roomCards.map(room => (
           <Card key={room.id} className="room-detail-card">
+            <div id={`family-room-card-${room.id}`} className="card-scroll-anchor" />
             <div className="room-detail-card__top">
               <h3 className="room-detail-card__name">{room.name}</h3>
               {room.sensitive && <span className="badge badge--warning">{t('room.sensitive')}</span>}
@@ -390,6 +644,57 @@ export function FamilyRooms() {
           </Card>
         ))}
       </div>
+      {isCreateModalOpen && (
+        <div className="member-modal-overlay" onClick={closeCreateRoomModal}>
+          <div className="member-modal" onClick={event => event.stopPropagation()}>
+            <div className="member-modal__header">
+              <div>
+                <h3>新增房间</h3>
+                <p>填写房间名称和类型后，会直接加入当前家庭空间。</p>
+              </div>
+              <button className="card-action-btn" type="button" onClick={closeCreateRoomModal}>{t('common.cancel')}</button>
+            </div>
+            <form className="settings-form" onSubmit={handleCreateRoom} noValidate>
+              <div className="form-group">
+                <label>房间名称</label>
+                <input
+                  className={`form-input${createErrors.name ? ' form-input--error' : ''}`}
+                  value={createForm.name}
+                  onChange={event => {
+                    const value = event.target.value;
+                    setCreateForm(current => ({ ...current, name: value }));
+                    if (createErrors.name) {
+                      setCreateErrors(current => ({ ...current, name: value.trim() ? '' : '请输入房间名称' }));
+                    }
+                  }}
+                />
+                {createErrors.name && <div className="form-error">{createErrors.name}</div>}
+              </div>
+              <div className="form-group">
+                <label>房间类型</label>
+                <select className="form-select" value={createForm.room_type} onChange={event => setCreateForm(current => ({ ...current, room_type: event.target.value as Room['room_type'] }))}>
+                  <option value="living_room">客厅</option>
+                  <option value="bedroom">卧室</option>
+                  <option value="study">书房</option>
+                  <option value="entrance">玄关</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>隐私等级</label>
+                <select className="form-select" value={createForm.privacy_level} onChange={event => setCreateForm(current => ({ ...current, privacy_level: event.target.value as Room['privacy_level'] }))}>
+                  <option value="public">公共</option>
+                  <option value="private">私密</option>
+                  <option value="sensitive">敏感</option>
+                </select>
+              </div>
+              <div className="member-modal__actions">
+                <button className="btn btn--outline" type="button" onClick={closeCreateRoomModal}>{t('common.cancel')}</button>
+                <button className="btn btn--primary" type="submit">新增房间</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -399,18 +704,25 @@ export function FamilyMembers() {
   const { t } = useI18n();
   const { members, overview, preferencesByMemberId, loading, refreshWorkspace } = useFamilyWorkspace();
   const { currentHouseholdId } = useHouseholdContext();
-  const [createForm, setCreateForm] = useState({ name: '', nickname: '', gender: '' as '' | 'male' | 'female', role: 'adult' as Member['role'], age_group: 'adult' as NonNullable<Member['age_group']>, phone: '', guardian_member_id: '' });
+  const [createForm, setCreateForm] = useState({ name: '', nickname: '', gender: '' as '' | 'male' | 'female', role: 'adult' as Member['role'], age_group: 'adult' as NonNullable<Member['age_group']>, birthday: '', birthday_is_lunar: false, phone: '', status: 'active' as Member['status'], guardian_member_id: '' });
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createErrors, setCreateErrors] = useState<{ name?: string; phone?: string; guardian_member_id?: string }>({});
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
-  const [editingMemberDraft, setEditingMemberDraft] = useState({ nickname: '', gender: '' as '' | 'male' | 'female', role: 'adult' as Member['role'], age_group: 'adult' as NonNullable<Member['age_group']>, phone: '', status: 'active' as Member['status'], guardian_member_id: '' });
+  const [editingMemberDraft, setEditingMemberDraft] = useState({ nickname: '', gender: '' as '' | 'male' | 'female', role: 'adult' as Member['role'], age_group: 'adult' as NonNullable<Member['age_group']>, birthday: '', birthday_is_lunar: false, phone: '', status: 'active' as Member['status'], guardian_member_id: '' });
   const [editingPreferencesMemberId, setEditingPreferencesMemberId] = useState<string | null>(null);
   const [preferencesDraft, setPreferencesDraft] = useState({ preferred_name: '', reminder_channel: '', sleep_start: '', sleep_end: '' });
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [toastMessage, setToastMessage] = useState('');
+  const [pendingScrollMemberId, setPendingScrollMemberId] = useState<string | null>(null);
   const guardianCandidates = useMemo(
-    () => members.filter(member => member.id !== editingMemberId && (member.role === 'admin' || member.role === 'adult')),
+    () => members.filter(member => member.id !== editingMemberId && member.status === 'active' && (member.role === 'admin' || member.role === 'adult')),
     [editingMemberId, members],
   );
+  const createAgeGroupOptions = useMemo(() => getAgeGroupOptionsForRole(createForm.role), [createForm.role]);
+  const createStatusOptions = useMemo(() => getAllowedStatusOptions(createForm.role), [createForm.role]);
+  const editingAgeGroupOptions = useMemo(() => getAgeGroupOptionsForRole(editingMemberDraft.role), [editingMemberDraft.role]);
+  const editingStatusOptions = useMemo(() => getAllowedStatusOptions(editingMemberDraft.role), [editingMemberDraft.role]);
   const sortedMembers = useMemo(
     () => [...members].sort((left, right) => {
       if (left.status !== right.status) {
@@ -430,31 +742,171 @@ export function FamilyMembers() {
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
 
+  useEffect(() => {
+    if (!isCreateModalOpen) {
+      return;
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsCreateModalOpen(false);
+        setCreateErrors({});
+        setError('');
+      }
+    }
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [isCreateModalOpen]);
+
+  useEffect(() => {
+    if (!pendingScrollMemberId || !members.some(member => member.id === pendingScrollMemberId)) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const element = document.getElementById(`family-member-card-${pendingScrollMemberId}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setPendingScrollMemberId(null);
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [members, pendingScrollMemberId]);
+
+  useEffect(() => {
+    const inferredAgeGroup = inferAgeGroupFromBirthday(createForm.birthday);
+    const allowedAgeGroups = getAgeGroupOptionsForRole(createForm.role).map(option => option.value);
+
+    if (inferredAgeGroup && allowedAgeGroups.includes(inferredAgeGroup)) {
+      if (createForm.age_group !== inferredAgeGroup) {
+        setCreateForm(current => ({ ...current, age_group: inferredAgeGroup }));
+      }
+      return;
+    }
+
+    if (!allowedAgeGroups.includes(createForm.age_group)) {
+      setCreateForm(current => ({ ...current, age_group: allowedAgeGroups[0] }));
+    }
+  }, [createForm.age_group, createForm.birthday, createForm.role]);
+
+  useEffect(() => {
+    if (!roleNeedsGuardian(createForm.role) && createForm.guardian_member_id) {
+      setCreateForm(current => ({ ...current, guardian_member_id: '' }));
+    }
+
+    if (!roleNeedsGuardian(createForm.role) && createErrors.guardian_member_id) {
+      setCreateErrors(current => ({ ...current, guardian_member_id: '' }));
+    }
+
+    if (!getAllowedStatusOptions(createForm.role).some(option => option.value === createForm.status)) {
+      setCreateForm(current => ({ ...current, status: 'active' }));
+    }
+  }, [createErrors.guardian_member_id, createForm.guardian_member_id, createForm.role, createForm.status]);
+
+  useEffect(() => {
+    const inferredAgeGroup = inferAgeGroupFromBirthday(editingMemberDraft.birthday);
+    const allowedAgeGroups = getAgeGroupOptionsForRole(editingMemberDraft.role).map(option => option.value);
+
+    if (inferredAgeGroup && allowedAgeGroups.includes(inferredAgeGroup)) {
+      if (editingMemberDraft.age_group !== inferredAgeGroup) {
+        setEditingMemberDraft(current => ({ ...current, age_group: inferredAgeGroup }));
+      }
+      return;
+    }
+
+    if (!allowedAgeGroups.includes(editingMemberDraft.age_group)) {
+      setEditingMemberDraft(current => ({ ...current, age_group: allowedAgeGroups[0] }));
+    }
+  }, [editingMemberDraft.age_group, editingMemberDraft.birthday, editingMemberDraft.role]);
+
+  useEffect(() => {
+    if (!roleNeedsGuardian(editingMemberDraft.role) && editingMemberDraft.guardian_member_id) {
+      setEditingMemberDraft(current => ({ ...current, guardian_member_id: '' }));
+    }
+
+    if (!getAllowedStatusOptions(editingMemberDraft.role).some(option => option.value === editingMemberDraft.status)) {
+      setEditingMemberDraft(current => ({ ...current, status: 'active' }));
+    }
+  }, [editingMemberDraft.guardian_member_id, editingMemberDraft.role, editingMemberDraft.status]);
+
+  function validateCreateMemberForm() {
+    const nextErrors: { name?: string; phone?: string; guardian_member_id?: string } = {};
+
+    if (!createForm.name.trim()) {
+      nextErrors.name = '请输入成员姓名';
+    }
+
+    const phoneError = validatePhoneNumber(createForm.phone);
+    if (phoneError) {
+      nextErrors.phone = phoneError;
+    }
+
+    if (roleNeedsGuardian(createForm.role) && !createForm.guardian_member_id) {
+      nextErrors.guardian_member_id = '儿童成员需要指定监护人';
+    }
+
+    setCreateErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
   async function handleCreateMember(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentHouseholdId) {
       setError('请先选择家庭。');
       return;
     }
+    if (!validateCreateMemberForm()) {
+      return;
+    }
 
     try {
       setError('');
-      await api.createMember({
+      const createdMember = await api.createMember({
         household_id: currentHouseholdId,
-        name: createForm.name,
+        name: createForm.name.trim(),
         nickname: createForm.nickname || null,
         gender: createForm.gender || null,
         role: createForm.role,
         age_group: createForm.age_group,
-        phone: createForm.phone || null,
+        birthday: createForm.birthday || null,
+        phone: createForm.phone.trim() || null,
+        status: createForm.status,
         guardian_member_id: createForm.guardian_member_id || null,
       });
-      setCreateForm({ name: '', nickname: '', gender: '', role: 'adult', age_group: 'adult', phone: '', guardian_member_id: '' });
+      await api.upsertMemberPreferences(createdMember.id, {
+        preferred_name: null,
+        light_preference: null,
+        climate_preference: null,
+        content_preference: null,
+        reminder_channel_preference: null,
+        sleep_schedule: null,
+        birthday_is_lunar: createForm.birthday_is_lunar,
+      });
+      setCreateForm({ name: '', nickname: '', gender: '', role: 'adult', age_group: 'adult', birthday: '', birthday_is_lunar: false, phone: '', status: 'active', guardian_member_id: '' });
+      setCreateErrors({});
+      setIsCreateModalOpen(false);
+      setPendingScrollMemberId(createdMember.id);
       await refreshWorkspace();
       setStatus('成员已创建。');
+      setToastMessage('成员已创建');
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : '创建成员失败');
     }
+  }
+
+  function openCreateMemberModal() {
+    setEditingMemberId(null);
+    setEditingPreferencesMemberId(null);
+    setError('');
+    setStatus('');
+    setCreateErrors({});
+    setIsCreateModalOpen(true);
+  }
+
+  function closeCreateMemberModal() {
+    setIsCreateModalOpen(false);
+    setError('');
+    setCreateErrors({});
   }
 
   function openPreferencesEditor(member: Member) {
@@ -483,6 +935,8 @@ export function FamilyMembers() {
       gender: member.gender ?? '',
       role: member.role,
       age_group: member.age_group ?? 'adult',
+      birthday: member.birthday ?? '',
+      birthday_is_lunar: preferencesByMemberId[member.id]?.birthday_is_lunar ?? false,
       phone: member.phone ?? '',
       status: member.status,
       guardian_member_id: member.guardian_member_id ?? '',
@@ -496,6 +950,17 @@ export function FamilyMembers() {
       return;
     }
 
+    if (roleNeedsGuardian(editingMemberDraft.role) && !editingMemberDraft.guardian_member_id) {
+      setError('儿童成员需要指定监护人后才能保存。');
+      return;
+    }
+
+    const phoneError = validatePhoneNumber(editingMemberDraft.phone);
+    if (phoneError) {
+      setError(phoneError);
+      return;
+    }
+
     try {
       setError('');
       await api.updateMember(editingMemberId, {
@@ -503,9 +968,19 @@ export function FamilyMembers() {
         gender: editingMemberDraft.gender || null,
         role: editingMemberDraft.role,
         age_group: editingMemberDraft.age_group,
+        birthday: editingMemberDraft.birthday || null,
         phone: editingMemberDraft.phone || null,
         status: editingMemberDraft.status,
         guardian_member_id: editingMemberDraft.guardian_member_id || null,
+      });
+      await api.upsertMemberPreferences(editingMemberId, {
+        preferred_name: preferencesByMemberId[editingMemberId]?.preferred_name ?? null,
+        light_preference: preferencesByMemberId[editingMemberId]?.light_preference ?? null,
+        climate_preference: preferencesByMemberId[editingMemberId]?.climate_preference ?? null,
+        content_preference: preferencesByMemberId[editingMemberId]?.content_preference ?? null,
+        reminder_channel_preference: preferencesByMemberId[editingMemberId]?.reminder_channel_preference ?? null,
+        sleep_schedule: preferencesByMemberId[editingMemberId]?.sleep_schedule ?? null,
+        birthday_is_lunar: editingMemberDraft.birthday_is_lunar,
       });
       await refreshWorkspace();
       setEditingMemberId(null);
@@ -554,6 +1029,7 @@ export function FamilyMembers() {
         content_preference: null,
         reminder_channel_preference: preferencesDraft.reminder_channel ? { note: preferencesDraft.reminder_channel } : null,
         sleep_schedule: preferencesDraft.sleep_start || preferencesDraft.sleep_end ? { start: preferencesDraft.sleep_start, end: preferencesDraft.sleep_end } : null,
+        birthday_is_lunar: preferencesByMemberId[editingPreferencesMemberId]?.birthday_is_lunar ?? false,
       });
       await refreshWorkspace();
       setEditingPreferencesMemberId(null);
@@ -567,56 +1043,28 @@ export function FamilyMembers() {
   return (
     <div className="family-members">
       {toastMessage && <div className="page-toast">{toastMessage}</div>}
-      <Card className="member-detail-card" style={{ marginBottom: '1rem' }}>
-        <form className="settings-form" onSubmit={handleCreateMember}>
-          <div className="form-group">
-            <label>姓名</label>
-            <input className="form-input" value={createForm.name} onChange={event => setCreateForm(current => ({ ...current, name: event.target.value }))} required />
-          </div>
-          <div className="form-group">
-            <label>昵称</label>
-            <input className="form-input" value={createForm.nickname} onChange={event => setCreateForm(current => ({ ...current, nickname: event.target.value }))} />
-          </div>
-          <div className="form-group">
-            <label>性别</label>
-            <select className="form-select" value={createForm.gender} onChange={event => setCreateForm(current => ({ ...current, gender: event.target.value as '' | 'male' | 'female' }))}>
-              <option value="">未设置</option>
-              <option value="male">男</option>
-              <option value="female">女</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label>角色</label>
-            <select className="form-select" value={createForm.role} onChange={event => setCreateForm(current => ({ ...current, role: event.target.value as Member['role'] }))}>
-              <option value="admin">管理员</option>
-              <option value="adult">成人</option>
-              <option value="child">儿童</option>
-              <option value="elder">长辈</option>
-              <option value="guest">访客</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label>年龄分组</label>
-            <select className="form-select" value={createForm.age_group} onChange={event => setCreateForm(current => ({ ...current, age_group: event.target.value as NonNullable<Member['age_group']> }))}>
-              <option value="adult">成人</option>
-              <option value="child">儿童</option>
-              <option value="teen">青少年</option>
-              <option value="toddler">幼儿</option>
-              <option value="elder">长辈</option>
-            </select>
-          </div>
-          <button className="btn btn--primary" type="submit">新增成员</button>
-          {(status || error) && <div className="text-text-secondary">{error || status}</div>}
-        </form>
-      </Card>
+      <div className="member-page-toolbar">
+        <div>
+          <h2 className="member-page-toolbar__title">成员列表</h2>
+          <p className="member-page-toolbar__desc">在这里查看家庭成员，并按需编辑、停用或维护偏好。</p>
+        </div>
+        <button className="btn btn--primary" type="button" onClick={openCreateMemberModal}>新增成员</button>
+      </div>
+      {(status || error) && <div className="text-text-secondary" style={{ marginBottom: '1rem' }}>{error || status}</div>}
       <div className="member-detail-grid">
         {loading && sortedMembers.length === 0 ? <div className="text-text-secondary">正在加载成员数据...</div> : sortedMembers.map(member => {
           const status = getMemberStatus(member.id, overview);
           const isEditingMember = editingMemberId === member.id;
           const isInactiveMember = member.status === 'inactive';
+          const isLunarBirthday = preferencesByMemberId[member.id]?.birthday_is_lunar ?? false;
+          const age = getAgeFromBirthday(member.birthday);
+          const birthdayCountdownDays = isLunarBirthday ? getLunarBirthdayCountdownDays(member.birthday) : getBirthdayCountdownDays(member.birthday);
+          const birthdayCountdown = formatBirthdayCountdown(birthdayCountdownDays, isLunarBirthday);
+          const isBirthdaySoon = birthdayCountdownDays !== null && birthdayCountdownDays >= 0 && birthdayCountdownDays <= 7;
 
           return (
-            <Card key={member.id} className={`member-detail-card${isInactiveMember ? ' member-detail-card--inactive' : ''}`}>
+            <Card key={member.id} className={`member-detail-card${isInactiveMember ? ' member-detail-card--inactive' : ''}${isBirthdaySoon ? ' member-detail-card--birthday-soon' : ''}`}>
+              <div id={`family-member-card-${member.id}`} className="card-scroll-anchor" />
               <div className="member-detail-card__top">
                 <div className="member-detail-card__avatar">
                   {member.role === 'elder' ? '👵' : member.role === 'child' ? '👦' : member.role === 'guest' ? '🧑' : '👨'}
@@ -631,6 +1079,15 @@ export function FamilyMembers() {
                 <span className={`badge badge--${status === 'home' ? 'success' : status === 'resting' ? 'warning' : 'secondary'}`}>
                   {status === 'home' ? t('member.atHome') : status === 'resting' ? t('member.resting') : t('member.away')}
                 </span>
+              </div>
+              <div className="member-detail-card__meta">
+                <span className={`birthday-kind-badge ${isLunarBirthday ? 'birthday-kind-badge--lunar' : 'birthday-kind-badge--solar'}`}>
+                  {isLunarBirthday ? '农历生日' : '公历生日'}
+                </span>
+                <span className="meta-item">🎂 {member.birthday ?? '未设置生日'}</span>
+                <span className="meta-item">🧮 {age === null ? '年龄待补充' : `${age} 岁`}</span>
+                <span className="meta-item">🎉 {birthdayCountdown}</span>
+                {isBirthdaySoon && <span className="meta-item meta-item--highlight">✨ 生日快到了</span>}
               </div>
               <p className="member-detail-card__prefs">{formatPreferenceSummary(preferencesByMemberId[member.id])}</p>
               <div className="member-detail-card__actions">
@@ -659,23 +1116,28 @@ export function FamilyMembers() {
                   <div className="form-group">
                     <label>角色</label>
                     <select className="form-select" value={editingMemberDraft.role} onChange={event => setEditingMemberDraft(current => ({ ...current, role: event.target.value as Member['role'] }))}>
-                      <option value="admin">管理员</option>
-                      <option value="adult">成人</option>
-                      <option value="child">儿童</option>
-                      <option value="elder">长辈</option>
-                      <option value="guest">访客</option>
+                      {getMemberRoleOptions().map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   </div>
                   <div className="form-group">
                     <label>年龄分组</label>
-                    <select className="form-select" value={editingMemberDraft.age_group} onChange={event => setEditingMemberDraft(current => ({ ...current, age_group: event.target.value as NonNullable<Member['age_group']> }))}>
-                      <option value="adult">成人</option>
-                      <option value="child">儿童</option>
-                      <option value="teen">青少年</option>
-                      <option value="toddler">幼儿</option>
-                      <option value="elder">长辈</option>
+                    <select className="form-select" value={editingMemberDraft.age_group} disabled={Boolean(editingMemberDraft.birthday)} onChange={event => setEditingMemberDraft(current => ({ ...current, age_group: event.target.value as NonNullable<Member['age_group']> }))}>
+                      {editingAgeGroupOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
+                    {editingMemberDraft.birthday && <div className="form-help">已根据生日自动计算年龄分组</div>}
                   </div>
+                  <div className="form-group">
+                    <label>生日</label>
+                    <input className="form-input" type="date" value={editingMemberDraft.birthday} onChange={event => setEditingMemberDraft(current => ({ ...current, birthday: event.target.value }))} />
+                  </div>
+                  <label className="toggle-row member-inline-toggle">
+                    <div className="toggle-row__text">
+                      <span className="toggle-row__label">按农历生日提醒</span>
+                    </div>
+                    <div className={`toggle-switch ${editingMemberDraft.birthday_is_lunar ? 'toggle-switch--on' : ''}`} onClick={() => setEditingMemberDraft(current => ({ ...current, birthday_is_lunar: !current.birthday_is_lunar }))}>
+                      <div className="toggle-switch__thumb" />
+                    </div>
+                  </label>
                   <div className="form-group">
                     <label>手机号</label>
                     <input className="form-input" value={editingMemberDraft.phone} onChange={event => setEditingMemberDraft(current => ({ ...current, phone: event.target.value }))} />
@@ -683,17 +1145,20 @@ export function FamilyMembers() {
                   <div className="form-group">
                     <label>状态</label>
                     <select className="form-select" value={editingMemberDraft.status} onChange={event => setEditingMemberDraft(current => ({ ...current, status: event.target.value as Member['status'] }))}>
-                      <option value="active">启用</option>
-                      <option value="inactive">停用</option>
+                      {editingStatusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
+                    {editingMemberDraft.role === 'admin' && <div className="form-help">管理员默认保持启用，避免影响家庭管理</div>}
                   </div>
-                  <div className="form-group">
-                    <label>监护人</label>
-                    <select className="form-select" value={editingMemberDraft.guardian_member_id} onChange={event => setEditingMemberDraft(current => ({ ...current, guardian_member_id: event.target.value }))}>
-                      <option value="">无</option>
-                      {guardianCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}（{formatRole(candidate.role)}）</option>)}
-                    </select>
-                  </div>
+                  {roleNeedsGuardian(editingMemberDraft.role) && (
+                    <div className="form-group">
+                      <label>监护人</label>
+                      <select className="form-select" value={editingMemberDraft.guardian_member_id} onChange={event => setEditingMemberDraft(current => ({ ...current, guardian_member_id: event.target.value }))}>
+                        <option value="">请选择监护人</option>
+                        {guardianCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}（{formatRole(candidate.role)}）</option>)}
+                      </select>
+                      <div className="form-help">儿童角色需要绑定一位已启用的成人或管理员</div>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: '0.75rem' }}>
                     <button className="btn btn--primary" type="button" onClick={() => void handleSaveMember()}>{t('common.save')}</button>
                     <button className="btn btn--outline" type="button" onClick={() => setEditingMemberId(null)}>{t('common.cancel')}</button>
@@ -704,6 +1169,115 @@ export function FamilyMembers() {
           );
         })}
       </div>
+      {isCreateModalOpen && (
+        <div className="member-modal-overlay" onClick={closeCreateMemberModal}>
+          <div className="member-modal" onClick={event => event.stopPropagation()}>
+            <div className="member-modal__header">
+              <div>
+                <h3>新增成员</h3>
+                <p>填写基础信息后，成员会直接加入当前家庭。</p>
+              </div>
+              <button className="card-action-btn" type="button" onClick={closeCreateMemberModal}>{t('common.cancel')}</button>
+            </div>
+            <form className="settings-form" onSubmit={handleCreateMember} noValidate>
+              <div className="form-group">
+                <label>姓名</label>
+                <input
+                  className={`form-input${createErrors.name ? ' form-input--error' : ''}`}
+                  value={createForm.name}
+                  onChange={event => {
+                    const value = event.target.value;
+                    setCreateForm(current => ({ ...current, name: value }));
+                    if (createErrors.name) {
+                      setCreateErrors(current => ({ ...current, name: value.trim() ? '' : '请输入成员姓名' }));
+                    }
+                  }}
+                />
+                {createErrors.name && <div className="form-error">{createErrors.name}</div>}
+              </div>
+              <div className="form-group">
+                <label>昵称</label>
+                <input className="form-input" value={createForm.nickname} onChange={event => setCreateForm(current => ({ ...current, nickname: event.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label>性别</label>
+                <select className="form-select" value={createForm.gender} onChange={event => setCreateForm(current => ({ ...current, gender: event.target.value as '' | 'male' | 'female' }))}>
+                  <option value="">未设置</option>
+                  <option value="male">男</option>
+                  <option value="female">女</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>角色</label>
+                <select className="form-select" value={createForm.role} onChange={event => setCreateForm(current => ({ ...current, role: event.target.value as Member['role'] }))}>
+                  {getMemberRoleOptions().map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>年龄分组</label>
+                <select className="form-select" value={createForm.age_group} disabled={Boolean(createForm.birthday)} onChange={event => setCreateForm(current => ({ ...current, age_group: event.target.value as NonNullable<Member['age_group']> }))}>
+                  {createAgeGroupOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                {createForm.birthday && <div className="form-help">已根据生日自动计算年龄分组</div>}
+              </div>
+              <div className="form-group">
+                <label>生日</label>
+                <input className="form-input" type="date" value={createForm.birthday} onChange={event => setCreateForm(current => ({ ...current, birthday: event.target.value }))} />
+              </div>
+              <label className="toggle-row member-inline-toggle">
+                <div className="toggle-row__text">
+                  <span className="toggle-row__label">按农历生日提醒</span>
+                </div>
+                <div className={`toggle-switch ${createForm.birthday_is_lunar ? 'toggle-switch--on' : ''}`} onClick={() => setCreateForm(current => ({ ...current, birthday_is_lunar: !current.birthday_is_lunar }))}>
+                  <div className="toggle-switch__thumb" />
+                </div>
+              </label>
+              <div className="form-group">
+                <label>手机号</label>
+                <input
+                  className={`form-input${createErrors.phone ? ' form-input--error' : ''}`}
+                  value={createForm.phone}
+                  onChange={event => {
+                    const value = event.target.value;
+                    setCreateForm(current => ({ ...current, phone: value }));
+                    if (createErrors.phone) {
+                      setCreateErrors(current => ({ ...current, phone: validatePhoneNumber(value) || '' }));
+                    }
+                  }}
+                />
+                {createErrors.phone && <div className="form-error">{createErrors.phone}</div>}
+              </div>
+              <div className="form-group">
+                <label>状态</label>
+                <select className="form-select" value={createForm.status} onChange={event => setCreateForm(current => ({ ...current, status: event.target.value as Member['status'] }))}>
+                  {createStatusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                {createForm.role === 'admin' && <div className="form-help">管理员默认保持启用，避免影响家庭管理</div>}
+              </div>
+              {roleNeedsGuardian(createForm.role) && (
+                <div className="form-group">
+                  <label>监护人</label>
+                  <select className={`form-select${createErrors.guardian_member_id ? ' form-select--error' : ''}`} value={createForm.guardian_member_id} onChange={event => {
+                    const value = event.target.value;
+                    setCreateForm(current => ({ ...current, guardian_member_id: value }));
+                    if (createErrors.guardian_member_id) {
+                      setCreateErrors(current => ({ ...current, guardian_member_id: value ? '' : '儿童成员需要指定监护人' }));
+                    }
+                  }}>
+                    <option value="">请选择监护人</option>
+                    {guardianCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}（{formatRole(candidate.role)}）</option>)}
+                  </select>
+                  {createErrors.guardian_member_id ? <div className="form-error">{createErrors.guardian_member_id}</div> : <div className="form-help">儿童角色需要绑定一位已启用的成人或管理员</div>}
+                </div>
+              )}
+              <div className="member-modal__actions">
+                <button className="btn btn--outline" type="button" onClick={closeCreateMemberModal}>{t('common.cancel')}</button>
+                <button className="btn btn--primary" type="submit">新增成员</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       {editingPreferencesMemberId && (
         <Card className="member-detail-card" style={{ marginTop: '1rem' }}>
           <div className="settings-form">
@@ -765,6 +1339,200 @@ const RELATION_CATEGORY_LABELS: Record<string, string> = {
 };
 
 /* 根据成员角色筛选可选的关系类型 */
+function coalesceGender(...genders: Array<Member['gender'] | undefined>): Member['gender'] {
+  for (const gender of genders) {
+    if (gender === 'male' || gender === 'female') {
+      return gender;
+    }
+  }
+  return null;
+}
+
+function inferRoleGender(
+  relationType: MemberRelationship['relation_type'] | undefined,
+  role: 'source' | 'target',
+): Member['gender'] {
+  if (role === 'source') {
+    return null;
+  }
+
+  switch (relationType) {
+    case 'husband':
+    case 'father':
+    case 'son':
+    case 'older_brother':
+    case 'younger_brother':
+    case 'grandfather_paternal':
+    case 'grandfather_maternal':
+    case 'grandson':
+      return 'male';
+    case 'wife':
+    case 'mother':
+    case 'daughter':
+    case 'older_sister':
+    case 'younger_sister':
+    case 'grandmother_paternal':
+    case 'grandmother_maternal':
+    case 'granddaughter':
+      return 'female';
+    default:
+      return null;
+  }
+}
+
+function getResolvedPairGender(
+  member: Member | undefined,
+  relationType: MemberRelationship['relation_type'],
+  reverseRelationType: MemberRelationship['relation_type'] | undefined,
+  role: 'source' | 'target',
+): Member['gender'] {
+  const reverseRole = role === 'source' ? 'target' : 'source';
+  return coalesceGender(
+    member?.gender,
+    inferRoleGender(relationType, role),
+    inferRoleGender(reverseRelationType, reverseRole),
+  );
+}
+
+function getSpouseCategoryLabel(firstGender: Member['gender'], secondGender: Member['gender']) {
+  if (firstGender === 'male' && secondGender === 'male') return '夫夫';
+  if (firstGender === 'female' && secondGender === 'female') return '妻妻';
+  if (
+    (firstGender === 'male' && secondGender === 'female')
+    || (firstGender === 'female' && secondGender === 'male')
+  ) {
+    return '夫妻';
+  }
+  return '伴侣';
+}
+
+function getParentChildCategoryLabel(parentGender: Member['gender'], childGender: Member['gender']) {
+  if (parentGender === 'male') {
+    if (childGender === 'male') return '父子';
+    if (childGender === 'female') return '父女';
+    return '父子/父女';
+  }
+
+  if (parentGender === 'female') {
+    if (childGender === 'male') return '母子';
+    if (childGender === 'female') return '母女';
+    return '母子/母女';
+  }
+
+  if (childGender === 'male') return '父子/母子';
+  if (childGender === 'female') return '父女/母女';
+  return '亲子';
+}
+
+function getSiblingCategoryLabel(olderGender: Member['gender'], youngerGender: Member['gender']) {
+  if (olderGender === 'male') {
+    if (youngerGender === 'male') return '兄弟';
+    if (youngerGender === 'female') return '兄妹';
+    return '兄弟/兄妹';
+  }
+
+  if (olderGender === 'female') {
+    if (youngerGender === 'male') return '姐弟';
+    if (youngerGender === 'female') return '姐妹';
+    return '姐弟/姐妹';
+  }
+
+  if (youngerGender === 'male') return '兄弟/姐弟';
+  if (youngerGender === 'female') return '兄妹/姐妹';
+  return '手足';
+}
+
+function inferGrandparentSide(
+  relationType: MemberRelationship['relation_type'],
+  reverseRelationType: MemberRelationship['relation_type'] | undefined,
+): 'paternal' | 'maternal' | null {
+  if (
+    relationType === 'grandfather_maternal'
+    || relationType === 'grandmother_maternal'
+    || reverseRelationType === 'grandfather_maternal'
+    || reverseRelationType === 'grandmother_maternal'
+  ) {
+    return 'maternal';
+  }
+
+  if (
+    relationType === 'grandfather_paternal'
+    || relationType === 'grandmother_paternal'
+    || reverseRelationType === 'grandfather_paternal'
+    || reverseRelationType === 'grandmother_paternal'
+  ) {
+    return 'paternal';
+  }
+
+  return null;
+}
+
+function getGrandparentCategoryLabel(
+  grandchildGender: Member['gender'],
+  side: 'paternal' | 'maternal' | null,
+) {
+  const maleLabel = side === 'maternal' ? '外祖孙' : '祖孙';
+  const femaleLabel = side === 'maternal' ? '外祖孙女' : '祖孙女';
+
+  if (grandchildGender === 'male') return maleLabel;
+  if (grandchildGender === 'female') return femaleLabel;
+  return `${maleLabel}/${femaleLabel}`;
+}
+
+function getRelationCategoryLabel(
+  relationship: MemberRelationship,
+  reverseRelationship: MemberRelationship | undefined,
+  sourceMember?: Member,
+  targetMember?: Member,
+) {
+  const relationType = relationship.relation_type;
+  const reverseRelationType = reverseRelationship?.relation_type;
+  const sourceGender = getResolvedPairGender(sourceMember, relationType, reverseRelationType, 'source');
+  const targetGender = getResolvedPairGender(targetMember, relationType, reverseRelationType, 'target');
+
+  switch (relationType) {
+    case 'husband':
+    case 'wife':
+    case 'spouse':
+      return getSpouseCategoryLabel(sourceGender, targetGender);
+    case 'father':
+    case 'mother':
+    case 'parent':
+      return getParentChildCategoryLabel(targetGender, sourceGender);
+    case 'son':
+    case 'daughter':
+    case 'child':
+      return getParentChildCategoryLabel(sourceGender, targetGender);
+    case 'older_brother':
+    case 'older_sister':
+      return getSiblingCategoryLabel(targetGender, sourceGender);
+    case 'younger_brother':
+    case 'younger_sister':
+      return getSiblingCategoryLabel(sourceGender, targetGender);
+    case 'grandfather_paternal':
+    case 'grandmother_paternal':
+    case 'grandfather_maternal':
+    case 'grandmother_maternal':
+      return getGrandparentCategoryLabel(
+        sourceGender,
+        inferGrandparentSide(relationType, reverseRelationType),
+      );
+    case 'grandson':
+    case 'granddaughter':
+      return getGrandparentCategoryLabel(
+        targetGender,
+        inferGrandparentSide(relationType, reverseRelationType),
+      );
+    case 'guardian':
+    case 'ward':
+      return '监护';
+    case 'caregiver':
+      return '照护';
+    default:
+      return RELATION_CATEGORY_LABELS[relationType] ?? relationType;
+  }
+}
+
 type RelationOption = { value: string; label: string };
 
 function getRelationOptionsForRole(role: string): RelationOption[] {
@@ -814,6 +1582,11 @@ type GraphEdge = { source: string; target: string; label: string; relationType: 
 function buildGraphData(members: Member[], relationships: MemberRelationship[]): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const angle = (2 * Math.PI) / Math.max(members.length, 1);
   const radius = Math.min(180, 60 + members.length * 20);
+  const memberMap = new Map(members.map(member => [member.id, member] as const));
+  const relationshipMap = new Map(relationships.map(relationship => [
+    `${relationship.source_member_id}|${relationship.target_member_id}`,
+    relationship,
+  ] as const));
 
   const nodes: GraphNode[] = members.map((m, i) => ({
     id: m.id,
@@ -835,7 +1608,12 @@ function buildGraphData(members: Member[], relationships: MemberRelationship[]):
       edges.push({
         source: rel.source_member_id,
         target: rel.target_member_id,
-        label: RELATION_CATEGORY_LABELS[rel.relation_type] ?? rel.relation_type,
+        label: getRelationCategoryLabel(
+          rel,
+          relationshipMap.get(`${rel.target_member_id}|${rel.source_member_id}`),
+          memberMap.get(rel.source_member_id),
+          memberMap.get(rel.target_member_id),
+        ),
         relationType: rel.relation_type,
       });
     }

@@ -49,9 +49,32 @@ function resolveErrorMessage(payload: unknown, fallbackMessage: string): string 
   return fallbackMessage;
 }
 
+async function readResponsePayload(response: Response, isJsonResponse: boolean): Promise<unknown> {
+  if (response.status === 204 || response.status === 205) {
+    return undefined;
+  }
+
+  const text = await response.text().catch(() => '');
+  if (!text.trim()) {
+    return undefined;
+  }
+
+  if (!isJsonResponse) {
+    return text;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? {});
-  headers.set('Content-Type', 'application/json');
+  if (init?.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   headers.set('X-Actor-Role', ACTOR_ROLE);
   if (ACTOR_ID) {
     headers.set('X-Actor-Id', ACTOR_ID);
@@ -66,9 +89,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const isJsonResponse = contentType.includes('application/json');
 
   if (!response.ok) {
-    const payload = isJsonResponse
-      ? await response.json().catch(() => null)
-      : await response.text().catch(() => '');
+    const payload = await readResponsePayload(response, isJsonResponse);
     throw new ApiError(
       response.status,
       resolveErrorMessage(payload, `Request failed with status ${response.status}`),
@@ -80,7 +101,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
 
-  return response.json() as Promise<T>;
+  const payload = await readResponsePayload(response, isJsonResponse);
+  return payload as T;
 }
 
 export const api = {
@@ -111,7 +133,9 @@ export const api = {
     gender?: 'male' | 'female' | null;
     role: Member['role'];
     age_group?: Member['age_group'];
+    birthday?: string | null;
     phone?: string | null;
+    status?: Member['status'];
     guardian_member_id?: string | null;
   }) {
     return request<Member>('/members', {

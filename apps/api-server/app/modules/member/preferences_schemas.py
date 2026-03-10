@@ -10,6 +10,7 @@ class MemberPreferenceUpsert(BaseModel):
     content_preference: Any | None = None
     reminder_channel_preference: Any | None = None
     sleep_schedule: Any | None = None
+    birthday_is_lunar: bool = False
 
 
 class MemberPreferenceRead(MemberPreferenceUpsert):

@@ -60,6 +60,7 @@ export type MemberPreference = {
   content_preference: unknown | null;
   reminder_channel_preference: unknown | null;
   sleep_schedule: unknown | null;
+  birthday_is_lunar: boolean;
   updated_at: string;
 };
 
