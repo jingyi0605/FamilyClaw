@@ -1,5 +1,8 @@
 import type {
   AuditLog,
+  ContextConfigRead,
+  ContextConfigUpsertPayload,
+  ContextOverviewRead,
   Device,
   HomeAssistantSyncResponse,
   Household,
@@ -206,5 +209,19 @@ export const api = {
     return request<PaginatedResponse<AuditLog>>(
       `/audit-logs?household_id=${encodeURIComponent(householdId)}`,
     );
+  },
+  getContextOverview(householdId: string) {
+    return request<ContextOverviewRead>(
+      `/context/overview?household_id=${encodeURIComponent(householdId)}`,
+    );
+  },
+  getContextConfig(householdId: string) {
+    return request<ContextConfigRead>(`/context/configs/${encodeURIComponent(householdId)}`);
+  },
+  updateContextConfig(householdId: string, payload: ContextConfigUpsertPayload) {
+    return request<ContextConfigRead>(`/context/configs/${encodeURIComponent(householdId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
   },
 };

@@ -1,23 +1,76 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 
-import { useHousehold } from "./state/household";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
+import { ContextCenterPage } from "./pages/ContextCenterPage";
 import { HouseholdPage } from "./pages/HouseholdPage";
 import { MemberPreferencesPermissionsPage } from "./pages/MemberPreferencesPermissionsPage";
 import { MemberRelationshipsPage } from "./pages/MemberRelationshipsPage";
 import { MembersPage } from "./pages/MembersPage";
 import { RoomsDevicesPage } from "./pages/RoomsDevicesPage";
+import { useHousehold } from "./state/household";
 
-const navItems = [
-  { to: "/", label: "家庭管理" },
-  { to: "/members", label: "成员管理" },
-  { to: "/member-relationships", label: "成员关系" },
-  { to: "/member-settings", label: "偏好与权限" },
-  { to: "/spaces", label: "房间与设备" },
-  { to: "/audit-logs", label: "审计日志" },
+type NavItem = {
+  to: string;
+  label: string;
+  title: string;
+  description: string;
+};
+
+const navItems: NavItem[] = [
+  {
+    to: "/context-center",
+    label: "家庭总览",
+    title: "家居上下文中心",
+    description: "查看家庭状态、成员状态、设备热区与上下文配置。",
+  },
+  {
+    to: "/",
+    label: "家庭管理",
+    title: "家庭底座管理",
+    description: "维护家庭主数据、时区、语言和最基础的家庭信息。",
+  },
+  {
+    to: "/members",
+    label: "成员管理",
+    title: "成员中心",
+    description: "管理成员资料、角色和启停状态。",
+  },
+  {
+    to: "/member-relationships",
+    label: "成员关系",
+    title: "关系图谱",
+    description: "维护家庭成员关系、监护链路和可见范围。",
+  },
+  {
+    to: "/member-settings",
+    label: "偏好与权限",
+    title: "成员偏好与权限",
+    description: "配置成员偏好、访问规则和执行边界。",
+  },
+  {
+    to: "/spaces",
+    label: "房间与设备",
+    title: "房间与设备管理",
+    description: "维护房间主数据、设备归属和 HA 同步结果。",
+  },
+  {
+    to: "/audit-logs",
+    label: "审计日志",
+    title: "审计与追踪",
+    description: "查看关键写操作、同步动作和失败记录。",
+  },
 ];
 
+function matchNavItem(pathname: string, item: NavItem) {
+  if (item.to === "/") {
+    return pathname === "/";
+  }
+
+  return pathname.startsWith(item.to);
+}
+
 export default function App() {
+  const location = useLocation();
   const {
     household,
     households,
@@ -26,6 +79,9 @@ export default function App() {
     refreshHousehold,
     setCurrentHouseholdId,
   } = useHousehold();
+
+  const currentNavItem =
+    navItems.find((item) => matchNavItem(location.pathname, item)) ?? navItems[0];
 
   async function handleSwitchHousehold(nextHouseholdId: string) {
     setCurrentHouseholdId(nextHouseholdId);
@@ -37,7 +93,11 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <h1>FamilyClaw</h1>
-          <p>家庭底座管理台</p>
+          <p>家庭 AI 中枢管理台</p>
+        </div>
+        <div className="sidebar-note">
+          <strong>当前阶段重点</strong>
+          <p>先把家庭主数据、家居接入和上下文中心做成闭环，别急着堆花哨功能。</p>
         </div>
         <nav className="nav">
           {navItems.map((item) => (
@@ -55,9 +115,10 @@ export default function App() {
 
       <main className="content">
         <header className="topbar">
-          <div>
-            <h2>管理控制台</h2>
-            <p>先围绕家庭、成员、房间、设备与审计做最小可运行闭环。</p>
+          <div className="topbar-copy">
+            <span className="topbar-kicker">FamilyClaw Console</span>
+            <h2>{currentNavItem.title}</h2>
+            <p>{currentNavItem.description}</p>
           </div>
           <div className="household-badge">
             <span>当前家庭</span>
@@ -83,6 +144,7 @@ export default function App() {
         </header>
 
         <Routes>
+          <Route path="/context-center" element={<ContextCenterPage />} />
           <Route path="/" element={<HouseholdPage />} />
           <Route path="/members" element={<MembersPage />} />
           <Route path="/member-relationships" element={<MemberRelationshipsPage />} />

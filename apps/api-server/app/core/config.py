@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     home_assistant_base_url: str | None = None
     home_assistant_token: str | None = None
     home_assistant_timeout_seconds: float = 10.0
+    context_cache_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_prefix="FAMILYCLAW_",

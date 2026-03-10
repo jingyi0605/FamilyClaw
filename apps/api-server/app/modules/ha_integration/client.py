@@ -29,26 +29,51 @@ class HomeAssistantClient:
             raise HomeAssistantClientError("home assistant token is not configured")
 
     def get_states(self) -> list[dict]:
-        payload = self._request_json("/api/states")
+        payload = self._request_json("/api/states", method="GET")
         if not isinstance(payload, list):
             raise HomeAssistantClientError("unexpected response from home assistant states api")
         return payload
 
-    def _request_json(self, path: str) -> dict | list:
+    def call_service(
+        self,
+        *,
+        domain: str,
+        service: str,
+        data: dict | None = None,
+    ) -> dict | list:
+        if not domain.strip():
+            raise HomeAssistantClientError("home assistant service domain is required")
+        if not service.strip():
+            raise HomeAssistantClientError("home assistant service name is required")
+        return self._request_json(
+            f"/api/services/{domain}/{service}",
+            method="POST",
+            body=data or {},
+        )
+
+    def _request_json(
+        self,
+        path: str,
+        *,
+        method: str,
+        body: dict | None = None,
+    ) -> dict | list:
         url = parse.urljoin(f"{self.base_url}/", path.lstrip("/"))
+        payload = json.dumps(body).encode("utf-8") if body is not None else None
         req = request.Request(
             url,
             headers={
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
             },
-            method="GET",
+            data=payload,
+            method=method,
         )
         try:
             with request.urlopen(req, timeout=self.timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
         except OSError:
-            return self._request_json_with_curl(url)
+            return self._request_json_with_curl(url, method=method, body=body)
         except error.HTTPError as exc:
             try:
                 detail = exc.read().decode("utf-8")
@@ -59,13 +84,19 @@ class HomeAssistantClient:
             ) from exc
         except error.URLError as exc:
             try:
-                return self._request_json_with_curl(url)
+                return self._request_json_with_curl(url, method=method, body=body)
             except HomeAssistantClientError:
                 raise HomeAssistantClientError(
                     f"home assistant connection failed: {exc.reason}"
                 ) from exc
 
-    def _request_json_with_curl(self, url: str) -> dict | list:
+    def _request_json_with_curl(
+        self,
+        url: str,
+        *,
+        method: str,
+        body: dict | None = None,
+    ) -> dict | list:
         command = [
             "curl",
             "--noproxy",
@@ -79,8 +110,12 @@ class HomeAssistantClient:
             f"Authorization: Bearer {self.token}",
             "-H",
             "Content-Type: application/json",
+            "-X",
+            method,
             url,
         ]
+        if body is not None:
+            command.extend(["--data", json.dumps(body, ensure_ascii=False)])
         try:
             output = subprocess.check_output(command, text=True)
         except subprocess.CalledProcessError as exc:

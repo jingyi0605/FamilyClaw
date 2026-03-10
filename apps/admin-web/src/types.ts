@@ -117,3 +117,145 @@ export type HomeAssistantSyncResponse = {
   devices: Device[];
   failures: { entity_id: string | null; reason: string }[];
 };
+
+export type ContextHomeMode = "home" | "away" | "night" | "sleep" | "custom";
+export type ContextPrivacyMode = "balanced" | "strict" | "care";
+export type ContextAutomationLevel = "manual" | "assisted" | "automatic";
+export type ContextHomeAssistantStatus = "healthy" | "degraded" | "offline";
+export type ContextPresenceStatus = "home" | "away" | "unknown";
+export type ContextActivityStatus = "active" | "focused" | "resting" | "sleeping" | "idle";
+export type ContextRoomScenePreset = "auto" | "welcome" | "focus" | "rest" | "quiet";
+export type ContextClimatePolicy = "follow_member" | "follow_room" | "manual";
+export type ContextInsightTone = "info" | "success" | "warning" | "danger";
+export type ContextStateSource = "snapshot" | "configured" | "default";
+
+export type ContextConfigMemberState = {
+  member_id: string;
+  presence: ContextPresenceStatus;
+  activity: ContextActivityStatus;
+  current_room_id: string | null;
+  confidence: number;
+  last_seen_minutes: number;
+  highlight: string;
+};
+
+export type ContextConfigRoomSetting = {
+  room_id: string;
+  scene_preset: ContextRoomScenePreset;
+  climate_policy: ContextClimatePolicy;
+  privacy_guard_enabled: boolean;
+  announcement_enabled: boolean;
+};
+
+export type ContextConfigUpsertPayload = {
+  home_mode: ContextHomeMode;
+  privacy_mode: ContextPrivacyMode;
+  automation_level: ContextAutomationLevel;
+  home_assistant_status: ContextHomeAssistantStatus;
+  active_member_id: string | null;
+  voice_fast_path_enabled: boolean;
+  guest_mode_enabled: boolean;
+  child_protection_enabled: boolean;
+  elder_care_watch_enabled: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
+  member_states: ContextConfigMemberState[];
+  room_settings: ContextConfigRoomSetting[];
+};
+
+export type ContextConfigRead = ContextConfigUpsertPayload & {
+  household_id: string;
+  version: number;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+export type ContextOverviewActiveMember = {
+  member_id: string;
+  name: string;
+  role: Member["role"];
+  presence: ContextPresenceStatus;
+  activity: ContextActivityStatus;
+  current_room_id: string | null;
+  current_room_name: string | null;
+  confidence: number;
+  source: ContextStateSource;
+};
+
+export type ContextOverviewMemberState = {
+  member_id: string;
+  name: string;
+  role: Member["role"];
+  presence: ContextPresenceStatus;
+  activity: ContextActivityStatus;
+  current_room_id: string | null;
+  current_room_name: string | null;
+  confidence: number;
+  last_seen_minutes: number;
+  highlight: string;
+  source: ContextStateSource;
+  source_summary: unknown | null;
+  updated_at: string | null;
+};
+
+export type ContextOverviewRoomOccupant = {
+  member_id: string;
+  name: string;
+  role: Member["role"];
+  presence: ContextPresenceStatus;
+  activity: ContextActivityStatus;
+};
+
+export type ContextOverviewRoomOccupancy = {
+  room_id: string;
+  name: string;
+  room_type: Room["room_type"];
+  privacy_level: Room["privacy_level"];
+  occupant_count: number;
+  occupants: ContextOverviewRoomOccupant[];
+  device_count: number;
+  online_device_count: number;
+  scene_preset: ContextRoomScenePreset;
+  climate_policy: ContextClimatePolicy;
+  privacy_guard_enabled: boolean;
+  announcement_enabled: boolean;
+};
+
+export type ContextOverviewDeviceSummary = {
+  total: number;
+  active: number;
+  offline: number;
+  inactive: number;
+  controllable: number;
+};
+
+export type ContextOverviewInsight = {
+  code: string;
+  title: string;
+  message: string;
+  tone: ContextInsightTone;
+};
+
+export type ContextOverviewRead = {
+  household_id: string;
+  household_name: string;
+  home_mode: ContextHomeMode;
+  privacy_mode: ContextPrivacyMode;
+  automation_level: ContextAutomationLevel;
+  home_assistant_status: ContextHomeAssistantStatus;
+  voice_fast_path_enabled: boolean;
+  guest_mode_enabled: boolean;
+  child_protection_enabled: boolean;
+  elder_care_watch_enabled: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
+  active_member: ContextOverviewActiveMember | null;
+  member_states: ContextOverviewMemberState[];
+  room_occupancy: ContextOverviewRoomOccupancy[];
+  device_summary: ContextOverviewDeviceSummary;
+  insights: ContextOverviewInsight[];
+  degraded: boolean;
+  generated_at: string;
+};
