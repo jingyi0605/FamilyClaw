@@ -208,6 +208,27 @@ export type ReminderOverviewRead = {
   }>;
 };
 
+export type ReminderTask = {
+  id: string;
+  household_id: string;
+  owner_member_id: string | null;
+  title: string;
+  description: string | null;
+  reminder_type: 'personal' | 'family' | 'medication' | 'course' | 'announcement';
+  target_member_ids: string[];
+  preferred_room_ids: string[];
+  schedule_kind: 'once' | 'recurring' | 'contextual';
+  schedule_rule: Record<string, unknown>;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  delivery_channels: string[];
+  ack_required: boolean;
+  escalation_policy: Record<string, unknown>;
+  enabled: boolean;
+  version: number;
+  updated_by: string | null;
+  updated_at: string;
+};
+
 export type HomeAssistantSyncResponse = {
   household_id: string;
   created_devices: number;
@@ -217,4 +238,67 @@ export type HomeAssistantSyncResponse = {
   failed_entities: number;
   devices: Device[];
   failures: { entity_id: string | null; reason: string }[];
+};
+
+export type FamilyQaFactReference = {
+  type: string;
+  label: string;
+  source: string;
+  occurred_at: string | null;
+  visibility: string;
+  inferred: boolean;
+  extra: Record<string, unknown>;
+};
+
+export type FamilyQaQueryResponse = {
+  answer_type: string;
+  answer: string;
+  confidence: number;
+  facts: FamilyQaFactReference[];
+  degraded: boolean;
+  suggestions: string[];
+  ai_trace_id: string | null;
+  ai_provider_code: string | null;
+  ai_degraded: boolean;
+};
+
+export type FamilyQaSuggestionsResponse = {
+  household_id: string;
+  items: Array<{
+    question: string;
+    answer_type: string;
+    reason: string;
+  }>;
+};
+
+export type MemoryType = 'fact' | 'event' | 'preference' | 'relation' | 'growth';
+export type MemoryStatus = 'active' | 'pending_review' | 'invalidated' | 'deleted';
+export type MemoryVisibility = 'public' | 'family' | 'private' | 'sensitive';
+
+export type MemoryCard = {
+  id: string;
+  household_id: string;
+  memory_type: MemoryType;
+  title: string;
+  summary: string;
+  normalized_text: string | null;
+  content: Record<string, unknown> | null;
+  status: MemoryStatus;
+  visibility: MemoryVisibility;
+  importance: number;
+  confidence: number;
+  subject_member_id: string | null;
+  source_event_id: string | null;
+  dedupe_key: string | null;
+  effective_at: string | null;
+  last_observed_at: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  invalidated_at: string | null;
+  related_members: Array<{
+    memory_id: string;
+    member_id: string;
+    relation_role: string;
+  }>;
 };

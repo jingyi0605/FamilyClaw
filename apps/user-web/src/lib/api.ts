@@ -2,12 +2,17 @@ import type {
   ContextConfigRead,
   ContextOverviewRead,
   Device,
+  FamilyQaQueryResponse,
+  FamilyQaSuggestionsResponse,
   HomeAssistantSyncResponse,
   Household,
+  MemoryCard,
+  MemoryType,
   MemberPreference,
   MemberRelationship,
   Member,
   PaginatedResponse,
+  ReminderTask,
   ReminderOverviewRead,
   Room,
 } from './types';
@@ -79,25 +84,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   listHouseholds() {
-    return request<PaginatedResponse<Household>>('/households');
+    return request<PaginatedResponse<Household>>('/households?page_size=100');
   },
   getHousehold(householdId: string) {
     return request<Household>(`/households/${encodeURIComponent(householdId)}`);
   },
   listRooms(householdId: string) {
-    return request<PaginatedResponse<Room>>(`/rooms?household_id=${encodeURIComponent(householdId)}`);
+    return request<PaginatedResponse<Room>>(`/rooms?household_id=${encodeURIComponent(householdId)}&page_size=100`);
   },
   listMembers(householdId: string) {
-    return request<PaginatedResponse<Member>>(`/members?household_id=${encodeURIComponent(householdId)}`);
+    return request<PaginatedResponse<Member>>(`/members?household_id=${encodeURIComponent(householdId)}&page_size=100`);
   },
   listMemberRelationships(householdId: string) {
-    return request<PaginatedResponse<MemberRelationship>>(`/member-relationships?household_id=${encodeURIComponent(householdId)}`);
+    return request<PaginatedResponse<MemberRelationship>>(`/member-relationships?household_id=${encodeURIComponent(householdId)}&page_size=100`);
   },
   getMemberPreferences(memberId: string) {
     return request<MemberPreference>(`/member-preferences/${encodeURIComponent(memberId)}`);
   },
   listDevices(householdId: string) {
-    return request<PaginatedResponse<Device>>(`/devices?household_id=${encodeURIComponent(householdId)}`);
+    return request<PaginatedResponse<Device>>(`/devices?household_id=${encodeURIComponent(householdId)}&page_size=100`);
   },
   syncHomeAssistant(householdId: string) {
     return request<HomeAssistantSyncResponse>('/devices/sync/ha', {
@@ -119,5 +124,73 @@ export const api = {
   },
   getReminderOverview(householdId: string) {
     return request<ReminderOverviewRead>(`/reminders/overview?household_id=${encodeURIComponent(householdId)}`);
+  },
+  getFamilyQaSuggestions(householdId: string, requesterMemberId?: string) {
+    const params = new URLSearchParams({ household_id: householdId });
+    if (requesterMemberId) {
+      params.set('requester_member_id', requesterMemberId);
+    }
+    return request<FamilyQaSuggestionsResponse>(`/family-qa/suggestions?${params.toString()}`);
+  },
+  queryFamilyQa(payload: { household_id: string; requester_member_id?: string; question: string; channel?: string; context?: Record<string, unknown> }) {
+    return request<FamilyQaQueryResponse>('/family-qa/query', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  listMemoryCards(params: { householdId: string; memoryType?: MemoryType; pageSize?: number }) {
+    const query = new URLSearchParams({
+      household_id: params.householdId,
+      page_size: String(params.pageSize ?? 100),
+    });
+    if (params.memoryType) {
+      query.set('memory_type', params.memoryType);
+    }
+    return request<PaginatedResponse<MemoryCard>>(`/memories/cards?${query.toString()}`);
+  },
+  createManualMemoryCard(payload: {
+    household_id: string;
+    memory_type: MemoryCard['memory_type'];
+    title: string;
+    summary: string;
+    content?: Record<string, unknown>;
+    status?: MemoryCard['status'];
+    visibility?: MemoryCard['visibility'];
+    importance?: number;
+    confidence?: number;
+    subject_member_id?: string | null;
+    source_event_id?: string | null;
+    dedupe_key?: string | null;
+    effective_at?: string | null;
+    last_observed_at?: string | null;
+    related_members?: { member_id: string; relation_role: 'subject' | 'participant' | 'mentioned' | 'owner' }[];
+    reason?: string | null;
+  }) {
+    return request<MemoryCard>('/memories/cards/manual', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  correctMemoryCard(memoryId: string, payload: {
+    action: 'correct' | 'invalidate' | 'delete';
+    title?: string | null;
+    summary?: string | null;
+    content?: Record<string, unknown> | null;
+    visibility?: MemoryCard['visibility'] | null;
+    status?: MemoryCard['status'] | null;
+    importance?: number | null;
+    confidence?: number | null;
+    reason?: string | null;
+  }) {
+    return request<MemoryCard>(`/memories/cards/${encodeURIComponent(memoryId)}/corrections`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  createReminderTask(payload: Omit<ReminderTask, 'id' | 'version' | 'updated_at'>) {
+    return request<ReminderTask>('/reminders', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   },
 };
