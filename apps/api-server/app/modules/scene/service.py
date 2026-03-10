@@ -10,6 +10,8 @@ from app.modules.context.service import get_context_overview
 from app.modules.device_action.schemas import DeviceActionExecuteRequest
 from app.modules.device_action.service import execute_device_action
 from app.modules.household.models import Household
+from app.modules.memory.schemas import EventRecordCreate
+from app.modules.memory.service import ingest_event_record_best_effort
 from app.modules.reminder.service import build_reminder_overview, trigger_task
 from app.modules.scene import repository
 from app.modules.scene.engine import can_start_scene_execution, scene_execution_lock
@@ -30,6 +32,46 @@ from app.modules.scene.schemas import (
 )
 
 DEFAULT_SCENE_TEMPLATE_CODES = {"smart_homecoming", "child_bedtime", "elder_care"}
+
+
+def _write_scene_memory_event(
+    db: Session,
+    *,
+    execution_id: str,
+    household_id: str,
+    template: SceneTemplateRead,
+    final_status: str,
+    summary: dict[str, object],
+    occurred_at: str,
+) -> None:
+    ingest_event_record_best_effort(
+        db,
+        EventRecordCreate(
+            household_id=household_id,
+            event_type="scene_executed",
+            source_type="scene",
+            source_ref=execution_id,
+            payload={
+                "memory_type": "event",
+                "title": f"场景执行：{template.name}",
+                "summary": f"场景《{template.name}》执行完成，结果是 {final_status}。",
+                "visibility": "family",
+                "importance": 3 if final_status == "success" else 2,
+                "confidence": 0.96 if final_status == "success" else 0.75,
+                "content": {
+                    "template_code": template.template_code,
+                    "template_name": template.name,
+                    "execution_id": execution_id,
+                    "status": final_status,
+                    "summary": summary,
+                },
+                "card_dedupe_key": f"scene:{template.template_code}:{final_status}",
+            },
+            dedupe_key=f"scene-execution:{execution_id}",
+            generate_memory_card=final_status in {"success", "partial", "blocked"},
+            occurred_at=occurred_at,
+        ),
+    )
 
 
 def list_builtin_scene_templates(
@@ -266,6 +308,15 @@ def trigger_template(
                 row.finished_at = utc_now_iso()
                 row.summary_json = dump_json({"blocked_guards": blocked_guards, "template_code": template.template_code})
                 db.flush()
+                _write_scene_memory_event(
+                    db,
+                    execution_id=execution.id,
+                    household_id=household_id,
+                    template=template,
+                    final_status="blocked",
+                    summary={"blocked_guards": blocked_guards, "template_code": template.template_code},
+                    occurred_at=row.finished_at,
+                )
             return get_execution_detail(db, execution.id)
 
         final_status = "success"
@@ -300,6 +351,15 @@ def trigger_template(
             row.finished_at = utc_now_iso()
             row.summary_json = dump_json(summary)
             db.flush()
+            _write_scene_memory_event(
+                db,
+                execution_id=execution.id,
+                household_id=household_id,
+                template=template,
+                final_status=final_status,
+                summary=summary,
+                occurred_at=row.finished_at,
+            )
         return get_execution_detail(db, execution.id)
 
 

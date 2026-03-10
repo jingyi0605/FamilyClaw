@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -23,7 +23,12 @@ from app.modules.memory.schemas import (
     MemoryDebugOverviewRead,
 )
 from app.modules.memory.context_engine import build_memory_context_bundle
-from app.modules.memory.query_service import get_memory_hot_summary, query_memory_cards
+from app.modules.memory.query_service import (
+    ensure_can_mutate_memory_card,
+    get_memory_hot_summary,
+    get_visible_memory_card_or_404,
+    query_memory_cards,
+)
 from app.modules.memory.service import (
     correct_memory_card,
     create_manual_memory_card,
@@ -137,12 +142,34 @@ def list_memory_cards_endpoint(
     )
 
 
+@router.get("/cards/{memory_id}", response_model=MemoryCardRead)
+def get_memory_card_detail_endpoint(
+    memory_id: str,
+    requester_member_id: str | None = None,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> MemoryCardRead:
+    return get_visible_memory_card_or_404(
+        db,
+        memory_id=memory_id,
+        actor=actor,
+        requester_member_id=requester_member_id,
+    )
+
+
 @router.post("/cards/manual", response_model=MemoryCardRead)
 def create_manual_memory_card_endpoint(
     payload: MemoryCardManualCreate,
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> MemoryCardRead:
+    if actor.role != "admin":
+        if actor.actor_id is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="member actor required")
+        if payload.subject_member_id is not None and payload.subject_member_id != actor.actor_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="member actor cannot create memory for another member")
+        if payload.visibility == "sensitive":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="member actor cannot create sensitive memory")
     card = create_manual_memory_card(db, payload=payload, actor=actor)
     write_audit_log(
         db,
@@ -165,9 +192,16 @@ def create_manual_memory_card_endpoint(
 @router.get("/cards/{memory_id}/revisions", response_model=MemoryCardRevisionListResponse)
 def list_memory_card_revisions_endpoint(
     memory_id: str,
+    requester_member_id: str | None = None,
     db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> MemoryCardRevisionListResponse:
+    get_visible_memory_card_or_404(
+        db,
+        memory_id=memory_id,
+        actor=actor,
+        requester_member_id=requester_member_id,
+    )
     return list_memory_card_revisions(db, memory_id=memory_id)
 
 
@@ -222,8 +256,15 @@ def correct_memory_card_endpoint(
     memory_id: str,
     payload: MemoryCardCorrectionPayload,
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> MemoryCardRead:
+    ensure_can_mutate_memory_card(
+        db,
+        memory_id=memory_id,
+        actor=actor,
+        action=payload.action,
+        requester_member_id=actor.actor_id if actor.role != "admin" else None,
+    )
     card = correct_memory_card(
         db,
         memory_id=memory_id,

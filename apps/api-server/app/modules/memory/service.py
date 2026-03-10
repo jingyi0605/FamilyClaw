@@ -34,6 +34,8 @@ SUPPORTED_EVENT_MEMORY_TYPES = {
     "family_relation_observed": "relation",
     "family_event_occurred": "event",
     "presence_changed": "event",
+    "reminder_acknowledged": "event",
+    "scene_executed": "event",
 }
 
 
@@ -715,3 +717,12 @@ def get_memory_debug_overview(db: Session, *, household_id: str) -> MemoryDebugO
         latest_event_at=repository.get_latest_event_occurred_at(db, household_id=household_id),
         latest_card_at=repository.get_latest_memory_card_updated_at(db, household_id=household_id),
     )
+
+
+def ingest_event_record_best_effort(db: Session, payload: EventRecordCreate) -> tuple[str | None, str | None]:
+    try:
+        with db.begin_nested():
+            event, _duplicate = ingest_event_record(db, payload)
+            return event.id, event.processing_status
+    except Exception:
+        return None, None

@@ -11,6 +11,8 @@ from app.db.utils import dump_json, new_uuid
 from app.modules.context.cache_service import ContextCacheUnavailableError, refresh_household_context_cache
 from app.modules.context.service import get_context_overview
 from app.modules.household.service import get_household_or_404
+from app.modules.memory.schemas import EventRecordCreate
+from app.modules.memory.service import ingest_event_record_best_effort
 from app.modules.member.models import Member
 from app.modules.presence.models import MemberPresenceState, PresenceEvent
 from app.modules.presence.schemas import PresenceEventCreate
@@ -266,4 +268,40 @@ def ingest_presence_event(
         db.flush()
 
     cache_refreshed = _refresh_context_cache_best_effort(db, payload.household_id)
+    if member is not None and snapshot is not None and snapshot_updated:
+        room_name = None
+        if snapshot.current_room_id is not None:
+            room = db.get(Room, snapshot.current_room_id)
+            room_name = room.name if room is not None else None
+        summary_text = f"{member.name} 当前状态变为 {snapshot.status}"
+        if room_name:
+            summary_text += f"，位置是 {room_name}"
+        ingest_event_record_best_effort(
+            db,
+            EventRecordCreate(
+                household_id=payload.household_id,
+                event_type="presence_changed",
+                source_type="presence",
+                source_ref=event.id,
+                subject_member_id=member.id,
+                room_id=snapshot.current_room_id,
+                payload={
+                    "memory_type": "event",
+                    "title": f"{member.name} 在家状态变化",
+                    "summary": summary_text,
+                    "visibility": "family",
+                    "importance": 3,
+                    "confidence": max(0.5, min(1.0, payload.confidence)),
+                    "content": {
+                        "status": snapshot.status,
+                        "room_name": room_name,
+                        "source_type": payload.source_type,
+                    },
+                    "card_dedupe_key": f"presence:{member.id}:{snapshot.status}",
+                },
+                dedupe_key=f"presence-event:{event.id}",
+                generate_memory_card=snapshot.status in {"home", "away"},
+                occurred_at=event.occurred_at,
+            ),
+        )
     return event, snapshot, snapshot_updated, cache_refreshed

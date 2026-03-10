@@ -3,11 +3,13 @@ from __future__ import annotations
 import re
 from threading import Lock
 
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
 from app.db.utils import utc_now_iso
 from app.modules.member.models import Member
+from app.modules.memory.repository import get_memory_card as repo_get_memory_card
 from app.modules.memory.repository import list_memory_cards as repo_list_memory_cards
 from app.modules.memory.service import _build_card_reads
 from app.modules.memory.schemas import (
@@ -43,6 +45,10 @@ def _resolve_requester_member_id(actor: ActorContext, requested_member_id: str |
     if requested_member_id is not None and requested_member_id != actor.actor_id:
         return actor.actor_id
     return actor.actor_id
+
+
+def resolve_requester_member_id(actor: ActorContext, requested_member_id: str | None) -> str | None:
+    return _resolve_requester_member_id(actor, requested_member_id)
 
 
 def _load_member_role(db: Session, member_id: str | None) -> str:
@@ -119,6 +125,12 @@ def _is_card_visible(
         return "public" in allow_scopes and "public" not in deny_scopes
 
     if card.visibility == "family":
+        if is_self:
+            return "self" in allow_scopes and "self" not in deny_scopes
+        if is_related_member:
+            return "self" in allow_scopes and "self" not in deny_scopes
+        if is_child:
+            return "children" in allow_scopes and "children" not in deny_scopes
         return "family" in allow_scopes and "family" not in deny_scopes
 
     if card.visibility == "private":
@@ -321,3 +333,61 @@ def get_memory_hot_summary(
     with _HOT_SUMMARY_LOCK:
         _HOT_SUMMARY_CACHE[cache_key] = summary
     return summary
+
+
+def get_visible_memory_card_or_404(
+    db: Session,
+    *,
+    memory_id: str,
+    actor: ActorContext,
+    requester_member_id: str | None = None,
+):
+    row = repo_get_memory_card(db, memory_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="memory card not found")
+    card = _build_card_reads(db, [row])[0]
+    effective_requester_member_id = _resolve_requester_member_id(actor, requester_member_id)
+    requester_role = _load_member_role(db, effective_requester_member_id)
+    children_ids = _load_children_ids(db, effective_requester_member_id)
+    allow_scopes, deny_scopes = _load_memory_permission_scopes(
+        db,
+        effective_requester_member_id,
+        requester_role,
+    )
+    if not _is_card_visible(
+        card,
+        actor=actor,
+        requester_member_id=effective_requester_member_id,
+        requester_role=requester_role,
+        children_ids=children_ids,
+        allow_scopes=allow_scopes,
+        deny_scopes=deny_scopes,
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="memory card not visible to current actor")
+    return card
+
+
+def ensure_can_mutate_memory_card(
+    db: Session,
+    *,
+    memory_id: str,
+    actor: ActorContext,
+    action: str,
+    requester_member_id: str | None = None,
+):
+    card = get_visible_memory_card_or_404(
+        db,
+        memory_id=memory_id,
+        actor=actor,
+        requester_member_id=requester_member_id,
+    )
+    effective_requester_member_id = _resolve_requester_member_id(actor, requester_member_id)
+    if actor.role == "admin":
+        return card
+    if actor.actor_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="member actor required")
+    if action == "delete":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="member actor cannot delete memory card")
+    if card.visibility == "sensitive" and card.subject_member_id != effective_requester_member_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="sensitive memory can only be corrected by owner")
+    return card

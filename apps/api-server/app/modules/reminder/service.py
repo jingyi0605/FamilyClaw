@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.delivery.service import build_delivery_plan
 from app.modules.household.models import Household
+from app.modules.memory.schemas import EventRecordCreate
+from app.modules.memory.service import ingest_event_record_best_effort
 from app.modules.member.models import Member
 from app.modules.reminder import repository
 from app.modules.reminder.models import ReminderAckEvent, ReminderDeliveryAttempt, ReminderRun, ReminderTask
@@ -206,7 +208,35 @@ def create_run(db: Session, payload: ReminderRunCreate) -> ReminderRunRead:
     )
     repository.add_run(db, row)
     db.flush()
-    return _to_run_read(row)
+    run_read = _to_run_read(row)
+    ingest_event_record_best_effort(
+        db,
+        EventRecordCreate(
+            household_id=row.household_id,
+            event_type="reminder_run_created",
+            source_type="reminder",
+            source_ref=row.id,
+            subject_member_id=row_task.owner_member_id,
+            payload={
+                "memory_type": "event",
+                "title": f"提醒已触发：{row_task.title}",
+                "summary": f"提醒《{row_task.title}》已触发，当前状态是 {row.status}。",
+                "visibility": "family",
+                "importance": 2,
+                "confidence": 0.95,
+                "content": {
+                    "task_id": row.task_id,
+                    "run_id": row.id,
+                    "trigger_reason": row.trigger_reason,
+                    "status": row.status,
+                },
+            },
+            dedupe_key=f"reminder-run:{row.id}",
+            generate_memory_card=False,
+            occurred_at=row.planned_at,
+        ),
+    )
+    return run_read
 
 
 def list_runs(db: Session, *, household_id: str, task_id: str | None = None, limit: int = 50) -> list[ReminderRunRead]:
@@ -323,7 +353,7 @@ def acknowledge_run(
     payload: ReminderAckEventCreate,
 ) -> ReminderAckResponse:
     ack_event = create_ack_event(db, payload)
-    run = repository.get_run(payload.run_id)
+    run = repository.get_run(db, payload.run_id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reminder run not found")
 
@@ -341,6 +371,33 @@ def acknowledge_run(
         run.status = "delivering"
     run.result_summary_json = dump_json(result_summary)
     db.flush()
+    ingest_event_record_best_effort(
+        db,
+        EventRecordCreate(
+            household_id=run.household_id,
+            event_type="reminder_acknowledged",
+            source_type="reminder",
+            source_ref=ack_event.id,
+            subject_member_id=ack_event.member_id,
+            payload={
+                "memory_type": "event",
+                "title": f"提醒确认：{run.task_id}",
+                "summary": f"提醒运行 {run.id} 已被确认，动作是 {ack_event.action}。",
+                "visibility": "family",
+                "importance": 3 if ack_event.action == "done" else 2,
+                "confidence": 0.98,
+                "content": {
+                    "run_id": run.id,
+                    "task_id": run.task_id,
+                    "action": ack_event.action,
+                    "note": ack_event.note,
+                },
+            },
+            dedupe_key=f"reminder-ack:{ack_event.id}",
+            generate_memory_card=ack_event.action in {"done", "delegated"},
+            occurred_at=ack_event.created_at,
+        ),
+    )
     return ReminderAckResponse(
         run=_to_run_read(run),
         ack_event=ack_event,
