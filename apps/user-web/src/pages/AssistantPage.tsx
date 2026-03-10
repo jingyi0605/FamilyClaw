@@ -294,6 +294,49 @@ export function AssistantPage() {
       {isSidebarOpen && (
         <div className="assistant-sidebar-overlay" onClick={() => setIsSidebarOpen(false)} />
       )}
+      {actionDraft && (
+        <div className="assistant-action-modal-overlay" onClick={() => setActionDraft(null)}>
+          <div className="assistant-action-modal" onClick={event => event.stopPropagation()}>
+            <div className="assistant-action-modal__header">
+              <h3>{actionDraft.type === 'reminder' ? t('assistant.toReminder') : t('assistant.toMemory')}</h3>
+              <button className="close-btn" type="button" onClick={() => setActionDraft(null)}>✕</button>
+            </div>
+            <div className="settings-form">
+              {actionDraft.type === 'reminder' ? (
+                <>
+                  <div className="form-group">
+                    <label>提醒标题</label>
+                    <input className="form-input" value={actionDraft.title} onChange={event => setActionDraft(current => current && current.type === 'reminder' ? { ...current, title: event.target.value } : current)} />
+                  </div>
+                  <div className="form-group">
+                    <label>提醒内容</label>
+                    <textarea className="form-input" rows={4} value={actionDraft.description} onChange={event => setActionDraft(current => current && current.type === 'reminder' ? { ...current, description: event.target.value } : current)} />
+                  </div>
+                  <div className="form-group">
+                    <label>提醒时间</label>
+                    <input className="form-input" type="datetime-local" value={actionDraft.triggerAt} onChange={event => setActionDraft(current => current && current.type === 'reminder' ? { ...current, triggerAt: event.target.value } : current)} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label>记忆标题</label>
+                    <input className="form-input" value={actionDraft.title} onChange={event => setActionDraft(current => current && current.type === 'memory' ? { ...current, title: event.target.value } : current)} />
+                  </div>
+                  <div className="form-group">
+                    <label>记忆摘要</label>
+                    <textarea className="form-input" rows={4} value={actionDraft.summary} onChange={event => setActionDraft(current => current && current.type === 'memory' ? { ...current, summary: event.target.value } : current)} />
+                  </div>
+                </>
+              )}
+              <div className="assistant-action-modal__actions">
+                <button className="btn btn--primary" type="button" onClick={() => void submitActionDraft()}>{t('common.confirm')}</button>
+                <button className="btn btn--outline" type="button" onClick={() => setActionDraft(null)}>{t('common.cancel')}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className={`assistant-sidebar ${isSidebarOpen ? 'is-open' : ''}`}>
         <div className="assistant-sidebar__header">
@@ -380,43 +423,6 @@ export function AssistantPage() {
               </button>
             </div>
             {(error || actionStatus) && <div className="text-text-secondary" style={{ marginTop: '0.75rem' }}>{error || actionStatus}</div>}
-            {actionDraft && (
-              <div style={{ marginTop: '1rem' }}>
-                <div className="settings-form">
-                  {actionDraft.type === 'reminder' ? (
-                    <>
-                      <div className="form-group">
-                        <label>提醒标题</label>
-                        <input className="form-input" value={actionDraft.title} onChange={event => setActionDraft(current => current && current.type === 'reminder' ? { ...current, title: event.target.value } : current)} />
-                      </div>
-                      <div className="form-group">
-                        <label>提醒内容</label>
-                        <textarea className="form-input" rows={4} value={actionDraft.description} onChange={event => setActionDraft(current => current && current.type === 'reminder' ? { ...current, description: event.target.value } : current)} />
-                      </div>
-                      <div className="form-group">
-                        <label>提醒时间</label>
-                        <input className="form-input" type="datetime-local" value={actionDraft.triggerAt} onChange={event => setActionDraft(current => current && current.type === 'reminder' ? { ...current, triggerAt: event.target.value } : current)} />
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="form-group">
-                        <label>记忆标题</label>
-                        <input className="form-input" value={actionDraft.title} onChange={event => setActionDraft(current => current && current.type === 'memory' ? { ...current, title: event.target.value } : current)} />
-                      </div>
-                      <div className="form-group">
-                        <label>记忆摘要</label>
-                        <textarea className="form-input" rows={4} value={actionDraft.summary} onChange={event => setActionDraft(current => current && current.type === 'memory' ? { ...current, summary: event.target.value } : current)} />
-                      </div>
-                    </>
-                  )}
-                  <div style={{ display: 'flex', gap: '0.75rem' }}>
-                    <button className="btn btn--primary" type="button" onClick={() => void submitActionDraft()}>{t('common.confirm')}</button>
-                    <button className="btn btn--outline" type="button" onClick={() => setActionDraft(null)}>{t('common.cancel')}</button>
-                  </div>
-                </div>
-              </div>
-            )}
           </>
         ) : (
           <EmptyState icon="💬" title={t('assistant.noSessions')} description={t('assistant.noSessionsHint')} action={<button className="btn btn--primary" onClick={handleNewChat}>{t('assistant.newChat')}</button>} />

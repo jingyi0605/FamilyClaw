@@ -1291,6 +1291,48 @@ input, select, textarea {
   background: var(--bg-surface);
 }
 
+.assistant-action-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-xl);
+  background: rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(6px);
+  z-index: 120;
+}
+
+.assistant-action-modal {
+  width: min(640px, calc(100vw - 2 * var(--spacing-xl)));
+  max-height: calc(100vh - 2 * var(--spacing-xl));
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  padding: var(--spacing-lg);
+}
+
+.assistant-action-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.assistant-action-modal__header h3 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.assistant-action-modal__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+}
+
 .chat-input {
   flex: 1;
   padding: var(--spacing-md) var(--spacing-lg);

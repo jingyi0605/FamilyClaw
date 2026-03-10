@@ -8,6 +8,9 @@ import { useHouseholdContext } from '../state/household';
 import { api } from '../lib/api';
 import type { MemoryCard, MemoryCardRevision, MemoryStatus, MemoryType, MemoryVisibility } from '../lib/types';
 
+const ACTOR_ROLE = (import.meta.env.VITE_API_ACTOR_ROLE ?? 'admin').toLowerCase();
+const CAN_DELETE_MEMORY = ACTOR_ROLE === 'admin';
+
 type MemoryFilterType = 'all' | 'fact' | 'event' | 'preference' | 'relation';
 
 const typeMap: Record<MemoryFilterType, { labelKey: MessageKey; icon: string }> = {
@@ -95,6 +98,7 @@ export function MemoriesPage() {
   const [revisions, setRevisions] = useState<MemoryCardRevision[]>([]);
   const [revisionsLoading, setRevisionsLoading] = useState(false);
   const [expandedRevisionId, setExpandedRevisionId] = useState<string | null>(null);
+  const [revisionError, setRevisionError] = useState('');
 
   useEffect(() => {
     if (!currentHouseholdId) {
@@ -154,6 +158,7 @@ export function MemoriesPage() {
     if (!selectedMemory) {
       setRevisions([]);
       setExpandedRevisionId(null);
+      setRevisionError('');
       return;
     }
 
@@ -166,11 +171,13 @@ export function MemoriesPage() {
         if (!cancelled) {
           setRevisions(result.items);
           setExpandedRevisionId(result.items[0]?.id ?? null);
+          setRevisionError('');
         }
       } catch {
         if (!cancelled) {
           setRevisions([]);
           setExpandedRevisionId(null);
+          setRevisionError('当前身份暂时不能查看修订历史，或者这条记忆没有公开修订记录。');
         }
       } finally {
         if (!cancelled) {
@@ -343,7 +350,7 @@ export function MemoriesPage() {
                 </div>
                 <div className="detail-field">
                   <label>修订历史</label>
-                  {revisionsLoading ? <p>正在加载修订历史...</p> : revisions.length > 0 ? (
+                  {revisionsLoading ? <p>正在加载修订历史...</p> : revisionError ? <p>{revisionError}</p> : revisions.length > 0 ? (
                     <div>
                       {revisions.slice(0, 5).map(revision => {
                         const isExpanded = expandedRevisionId === revision.id;
@@ -379,7 +386,9 @@ export function MemoriesPage() {
                 <button className="btn btn--outline" onClick={() => setEditingDraft({ title: selectedMemory.title, summary: selectedMemory.summary })}>{t('memory.edit')}</button>
                 <button className="btn btn--outline" onClick={() => void handleCorrect()}>{t('memory.correct')}</button>
                 <button className="btn btn--outline btn--warning" onClick={() => void handleInvalidate()}>{t('memory.invalidate')}</button>
-                <button className="btn btn--outline btn--danger" onClick={() => void handleDelete()}>{t('memory.delete')}</button>
+                {CAN_DELETE_MEMORY ? (
+                  <button className="btn btn--outline btn--danger" onClick={() => void handleDelete()}>{t('memory.delete')}</button>
+                ) : null}
               </div>
             </>
           ) : (
