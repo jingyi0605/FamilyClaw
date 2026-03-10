@@ -99,3 +99,41 @@ class ReminderAckEventCreate(BaseModel):
 class ReminderAckEventRead(ReminderAckEventCreate):
     id: str
     created_at: str
+
+
+class ReminderOverviewItem(BaseModel):
+    task_id: str
+    title: str
+    reminder_type: ReminderType
+    enabled: bool
+    next_trigger_at: str | None = None
+    latest_run_status: str | None = None
+    latest_run_planned_at: str | None = None
+    latest_ack_action: ReminderAckAction | None = None
+
+
+class ReminderOverviewRead(BaseModel):
+    household_id: str
+    total_tasks: int = Field(ge=0)
+    enabled_tasks: int = Field(ge=0)
+    pending_runs: int = Field(ge=0)
+    ack_required_tasks: int = Field(ge=0)
+    items: list[ReminderOverviewItem] = Field(default_factory=list)
+
+
+class ReminderTriggerResponse(BaseModel):
+    run: ReminderRunRead
+    delivery_attempts: list[ReminderDeliveryAttemptRead] = Field(default_factory=list)
+    escalated: bool = False
+
+
+class ReminderAckResponse(BaseModel):
+    run: ReminderRunRead
+    ack_event: ReminderAckEventRead
+    delivery_attempts: list[ReminderDeliveryAttemptRead] = Field(default_factory=list)
+
+
+class ReminderSchedulerDispatchResponse(BaseModel):
+    household_id: str
+    created_runs: list[ReminderRunRead] = Field(default_factory=list)
+    escalated_runs: list[ReminderRunRead] = Field(default_factory=list)

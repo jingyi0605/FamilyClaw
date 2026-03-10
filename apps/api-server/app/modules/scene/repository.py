@@ -43,6 +43,22 @@ def get_execution(db: Session, execution_id: str) -> SceneExecution | None:
     return db.get(SceneExecution, execution_id)
 
 
+def get_execution_by_template_and_trigger(
+    db: Session,
+    *,
+    template_id: str,
+    trigger_key: str,
+) -> SceneExecution | None:
+    stmt = (
+        select(SceneExecution)
+        .where(SceneExecution.template_id == template_id)
+        .where(SceneExecution.trigger_key == trigger_key)
+        .order_by(SceneExecution.started_at.desc(), SceneExecution.id.desc())
+        .limit(1)
+    )
+    return db.scalar(stmt)
+
+
 def list_executions(
     db: Session,
     *,
@@ -59,6 +75,22 @@ def list_executions(
     if template_id is not None:
         stmt = stmt.where(SceneExecution.template_id == template_id)
     return list(db.scalars(stmt).all())
+
+
+def get_latest_execution_by_trigger(
+    db: Session,
+    *,
+    template_id: str,
+    trigger_key: str,
+) -> SceneExecution | None:
+    stmt = (
+        select(SceneExecution)
+        .where(SceneExecution.template_id == template_id)
+        .where(SceneExecution.trigger_key == trigger_key)
+        .order_by(SceneExecution.started_at.desc(), SceneExecution.id.desc())
+        .limit(1)
+    )
+    return db.scalar(stmt)
 
 
 def add_execution_step(db: Session, row: SceneExecutionStep) -> SceneExecutionStep:

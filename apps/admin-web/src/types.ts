@@ -259,3 +259,321 @@ export type ContextOverviewRead = {
   degraded: boolean;
   generated_at: string;
 };
+
+export type QaFactReference = {
+  type: string;
+  label: string;
+  source: string;
+  occurred_at: string | null;
+  visibility: string;
+  inferred: boolean;
+  extra: Record<string, unknown>;
+};
+
+export type FamilyQaQueryResponse = {
+  answer_type: string;
+  answer: string;
+  confidence: number;
+  facts: QaFactReference[];
+  degraded: boolean;
+  suggestions: string[];
+  ai_trace_id: string | null;
+  ai_provider_code: string | null;
+  ai_degraded: boolean;
+};
+
+export type FamilyQaSuggestionItem = {
+  question: string;
+  answer_type: string;
+  reason: string;
+};
+
+export type FamilyQaSuggestionsResponse = {
+  household_id: string;
+  items: FamilyQaSuggestionItem[];
+};
+
+export type ReminderTask = {
+  id: string;
+  household_id: string;
+  owner_member_id: string | null;
+  title: string;
+  description: string | null;
+  reminder_type: "personal" | "family" | "medication" | "course" | "announcement";
+  target_member_ids: string[];
+  preferred_room_ids: string[];
+  schedule_kind: "once" | "recurring" | "contextual";
+  schedule_rule: Record<string, unknown>;
+  priority: "low" | "normal" | "high" | "urgent";
+  delivery_channels: string[];
+  ack_required: boolean;
+  escalation_policy: Record<string, unknown>;
+  enabled: boolean;
+  version: number;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+export type ReminderOverviewItem = {
+  task_id: string;
+  title: string;
+  reminder_type: ReminderTask["reminder_type"];
+  enabled: boolean;
+  next_trigger_at: string | null;
+  latest_run_status: string | null;
+  latest_run_planned_at: string | null;
+  latest_ack_action: "heard" | "done" | "dismissed" | "delegated" | null;
+};
+
+export type ReminderOverviewRead = {
+  household_id: string;
+  total_tasks: number;
+  enabled_tasks: number;
+  pending_runs: number;
+  ack_required_tasks: number;
+  items: ReminderOverviewItem[];
+};
+
+export type ReminderRun = {
+  id: string;
+  task_id: string;
+  household_id: string;
+  schedule_slot_key: string;
+  trigger_reason: string;
+  planned_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  status: "pending" | "delivering" | "acked" | "expired" | "cancelled" | "failed";
+  context_snapshot: Record<string, unknown>;
+  result_summary: Record<string, unknown>;
+};
+
+export type ReminderDeliveryAttempt = {
+  id: string;
+  run_id: string;
+  target_member_id: string | null;
+  target_room_id: string | null;
+  channel: string;
+  attempt_index: number;
+  planned_at: string;
+  sent_at: string | null;
+  status: "queued" | "sent" | "heard" | "failed" | "skipped";
+  provider_result: Record<string, unknown>;
+  failure_reason: string | null;
+};
+
+export type ReminderTriggerResponse = {
+  run: ReminderRun;
+  delivery_attempts: ReminderDeliveryAttempt[];
+  escalated: boolean;
+};
+
+export type ReminderAckEvent = {
+  id: string;
+  run_id: string;
+  member_id: string | null;
+  action: "heard" | "done" | "dismissed" | "delegated";
+  note: string | null;
+  created_at: string;
+};
+
+export type ReminderAckResponse = {
+  run: ReminderRun;
+  ack_event: ReminderAckEvent;
+  delivery_attempts: ReminderDeliveryAttempt[];
+};
+
+export type ReminderSchedulerDispatchResponse = {
+  household_id: string;
+  created_runs: ReminderRun[];
+  escalated_runs: ReminderRun[];
+};
+
+export type SceneTemplate = {
+  id: string;
+  household_id: string;
+  template_code: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  priority: number;
+  cooldown_seconds: number;
+  trigger: Record<string, unknown>;
+  conditions: Record<string, unknown>[];
+  guards: Record<string, unknown>[];
+  actions: Record<string, unknown>[];
+  rollout_policy: Record<string, unknown>;
+  version: number;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+export type ScenePreviewStep = {
+  step_index: number;
+  step_type: "reminder" | "broadcast" | "device_action" | "context_update";
+  target_ref: string | null;
+  status: "planned" | "success" | "skipped" | "failed" | "blocked";
+  summary: string;
+  request: Record<string, unknown>;
+};
+
+export type ScenePreviewResponse = {
+  household_id: string;
+  template: SceneTemplate;
+  trigger_key: string;
+  matched_conditions: string[];
+  blocked_guards: string[];
+  requires_confirmation: boolean;
+  steps: ScenePreviewStep[];
+  explanation: string | null;
+  degraded: boolean;
+};
+
+export type SceneExecution = {
+  id: string;
+  template_id: string;
+  household_id: string;
+  trigger_key: string;
+  trigger_source: string;
+  started_at: string;
+  finished_at: string | null;
+  status: "planned" | "running" | "success" | "partial" | "skipped" | "blocked" | "failed";
+  guard_result: Record<string, unknown>;
+  conflict_result: Record<string, unknown>;
+  context_snapshot: Record<string, unknown>;
+  summary: Record<string, unknown>;
+};
+
+export type SceneExecutionStep = {
+  id: string;
+  execution_id: string;
+  step_index: number;
+  step_type: "reminder" | "broadcast" | "device_action" | "context_update";
+  target_ref: string | null;
+  request: Record<string, unknown>;
+  result: Record<string, unknown>;
+  status: "planned" | "success" | "skipped" | "failed" | "blocked";
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type SceneExecutionDetailRead = {
+  execution: SceneExecution;
+  steps: SceneExecutionStep[];
+};
+
+export type SceneTemplatePresetItem = {
+  template_code: string;
+  name: string;
+  description: string;
+  payload: Omit<SceneTemplate, "id" | "version" | "updated_at"> & {
+    updated_by: string | null;
+  };
+};
+
+export type AiProviderProfile = {
+  id: string;
+  provider_code: string;
+  display_name: string;
+  transport_type: "openai_compatible" | "native_sdk" | "local_gateway";
+  base_url: string | null;
+  api_version: string | null;
+  secret_ref: string | null;
+  enabled: boolean;
+  supported_capabilities: string[];
+  privacy_level: "local_only" | "private_cloud" | "public_cloud";
+  latency_budget_ms: number | null;
+  cost_policy: Record<string, unknown>;
+  extra_config: Record<string, unknown>;
+  updated_at: string;
+};
+
+export type AiProviderProfileCreatePayload = {
+  provider_code: string;
+  display_name: string;
+  transport_type: "openai_compatible" | "native_sdk" | "local_gateway";
+  base_url: string | null;
+  api_version: string | null;
+  secret_ref: string | null;
+  enabled: boolean;
+  supported_capabilities: string[];
+  privacy_level: "local_only" | "private_cloud" | "public_cloud";
+  latency_budget_ms: number | null;
+  cost_policy: Record<string, unknown>;
+  extra_config: Record<string, unknown>;
+};
+
+export type AiProviderProfileUpdatePayload = Partial<AiProviderProfileCreatePayload>;
+
+export type AiCapabilityRoute = {
+  id: string;
+  capability: string;
+  household_id: string | null;
+  primary_provider_profile_id: string | null;
+  fallback_provider_profile_ids: string[];
+  routing_mode: string;
+  timeout_ms: number;
+  max_retry_count: number;
+  allow_remote: boolean;
+  prompt_policy: Record<string, unknown>;
+  response_policy: Record<string, unknown>;
+  enabled: boolean;
+  updated_at: string;
+};
+
+export type AiCapabilityRouteUpsertPayload = {
+  capability: string;
+  household_id: string | null;
+  primary_provider_profile_id: string | null;
+  fallback_provider_profile_ids: string[];
+  routing_mode: string;
+  timeout_ms: number;
+  max_retry_count: number;
+  allow_remote: boolean;
+  prompt_policy: Record<string, unknown>;
+  response_policy: Record<string, unknown>;
+  enabled: boolean;
+};
+
+export type AiCallLog = {
+  id: string;
+  capability: string;
+  provider_code: string;
+  model_name: string;
+  household_id: string | null;
+  requester_member_id: string | null;
+  trace_id: string;
+  input_policy: string;
+  masked_fields: string[];
+  latency_ms: number | null;
+  usage: Record<string, unknown>;
+  status: string;
+  fallback_used: boolean;
+  error_code: string | null;
+  created_at: string;
+};
+
+export type AiGatewayAttemptResult = {
+  provider_code: string;
+  model_name: string;
+  status: string;
+  latency_ms: number | null;
+  error_code: string | null;
+  fallback_used: boolean;
+};
+
+export type AiGatewayInvokeResponse = {
+  capability: string;
+  household_id: string | null;
+  requester_member_id: string | null;
+  trace_id: string;
+  status: string;
+  degraded: boolean;
+  provider_code: string;
+  model_name: string;
+  finish_reason: string;
+  normalized_output: Record<string, unknown>;
+  raw_response_ref: string | null;
+  blocked_reason: string | null;
+  attempts: AiGatewayAttemptResult[];
+};

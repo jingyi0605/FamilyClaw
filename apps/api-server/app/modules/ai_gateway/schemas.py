@@ -127,3 +127,67 @@ class AiModelCallLogCreate(BaseModel):
 class AiModelCallLogRead(AiModelCallLogCreate):
     id: str
     created_at: str
+
+
+class AiProviderCandidate(BaseModel):
+    provider_profile_id: str
+    provider_code: str
+    display_name: str
+    privacy_level: AiPrivacyLevel
+    transport_type: AiTransportType
+    order: int = Field(ge=0)
+
+
+class AiInvocationPlan(BaseModel):
+    capability: AiCapability
+    household_id: str | None = None
+    requester_member_id: str | None = None
+    trace_id: str
+    routing_mode: AiRoutingMode
+    timeout_ms: int = Field(ge=100, le=120000)
+    max_retry_count: int = Field(ge=0, le=5)
+    allow_remote: bool
+    prompt_policy: dict[str, Any] = Field(default_factory=dict)
+    response_policy: dict[str, Any] = Field(default_factory=dict)
+    primary_provider: AiProviderCandidate | None = None
+    fallback_providers: list[AiProviderCandidate] = Field(default_factory=list)
+    template_fallback_enabled: bool = False
+    blocked_reason: str | None = None
+
+
+class AiPreparedPayload(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+    masked_fields: list[str] = Field(default_factory=list)
+    blocked_reason: str | None = None
+
+
+class AiGatewayInvokeRequest(BaseModel):
+    capability: AiCapability
+    household_id: str | None = Field(default=None, min_length=1)
+    requester_member_id: str | None = Field(default=None, min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AiGatewayAttemptResult(BaseModel):
+    provider_code: str
+    model_name: str
+    status: AiModelCallStatus
+    latency_ms: int | None = Field(default=None, ge=0)
+    error_code: str | None = None
+    fallback_used: bool = False
+
+
+class AiGatewayInvokeResponse(BaseModel):
+    capability: AiCapability
+    household_id: str | None = None
+    requester_member_id: str | None = None
+    trace_id: str
+    status: str
+    degraded: bool = False
+    provider_code: str
+    model_name: str
+    finish_reason: str
+    normalized_output: dict[str, Any] = Field(default_factory=dict)
+    raw_response_ref: str | None = None
+    blocked_reason: str | None = None
+    attempts: list[AiGatewayAttemptResult] = Field(default_factory=list)

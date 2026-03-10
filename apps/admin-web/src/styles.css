@@ -260,6 +260,69 @@ pre {
   min-width: 100%;
 }
 
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.service-card,
+.stack-item {
+  padding: 1rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(213, 224, 243, 0.8);
+  box-shadow: 0 12px 30px rgba(20, 38, 76, 0.06);
+}
+
+.service-card h4,
+.stack-item strong {
+  margin: 0 0 0.5rem;
+}
+
+.stack-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.chip {
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+}
+
+.fact-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  color: #42526b;
+}
+
+.fact-list li + li {
+  margin-top: 0.35rem;
+}
+
+.muted,
+.inline-note {
+  color: #687897;
+}
+
+.table-shell {
+  overflow-x: auto;
+}
+
 .page-grid {
   display: grid;
   gap: 1rem;

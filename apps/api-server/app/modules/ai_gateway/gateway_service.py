@@ -1,0 +1,456 @@
+from uuid import uuid4
+
+from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.modules.ai_gateway import repository
+from app.modules.ai_gateway.provider_runtime import (
+    ProviderRuntimeError,
+    build_template_fallback_output,
+    get_provider_adapter,
+)
+from app.modules.ai_gateway.schemas import (
+    AiCapability,
+    AiGatewayAttemptResult,
+    AiGatewayInvokeRequest,
+    AiGatewayInvokeResponse,
+    AiInvocationPlan,
+    AiModelCallLogCreate,
+    AiPreparedPayload,
+    AiProviderCandidate,
+)
+from app.modules.ai_gateway.service import log_model_call, resolve_capability_route
+
+
+def build_invocation_plan(
+    db: Session,
+    *,
+    capability: AiCapability,
+    household_id: str | None = None,
+    requester_member_id: str | None = None,
+    trace_id: str | None = None,
+) -> AiInvocationPlan:
+    route = resolve_capability_route(
+        db,
+        capability=capability,
+        household_id=household_id,
+    )
+    if route is None:
+        return _build_runtime_default_plan(
+            db,
+            capability=capability,
+            household_id=household_id,
+            requester_member_id=requester_member_id,
+            trace_id=trace_id,
+        )
+
+    provider_candidates = _build_provider_candidates(
+        db,
+        provider_profile_ids=[
+            provider_id
+            for provider_id in [route.primary_provider_profile_id, *route.fallback_provider_profile_ids]
+            if provider_id is not None
+        ],
+        routing_mode=route.routing_mode,
+    )
+    primary_provider = provider_candidates[0] if provider_candidates else None
+    fallback_providers = provider_candidates[1:] if len(provider_candidates) > 1 else []
+    blocked_reason = None
+    if not route.enabled:
+        blocked_reason = "当前能力路由已禁用"
+    if route.routing_mode != "template_only" and primary_provider is None:
+        blocked_reason = blocked_reason or "当前能力没有可用主供应商"
+
+    return AiInvocationPlan(
+        capability=capability,
+        household_id=household_id,
+        requester_member_id=requester_member_id,
+        trace_id=trace_id or _new_trace_id(),
+        routing_mode=route.routing_mode,
+        timeout_ms=route.timeout_ms,
+        max_retry_count=route.max_retry_count,
+        allow_remote=route.allow_remote,
+        prompt_policy=route.prompt_policy,
+        response_policy=route.response_policy,
+        primary_provider=primary_provider,
+        fallback_providers=fallback_providers,
+        template_fallback_enabled=bool(route.response_policy.get("template_fallback_enabled", True)),
+        blocked_reason=blocked_reason,
+    )
+
+
+def prepare_payload_for_invocation(
+    plan: AiInvocationPlan,
+    payload: dict[str, object],
+) -> AiPreparedPayload:
+    prepared_payload = dict(payload)
+    masked_fields: list[str] = []
+    blocked_reason = plan.blocked_reason
+
+    mask_fields = plan.prompt_policy.get("mask_fields", [])
+    for field_name in mask_fields:
+        if field_name in prepared_payload:
+            prepared_payload[field_name] = "***"
+            masked_fields.append(field_name)
+
+    if not plan.allow_remote and any(candidate.privacy_level != "local_only" for candidate in _iter_plan_candidates(plan)):
+        blocked_reason = blocked_reason or "当前策略禁止把请求发送到远端模型"
+
+    return AiPreparedPayload(
+        payload=prepared_payload,
+        masked_fields=masked_fields,
+        blocked_reason=blocked_reason,
+    )
+
+
+def invoke_capability(
+    db: Session,
+    payload: AiGatewayInvokeRequest,
+) -> AiGatewayInvokeResponse:
+    plan = build_invocation_plan(
+        db,
+        capability=payload.capability,
+        household_id=payload.household_id,
+        requester_member_id=payload.requester_member_id,
+    )
+    prepared_payload = prepare_payload_for_invocation(plan, payload.payload)
+    attempts: list[AiGatewayAttemptResult] = []
+
+    if prepared_payload.blocked_reason and not plan.template_fallback_enabled:
+        _write_template_log(
+            db,
+            plan=plan,
+            masked_fields=prepared_payload.masked_fields,
+            status="blocked",
+            error_code="policy_blocked",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=prepared_payload.blocked_reason,
+        )
+
+    for index, candidate in enumerate(_iter_plan_candidates(plan)):
+        provider_row = repository.get_provider_profile(db, candidate.provider_profile_id)
+        if provider_row is None or not provider_row.enabled:
+            attempts.append(
+                _write_attempt_log(
+                    db,
+                    plan=plan,
+                    candidate=candidate,
+                    masked_fields=prepared_payload.masked_fields,
+                    status="failed",
+                    latency_ms=0,
+                    error_code="provider_missing",
+                    fallback_used=index > 0,
+                )
+            )
+            continue
+
+        if prepared_payload.blocked_reason and candidate.privacy_level != "local_only":
+            attempts.append(
+                _write_attempt_log(
+                    db,
+                    plan=plan,
+                    candidate=candidate,
+                    masked_fields=prepared_payload.masked_fields,
+                    status="blocked",
+                    latency_ms=0,
+                    error_code="policy_blocked",
+                    fallback_used=index > 0,
+                )
+            )
+            continue
+
+        adapter = get_provider_adapter(provider_row.transport_type)
+        if adapter is None:
+            attempts.append(
+                _write_attempt_log(
+                    db,
+                    plan=plan,
+                    candidate=candidate,
+                    masked_fields=prepared_payload.masked_fields,
+                    status="failed",
+                    latency_ms=0,
+                    error_code="adapter_unavailable",
+                    fallback_used=index > 0,
+                )
+            )
+            continue
+
+        try:
+            result = adapter.invoke(
+                capability=plan.capability,
+                provider_profile=provider_row,
+                payload=prepared_payload.payload,
+                timeout_ms=plan.timeout_ms,
+            )
+        except ProviderRuntimeError as exc:
+            attempts.append(
+                _write_attempt_log(
+                    db,
+                    plan=plan,
+                    candidate=candidate,
+                    masked_fields=prepared_payload.masked_fields,
+                    status=_map_error_code_to_status(exc.error_code),
+                    latency_ms=0,
+                    error_code=exc.error_code,
+                    fallback_used=index > 0,
+                )
+            )
+            continue
+
+        attempt_status = "fallback_success" if index > 0 else "success"
+        attempts.append(
+            _write_attempt_log(
+                db,
+                plan=plan,
+                candidate=candidate,
+                masked_fields=prepared_payload.masked_fields,
+                status=attempt_status,
+                latency_ms=result.latency_ms,
+                error_code=None,
+                fallback_used=index > 0,
+                model_name=result.model_name,
+                usage={"transport_type": provider_row.transport_type},
+            )
+        )
+        return AiGatewayInvokeResponse(
+            capability=plan.capability,
+            household_id=plan.household_id,
+            requester_member_id=plan.requester_member_id,
+            trace_id=plan.trace_id,
+            status="success",
+            degraded=index > 0,
+            provider_code=result.provider_code,
+            model_name=result.model_name,
+            finish_reason=result.finish_reason,
+            normalized_output=result.normalized_output,
+            raw_response_ref=result.raw_response_ref,
+            attempts=attempts,
+        )
+
+    if not plan.template_fallback_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="当前能力没有可用供应商，且未配置模板降级",
+        )
+
+    template_output = build_template_fallback_output(
+        capability=plan.capability,
+        payload=prepared_payload.payload,
+    )
+    attempts.append(
+        _write_template_log(
+            db,
+            plan=plan,
+            masked_fields=prepared_payload.masked_fields,
+            status="fallback_success",
+            error_code=None,
+        )
+    )
+    return AiGatewayInvokeResponse(
+        capability=plan.capability,
+        household_id=plan.household_id,
+        requester_member_id=plan.requester_member_id,
+        trace_id=plan.trace_id,
+        status="success",
+        degraded=True,
+        provider_code="template",
+        model_name="template-fallback",
+        finish_reason="template_fallback",
+        normalized_output=template_output,
+        raw_response_ref="template://fallback",
+        blocked_reason=prepared_payload.blocked_reason,
+        attempts=attempts,
+    )
+
+
+def _build_runtime_default_plan(
+    db: Session,
+    *,
+    capability: AiCapability,
+    household_id: str | None,
+    requester_member_id: str | None,
+    trace_id: str | None,
+) -> AiInvocationPlan:
+    provider_codes = [
+        code
+        for code in [
+            settings.ai_runtime.default_provider_code,
+            *settings.ai_runtime.default_fallback_provider_codes,
+        ]
+        if code
+    ]
+    rows = [repository.get_provider_profile_by_code(db, provider_code) for provider_code in provider_codes]
+    providers = [
+        AiProviderCandidate(
+            provider_profile_id=row.id,
+            provider_code=row.provider_code,
+            display_name=row.display_name,
+            privacy_level=row.privacy_level,
+            transport_type=row.transport_type,
+            order=index,
+        )
+        for index, row in enumerate(rows)
+        if row is not None and row.enabled
+    ]
+    providers = _reorder_candidates(providers, routing_mode=settings.ai_runtime.default_routing_mode)
+    primary_provider = providers[0] if providers else None
+    fallback_providers = providers[1:] if len(providers) > 1 else []
+    blocked_reason = None
+    if primary_provider is None and settings.ai_runtime.default_routing_mode != "template_only":
+        blocked_reason = "运行时默认 AI 供应商未配置"
+
+    return AiInvocationPlan(
+        capability=capability,
+        household_id=household_id,
+        requester_member_id=requester_member_id,
+        trace_id=trace_id or _new_trace_id(),
+        routing_mode=settings.ai_runtime.default_routing_mode,
+        timeout_ms=settings.ai_runtime.default_timeout_ms,
+        max_retry_count=settings.ai_runtime.default_max_retry_count,
+        allow_remote=settings.ai_runtime.default_allow_remote,
+        primary_provider=primary_provider,
+        fallback_providers=fallback_providers,
+        template_fallback_enabled=True,
+        blocked_reason=blocked_reason,
+    )
+
+
+def _build_provider_candidates(
+    db: Session,
+    *,
+    provider_profile_ids: list[str],
+    routing_mode: str,
+) -> list[AiProviderCandidate]:
+    rows = repository.list_provider_profiles_by_ids(db, provider_profile_ids)
+    row_by_id = {row.id: row for row in rows}
+    candidates: list[AiProviderCandidate] = []
+    for index, provider_profile_id in enumerate(provider_profile_ids):
+        row = row_by_id.get(provider_profile_id)
+        if row is None or not row.enabled:
+            continue
+        candidates.append(
+            AiProviderCandidate(
+                provider_profile_id=row.id,
+                provider_code=row.provider_code,
+                display_name=row.display_name,
+                privacy_level=row.privacy_level,
+                transport_type=row.transport_type,
+                order=index,
+            )
+        )
+    return _reorder_candidates(candidates, routing_mode=routing_mode)
+
+
+def _reorder_candidates(
+    candidates: list[AiProviderCandidate],
+    *,
+    routing_mode: str,
+) -> list[AiProviderCandidate]:
+    if routing_mode != "local_preferred_then_cloud":
+        return candidates
+    return sorted(
+        candidates,
+        key=lambda item: (0 if item.privacy_level == "local_only" else 1, item.order),
+    )
+
+
+def _iter_plan_candidates(plan: AiInvocationPlan) -> list[AiProviderCandidate]:
+    candidates: list[AiProviderCandidate] = []
+    if plan.primary_provider is not None:
+        candidates.append(plan.primary_provider)
+    candidates.extend(plan.fallback_providers)
+    return candidates
+
+
+def _write_attempt_log(
+    db: Session,
+    *,
+    plan: AiInvocationPlan,
+    candidate: AiProviderCandidate,
+    masked_fields: list[str],
+    status: str,
+    latency_ms: int,
+    error_code: str | None,
+    fallback_used: bool,
+    model_name: str | None = None,
+    usage: dict[str, object] | None = None,
+) -> AiGatewayAttemptResult:
+    log_model_call(
+        db,
+        AiModelCallLogCreate(
+            capability=plan.capability,
+            provider_code=candidate.provider_code,
+            model_name=model_name or f"{candidate.provider_code}-{plan.capability}",
+            household_id=plan.household_id,
+            requester_member_id=plan.requester_member_id,
+            trace_id=plan.trace_id,
+            input_policy="masked" if masked_fields else "default",
+            masked_fields=masked_fields,
+            latency_ms=latency_ms,
+            usage=usage or {},
+            status=status,
+            fallback_used=fallback_used,
+            error_code=error_code,
+        ),
+    )
+    return AiGatewayAttemptResult(
+        provider_code=candidate.provider_code,
+        model_name=model_name or f"{candidate.provider_code}-{plan.capability}",
+        status=status,
+        latency_ms=latency_ms,
+        error_code=error_code,
+        fallback_used=fallback_used,
+    )
+
+
+def _write_template_log(
+    db: Session,
+    *,
+    plan: AiInvocationPlan,
+    masked_fields: list[str],
+    status: str,
+    error_code: str | None,
+) -> AiGatewayAttemptResult:
+    log_model_call(
+        db,
+        AiModelCallLogCreate(
+            capability=plan.capability,
+            provider_code="template",
+            model_name="template-fallback",
+            household_id=plan.household_id,
+            requester_member_id=plan.requester_member_id,
+            trace_id=plan.trace_id,
+            input_policy="masked" if masked_fields else "default",
+            masked_fields=masked_fields,
+            latency_ms=0,
+            usage={},
+            status=status,
+            fallback_used=True,
+            error_code=error_code,
+        ),
+    )
+    return AiGatewayAttemptResult(
+        provider_code="template",
+        model_name="template-fallback",
+        status=status,
+        latency_ms=0,
+        error_code=error_code,
+        fallback_used=True,
+    )
+
+
+def _map_error_code_to_status(error_code: str) -> str:
+    if error_code == "timeout":
+        return "timeout"
+    if error_code == "rate_limited":
+        return "rate_limited"
+    if error_code == "validation_error":
+        return "validation_error"
+    return "failed"
+
+
+def _new_trace_id() -> str:
+    return uuid4().hex

@@ -1,12 +1,14 @@
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 
 import { AuditLogsPage } from "./pages/AuditLogsPage";
+import { AiProviderConfigPage } from "./pages/AiProviderConfigPage";
 import { ContextCenterPage } from "./pages/ContextCenterPage";
 import { HouseholdPage } from "./pages/HouseholdPage";
 import { MemberPreferencesPermissionsPage } from "./pages/MemberPreferencesPermissionsPage";
 import { MemberRelationshipsPage } from "./pages/MemberRelationshipsPage";
 import { MembersPage } from "./pages/MembersPage";
 import { RoomsDevicesPage } from "./pages/RoomsDevicesPage";
+import { ServiceCenterPage } from "./pages/ServiceCenterPage";
 import { useHousehold } from "./state/household";
 
 type NavItem = {
@@ -17,6 +19,12 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
+  {
+    to: "/ai-provider-config",
+    label: "AI 配置",
+    title: "AI 模型供应商配置",
+    description: "手动配置供应商、能力路由和预览调用，方便完整测试。",
+  },
   {
     to: "/context-center",
     label: "家庭总览",
@@ -52,6 +60,12 @@ const navItems: NavItem[] = [
     label: "房间与设备",
     title: "房间与设备管理",
     description: "维护房间主数据、设备归属和 HA 同步结果。",
+  },
+  {
+    to: "/service-center",
+    label: "服务中心",
+    title: "家庭服务中心",
+    description: "统一查看问答、提醒、场景和 AI 路由摘要。",
   },
   {
     to: "/audit-logs",
@@ -144,7 +158,9 @@ export default function App() {
         </header>
 
         <Routes>
+          <Route path="/ai-provider-config" element={<AiProviderConfigPage />} />
           <Route path="/context-center" element={<ContextCenterPage />} />
+          <Route path="/service-center" element={<ServiceCenterPage />} />
           <Route path="/" element={<HouseholdPage />} />
           <Route path="/members" element={<MembersPage />} />
           <Route path="/member-relationships" element={<MemberRelationshipsPage />} />

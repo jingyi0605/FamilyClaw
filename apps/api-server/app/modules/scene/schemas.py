@@ -65,3 +65,47 @@ class SceneExecutionStepCreate(BaseModel):
 
 class SceneExecutionStepRead(SceneExecutionStepCreate):
     id: str
+
+
+class SceneTemplatePresetItem(BaseModel):
+    template_code: str
+    name: str
+    description: str
+    payload: SceneTemplateUpsert
+
+
+class ScenePreviewRequest(BaseModel):
+    household_id: str = Field(min_length=1)
+    trigger_source: str = Field(default="manual", min_length=1, max_length=30)
+    trigger_payload: dict[str, Any] = Field(default_factory=dict)
+    confirm_high_risk: bool = False
+
+
+class ScenePreviewStep(BaseModel):
+    step_index: int = Field(ge=0)
+    step_type: SceneExecutionStepType
+    target_ref: str | None = None
+    status: SceneExecutionStepStatus
+    summary: str
+    request: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScenePreviewResponse(BaseModel):
+    household_id: str
+    template: SceneTemplateRead
+    trigger_key: str
+    matched_conditions: list[str] = Field(default_factory=list)
+    blocked_guards: list[str] = Field(default_factory=list)
+    requires_confirmation: bool = False
+    steps: list[ScenePreviewStep] = Field(default_factory=list)
+    explanation: str | None = None
+    degraded: bool = False
+
+
+class SceneTriggerRequest(ScenePreviewRequest):
+    updated_by: str | None = Field(default=None, min_length=1)
+
+
+class SceneExecutionDetailRead(BaseModel):
+    execution: SceneExecutionRead
+    steps: list[SceneExecutionStepRead] = Field(default_factory=list)

@@ -31,14 +31,18 @@ import {
 import { api } from "../lib/api";
 import { useHousehold } from "../state/household";
 import type {
+  AiCapabilityRoute,
   AuditLog,
   ContextOverviewMemberState,
   ContextOverviewRead,
   ContextOverviewRoomOccupancy,
   ContextStateSource,
   Device,
+  FamilyQaSuggestionItem,
   Member,
+  ReminderOverviewRead,
   Room,
+  SceneExecution,
 } from "../types";
 
 type Tone = "default" | "success" | "warning" | "danger";
@@ -350,6 +354,10 @@ export function ContextCenterPage() {
   const [draft, setDraft] = useState<ContextCenterDraft | null>(null);
   const [configVersion, setConfigVersion] = useState<number | null>(null);
   const [configUpdatedAt, setConfigUpdatedAt] = useState<string | null>(null);
+  const [reminderOverview, setReminderOverview] = useState<ReminderOverviewRead | null>(null);
+  const [sceneExecutions, setSceneExecutions] = useState<SceneExecution[]>([]);
+  const [qaSuggestions, setQaSuggestions] = useState<FamilyQaSuggestionItem[]>([]);
+  const [aiRoutes, setAiRoutes] = useState<AiCapabilityRoute[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -364,6 +372,10 @@ export function ContextCenterPage() {
       setDraft(null);
       setConfigVersion(null);
       setConfigUpdatedAt(null);
+      setReminderOverview(null);
+      setSceneExecutions([]);
+      setQaSuggestions([]);
+      setAiRoutes([]);
       setError("");
       setStatus("");
       return;
@@ -382,6 +394,10 @@ export function ContextCenterPage() {
       roomsResult,
       devicesResult,
       logsResult,
+      remindersResult,
+      scenesResult,
+      suggestionsResult,
+      aiRoutesResult,
     ] = await Promise.allSettled([
       api.getContextOverview(household.id),
       api.getContextConfig(household.id),
@@ -389,6 +405,10 @@ export function ContextCenterPage() {
       api.listRooms(household.id),
       api.listDevices(household.id),
       api.listAuditLogs(household.id),
+      api.getReminderOverview(household.id),
+      api.listSceneExecutions(household.id),
+      api.listFamilyQaSuggestions(household.id),
+      api.listAiRoutes(household.id),
     ]);
 
     const nextOverview = overviewResult.status === "fulfilled" ? overviewResult.value : null;
@@ -421,6 +441,10 @@ export function ContextCenterPage() {
     setLogs(nextLogs);
     setOverview(nextOverview);
     setDraft(nextDraft);
+    setReminderOverview(remindersResult.status === "fulfilled" ? remindersResult.value : null);
+    setSceneExecutions(scenesResult.status === "fulfilled" ? scenesResult.value : []);
+    setQaSuggestions(suggestionsResult.status === "fulfilled" ? suggestionsResult.value.items : []);
+    setAiRoutes(aiRoutesResult.status === "fulfilled" ? aiRoutesResult.value : []);
 
     if (configResult.status === "fulfilled") {
       setConfigVersion(configResult.value.version);
@@ -438,6 +462,10 @@ export function ContextCenterPage() {
       roomsResult.status === "rejected" ? "房间数据加载失败" : "",
       devicesResult.status === "rejected" ? "设备数据加载失败" : "",
       logsResult.status === "rejected" ? "审计日志加载失败" : "",
+      remindersResult.status === "rejected" ? "提醒总览加载失败" : "",
+      scenesResult.status === "rejected" ? "场景执行摘要加载失败" : "",
+      suggestionsResult.status === "rejected" ? "问答建议加载失败" : "",
+      aiRoutesResult.status === "rejected" ? "AI 路由摘要加载失败" : "",
     ].filter(Boolean);
 
     if (failedMessages.length > 0) {
@@ -1375,6 +1403,37 @@ export function ContextCenterPage() {
               })}
             </div>
           </article>
+        </div>
+      </PageSection>
+
+      <PageSection
+        title="服务中心摘要"
+        description="这里只放轻量入口，不把服务管理全塞进这个页面。重操作去服务中心。"
+      >
+        <div className="summary-grid context-summary-grid">
+          <div className="summary-card">
+            <span>待确认提醒</span>
+            <strong>{reminderOverview ? String(reminderOverview.pending_runs) : "暂无"}</strong>
+            <small>{reminderOverview ? `${reminderOverview.enabled_tasks} 条启用任务` : "提醒总览暂不可用。"}</small>
+          </div>
+          <div className="summary-card">
+            <span>最近场景执行</span>
+            <strong>{sceneExecutions[0] ? sceneExecutions[0].status : "暂无"}</strong>
+            <small>{sceneExecutions[0] ? formatDateTime(sceneExecutions[0].started_at) : "还没有场景执行记录。"}</small>
+          </div>
+          <div className="summary-card">
+            <span>常见问答入口</span>
+            <strong>{qaSuggestions[0]?.question ?? "暂无建议"}</strong>
+            <small>{qaSuggestions[0]?.reason ?? "问答建议接口当前不可用。"}</small>
+          </div>
+          <div className="summary-card">
+            <span>AI 路由摘要</span>
+            <strong>{aiRoutes[0]?.capability ?? "暂无配置"}</strong>
+            <small>{aiRoutes[0] ? `${aiRoutes[0].routing_mode} · ${aiRoutes[0].allow_remote ? "允许远端" : "仅本地"}` : "当前家庭暂无专属路由。"} </small>
+          </div>
+        </div>
+        <div className="inline-note">
+          更完整的问答、提醒、场景和 AI 摘要，请去左侧导航的“服务中心”页面。
         </div>
       </PageSection>
 

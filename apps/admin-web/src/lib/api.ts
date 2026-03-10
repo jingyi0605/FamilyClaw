@@ -1,9 +1,18 @@
 import type {
+  AiCallLog,
+  AiCapabilityRoute,
+  AiCapabilityRouteUpsertPayload,
+  AiGatewayInvokeResponse,
+  AiProviderProfile,
+  AiProviderProfileCreatePayload,
+  AiProviderProfileUpdatePayload,
   AuditLog,
   ContextConfigRead,
   ContextConfigUpsertPayload,
   ContextOverviewRead,
   Device,
+  FamilyQaQueryResponse,
+  FamilyQaSuggestionsResponse,
   HomeAssistantSyncResponse,
   Household,
   Member,
@@ -12,7 +21,17 @@ import type {
   MemberPreference,
   MemberRelationship,
   PaginatedResponse,
+  ReminderAckResponse,
+  ReminderOverviewRead,
+  ReminderSchedulerDispatchResponse,
+  ReminderTask,
+  ReminderTriggerResponse,
   Room,
+  SceneExecution,
+  SceneExecutionDetailRead,
+  ScenePreviewResponse,
+  SceneTemplate,
+  SceneTemplatePresetItem,
 } from "../types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
@@ -221,6 +240,176 @@ export const api = {
   updateContextConfig(householdId: string, payload: ContextConfigUpsertPayload) {
     return request<ContextConfigRead>(`/context/configs/${encodeURIComponent(householdId)}`, {
       method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  queryFamilyQa(payload: {
+    household_id: string;
+    requester_member_id?: string | null;
+    question: string;
+    channel?: string;
+    context?: Record<string, unknown>;
+  }) {
+    return request<FamilyQaQueryResponse>("/family-qa/query", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  listFamilyQaSuggestions(householdId: string, requesterMemberId?: string) {
+    const params = new URLSearchParams({ household_id: householdId });
+    if (requesterMemberId) {
+      params.set("requester_member_id", requesterMemberId);
+    }
+    return request<FamilyQaSuggestionsResponse>(`/family-qa/suggestions?${params.toString()}`);
+  },
+  listReminderTasks(householdId: string, enabled?: boolean) {
+    const params = new URLSearchParams({ household_id: householdId });
+    if (enabled !== undefined) {
+      params.set("enabled", String(enabled));
+    }
+    return request<ReminderTask[]>(`/reminders?${params.toString()}`);
+  },
+  createReminderTask(payload: Omit<ReminderTask, "id" | "version" | "updated_at">) {
+    return request<ReminderTask>("/reminders", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  updateReminderTask(reminderId: string, payload: Partial<ReminderTask>) {
+    return request<ReminderTask>(`/reminders/${reminderId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+  deleteReminderTask(reminderId: string) {
+    return request<void>(`/reminders/${reminderId}`, {
+      method: "DELETE",
+    });
+  },
+  getReminderOverview(householdId: string) {
+    return request<ReminderOverviewRead>(`/reminders/overview?household_id=${encodeURIComponent(householdId)}`);
+  },
+  triggerReminder(reminderId: string) {
+    return request<ReminderTriggerResponse>(`/reminders/${reminderId}/trigger`, {
+      method: "POST",
+    });
+  },
+  dispatchReminderScheduler(householdId: string) {
+    return request<ReminderSchedulerDispatchResponse>(
+      `/reminders/scheduler/dispatch?household_id=${encodeURIComponent(householdId)}`,
+      {
+        method: "POST",
+      },
+    );
+  },
+  acknowledgeReminderRun(runId: string, payload: {
+    run_id: string;
+    member_id?: string | null;
+    action: "heard" | "done" | "dismissed" | "delegated";
+    note?: string | null;
+  }) {
+    return request<ReminderAckResponse>(`/reminder-runs/${runId}/ack`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  listSceneTemplatePresets(householdId: string) {
+    return request<SceneTemplatePresetItem[]>(
+      `/scenes/template-presets?household_id=${encodeURIComponent(householdId)}`,
+    );
+  },
+  listSceneTemplates(householdId: string, enabled?: boolean) {
+    const params = new URLSearchParams({ household_id: householdId });
+    if (enabled !== undefined) {
+      params.set("enabled", String(enabled));
+    }
+    return request<SceneTemplate[]>(`/scenes/templates?${params.toString()}`);
+  },
+  upsertSceneTemplate(templateCode: string, payload: Omit<SceneTemplate, "id" | "version" | "updated_at"> & { updated_by?: string | null }) {
+    return request<SceneTemplate>(`/scenes/templates/${encodeURIComponent(templateCode)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  previewSceneTemplate(templateCode: string, payload: {
+    household_id: string;
+    trigger_source?: string;
+    trigger_payload?: Record<string, unknown>;
+    confirm_high_risk?: boolean;
+  }) {
+    return request<ScenePreviewResponse>(`/scenes/templates/${encodeURIComponent(templateCode)}/preview`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  triggerSceneTemplate(templateCode: string, payload: {
+    household_id: string;
+    trigger_source?: string;
+    trigger_payload?: Record<string, unknown>;
+    confirm_high_risk?: boolean;
+    updated_by?: string | null;
+  }) {
+    return request<SceneExecutionDetailRead>(`/scenes/templates/${encodeURIComponent(templateCode)}/trigger`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  listSceneExecutions(householdId: string) {
+    return request<SceneExecution[]>(`/scenes/executions?household_id=${encodeURIComponent(householdId)}`);
+  },
+  getSceneExecutionDetail(executionId: string) {
+    return request<SceneExecutionDetailRead>(`/scenes/executions/${encodeURIComponent(executionId)}`);
+  },
+  getAiRuntimeDefaults() {
+    return request<Record<string, unknown>>("/ai/runtime-defaults");
+  },
+  listAiProviders(enabled?: boolean) {
+    const params = new URLSearchParams();
+    if (enabled !== undefined) {
+      params.set("enabled", String(enabled));
+    }
+    return request<AiProviderProfile[]>(`/ai/providers${params.toString() ? `?${params.toString()}` : ""}`);
+  },
+  listAiRoutes(householdId?: string) {
+    const params = new URLSearchParams();
+    if (householdId) {
+      params.set("household_id", householdId);
+    }
+    return request<AiCapabilityRoute[]>(`/ai/routes${params.toString() ? `?${params.toString()}` : ""}`);
+  },
+  listAiCallLogs(householdId?: string) {
+    const params = new URLSearchParams();
+    if (householdId) {
+      params.set("household_id", householdId);
+    }
+    return request<AiCallLog[]>(`/ai/call-logs${params.toString() ? `?${params.toString()}` : ""}`);
+  },
+  createAiProvider(payload: AiProviderProfileCreatePayload) {
+    return request<AiProviderProfile>("/ai/providers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  updateAiProvider(providerProfileId: string, payload: AiProviderProfileUpdatePayload) {
+    return request<AiProviderProfile>(`/ai/providers/${encodeURIComponent(providerProfileId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+  upsertAiRoute(capability: string, payload: AiCapabilityRouteUpsertPayload) {
+    return request<AiCapabilityRoute>(`/ai/routes/${encodeURIComponent(capability)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  invokeAiPreview(payload: {
+    capability: string;
+    household_id?: string | null;
+    requester_member_id?: string | null;
+    payload: Record<string, unknown>;
+  }) {
+    return request<AiGatewayInvokeResponse>("/ai/invoke-preview", {
+      method: "POST",
       body: JSON.stringify(payload),
     });
   },
