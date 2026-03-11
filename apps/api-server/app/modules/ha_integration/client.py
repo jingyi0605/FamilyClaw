@@ -37,6 +37,24 @@ class HomeAssistantClient:
             raise HomeAssistantClientError("unexpected response from home assistant states api")
         return payload
 
+    def get_device_registry(self) -> list[dict]:
+        payload = self._request_ws_command("config/device_registry/list")
+        if not isinstance(payload, list):
+            raise HomeAssistantClientError("unexpected response from home assistant device registry api")
+        return payload
+
+    def get_entity_registry(self) -> list[dict]:
+        payload = self._request_ws_command("config/entity_registry/list")
+        if not isinstance(payload, list):
+            raise HomeAssistantClientError("unexpected response from home assistant entity registry api")
+        return payload
+
+    def get_area_registry(self) -> list[dict]:
+        payload = self._request_ws_command("config/area_registry/list")
+        if not isinstance(payload, list):
+            raise HomeAssistantClientError("unexpected response from home assistant area registry api")
+        return payload
+
     def call_service(
         self,
         *,
@@ -134,3 +152,68 @@ class HomeAssistantClient:
             raise HomeAssistantClientError(
                 "home assistant returned invalid json"
             ) from exc
+
+    def _request_ws_command(self, command_type: str) -> dict | list:
+        try:
+            from websockets.sync.client import connect
+        except ImportError as exc:
+            raise HomeAssistantClientError(
+                "websockets package is required for home assistant registry sync"
+            ) from exc
+
+        ws_url = self._build_websocket_url()
+        try:
+            with connect(ws_url, open_timeout=self.timeout_seconds, close_timeout=self.timeout_seconds) as websocket:
+                auth_required = self._recv_ws_json(websocket)
+                if auth_required.get("type") != "auth_required":
+                    raise HomeAssistantClientError("unexpected websocket auth handshake from home assistant")
+
+                websocket.send(
+                    json.dumps(
+                        {
+                            "type": "auth",
+                            "access_token": self.token,
+                        }
+                    )
+                )
+                auth_result = self._recv_ws_json(websocket)
+                if auth_result.get("type") != "auth_ok":
+                    raise HomeAssistantClientError("home assistant websocket authentication failed")
+
+                websocket.send(json.dumps({"id": 1, "type": command_type}))
+                response = self._recv_ws_json(websocket)
+        except Exception as exc:
+            raise HomeAssistantClientError(
+                f"home assistant websocket request failed: {exc}"
+            ) from exc
+
+        if response.get("type") != "result":
+            raise HomeAssistantClientError("unexpected websocket response from home assistant")
+        if not response.get("success"):
+            raise HomeAssistantClientError(
+                f"home assistant websocket command failed: {response.get('error')}"
+            )
+        return response.get("result")
+
+    def _build_websocket_url(self) -> str:
+        parsed = parse.urlparse(self.base_url)
+        if parsed.scheme not in {"http", "https"}:
+            raise HomeAssistantClientError("home assistant base url must start with http or https")
+        ws_scheme = "wss" if parsed.scheme == "https" else "ws"
+        websocket_path = parsed.path.rstrip("/") + "/api/websocket"
+        return parse.urlunparse(
+            (
+                ws_scheme,
+                parsed.netloc,
+                websocket_path,
+                "",
+                "",
+                "",
+            )
+        )
+
+    def _recv_ws_json(self, websocket) -> dict:
+        payload = json.loads(websocket.recv())
+        if not isinstance(payload, dict):
+            raise HomeAssistantClientError("unexpected websocket payload from home assistant")
+        return payload

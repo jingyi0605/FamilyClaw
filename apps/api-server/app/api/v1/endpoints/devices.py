@@ -14,6 +14,8 @@ from app.modules.ha_integration.client import HomeAssistantClientError
 from app.modules.ha_integration.schemas import (
     HomeAssistantConfigRead,
     HomeAssistantConfigUpsert,
+    HomeAssistantDeviceCandidate,
+    HomeAssistantDeviceCandidatesResponse,
     HomeAssistantRoomCandidate,
     HomeAssistantRoomCandidatesResponse,
     HomeAssistantRoomSyncRequest,
@@ -24,6 +26,7 @@ from app.modules.ha_integration.schemas import (
 )
 from app.modules.ha_integration.service import (
     get_home_assistant_config_view,
+    list_home_assistant_device_candidates,
     list_home_assistant_room_candidates,
     sync_home_assistant_devices,
     sync_home_assistant_rooms,
@@ -100,6 +103,7 @@ def sync_home_assistant_devices_endpoint(
         summary = sync_home_assistant_devices(
             db,
             household_id=payload.household_id,
+            external_device_ids=payload.external_device_ids,
         )
         audit_result = "success" if summary.failed_entities == 0 else "fail"
         write_audit_log(
@@ -118,6 +122,7 @@ def sync_home_assistant_devices_endpoint(
                 "assigned_rooms": summary.assigned_rooms,
                 "skipped_entities": summary.skipped_entities,
                 "failed_entities": summary.failed_entities,
+                "requested_device_ids": payload.external_device_ids,
             },
         )
         db.commit()
@@ -166,6 +171,33 @@ def sync_home_assistant_devices_endpoint(
         failures=[
             HomeAssistantSyncFailure(entity_id=failure.entity_id, reason=failure.reason)
             for failure in summary.failures
+        ],
+    )
+
+
+@router.get("/ha-candidates/{household_id}", response_model=HomeAssistantDeviceCandidatesResponse)
+def list_home_assistant_device_candidates_endpoint(
+    household_id: str,
+    db: Session = Depends(get_db),
+) -> HomeAssistantDeviceCandidatesResponse:
+    try:
+        items = list_home_assistant_device_candidates(db, household_id=household_id)
+    except HomeAssistantClientError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return HomeAssistantDeviceCandidatesResponse(
+        household_id=household_id,
+        items=[
+            HomeAssistantDeviceCandidate(
+                external_device_id=item.external_device_id,
+                primary_entity_id=item.primary_entity_id,
+                name=item.name,
+                room_name=item.room_name,
+                device_type=item.device_type,
+                entity_count=item.entity_count,
+                already_synced=item.already_synced,
+            )
+            for item in items
         ],
     )
 

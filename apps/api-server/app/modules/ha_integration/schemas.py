@@ -5,6 +5,7 @@ from app.modules.device.schemas import DeviceRead
 
 class HomeAssistantSyncRequest(BaseModel):
     household_id: str = Field(min_length=1)
+    external_device_ids: list[str] = Field(default_factory=list)
 
 
 class HomeAssistantSyncFailure(BaseModel):
@@ -23,6 +24,21 @@ class HomeAssistantSyncResponse(BaseModel):
     failed_entities: int
     devices: list[DeviceRead]
     failures: list[HomeAssistantSyncFailure]
+
+
+class HomeAssistantDeviceCandidate(BaseModel):
+    external_device_id: str
+    primary_entity_id: str
+    name: str
+    room_name: str | None
+    device_type: str
+    entity_count: int
+    already_synced: bool
+
+
+class HomeAssistantDeviceCandidatesResponse(BaseModel):
+    household_id: str
+    items: list[HomeAssistantDeviceCandidate]
 
 
 class HomeAssistantConfigRead(BaseModel):
