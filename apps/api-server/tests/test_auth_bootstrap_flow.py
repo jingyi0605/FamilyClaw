@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from fastapi import HTTPException
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine
@@ -11,12 +12,12 @@ from sqlalchemy.orm import Session, sessionmaker
 import app.db.models  # noqa: F401
 from app.api.dependencies import ActorContext, ensure_actor_can_access_household
 from app.core.config import settings
-from app.modules.account.models import Account
 from app.modules.account.schemas import BootstrapAccountCompleteRequest
 from app.modules.account.service import (
     authenticate_account,
     complete_bootstrap_account,
     create_account_session,
+    ensure_pending_household_bootstrap_accounts,
     resolve_authenticated_actor_by_session_token,
 )
 from app.modules.household.schemas import HouseholdCreate
@@ -37,7 +38,9 @@ class AuthBootstrapFlowTests(unittest.TestCase):
 
         db_path = os.path.join(self._tempdir.name, "test.db")
         settings.database_url = f"sqlite:///{db_path}"
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        project_root = Path(__file__).resolve().parents[1]
+        alembic_config = Config(str(project_root / "alembic.ini"))
+        alembic_config.set_main_option("script_location", str(project_root / "migrations"))
         alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
         command.upgrade(alembic_config, "head")
 
@@ -62,6 +65,11 @@ class AuthBootstrapFlowTests(unittest.TestCase):
             os.environ["FAMILYCLAW_BOOTSTRAP_HOUSEHOLD_PASSWORD"] = self._previous_bootstrap_password
 
     def test_create_household_creates_bootstrap_account(self) -> None:
+        ensure_pending_household_bootstrap_accounts(self.db)
+        bootstrap = authenticate_account(self.db, "user", "user")
+        self.assertEqual("bootstrap", bootstrap.account_type)
+        self.assertIsNone(bootstrap.household_id)
+
         household = create_household(
             self.db,
             HouseholdCreate(name="Test Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
@@ -70,11 +78,12 @@ class AuthBootstrapFlowTests(unittest.TestCase):
 
         bootstrap = authenticate_account(self.db, "user", "user")
 
-        self.assertEqual(household.id, bootstrap.household_id)
         self.assertEqual("bootstrap", bootstrap.account_type)
         self.assertTrue(bootstrap.must_change_password)
+        self.assertIsNone(bootstrap.household_id)
 
     def test_complete_bootstrap_account_disables_default_credentials(self) -> None:
+        ensure_pending_household_bootstrap_accounts(self.db)
         household = create_household(
             self.db,
             HouseholdCreate(name="Test Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
@@ -108,11 +117,12 @@ class AuthBootstrapFlowTests(unittest.TestCase):
         self.assertEqual(member.id, owner.member_id)
         self.assertEqual("admin", owner.role)
 
-        with self.assertRaises(Exception) as context:
+        with self.assertRaises(HTTPException) as context:
             authenticate_account(self.db, "user", "user")
         self.assertEqual(401, context.exception.status_code)
 
     def test_session_resolution_and_household_access_guard(self) -> None:
+        ensure_pending_household_bootstrap_accounts(self.db)
         household = create_household(
             self.db,
             HouseholdCreate(name="Test Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
@@ -154,11 +164,12 @@ class AuthBootstrapFlowTests(unittest.TestCase):
         actor_context = ActorContext.from_authenticated_actor(resolved)
         ensure_actor_can_access_household(actor_context, household.id)
 
-        with self.assertRaises(Exception) as context:
+        with self.assertRaises(HTTPException) as context:
             ensure_actor_can_access_household(actor_context, another.id)
         self.assertEqual(403, context.exception.status_code)
 
     def test_setup_status_advances_after_bootstrap_completion(self) -> None:
+        ensure_pending_household_bootstrap_accounts(self.db)
         household = create_household(
             self.db,
             HouseholdCreate(name="Test Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),

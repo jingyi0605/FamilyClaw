@@ -6,7 +6,6 @@ from typing import cast
 from app.db.utils import new_uuid
 from app.modules.agent.models import FamilyAgent
 from app.modules.ai_gateway.models import AiCapabilityRoute
-from app.modules.account.service import ensure_household_bootstrap_account
 from app.modules.household.models import Household
 from app.modules.household.schemas import (
     HouseholdCreate,
@@ -41,7 +40,6 @@ def create_household(db: Session, payload: HouseholdCreate) -> Household:
     )
     db.add(household)
     db.flush()
-    ensure_household_bootstrap_account(db, household.id)
     return household
 
 

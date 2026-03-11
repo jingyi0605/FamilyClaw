@@ -275,18 +275,57 @@ def ensure_household_bootstrap_account(db: Session, household_id: str) -> Accoun
     return account
 
 
-def ensure_pending_household_bootstrap_accounts(db: Session) -> None:
-    pending_households = list(
-        db.scalars(
-            select(Household).where(Household.setup_status.in_(["pending", "in_progress"]))
-        ).all()
+def ensure_global_bootstrap_account(db: Session) -> Account | None:
+    username = settings.bootstrap_household_username.strip()
+    password = settings.bootstrap_household_password
+    if not username or not password:
+        return None
+
+    existing_bootstrap = db.scalar(
+        select(Account).where(Account.account_type == "bootstrap")
     )
-    changed = False
-    for household in pending_households:
-        account = ensure_household_bootstrap_account(db, household.id)
-        if account is not None:
+    if existing_bootstrap is not None:
+        changed = False
+        if existing_bootstrap.status != "active":
+            existing_bootstrap.status = "active"
             changed = True
-    if changed:
+        if existing_bootstrap.must_change_password is not True:
+            existing_bootstrap.must_change_password = True
+            changed = True
+        if existing_bootstrap.household_id is not None:
+            existing_bootstrap.household_id = None
+            changed = True
+        if changed:
+            existing_bootstrap.password_hash = hash_password(password)
+            db.add(existing_bootstrap)
+        return existing_bootstrap
+
+    existing_household_account = db.scalar(
+        select(Account).where(Account.account_type == "household", Account.status == "active")
+    )
+    if existing_household_account is not None:
+        return None
+
+    username_owner = get_account_by_username(db, username)
+    if username_owner is not None:
+        return None
+
+    account = Account(
+        id=new_uuid(),
+        username=username,
+        password_hash=hash_password(password),
+        account_type="bootstrap",
+        status="active",
+        household_id=None,
+        must_change_password=True,
+    )
+    db.add(account)
+    return account
+
+
+def ensure_pending_household_bootstrap_accounts(db: Session) -> None:
+    account = ensure_global_bootstrap_account(db)
+    if account is not None:
         db.commit()
 
 
@@ -383,7 +422,7 @@ def complete_bootstrap_account(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="member must belong to the target household")
 
     if actor.account_type == "bootstrap":
-        if actor.household_id != payload.household_id:
+        if actor.household_id is not None and actor.household_id != payload.household_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="bootstrap account cannot finish another household")
         bootstrap_account = db.get(Account, actor.account_id)
     else:
