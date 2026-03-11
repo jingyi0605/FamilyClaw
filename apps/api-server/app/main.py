@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.db.session import ensure_sqlite_schema
 
 setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info("Starting %s", settings.app_name)
+    ensure_sqlite_schema()
     yield
     logger.info("Stopping %s", settings.app_name)
 
