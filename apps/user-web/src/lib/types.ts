@@ -256,6 +256,21 @@ export type HomeAssistantSyncResponse = {
   failures: { entity_id: string | null; reason: string }[];
 };
 
+export type HomeAssistantDeviceCandidate = {
+  external_device_id: string;
+  primary_entity_id: string;
+  name: string;
+  room_name: string | null;
+  device_type: string;
+  entity_count: number;
+  already_synced: boolean;
+};
+
+export type HomeAssistantDeviceCandidatesResponse = {
+  household_id: string;
+  items: HomeAssistantDeviceCandidate[];
+};
+
 export type HomeAssistantConfig = {
   household_id: string;
   base_url: string | null;
@@ -302,6 +317,9 @@ export type FamilyQaQueryResponse = {
   facts: FamilyQaFactReference[];
   degraded: boolean;
   suggestions: string[];
+  effective_agent_id: string | null;
+  effective_agent_type: string | null;
+  effective_agent_name: string | null;
   ai_trace_id: string | null;
   ai_provider_code: string | null;
   ai_degraded: boolean;
@@ -309,11 +327,92 @@ export type FamilyQaQueryResponse = {
 
 export type FamilyQaSuggestionsResponse = {
   household_id: string;
+  effective_agent_id: string | null;
+  effective_agent_type: string | null;
+  effective_agent_name: string | null;
   items: Array<{
     question: string;
     answer_type: string;
     reason: string;
   }>;
+};
+
+export type AgentType = 'butler' | 'nutritionist' | 'fitness_coach' | 'study_coach' | 'custom';
+export type AgentStatus = 'draft' | 'active' | 'inactive';
+
+export type AgentSoulProfile = {
+  id: string;
+  agent_id: string;
+  version: number;
+  self_identity: string;
+  role_summary: string;
+  intro_message: string | null;
+  speaking_style: string | null;
+  personality_traits: string[];
+  service_focus: string[];
+  service_boundaries: Record<string, unknown> | null;
+  is_active: boolean;
+  created_by: string;
+  created_at: string;
+};
+
+export type AgentMemberCognition = {
+  id: string;
+  agent_id: string;
+  member_id: string;
+  display_address: string | null;
+  closeness_level: number;
+  service_priority: number;
+  communication_style: string | null;
+  care_notes: Record<string, unknown> | null;
+  prompt_notes: string | null;
+  version: number;
+  updated_at: string;
+};
+
+export type AgentRuntimePolicy = {
+  agent_id: string;
+  conversation_enabled: boolean;
+  default_entry: boolean;
+  routing_tags: string[];
+  memory_scope: Record<string, unknown> | null;
+  updated_at: string;
+};
+
+export type AgentSummary = {
+  id: string;
+  household_id: string;
+  code: string;
+  agent_type: AgentType;
+  display_name: string;
+  status: AgentStatus;
+  is_primary: boolean;
+  sort_order: number;
+  summary: string | null;
+  conversation_enabled: boolean;
+  default_entry: boolean;
+  updated_at: string;
+};
+
+export type AgentDetail = {
+  id: string;
+  household_id: string;
+  code: string;
+  agent_type: AgentType;
+  display_name: string;
+  status: AgentStatus;
+  is_primary: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  soul: AgentSoulProfile | null;
+  member_cognitions: AgentMemberCognition[];
+  runtime_policy: AgentRuntimePolicy | null;
+};
+
+export type AgentListResponse = {
+  household_id: string;
+  items: AgentSummary[];
 };
 
 export type MemoryType = 'fact' | 'event' | 'preference' | 'relation' | 'growth';

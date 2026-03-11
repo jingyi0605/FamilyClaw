@@ -1,10 +1,13 @@
 import type {
+  AgentDetail,
+  AgentListResponse,
   ContextConfigRead,
   ContextOverviewRead,
   Device,
   FamilyQaQueryResponse,
   FamilyQaSuggestionsResponse,
   HomeAssistantConfig,
+  HomeAssistantDeviceCandidatesResponse,
   HomeAssistantRoomCandidatesResponse,
   HomeAssistantRoomSyncResponse,
   HomeAssistantSyncResponse,
@@ -223,10 +226,19 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  listHomeAssistantDeviceCandidates(householdId: string) {
+    return request<HomeAssistantDeviceCandidatesResponse>(`/devices/ha-candidates/${encodeURIComponent(householdId)}`);
+  },
   syncHomeAssistant(householdId: string) {
     return request<HomeAssistantSyncResponse>('/devices/sync/ha', {
       method: 'POST',
-      body: JSON.stringify({ household_id: householdId }),
+      body: JSON.stringify({ household_id: householdId, external_device_ids: [] }),
+    });
+  },
+  syncSelectedHomeAssistantDevices(householdId: string, externalDeviceIds: string[]) {
+    return request<HomeAssistantSyncResponse>('/devices/sync/ha', {
+      method: 'POST',
+      body: JSON.stringify({ household_id: householdId, external_device_ids: externalDeviceIds }),
     });
   },
   syncHomeAssistantRooms(householdId: string) {
@@ -259,14 +271,30 @@ export const api = {
   getReminderOverview(householdId: string) {
     return request<ReminderOverviewRead>(`/reminders/overview?household_id=${encodeURIComponent(householdId)}`);
   },
-  getFamilyQaSuggestions(householdId: string, requesterMemberId?: string) {
+  listAgents(householdId: string) {
+    return request<AgentListResponse>(`/ai-config/${encodeURIComponent(householdId)}`);
+  },
+  getAgentDetail(householdId: string, agentId: string) {
+    return request<AgentDetail>(`/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}`);
+  },
+  getFamilyQaSuggestions(householdId: string, requesterMemberId?: string, agentId?: string) {
     const params = new URLSearchParams({ household_id: householdId });
     if (requesterMemberId) {
       params.set('requester_member_id', requesterMemberId);
     }
+    if (agentId) {
+      params.set('agent_id', agentId);
+    }
     return request<FamilyQaSuggestionsResponse>(`/family-qa/suggestions?${params.toString()}`);
   },
-  queryFamilyQa(payload: { household_id: string; requester_member_id?: string; question: string; channel?: string; context?: Record<string, unknown> }) {
+  queryFamilyQa(payload: {
+    household_id: string;
+    requester_member_id?: string;
+    agent_id?: string;
+    question: string;
+    channel?: string;
+    context?: Record<string, unknown>;
+  }) {
     return request<FamilyQaQueryResponse>('/family-qa/query', {
       method: 'POST',
       body: JSON.stringify(payload),

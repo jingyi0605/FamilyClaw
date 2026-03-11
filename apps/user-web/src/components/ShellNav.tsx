@@ -9,7 +9,7 @@ import { useHouseholdContext } from '../state/household';
 const navItems = [
   { to: '/', icon: <Home size={20} strokeWidth={2.5} />, labelKey: 'nav.home' as const, end: true },
   { to: '/family', icon: <Users size={20} strokeWidth={2.5} />, labelKey: 'nav.family' as const },
-  { to: '/assistant', icon: <MessageSquareText size={20} strokeWidth={2.5} />, labelKey: 'nav.assistant' as const },
+  { to: '/conversation', icon: <MessageSquareText size={20} strokeWidth={2.5} />, labelKey: 'nav.assistant' as const },
   { to: '/memories', icon: <BookOpenText size={20} strokeWidth={2.5} />, labelKey: 'nav.memories' as const },
   { to: '/settings', icon: <Settings size={20} strokeWidth={2.5} />, labelKey: 'nav.settings' as const },
 ];

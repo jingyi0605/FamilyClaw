@@ -1,7 +1,7 @@
 /* ============================================================
  * App 路由配置
  * ============================================================ */
-import { Routes, Route } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from './layouts/AppLayout';
 import { HomePage } from './pages/HomePage';
 import { FamilyLayout, FamilyOverview, FamilyRooms, FamilyMembers, FamilyRelationships } from './pages/FamilyPage';
@@ -32,8 +32,9 @@ export default function App() {
           <Route path="relationships" element={<FamilyRelationships />} />
         </Route>
 
-        {/* 助手 */}
-        <Route path="/assistant" element={<AssistantPage />} />
+        {/* 对话 */}
+        <Route path="/conversation" element={<AssistantPage />} />
+        <Route path="/assistant" element={<Navigate to="/conversation" replace />} />
 
         {/* 记忆 */}
         <Route path="/memories" element={<MemoriesPage />} />

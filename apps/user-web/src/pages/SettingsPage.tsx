@@ -9,7 +9,18 @@ import { PageHeader, Card, Section, ToggleSwitch } from '../components/base';
 import { SettingsNav } from '../components/SettingsNav';
 import { useHouseholdContext } from '../state/household';
 import { api } from '../lib/api';
-import type { ContextConfigRead, ContextOverviewRead, Device, HomeAssistantConfig, HomeAssistantRoomCandidate, HomeAssistantRoomSyncResponse, HomeAssistantSyncResponse, Room } from '../lib/types';
+import type {
+  ContextConfigRead,
+  ContextOverviewRead,
+  Device,
+  HomeAssistantConfig,
+  HomeAssistantDeviceCandidate,
+  HomeAssistantRoomCandidate,
+  HomeAssistantRoomSyncResponse,
+  HomeAssistantSyncResponse,
+  Room,
+} from '../lib/types';
+export { SettingsAiPage as SettingsAi } from './SettingsAiPage';
 
 function useContextConfigSettings() {
   const { currentHouseholdId } = useHouseholdContext();
@@ -165,7 +176,7 @@ export function SettingsAppearance() {
 }
 
 /* ---- AI 配置 ---- */
-export function SettingsAi() {
+export function LegacySettingsAi() {
   const { t } = useI18n();
   const { config, loading, error, status, savePatch } = useContextConfigSettings();
 
@@ -362,6 +373,10 @@ export function SettingsIntegrations() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [deviceDrafts, setDeviceDrafts] = useState<Record<string, Pick<Device, 'name' | 'room_id' | 'status' | 'controllable'>>>({});
+  const [deviceCandidates, setDeviceCandidates] = useState<HomeAssistantDeviceCandidate[]>([]);
+  const [selectedExternalDeviceIds, setSelectedExternalDeviceIds] = useState<string[]>([]);
+  const [deviceModalOpen, setDeviceModalOpen] = useState(false);
+  const [deviceModalLoading, setDeviceModalLoading] = useState(false);
   const [syncSummary, setSyncSummary] = useState<HomeAssistantSyncResponse | null>(null);
   const [roomSyncSummary, setRoomSyncSummary] = useState<HomeAssistantRoomSyncResponse | null>(null);
   const [roomCandidates, setRoomCandidates] = useState<HomeAssistantRoomCandidate[]>([]);
@@ -503,17 +518,37 @@ export function SettingsIntegrations() {
     });
   }
 
-  async function handleSync() {
+  async function openDeviceSyncModal() {
     if (!currentHouseholdId) {
       setError('还没有选中家庭，暂时无法同步。');
       return;
     }
 
+    setDeviceModalLoading(true);
+    setError('');
+    try {
+      const result = await api.listHomeAssistantDeviceCandidates(currentHouseholdId);
+      setDeviceCandidates(result.items);
+      setSelectedExternalDeviceIds(result.items.map(item => item.external_device_id));
+      setDeviceModalOpen(true);
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : '加载 HA 设备候选项失败');
+    } finally {
+      setDeviceModalLoading(false);
+    }
+  }
+
+  async function handleConfirmDeviceSync() {
+    if (!currentHouseholdId) {
+      return;
+    }
+
     await runAction(async () => {
-      const result = await api.syncHomeAssistant(currentHouseholdId);
+      const result = await api.syncSelectedHomeAssistantDevices(currentHouseholdId, selectedExternalDeviceIds);
       setSyncSummary(result);
+      setDeviceModalOpen(false);
       await reloadWorkspace();
-      setStatus('Home Assistant 同步完成，设备和房间列表已刷新。');
+      setStatus(`Home Assistant 同步完成，本次处理 ${result.created_devices + result.updated_devices} 台设备。`);
     });
   }
 
@@ -556,6 +591,22 @@ export function SettingsIntegrations() {
       : [...current, roomName]);
   }
 
+  function toggleDeviceSelection(externalDeviceId: string) {
+    setSelectedExternalDeviceIds(current => current.includes(externalDeviceId)
+      ? current.filter(id => id !== externalDeviceId)
+      : [...current, externalDeviceId]);
+  }
+
+  function toggleDeviceRoomSelection(deviceIds: string[]) {
+    setSelectedExternalDeviceIds(current => {
+      const allSelected = deviceIds.every(id => current.includes(id));
+      if (allSelected) {
+        return current.filter(id => !deviceIds.includes(id));
+      }
+      return Array.from(new Set([...current, ...deviceIds]));
+    });
+  }
+
   async function handleSaveDevice(deviceId: string) {
     const draft = deviceDrafts[deviceId];
     if (!draft) {
@@ -571,6 +622,16 @@ export function SettingsIntegrations() {
 
   const roomNameMap = useMemo(() => Object.fromEntries(rooms.map(room => [room.id, room.name])), [rooms]);
   const roomOptions = useMemo(() => [{ id: '', name: '未分配房间' }, ...rooms.map(room => ({ id: room.id, name: room.name }))], [rooms]);
+  const deviceCandidateGroups = useMemo(() => {
+    const groups = new Map<string, HomeAssistantDeviceCandidate[]>();
+    deviceCandidates.forEach(candidate => {
+      const roomName = candidate.room_name || '未分配房间';
+      groups.set(roomName, [...(groups.get(roomName) ?? []), candidate]);
+    });
+    return Array.from(groups.entries())
+      .map(([roomName, items]) => ({ roomName, items }))
+      .sort((a, b) => a.roomName.localeCompare(b.roomName, 'zh-CN'));
+  }, [deviceCandidates]);
 
   function formatDeviceType(type: Device['device_type']) {
     switch (type) {
@@ -622,7 +683,7 @@ export function SettingsIntegrations() {
             <div className="integration-actions">
               <button className="btn btn--outline btn--sm" type="button" onClick={() => setConfigModalOpen(true)} disabled={loading}>配置连接</button>
               <span className="integration-action-tooltip" title={disabledHaActionTooltip}>
-                <button className="btn btn--outline btn--sm" onClick={handleSync} disabled={loading || !canOperateHa}>
+                <button className="btn btn--outline btn--sm" onClick={openDeviceSyncModal} disabled={loading || deviceModalLoading || !canOperateHa}>
                   {syncButtonLabel}
                 </button>
               </span>
@@ -714,6 +775,59 @@ export function SettingsIntegrations() {
             <div className="member-modal__actions">
               <button className="btn btn--outline btn--sm" type="button" onClick={() => setRoomModalOpen(false)} disabled={loading}>取消</button>
               <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleConfirmRoomSync()} disabled={loading || selectedRoomNames.length === 0}>同步选中房间</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {deviceModalOpen && (
+        <div className="member-modal-overlay" onClick={() => setDeviceModalOpen(false)}>
+          <div className="member-modal ha-device-modal" onClick={event => event.stopPropagation()}>
+            <div className="member-modal__header">
+              <div>
+                <h3>选择要同步的 HA 设备</h3>
+                <p>设备按房间分组展示。你可以按房间整组选，也可以单独勾选设备。</p>
+              </div>
+            </div>
+            <div className="ha-device-modal__list">
+              {deviceCandidateGroups.length === 0 ? <div className="integration-status__detail">HA 里没有可同步的设备。</div> : deviceCandidateGroups.map(group => {
+                const deviceIds = group.items.map(item => item.external_device_id);
+                const selectedCount = deviceIds.filter(id => selectedExternalDeviceIds.includes(id)).length;
+                const allSelected = selectedCount === deviceIds.length;
+                return (
+                  <div key={group.roomName} className="ha-device-group">
+                    <label className="ha-device-group__header">
+                      <input type="checkbox" checked={allSelected} onChange={() => toggleDeviceRoomSelection(deviceIds)} disabled={loading} />
+                      <div className="ha-device-group__meta">
+                        <strong>{group.roomName}</strong>
+                        <span className="integration-status__detail">已选 {selectedCount}/{group.items.length} 台</span>
+                      </div>
+                    </label>
+                    <div className="ha-device-group__items">
+                      {group.items.map(candidate => (
+                        <label key={candidate.external_device_id} className="ha-device-option">
+                          <input
+                            type="checkbox"
+                            checked={selectedExternalDeviceIds.includes(candidate.external_device_id)}
+                            onChange={() => toggleDeviceSelection(candidate.external_device_id)}
+                            disabled={loading}
+                          />
+                          <div className="ha-device-option__body">
+                            <div className="ha-device-option__title-row">
+                              <strong>{candidate.name}</strong>
+                              <span className={`badge badge--${candidate.already_synced ? 'secondary' : 'success'}`}>{candidate.already_synced ? '已同步过' : '新设备'}</span>
+                            </div>
+                            <div className="integration-status__detail">{candidate.device_type} · 主实体 {candidate.primary_entity_id} · 关联实体 {candidate.entity_count} 个</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="member-modal__actions">
+              <button className="btn btn--outline btn--sm" type="button" onClick={() => setDeviceModalOpen(false)} disabled={loading}>取消</button>
+              <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleConfirmDeviceSync()} disabled={loading || selectedExternalDeviceIds.length === 0}>同步选中设备</button>
             </div>
           </div>
         </div>
