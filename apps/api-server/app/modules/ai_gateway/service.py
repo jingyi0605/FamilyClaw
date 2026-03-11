@@ -100,6 +100,23 @@ def update_provider_profile(
     return _to_provider_profile_read(row)
 
 
+def delete_provider_profile(
+    db: Session,
+    provider_profile_id: str,
+) -> None:
+    row = repository.get_provider_profile(db, provider_profile_id)
+    if row is None:
+        raise AiGatewayNotFoundError("provider profile 不存在")
+
+    for route in repository.list_all_capability_routes(db):
+        fallback_ids = load_json(route.fallback_provider_profile_ids_json) or []
+        if route.primary_provider_profile_id == provider_profile_id or provider_profile_id in fallback_ids:
+            raise AiGatewayConfigurationError("供应商档案仍被能力路由引用，不能直接删除")
+
+    repository.delete_provider_profile(db, row)
+    db.flush()
+
+
 def upsert_capability_route(db: Session, payload: AiCapabilityRouteUpsert) -> AiCapabilityRouteRead:
     _validate_capability_route(db, payload)
 

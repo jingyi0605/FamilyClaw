@@ -96,6 +96,12 @@ class AgentCreate(BaseModel):
     created_by: str = Field(default="user-web", min_length=1, max_length=30)
 
 
+class AgentUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=100)
+    status: AgentStatus | None = None
+    sort_order: int | None = Field(default=None, ge=0, le=100000)
+
+
 class AgentSoulProfileUpsert(BaseModel):
     self_identity: str = Field(min_length=1, max_length=4000)
     role_summary: str = Field(min_length=1, max_length=2000)

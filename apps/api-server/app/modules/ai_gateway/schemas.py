@@ -30,6 +30,33 @@ AiModelCallStatus = Literal[
     "rate_limited",
     "validation_error",
 ]
+AiProviderFieldType = Literal["text", "secret", "number", "select", "boolean"]
+
+
+class AiProviderFieldOptionRead(BaseModel):
+    label: str
+    value: str
+
+
+class AiProviderFieldRead(BaseModel):
+    key: str
+    label: str
+    field_type: AiProviderFieldType
+    required: bool
+    placeholder: str | None = None
+    help_text: str | None = None
+    default_value: str | int | bool | None = None
+    options: list[AiProviderFieldOptionRead] = Field(default_factory=list)
+
+
+class AiProviderAdapterRead(BaseModel):
+    adapter_code: str
+    display_name: str
+    description: str
+    transport_type: AiTransportType
+    default_privacy_level: AiPrivacyLevel
+    default_supported_capabilities: list[AiCapability] = Field(default_factory=list)
+    field_schema: list[AiProviderFieldRead] = Field(default_factory=list)
 
 
 class AiProviderProfileBase(BaseModel):

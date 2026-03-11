@@ -19,6 +19,7 @@ from app.modules.agent.schemas import (
     AgentSoulProfileRead,
     AgentSoulProfileUpsert,
     AgentSummaryRead,
+    AgentUpdate,
 )
 from app.modules.member.models import Member
 from sqlalchemy.orm import Session
@@ -97,6 +98,29 @@ def create_agent(
         updated_at=utc_now_iso(),
     )
     repository.add_runtime_policy(db, runtime_policy)
+    db.flush()
+    return _to_agent_detail_read(db, row)
+
+
+def update_agent(
+    db: Session,
+    *,
+    household_id: str,
+    agent_id: str,
+    payload: AgentUpdate,
+) -> AgentDetailRead:
+    row = _get_agent_in_household_or_404(db, household_id=household_id, agent_id=agent_id)
+    data = payload.model_dump(exclude_unset=True)
+    if "display_name" in data and data["display_name"] is not None:
+        display_name = data["display_name"].strip()
+        if not display_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="display_name 不能为空")
+        row.display_name = display_name
+    if "status" in data and data["status"] is not None:
+        row.status = data["status"]
+    if "sort_order" in data and data["sort_order"] is not None:
+        row.sort_order = data["sort_order"]
+    row.updated_at = utc_now_iso()
     db.flush()
     return _to_agent_detail_read(db, row)
 
@@ -267,6 +291,15 @@ def upsert_agent_runtime_policy(
     if row is None:
         row = FamilyAgentRuntimePolicy(agent_id=agent.id)
         repository.add_runtime_policy(db, row)
+    if payload.default_entry:
+        for item in repository.list_agents(db, household_id=household_id):
+            if item.id == agent.id:
+                continue
+            runtime_policy = repository.get_runtime_policy(db, agent_id=item.id)
+            if runtime_policy is None or not runtime_policy.default_entry:
+                continue
+            runtime_policy.default_entry = False
+            runtime_policy.updated_at = utc_now_iso()
     row.conversation_enabled = payload.conversation_enabled
     row.default_entry = payload.default_entry
     row.routing_tags_json = dump_json(payload.routing_tags) or "[]"

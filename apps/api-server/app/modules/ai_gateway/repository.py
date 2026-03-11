@@ -38,6 +38,10 @@ def add_provider_profile(db: Session, row: AiProviderProfile) -> AiProviderProfi
     return row
 
 
+def delete_provider_profile(db: Session, row: AiProviderProfile) -> None:
+    db.delete(row)
+
+
 def get_capability_route(
     db: Session,
     *,
@@ -65,6 +69,14 @@ def list_capability_routes(
         stmt = stmt.where(AiCapabilityRoute.household_id.is_(None))
     else:
         stmt = stmt.where(AiCapabilityRoute.household_id == household_id)
+    return list(db.scalars(stmt).all())
+
+
+def list_all_capability_routes(db: Session) -> Sequence[AiCapabilityRoute]:
+    stmt: Select[tuple[AiCapabilityRoute]] = select(AiCapabilityRoute).order_by(
+        AiCapabilityRoute.capability.asc(),
+        AiCapabilityRoute.household_id.asc().nullsfirst(),
+    )
     return list(db.scalars(stmt).all())
 
 
