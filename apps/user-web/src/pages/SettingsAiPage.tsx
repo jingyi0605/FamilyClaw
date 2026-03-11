@@ -1,6 +1,7 @@
 import { Card, EmptyState, Section } from '../components/base';
 import { AiProviderConfigPanel } from '../components/AiProviderConfigPanel';
 import { AgentConfigPanel } from '../components/AgentConfigPanel';
+import { ButlerBootstrapConversation } from '../components/ButlerBootstrapConversation';
 import { useI18n } from '../i18n';
 import { useHouseholdContext } from '../state/household';
 import { useSetupContext } from '../state/setup';
@@ -35,6 +36,7 @@ export function SettingsAiPage() {
     }
     return step;
   });
+  const needsButlerBootstrap = (setupStatus?.missing_requirements ?? []).includes('first_butler_agent');
 
   return (
     <div className="settings-page">
@@ -58,6 +60,15 @@ export function SettingsAiPage() {
 
         <AiProviderConfigPanel householdId={currentHouseholdId} onChanged={() => void refreshSetupStatus(currentHouseholdId)} />
       </Section>
+
+      {needsButlerBootstrap && (
+        <Section title="首个管家引导创建">
+          <ButlerBootstrapConversation
+            householdId={currentHouseholdId}
+            onCreated={() => void refreshSetupStatus(currentHouseholdId)}
+          />
+        </Section>
+      )}
 
       <Section title="Agent 配置中心">
         <AgentConfigPanel householdId={currentHouseholdId} onChanged={() => void refreshSetupStatus(currentHouseholdId)} />

@@ -4,6 +4,14 @@ from pydantic import BaseModel, Field
 
 AgentType = Literal["butler", "nutritionist", "fitness_coach", "study_coach", "custom"]
 AgentStatus = Literal["draft", "active", "inactive"]
+ButlerBootstrapStatus = Literal["collecting", "reviewing", "completed"]
+ButlerBootstrapField = Literal[
+    "display_name",
+    "role_summary",
+    "speaking_style",
+    "personality_traits",
+    "service_focus",
+]
 
 
 class AgentSoulProfileRead(BaseModel):
@@ -93,6 +101,35 @@ class AgentCreate(BaseModel):
     service_boundaries: dict[str, Any] | None = None
     conversation_enabled: bool = True
     default_entry: bool = True
+    created_by: str = Field(default="user-web", min_length=1, max_length=30)
+
+
+class ButlerBootstrapDraft(BaseModel):
+    household_id: str = Field(min_length=1)
+    display_name: str = Field(default="", max_length=100)
+    role_summary: str = Field(default="", max_length=2000)
+    speaking_style: str = Field(default="", max_length=2000)
+    personality_traits: list[str] = Field(default_factory=list, max_length=20)
+    service_focus: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ButlerBootstrapSessionRead(BaseModel):
+    session_id: str = Field(min_length=1)
+    status: ButlerBootstrapStatus
+    pending_field: ButlerBootstrapField | None = None
+    draft: ButlerBootstrapDraft
+    assistant_message: str = Field(min_length=1)
+    can_confirm: bool = False
+
+
+class ButlerBootstrapMessageCreate(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    draft: ButlerBootstrapDraft
+    pending_field: ButlerBootstrapField | None = None
+
+
+class ButlerBootstrapConfirm(BaseModel):
+    draft: ButlerBootstrapDraft
     created_by: str = Field(default="user-web", min_length=1, max_length=30)
 
 

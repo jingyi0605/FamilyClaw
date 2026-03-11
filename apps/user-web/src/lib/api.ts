@@ -1,6 +1,8 @@
 import type {
   AgentDetail,
   AgentListResponse,
+  ButlerBootstrapMessagePayload,
+  ButlerBootstrapSession,
   AgentRuntimePolicy,
   AgentUpdatePayload,
   AgentMemberCognition,
@@ -393,6 +395,33 @@ export const api = {
   },
   getReminderOverview(householdId: string) {
     return request<ReminderOverviewRead>(`/reminders/overview?household_id=${encodeURIComponent(householdId)}`);
+  },
+  createButlerBootstrapSession(householdId: string) {
+    return request<ButlerBootstrapSession>(`/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions`, {
+      method: 'POST',
+    });
+  },
+  sendButlerBootstrapMessage(householdId: string, sessionId: string, payload: ButlerBootstrapMessagePayload) {
+    return request<ButlerBootstrapSession>(
+      `/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions/${encodeURIComponent(sessionId)}/messages`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  confirmButlerBootstrapSession(
+    householdId: string,
+    sessionId: string,
+    payload: { draft: ButlerBootstrapSession['draft']; created_by?: string },
+  ) {
+    return request<AgentDetail>(
+      `/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions/${encodeURIComponent(sessionId)}/confirm`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
   },
   listAgents(householdId: string) {
     return request<AgentListResponse>(`/ai-config/${encodeURIComponent(householdId)}`);

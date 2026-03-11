@@ -5,10 +5,18 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import ActorContext, ensure_actor_can_access_household, require_admin_actor, require_bound_member_actor
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
+from app.modules.agent.bootstrap_service import (
+    advance_butler_bootstrap_session,
+    confirm_butler_bootstrap_session,
+    start_butler_bootstrap_session,
+)
 from app.modules.agent.schemas import (
     AgentCreate,
     AgentDetailRead,
     AgentListResponse,
+    ButlerBootstrapConfirm,
+    ButlerBootstrapMessageCreate,
+    ButlerBootstrapSessionRead,
     AgentMemberCognitionRead,
     AgentMemberCognitionsUpsert,
     AgentRuntimePolicyRead,
@@ -214,6 +222,61 @@ def upsert_ai_config_provider_route_endpoint(
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
+
+
+@router.post("/{household_id}/butler-bootstrap/sessions", response_model=ButlerBootstrapSessionRead, status_code=status.HTTP_201_CREATED)
+def create_butler_bootstrap_session_endpoint(
+    household_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> ButlerBootstrapSessionRead:
+    ensure_actor_can_access_household(actor, household_id)
+    return start_butler_bootstrap_session(db, household_id=household_id)
+
+
+@router.post("/{household_id}/butler-bootstrap/sessions/{session_id}/messages", response_model=ButlerBootstrapSessionRead)
+def append_butler_bootstrap_message_endpoint(
+    household_id: str,
+    session_id: str,
+    payload: ButlerBootstrapMessageCreate,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> ButlerBootstrapSessionRead:
+    ensure_actor_can_access_household(actor, household_id)
+    return advance_butler_bootstrap_session(
+        db,
+        household_id=household_id,
+        session_id=session_id,
+        payload=payload,
+    )
+
+
+@router.post("/{household_id}/butler-bootstrap/sessions/{session_id}/confirm", response_model=AgentDetailRead, status_code=status.HTTP_201_CREATED)
+def confirm_butler_bootstrap_session_endpoint(
+    household_id: str,
+    session_id: str,
+    payload: ButlerBootstrapConfirm,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> AgentDetailRead:
+    ensure_actor_can_access_household(actor, household_id)
+    result = confirm_butler_bootstrap_session(db, household_id=household_id, payload=payload)
+    write_audit_log(
+        db,
+        household_id=household_id,
+        actor=actor,
+        action="agent.bootstrap_create",
+        target_type="family_agent",
+        target_id=result.id,
+        result="success",
+        details={"session_id": session_id, **payload.model_dump(mode="json")},
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+    return result
 
 
 @router.get("/{household_id}", response_model=AgentListResponse)

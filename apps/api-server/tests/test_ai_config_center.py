@@ -11,6 +11,12 @@ import app.db.models  # noqa: F401
 from app.core.config import settings
 from app.modules.agent import repository as agent_repository
 from app.modules.agent.schemas import AgentCreate, AgentRuntimePolicyUpsert
+from app.modules.agent.bootstrap_service import (
+    advance_butler_bootstrap_session,
+    confirm_butler_bootstrap_session,
+    start_butler_bootstrap_session,
+)
+from app.modules.agent.schemas import ButlerBootstrapConfirm, ButlerBootstrapMessageCreate
 from app.modules.agent.service import create_agent, upsert_agent_runtime_policy
 from app.modules.ai_gateway.provider_config_service import list_provider_adapters
 from app.modules.ai_gateway.schemas import AiCapabilityRouteUpsert, AiProviderProfileCreate
@@ -192,6 +198,132 @@ class AiConfigCenterTests(unittest.TestCase):
         self.assertEqual("completed", setup_status.status)
         self.assertEqual("finish", setup_status.current_step)
         self.assertFalse(setup_status.is_required)
+
+    def test_butler_bootstrap_flow_reuses_existing_agent_creation_model(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Bootstrap Home", city="Hangzhou", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        provider = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                provider_code="bootstrap-chatgpt-main",
+                display_name="Bootstrap 模型",
+                transport_type="openai_compatible",
+                base_url="https://api.openai.com/v1",
+                api_version=None,
+                secret_ref="OPENAI_API_KEY",
+                enabled=True,
+                supported_capabilities=["qa_generation"],
+                privacy_level="public_cloud",
+                latency_budget_ms=15000,
+                cost_policy={},
+                extra_config={"adapter_code": "chatgpt", "model_name": "gpt-4o-mini"},
+            ),
+        )
+        self.db.flush()
+
+        upsert_capability_route(
+            self.db,
+            AiCapabilityRouteUpsert(
+                capability="qa_generation",
+                household_id=household.id,
+                primary_provider_profile_id=provider.id,
+                fallback_provider_profile_ids=[],
+                routing_mode="primary_then_fallback",
+                timeout_ms=15000,
+                max_retry_count=0,
+                allow_remote=True,
+                prompt_policy={},
+                response_policy={},
+                enabled=True,
+            ),
+        )
+        self.db.flush()
+
+        session = start_butler_bootstrap_session(self.db, household_id=household.id)
+        self.assertEqual("display_name", session.pending_field)
+
+        session = advance_butler_bootstrap_session(
+            self.db,
+            household_id=household.id,
+            session_id=session.session_id,
+            payload=ButlerBootstrapMessageCreate(
+                message="阿福",
+                draft=session.draft,
+                pending_field=session.pending_field,
+            ),
+        )
+        session = advance_butler_bootstrap_session(
+            self.db,
+            household_id=household.id,
+            session_id=session.session_id,
+            payload=ButlerBootstrapMessageCreate(
+                message="负责家庭问答、提醒和成员关怀",
+                draft=session.draft,
+                pending_field=session.pending_field,
+            ),
+        )
+        session = advance_butler_bootstrap_session(
+            self.db,
+            household_id=household.id,
+            session_id=session.session_id,
+            payload=ButlerBootstrapMessageCreate(
+                message="温和直接，少废话",
+                draft=session.draft,
+                pending_field=session.pending_field,
+            ),
+        )
+        session = advance_butler_bootstrap_session(
+            self.db,
+            household_id=household.id,
+            session_id=session.session_id,
+            payload=ButlerBootstrapMessageCreate(
+                message="细心，稳重，有边界感",
+                draft=session.draft,
+                pending_field=session.pending_field,
+            ),
+        )
+        session = advance_butler_bootstrap_session(
+            self.db,
+            household_id=household.id,
+            session_id=session.session_id,
+            payload=ButlerBootstrapMessageCreate(
+                message="家庭问答，提醒复盘，成员关怀",
+                draft=session.draft,
+                pending_field=session.pending_field,
+            ),
+        )
+
+        self.assertEqual("reviewing", session.status)
+        self.assertTrue(session.can_confirm)
+        self.assertEqual(["细心", "稳重", "有边界感"], session.draft.personality_traits)
+
+        created = confirm_butler_bootstrap_session(
+            self.db,
+            household_id=household.id,
+            payload=ButlerBootstrapConfirm(draft=session.draft, created_by="setup-wizard"),
+        )
+        self.db.commit()
+
+        self.assertEqual("阿福", created.display_name)
+        self.assertEqual("butler", created.agent_type)
+        self.assertIsNotNone(created.soul)
+        assert created.soul is not None
+        self.assertEqual("负责家庭问答、提醒和成员关怀", created.soul.role_summary)
+        self.assertEqual(["家庭问答", "提醒复盘", "成员关怀"], created.soul.service_focus)
+
+    def test_butler_bootstrap_requires_provider_first(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="No Provider Home", city="Suzhou", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        with self.assertRaisesRegex(Exception, "请先完成 AI 供应商配置"):
+            start_butler_bootstrap_session(self.db, household_id=household.id)
 
 
 if __name__ == "__main__":

@@ -551,6 +551,38 @@ export type AgentListResponse = {
   items: AgentSummary[];
 };
 
+export type ButlerBootstrapStatus = 'collecting' | 'reviewing' | 'completed';
+export type ButlerBootstrapField =
+  | 'display_name'
+  | 'role_summary'
+  | 'speaking_style'
+  | 'personality_traits'
+  | 'service_focus';
+
+export type ButlerBootstrapDraft = {
+  household_id: string;
+  display_name: string;
+  role_summary: string;
+  speaking_style: string;
+  personality_traits: string[];
+  service_focus: string[];
+};
+
+export type ButlerBootstrapSession = {
+  session_id: string;
+  status: ButlerBootstrapStatus;
+  pending_field: ButlerBootstrapField | null;
+  draft: ButlerBootstrapDraft;
+  assistant_message: string;
+  can_confirm: boolean;
+};
+
+export type ButlerBootstrapMessagePayload = {
+  message: string;
+  draft: ButlerBootstrapDraft;
+  pending_field: ButlerBootstrapField | null;
+};
+
 export type MemoryType = 'fact' | 'event' | 'preference' | 'relation' | 'growth';
 export type MemoryStatus = 'active' | 'pending_review' | 'invalidated' | 'deleted';
 export type MemoryVisibility = 'public' | 'family' | 'private' | 'sensitive';

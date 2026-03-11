@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Card, EmptyState, PageHeader, Section } from '../components/base';
-import { AgentConfigPanel } from '../components/AgentConfigPanel';
 import { AiProviderConfigPanel } from '../components/AiProviderConfigPanel';
+import { ButlerBootstrapConversation } from '../components/ButlerBootstrapConversation';
 import { api } from '../lib/api';
 import { SETUP_ROUTE_CAPABILITIES } from '../lib/aiConfig';
 import type { AgentSummary, AiCapabilityRoute, AiProviderProfile, HouseholdSetupStepCode, Member } from '../lib/types';
@@ -258,11 +258,11 @@ export function SetupWizardPage() {
           <div className="setup-inline-tip"><strong>当前供应商：</strong><span>{currentProvider ? currentProvider.display_name : '未配置'}</span></div>
           {aiError && <div className="form-error">{aiError}</div>}
           {aiLoading && <p>正在读取 AI 配置概览…</p>}
-          <AgentConfigPanel
+          <ButlerBootstrapConversation
             householdId={currentHouseholdId}
-            compact
-            onlyButler
-            onChanged={refreshAiSummary}
+            source="setup-wizard"
+            existingButlerAgent={currentButlerAgent}
+            onCreated={() => void refreshAiSummary()}
           />
         </div>
       );
