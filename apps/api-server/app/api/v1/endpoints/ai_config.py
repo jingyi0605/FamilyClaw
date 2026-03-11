@@ -6,6 +6,7 @@ from app.api.dependencies import ActorContext, require_admin_actor
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.agent.schemas import (
+    AgentCreate,
     AgentDetailRead,
     AgentListResponse,
     AgentMemberCognitionRead,
@@ -17,6 +18,7 @@ from app.modules.agent.schemas import (
 )
 from app.modules.agent.service import (
     AgentNotFoundError,
+    create_agent,
     get_agent_detail,
     list_ai_config_agents,
     upsert_agent_member_cognitions,
@@ -36,6 +38,32 @@ def list_ai_config_agents_endpoint(
     _actor: ActorContext = Depends(require_admin_actor),
 ) -> AgentListResponse:
     return list_ai_config_agents(db, household_id=household_id)
+
+
+@router.post("/{household_id}/agents", response_model=AgentDetailRead, status_code=status.HTTP_201_CREATED)
+def create_ai_config_agent_endpoint(
+    household_id: str,
+    payload: AgentCreate,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> AgentDetailRead:
+    result = create_agent(db, household_id=household_id, payload=payload)
+    write_audit_log(
+        db,
+        household_id=household_id,
+        actor=actor,
+        action="agent.create",
+        target_type="family_agent",
+        target_id=result.id,
+        result="success",
+        details=payload.model_dump(mode="json"),
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+    return result
 
 
 @router.get("/{household_id}/agents/{agent_id}", response_model=AgentDetailRead)

@@ -16,6 +16,7 @@ import type { Household } from '../lib/types';
 export interface HouseholdSummary {
   id: string;
   name: string;
+  city?: string | null;
   timezone?: string;
   locale?: string;
   status?: string;
@@ -46,6 +47,7 @@ function toHouseholdSummary(household: Household): HouseholdSummary {
   return {
     id: household.id,
     name: household.name,
+    city: household.city,
     timezone: household.timezone,
     locale: household.locale,
     status: household.status,

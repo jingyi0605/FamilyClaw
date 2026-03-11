@@ -9,6 +9,7 @@ from app.modules.agent.models import (
     FamilyAgentSoulProfile,
 )
 from app.modules.agent.schemas import (
+    AgentCreate,
     AgentDetailRead,
     AgentListResponse,
     AgentMemberCognitionRead,
@@ -39,6 +40,64 @@ def get_agent_detail(db: Session, *, household_id: str, agent_id: str) -> AgentD
     row = repository.get_agent_by_household_and_id(db, household_id=household_id, agent_id=agent_id)
     if row is None:
         raise AgentNotFoundError(f"agent {agent_id} not found in household {household_id}")
+    return _to_agent_detail_read(db, row)
+
+
+def create_agent(
+    db: Session,
+    *,
+    household_id: str,
+    payload: AgentCreate,
+) -> AgentDetailRead:
+    existing_primary = repository.get_primary_agent(db, household_id=household_id)
+    sort_order = len(repository.list_agents(db, household_id=household_id)) * 100 + 100
+    display_name = payload.display_name.strip()
+    code = _build_agent_code(display_name)
+
+    if repository.get_agent_by_household_and_code(db, household_id=household_id, code=code) is not None:
+        code = f"{code}-{new_uuid()[:8]}"
+
+    row = FamilyAgent(
+        id=new_uuid(),
+        household_id=household_id,
+        code=code,
+        agent_type=payload.agent_type,
+        display_name=display_name,
+        status="active",
+        is_primary=existing_primary is None,
+        sort_order=sort_order,
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
+    )
+    repository.add_agent(db, row)
+
+    soul = FamilyAgentSoulProfile(
+        id=new_uuid(),
+        agent_id=row.id,
+        version=1,
+        self_identity=payload.self_identity,
+        role_summary=payload.role_summary,
+        intro_message=payload.intro_message,
+        speaking_style=payload.speaking_style,
+        personality_traits_json=dump_json(payload.personality_traits) or "[]",
+        service_focus_json=dump_json(payload.service_focus) or "[]",
+        service_boundaries_json=dump_json(payload.service_boundaries),
+        is_active=True,
+        created_by=payload.created_by,
+        created_at=utc_now_iso(),
+    )
+    repository.add_soul_profile(db, soul)
+
+    runtime_policy = FamilyAgentRuntimePolicy(
+        agent_id=row.id,
+        conversation_enabled=payload.conversation_enabled,
+        default_entry=payload.default_entry if existing_primary is None else False,
+        routing_tags_json=dump_json(["setup", payload.agent_type]) or "[]",
+        memory_scope_json=None,
+        updated_at=utc_now_iso(),
+    )
+    repository.add_runtime_policy(db, runtime_policy)
+    db.flush()
     return _to_agent_detail_read(db, row)
 
 
@@ -339,3 +398,14 @@ def _load_json_dict(value: str | None) -> dict | None:
     if isinstance(data, dict):
         return data
     return None
+
+
+def _build_agent_code(display_name: str) -> str:
+    normalized = "".join(
+        character.lower()
+        if character.isalnum()
+        else "-"
+        for character in display_name.strip()
+    )
+    compact = "-".join(part for part in normalized.split("-") if part)
+    return compact[:64] or f"agent-{new_uuid()[:8]}"

@@ -9,11 +9,13 @@ import { api } from '../lib/api';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel } from '../lib/agents';
 import type { AgentDetail, AgentSummary, Member } from '../lib/types';
 import { useHouseholdContext } from '../state/household';
+import { useSetupContext } from '../state/setup';
 
 export function SettingsAiPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { currentHouseholdId } = useHouseholdContext();
+  const { setupStatus } = useSetupContext();
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
@@ -111,6 +113,19 @@ export function SettingsAiPage() {
     () => new Map(members.map(member => [member.id, member.name])),
     [members],
   );
+  const setupHints = useMemo(() => {
+    if (!setupStatus || setupStatus.is_required || setupStatus.missing_requirements.length === 0) {
+      return [];
+    }
+    const labels: Record<string, string> = {
+      family_profile: '家庭资料',
+      first_member: '首位成员',
+      provider_setup: 'AI 供应商',
+      first_butler_agent: '首个管家 Agent',
+      finish: '完成放行',
+    };
+    return setupStatus.missing_requirements.map(step => labels[step] ?? step);
+  }, [setupStatus]);
 
   if (!currentHouseholdId) {
     return (
@@ -125,6 +140,24 @@ export function SettingsAiPage() {
   return (
     <div className="settings-page">
       <Section title={t('settings.ai')}>
+        {setupHints.length > 0 && (
+          <Card className="setup-resume-card">
+            <div className="setup-resume-card__header">
+              <div>
+                <h3>这个家庭还有补录项</h3>
+                <p>现在不强制锁你，但这些缺口还在。拖着不补，后面照样反咬你。</p>
+              </div>
+              <button className="btn btn--outline" type="button" onClick={() => navigate('/setup')}>
+                去补录
+              </button>
+            </div>
+            <div className="setup-resume-card__chips">
+              {setupHints.map(item => (
+                <span key={item} className="ai-pill">{item}</span>
+              ))}
+            </div>
+          </Card>
+        )}
         <div className="settings-note">
           <span>ℹ️</span> {t('settings.ai.overviewNote')}
         </div>

@@ -81,6 +81,21 @@ class AgentListResponse(BaseModel):
     items: list[AgentSummaryRead] = Field(default_factory=list)
 
 
+class AgentCreate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=100)
+    agent_type: AgentType = "butler"
+    self_identity: str = Field(min_length=1, max_length=4000)
+    role_summary: str = Field(min_length=1, max_length=2000)
+    intro_message: str | None = Field(default=None, max_length=4000)
+    speaking_style: str | None = Field(default=None, max_length=2000)
+    personality_traits: list[str] = Field(default_factory=list, max_length=20)
+    service_focus: list[str] = Field(default_factory=list, max_length=20)
+    service_boundaries: dict[str, Any] | None = None
+    conversation_enabled: bool = True
+    default_entry: bool = True
+    created_by: str = Field(default="user-web", min_length=1, max_length=30)
+
+
 class AgentSoulProfileUpsert(BaseModel):
     self_identity: str = Field(min_length=1, max_length=4000)
     role_summary: str = Field(min_length=1, max_length=2000)

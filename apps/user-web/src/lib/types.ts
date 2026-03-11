@@ -3,11 +3,94 @@ import type { RoomType } from './roomTypes';
 export type Household = {
   id: string;
   name: string;
+  city: string | null;
   timezone: string;
   locale: string;
   status: string;
   created_at: string;
   updated_at: string;
+};
+
+export type HouseholdSetupStepCode =
+  | 'family_profile'
+  | 'first_member'
+  | 'provider_setup'
+  | 'first_butler_agent'
+  | 'finish';
+
+export type HouseholdSetupLifecycleStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
+
+export type HouseholdSetupStatus = {
+  household_id: string;
+  status: HouseholdSetupLifecycleStatus;
+  current_step: HouseholdSetupStepCode;
+  completed_steps: HouseholdSetupStepCode[];
+  missing_requirements: HouseholdSetupStepCode[];
+  is_required: boolean;
+  resume_token: string | null;
+  updated_at: string;
+};
+
+export type AiProviderProfile = {
+  id: string;
+  provider_code: string;
+  display_name: string;
+  transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
+  base_url: string | null;
+  api_version: string | null;
+  secret_ref: string | null;
+  enabled: boolean;
+  supported_capabilities: string[];
+  privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
+  latency_budget_ms: number | null;
+  cost_policy: Record<string, unknown>;
+  extra_config: Record<string, unknown>;
+  updated_at: string;
+};
+
+export type AiProviderProfileCreatePayload = {
+  provider_code: string;
+  display_name: string;
+  transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
+  base_url: string | null;
+  api_version: string | null;
+  secret_ref: string | null;
+  enabled: boolean;
+  supported_capabilities: string[];
+  privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
+  latency_budget_ms: number | null;
+  cost_policy: Record<string, unknown>;
+  extra_config: Record<string, unknown>;
+};
+
+export type AiCapabilityRoute = {
+  id: string;
+  capability: string;
+  household_id: string | null;
+  primary_provider_profile_id: string | null;
+  fallback_provider_profile_ids: string[];
+  routing_mode: string;
+  timeout_ms: number;
+  max_retry_count: number;
+  allow_remote: boolean;
+  prompt_policy: Record<string, unknown>;
+  response_policy: Record<string, unknown>;
+  enabled: boolean;
+  updated_at: string;
+};
+
+export type AiCapabilityRouteUpsertPayload = {
+  capability: string;
+  household_id: string | null;
+  primary_provider_profile_id: string | null;
+  fallback_provider_profile_ids: string[];
+  routing_mode: string;
+  timeout_ms: number;
+  max_retry_count: number;
+  allow_remote: boolean;
+  prompt_policy: Record<string, unknown>;
+  response_policy: Record<string, unknown>;
+  enabled: boolean;
 };
 
 export type PaginatedResponse<T> = {

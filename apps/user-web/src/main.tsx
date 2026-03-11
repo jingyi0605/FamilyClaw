@@ -7,6 +7,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider } from './theme';
 import { I18nProvider } from './i18n';
 import { HouseholdProvider } from './state/household';
+import { SetupProvider } from './state/setup';
 import App from './App';
 import './styles.css';
 
@@ -16,7 +17,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <ThemeProvider>
         <I18nProvider>
           <HouseholdProvider>
-            <App />
+            <SetupProvider>
+              <App />
+            </SetupProvider>
           </HouseholdProvider>
         </I18nProvider>
       </ThemeProvider>

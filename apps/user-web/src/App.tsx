@@ -3,10 +3,12 @@
  * ============================================================ */
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from './layouts/AppLayout';
+import { SetupGuard } from './layouts/SetupGuard';
 import { HomePage } from './pages/HomePage';
 import { FamilyLayout, FamilyOverview, FamilyRooms, FamilyMembers, FamilyRelationships } from './pages/FamilyPage';
 import { AssistantPage } from './pages/AssistantPage';
 import { MemoriesPage } from './pages/MemoriesPage';
+import { SetupWizardPage } from './pages/SetupWizardPage';
 import {
   SettingsLayout,
   SettingsAppearance,
@@ -20,9 +22,25 @@ import {
 export default function App() {
   return (
     <Routes>
+      <Route
+        path="/setup"
+        element={(
+          <SetupGuard mode="setup">
+            <SetupWizardPage />
+          </SetupGuard>
+        )}
+      />
+
       <Route element={<AppLayout />}>
         {/* 首页 */}
-        <Route path="/" element={<HomePage />} />
+        <Route
+          path="/"
+          element={(
+            <SetupGuard mode="protected">
+              <HomePage />
+            </SetupGuard>
+          )}
+        />
 
         {/* 家庭 */}
         <Route path="/family" element={<FamilyLayout />}>
@@ -33,7 +51,14 @@ export default function App() {
         </Route>
 
         {/* 对话 */}
-        <Route path="/conversation" element={<AssistantPage />} />
+        <Route
+          path="/conversation"
+          element={(
+            <SetupGuard mode="protected">
+              <AssistantPage />
+            </SetupGuard>
+          )}
+        />
         <Route path="/assistant" element={<Navigate to="/conversation" replace />} />
 
         {/* 记忆 */}
@@ -42,7 +67,14 @@ export default function App() {
         {/* 设置 */}
         <Route path="/settings" element={<SettingsLayout />}>
           <Route path="appearance" element={<SettingsAppearance />} />
-          <Route path="ai" element={<SettingsAi />} />
+          <Route
+            path="ai"
+            element={(
+              <SetupGuard mode="protected">
+                <SettingsAi />
+              </SetupGuard>
+            )}
+          />
           <Route path="language" element={<SettingsLanguage />} />
           <Route path="notifications" element={<SettingsNotifications />} />
           <Route path="accessibility" element={<SettingsAccessibility />} />

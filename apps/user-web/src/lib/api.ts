@@ -1,6 +1,10 @@
 import type {
   AgentDetail,
   AgentListResponse,
+  AiCapabilityRoute,
+  AiCapabilityRouteUpsertPayload,
+  AiProviderProfile,
+  AiProviderProfileCreatePayload,
   ContextConfigRead,
   ContextOverviewRead,
   Device,
@@ -12,6 +16,7 @@ import type {
   HomeAssistantRoomSyncResponse,
   HomeAssistantSyncResponse,
   Household,
+  HouseholdSetupStatus,
   MemoryCard,
   MemoryCardRevision,
   MemoryType,
@@ -117,6 +122,33 @@ export const api = {
   },
   getHousehold(householdId: string) {
     return request<Household>(`/households/${encodeURIComponent(householdId)}`);
+  },
+  updateHousehold(householdId: string, payload: Partial<Pick<Household, 'name' | 'city' | 'timezone' | 'locale'>>) {
+    return request<Household>(`/households/${encodeURIComponent(householdId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+  getHouseholdSetupStatus(householdId: string) {
+    return request<HouseholdSetupStatus>(`/households/${encodeURIComponent(householdId)}/setup-status`);
+  },
+  listAiProviders() {
+    return request<AiProviderProfile[]>('/ai/providers?enabled=true');
+  },
+  createAiProvider(payload: AiProviderProfileCreatePayload) {
+    return request<AiProviderProfile>('/ai/providers', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  listAiRoutes(householdId: string) {
+    return request<AiCapabilityRoute[]>(`/ai/routes?household_id=${encodeURIComponent(householdId)}`);
+  },
+  upsertAiRoute(capability: string, payload: AiCapabilityRouteUpsertPayload) {
+    return request<AiCapabilityRoute>(`/ai/routes/${encodeURIComponent(capability)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
   },
   createRoom(payload: {
     household_id: string;
@@ -273,6 +305,25 @@ export const api = {
   },
   listAgents(householdId: string) {
     return request<AgentListResponse>(`/ai-config/${encodeURIComponent(householdId)}`);
+  },
+  createAgent(householdId: string, payload: {
+    display_name: string;
+    agent_type?: 'butler' | 'nutritionist' | 'fitness_coach' | 'study_coach' | 'custom';
+    self_identity: string;
+    role_summary: string;
+    intro_message?: string | null;
+    speaking_style?: string | null;
+    personality_traits: string[];
+    service_focus: string[];
+    service_boundaries?: Record<string, unknown> | null;
+    conversation_enabled?: boolean;
+    default_entry?: boolean;
+    created_by?: string;
+  }) {
+    return request<AgentDetail>(`/ai-config/${encodeURIComponent(householdId)}/agents`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   },
   getAgentDetail(householdId: string, agentId: string) {
     return request<AgentDetail>(`/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}`);
