@@ -1,7 +1,7 @@
 """add lunar birthday flag to member preferences
 
 Revision ID: 20260310_0002
-Revises: 20260309_0001
+Revises: 20260311_0008
 Create Date: 2026-03-10 00:02:00
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision = "20260310_0002"
-down_revision = "20260310_0006"
+down_revision = "20260311_0008"
 branch_labels = None
 depends_on = None
 

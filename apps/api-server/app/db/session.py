@@ -6,6 +6,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+from app.db.base import Base
 
 url = make_url(settings.database_url)
 if url.get_backend_name() == "sqlite" and url.database:
@@ -28,6 +29,15 @@ if url.get_backend_name() == "sqlite":
         cursor.close()
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
+
+
+def ensure_sqlite_schema() -> None:
+    if url.get_backend_name() != "sqlite":
+        return
+
+    import app.db.models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
 
 
 def get_db() -> Generator[Session, None, None]:
