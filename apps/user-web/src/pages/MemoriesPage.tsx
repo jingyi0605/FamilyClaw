@@ -62,6 +62,19 @@ function summarizeSource(card: MemoryCard) {
   return '系统生成';
 }
 
+function getMemoryPermissionHint(card: MemoryCard) {
+  if (card.status === 'deleted') {
+    return '这条记忆已经删除，只保留查看记录，不能继续修改。';
+  }
+  if (card.visibility === 'sensitive') {
+    return '这条记忆属于敏感内容，修改前请先确认是否真的需要保留或更正。';
+  }
+  if (card.visibility === 'private') {
+    return '这条记忆是私密范围，建议只在确认归属和内容准确时再修改。';
+  }
+  return '你可以在这里更正文案或标记失效，系统会保留修订历史。';
+}
+
 function getDetailContent(card: MemoryCard) {
   if (card.summary) {
     return card.summary;
@@ -249,6 +262,7 @@ export function MemoriesPage() {
   )), [memories, searchQuery]);
 
   const selectedMemory = filtered.find(m => m.id === selectedId) ?? memories.find(m => m.id === selectedId) ?? null;
+  const canEditSelectedMemory = selectedMemory ? selectedMemory.status !== 'deleted' : false;
 
   useEffect(() => {
     if (selectedMemory) {
@@ -428,11 +442,11 @@ export function MemoriesPage() {
               <div className="memory-detail__body">
                 <div className="detail-field">
                   <label>{t('memory.detail')}</label>
-                  <input className="form-input" value={editingDraft.title} onChange={event => setEditingDraft(current => ({ ...current, title: event.target.value }))} />
+                  <input className="form-input" value={editingDraft.title} disabled={!canEditSelectedMemory} onChange={event => setEditingDraft(current => ({ ...current, title: event.target.value }))} />
                 </div>
                 <div className="detail-field">
                   <label>内容</label>
-                  <textarea className="form-input" value={editingDraft.summary} onChange={event => setEditingDraft(current => ({ ...current, summary: event.target.value }))} rows={5} />
+                  <textarea className="form-input" value={editingDraft.summary} disabled={!canEditSelectedMemory} onChange={event => setEditingDraft(current => ({ ...current, summary: event.target.value }))} rows={5} />
                 </div>
                 <div className="detail-field">
                   <label>{t('memory.source')}</label>
@@ -445,6 +459,11 @@ export function MemoriesPage() {
                 <div className="detail-field">
                   <label>{t('memory.status')}</label>
                   <p>{formatStatus(selectedMemory.status)}</p>
+                </div>
+                <div className="detail-field">
+                  <label>当前操作说明</label>
+                  <p>{getMemoryPermissionHint(selectedMemory)}</p>
+                  <p>{CAN_DELETE_MEMORY ? '当前身份允许删除记忆，但删除后只保留修订记录。' : '当前身份没有删除权限，如需删除请联系家庭管理员。'}</p>
                 </div>
                 <div className="detail-field">
                   <label>{t('memory.updatedAt')}</label>
@@ -501,11 +520,11 @@ export function MemoriesPage() {
                 </div>
               </div>
               <div className="memory-detail__actions">
-                <button className="btn btn--outline" onClick={() => setEditingDraft({ title: selectedMemory.title, summary: selectedMemory.summary })}>{t('memory.edit')}</button>
-                <button className="btn btn--outline" onClick={() => void handleCorrect()}>{t('memory.correct')}</button>
-                <button className="btn btn--outline btn--warning" onClick={() => void handleInvalidate()}>{t('memory.invalidate')}</button>
+                <button className="btn btn--outline" disabled={!canEditSelectedMemory} onClick={() => setEditingDraft({ title: selectedMemory.title, summary: selectedMemory.summary })}>{t('memory.edit')}</button>
+                <button className="btn btn--outline" disabled={!canEditSelectedMemory} onClick={() => void handleCorrect()}>{t('memory.correct')}</button>
+                <button className="btn btn--outline btn--warning" disabled={!canEditSelectedMemory} onClick={() => void handleInvalidate()}>{t('memory.invalidate')}</button>
                 {CAN_DELETE_MEMORY ? (
-                  <button className="btn btn--outline btn--danger" onClick={() => void handleDelete()}>{t('memory.delete')}</button>
+                  <button className="btn btn--outline btn--danger" disabled={!canEditSelectedMemory} onClick={() => void handleDelete()}>{t('memory.delete')}</button>
                 ) : null}
               </div>
             </>

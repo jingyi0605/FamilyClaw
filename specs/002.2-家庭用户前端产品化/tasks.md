@@ -294,7 +294,8 @@
 
 - [ ] 2.2 做家庭、房间、成员和关系管理页
   - 状态：IN_PROGRESS
-  - 当前进度：家庭概览 / 房间 / 成员 / 关系页面已切到真实读接口（`households / context/overview / rooms / members / devices / member-relationships / member-preferences`）；新增房间 / 成员 / 关系已接到现有写接口；成员偏好也已接到现有 `member-preferences/{member_id}` upsert 接口。更复杂的成员权限和房间编辑仍待后续补。
+  - 当前进度：家庭概览 / 房间 / 成员 / 关系页面已切到真实读接口（`households / context/overview / rooms / members / devices / member-relationships / member-preferences`）；新增房间 / 成员 / 关系已接到现有写接口；成员偏好也已接到现有 `member-preferences/{member_id}` upsert 接口；关系图谱和移动端家庭切换入口也已经补上。当前还缺家庭基础信息编辑和房间编辑。
+  - 当前阻塞：已检查 `apps/api-server/app/api/v1/endpoints/households.py` 和 `apps/api-server/app/api/v1/endpoints/rooms.py`，目前只有 `GET/POST`，没有家庭更新接口和房间更新接口，所以这两块暂时不能做真保存，先不做假提交。
   - 这一步到底做什么：把家庭结构管理从调试台迁出来，做成用户能用的产品页。
   - 做完你能看到什么：用户前端能直接维护家庭、房间、成员和关系。
   - 先依赖什么：2.1
@@ -319,7 +320,8 @@
 
 - [ ] 2.3 做设备、HA 和 AI 易用配置页
   - 状态：IN_PROGRESS
-  - 当前进度：设置页二级导航和 6 个子页面骨架已完成；主题切换、语言切换、长辈模式已可工作；设备与集成页已切到真实 API（`context/overview / devices / rooms / devices/sync/ha`）；AI 配置已接入真实的隐私级别字段，并继续接入了 `voice_fast_path_enabled / guest_mode_enabled / child_protection_enabled / elder_care_watch_enabled` 这些家庭服务开关；通知偏好已接入真实的免打扰开关和时段（`context/configs`）。其余像助手称呼、回复语气、通知方式、通知范围等字段，后端还没有稳定的用户态配置承载，当前已在页面里明确提示，不做假映射。
+  - 当前进度：设置页二级导航和 6 个子页面骨架已完成；主题切换、语言切换、长辈模式已可工作；设备与集成页已切到真实 API（`context/overview / devices / rooms / devices/sync/ha`）；AI 配置已接入真实的隐私级别字段，并继续接入了 `voice_fast_path_enabled / guest_mode_enabled / child_protection_enabled / elder_care_watch_enabled` 这些家庭服务开关；通知偏好已接入真实的免打扰开关和时段（`context/configs`）。语言页里的日期格式 / 时间格式、AI 页里的助手称呼 / 回复语气 / 长度 / 记忆策略开关，以及通知方式等没有稳定后端承载的项，当前都已改成明确说明态或禁用态，避免误导用户以为能保存。
+  - 当前阻塞：`ai/runtime-defaults`、`ai/routes` 这类接口还没有在用户端形成稳定产品语义映射；像助手称呼、回复语气、通知方式、通知范围等字段，后端也还没有明确的用户态配置承载，所以这批字段目前只能保留说明态，不能做真保存。
   - 这一步到底做什么：把设备、HA、AI 这些完整配置能力收进 `设置` 入口，但全部换成用户看得懂的话。
   - 做完你能看到什么：用户在 `设置` 里就能完成设备、HA、AI 配置，但不会看到一堆开发者术语。
   - 先依赖什么：2.2
@@ -369,7 +371,8 @@
 
 - [ ] 3.1 做 AI 助手多会话与连续对话页
   - 状态：IN_PROGRESS
-  - 当前进度：已把助手页从纯模拟数据切到真实 `family-qa/suggestions` 和 `family-qa/query`；当前保留本地会话壳，支持新建、切换、连续追问，并能显示真实回答、降级状态、事实引用和推荐追问。快捷动作里“转为提醒”“写入记忆”也已接到现有 `reminders` 和 `memories/cards/manual` 接口。真正的服务端会话持久化还没做。
+  - 当前进度：已把助手页从纯模拟数据切到真实 `family-qa/suggestions` 和 `family-qa/query`；支持新建、切换、连续追问，并能显示真实回答、降级状态、事实引用和推荐追问。当前已经补了按家庭维度保存到本地 `localStorage` 的会话持久化，刷新后还能恢复最近会话。快捷动作里“转为提醒”“写入记忆”也已接到现有 `reminders` 和 `memories/cards/manual` 接口。
+  - 当前阻塞：真正的服务端会话持久化和会话搜索还没做；当前搜索入口已收成说明态，避免误导成可用能力。
   - 这一步到底做什么：把助手做成真正能长期使用的对话中心，不是一次性问答框。
   - 做完你能看到什么：用户能管理多个会话，并在同一会话中持续追问。
   - 先依赖什么：2.4
@@ -394,7 +397,8 @@
 
 - [ ] 3.2 做家庭记忆列表、详情和纠错管理
   - 状态：IN_PROGRESS
-  - 当前进度：记忆页已切到真实 `memories/cards`，支持分类切换、搜索、列表和详情抽屉，能展示来源、可见范围、状态和更新时间。纠错 / 失效 / 删除已接到现有 `memories/cards/{id}/corrections` 接口，修订历史也已接到现有 `memories/cards/{id}/revisions`，并支持展开查看 `before / after` 详情。当前仍缺更细的权限提示和更友好的编辑交互。
+  - 当前进度：记忆页已切到真实 `memories/cards`，支持分类切换、搜索、列表和详情抽屉，能展示来源、可见范围、状态和更新时间。纠错 / 失效 / 删除已接到现有 `memories/cards/{id}/corrections` 接口，修订历史也已接到现有 `memories/cards/{id}/revisions`，并支持展开查看 `before / after` 详情。当前已经补了敏感 / 私密 / 已删除记忆的操作说明，以及非管理员删除权限提示。
+  - 当前阻塞：更细的成员级权限判断仍依赖后端进一步给出用户态权限语义，当前前端只能基于可见范围、状态和 actor 角色做保守提示。
   - 这一步到底做什么：把家庭记忆做成可查、可改、可控的页面，而不是黑盒存储。
   - 做完你能看到什么：用户能查看来源、纠错、失效标记和可见范围。
   - 先依赖什么：3.1
@@ -419,7 +423,8 @@
 
 - [ ] 3.3 打通助手到提醒、场景和记忆的快捷动作
   - 状态：IN_PROGRESS
-  - 当前进度：助手页里的“转为提醒”“写入记忆”已经接到现有 `reminders` 和 `memories/cards/manual` 接口，并补了前端确认表单；家庭页也已经补上基于现有接口的新增房间、成员、关系表单（`rooms / members / member-relationships`）。场景动作和页面跳转还没接。
+  - 当前进度：助手页里的“转为提醒”“写入记忆”已经接到现有 `reminders` 和 `memories/cards/manual` 接口，并补了前端确认表单；回答后的动作区也已补上跳转到家庭页、设置页、记忆页的快捷入口。家庭页也已经补上基于现有接口的新增房间、成员、关系表单（`rooms / members / member-relationships`）。
+  - 当前阻塞：场景接口目前仍是 admin 保护的 `scenes/*` 路由，用户端缺少稳定的场景产品语义和权限边界，所以这部分先不做直接触发，避免做出高风险假入口。
   - 这一步到底做什么：让助手回答不是停在一段文字，而是能继续转成家庭服务动作。
   - 做完你能看到什么：用户可以把回答转成提醒、写入记忆或跳转相关家庭页面。
   - 先依赖什么：3.1、3.2

@@ -177,11 +177,12 @@ export function SettingsAi() {
         <div className="settings-form">
           <div className="form-group">
             <label>{t('settings.ai.assistantName')}</label>
-            <input type="text" className="form-input" defaultValue="家庭助手" />
+            <input type="text" className="form-input" value="家庭助手" disabled readOnly />
+            <div className="form-help">这个字段后端还没有稳定的用户态配置，先展示默认值，不支持保存。</div>
           </div>
           <div className="form-group">
             <label>{t('settings.ai.replyTone')}</label>
-            <select className="form-select">
+            <select className="form-select" value="温和友好" disabled>
               <option>温和友好</option>
               <option>简洁干练</option>
               <option>活泼有趣</option>
@@ -189,7 +190,7 @@ export function SettingsAi() {
           </div>
           <div className="form-group">
             <label>{t('settings.ai.replyLength')}</label>
-            <select className="form-select">
+            <select className="form-select" value="适中" disabled>
               <option>适中</option>
               <option>简短</option>
               <option>详细</option>
@@ -197,16 +198,17 @@ export function SettingsAi() {
           </div>
           <div className="form-group">
             <label>{t('settings.ai.outputLanguage')}</label>
-            <select className="form-select">
+            <select className="form-select" value="中文" disabled>
               <option>中文</option>
               <option>English</option>
             </select>
+            <div className="form-help">回复语气、长度和输出语言当前都是产品预留项，先不做假保存。</div>
           </div>
 
           <div className="settings-toggles">
-            <ToggleSwitch checked={true} label={t('settings.ai.useMemory')} description={t('settings.ai.useMemoryDesc')} />
-            <ToggleSwitch checked={true} label={t('settings.ai.suggestReminder')} description={t('settings.ai.suggestReminderDesc')} />
-            <ToggleSwitch checked={false} label={t('settings.ai.suggestScene')} description={t('settings.ai.suggestSceneDesc')} />
+            <ToggleSwitch checked={true} label={t('settings.ai.useMemory')} description={`${t('settings.ai.useMemoryDesc')} 当前按系统默认策略运行，暂不支持单独保存。`} disabled />
+            <ToggleSwitch checked={true} label={t('settings.ai.suggestReminder')} description={`${t('settings.ai.suggestReminderDesc')} 当前按系统默认策略运行，暂不支持单独保存。`} disabled />
+            <ToggleSwitch checked={false} label={t('settings.ai.suggestScene')} description={`${t('settings.ai.suggestSceneDesc')} 场景策略还没有稳定的用户态配置字段。`} disabled />
           </div>
 
           <Section title="家庭服务开关" className="section--embedded">
@@ -257,18 +259,20 @@ export function SettingsLanguage() {
           </div>
           <div className="form-group">
             <label>{t('settings.language.dateFormat')}</label>
-            <select className="form-select">
+            <select className="form-select" value="YYYY-MM-DD" disabled>
               <option>YYYY-MM-DD</option>
               <option>MM/DD/YYYY</option>
               <option>DD/MM/YYYY</option>
             </select>
+            <div className="form-help">日期格式当前跟随系统默认规则展示，暂不支持单独保存。</div>
           </div>
           <div className="form-group">
             <label>{t('settings.language.timeFormat')}</label>
-            <select className="form-select">
+            <select className="form-select" value="24 小时制" disabled>
               <option>24 小时制</option>
               <option>12 小时制</option>
             </select>
+            <div className="form-help">时间格式当前跟随系统默认规则展示，暂不支持单独保存。</div>
           </div>
         </div>
       </Section>
@@ -287,11 +291,12 @@ export function SettingsNotifications() {
         <div className="settings-form">
           <div className="form-group">
             <label>{t('settings.notifications.method')}</label>
-            <select className="form-select">
+            <select className="form-select" value="浏览器通知 + 站内消息" disabled>
               <option>浏览器通知 + 站内消息</option>
               <option>仅站内消息</option>
               <option>全部关闭</option>
             </select>
+            <div className="form-help">通知方式还没有对应的稳定后端字段，先展示默认推荐方案。</div>
           </div>
           <div className="settings-toggles">
             <ToggleSwitch checked={config?.quiet_hours_enabled ?? false} label={t('settings.notifications.dnd')} description={`开启后在 ${config?.quiet_hours_start ?? '22:00'}-${config?.quiet_hours_end ?? '07:00'} 不会收到通知`} onChange={value => void savePatch({ quiet_hours_enabled: value })} />

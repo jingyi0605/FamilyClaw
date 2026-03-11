@@ -123,19 +123,29 @@ export function ToggleSwitch({
   label,
   description,
   onChange,
+  disabled = false,
 }: {
   checked: boolean;
   label: string;
   description?: string;
   onChange?: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
-    <label className="toggle-row">
+    <label className={`toggle-row ${disabled ? 'toggle-row--disabled' : ''}`}>
       <div className="toggle-row__text">
         <span className="toggle-row__label">{label}</span>
         {description && <span className="toggle-row__desc">{description}</span>}
       </div>
-      <div className={`toggle-switch ${checked ? 'toggle-switch--on' : ''}`} onClick={() => onChange?.(!checked)}>
+      <div
+        className={`toggle-switch ${checked ? 'toggle-switch--on' : ''} ${disabled ? 'toggle-switch--disabled' : ''}`}
+        onClick={() => {
+          if (!disabled) {
+            onChange?.(!checked);
+          }
+        }}
+        aria-disabled={disabled}
+      >
         <div className="toggle-switch__thumb" />
       </div>
     </label>

@@ -3,6 +3,7 @@
  * 支持卡片添加、移除、拖拽排列
  * ============================================================ */
 import { useState, useRef, useCallback, useEffect, type DragEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   CloudSun, BarChart2, Home, Users, ClipboardList, Zap, Bot, Smartphone, 
   Droplets, Wind, Thermometer, Umbrella, Sun,
@@ -308,7 +309,7 @@ function DevicesCard({ data }: { data: DashboardData }) {
 }
 
 /* ---- 渲染单个仪表盘卡片 ---- */
-function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'], data: DashboardData, loading: boolean) {
+function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'], data: DashboardData, loading: boolean, navigate: ReturnType<typeof useNavigate>) {
   switch (type) {
     case 'weather':
       return <WeatherCard data={data} />;
@@ -399,10 +400,10 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'],
         <Card className="dashboard-card animate-card">
           <h3 className="dashboard-card__title flex items-center gap-2"><Zap size={20} /> {t('home.quickActions')}</h3>
           <div className="quick-actions">
-            <button className="quick-action-btn hover-lift flex items-center gap-2"><MessageSquareText size={16} /> {t('nav.assistant')}</button>
-            <button className="quick-action-btn hover-lift flex items-center gap-2"><BookOpenText size={16} /> {t('nav.memories')}</button>
-            <button className="quick-action-btn hover-lift flex items-center gap-2"><Settings size={16} /> {t('nav.settings')}</button>
-            <button className="quick-action-btn hover-lift flex items-center gap-2"><Users size={16} /> {t('nav.family')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => navigate('/assistant')}><MessageSquareText size={16} /> {t('nav.assistant')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => navigate('/memories')}><BookOpenText size={16} /> {t('nav.memories')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => navigate('/settings')}><Settings size={16} /> {t('nav.settings')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => navigate('/family')}><Users size={16} /> {t('nav.family')}</button>
           </div>
         </Card>
       );
@@ -418,6 +419,7 @@ function renderDashboardCard(type: CardType, t: ReturnType<typeof useI18n>['t'],
 /* ---- 首页主组件 ---- */
 export function HomePage() {
   const { t } = useI18n();
+  const navigate = useNavigate();
   const { currentHousehold, currentHouseholdId } = useHouseholdContext();
   const familyName = currentHousehold?.name ?? '';
 
@@ -591,10 +593,10 @@ export function HomePage() {
                   <button className="remove-card-btn" onClick={() => removeCard(idx)}>✕</button>
                 </div>
               )}
-              {renderDashboardCard(type, t, dashboardData, loading)}
-            </div>
-          );
-        })}
+               {renderDashboardCard(type, t, dashboardData, loading, navigate)}
+             </div>
+           );
+         })}
       </div>
 
       {layout.length === 0 && (

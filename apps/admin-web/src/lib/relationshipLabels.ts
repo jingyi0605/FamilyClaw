@@ -47,8 +47,8 @@ const RELATION_CATEGORY_LABELS: Record<RelationType, string> = {
   younger_sister: "手足",
   grandfather_paternal: "祖孙",
   grandmother_paternal: "祖孙",
-  grandfather_maternal: "外祖孙",
-  grandmother_maternal: "外祖孙",
+  grandfather_maternal: "外孙",
+  grandmother_maternal: "外孙",
   grandson: "祖孙",
   granddaughter: "祖孙",
   guardian: "监护",
@@ -188,8 +188,8 @@ function getGrandparentCategoryLabel(
   grandchildGender: Member["gender"],
   side: "paternal" | "maternal" | null,
 ) {
-  const maleLabel = side === "maternal" ? "外祖孙" : "祖孙";
-  const femaleLabel = side === "maternal" ? "外祖孙女" : "祖孙女";
+  const maleLabel = side === "maternal" ? "外孙" : "孙子";
+  const femaleLabel = side === "maternal" ? "外孙女" : "孙女";
 
   if (grandchildGender === "male") return maleLabel;
   if (grandchildGender === "female") return femaleLabel;

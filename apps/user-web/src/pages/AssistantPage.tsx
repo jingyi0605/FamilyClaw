@@ -3,11 +3,14 @@
  * ============================================================ */
 import { useEffect, useMemo, useState } from 'react';
 import { Menu, MessageSquarePlus } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useHouseholdContext } from '../state/household';
 import { EmptyState } from '../components/base';
 import { api } from '../lib/api';
 import type { FamilyQaFactReference } from '../lib/types';
+
+const ASSISTANT_STORAGE_KEY = 'familyclaw-assistant-sessions';
 
 interface Session {
   id: string;
@@ -27,6 +30,12 @@ interface Message {
   suggestions?: string[];
 }
 
+type PersistedAssistantState = {
+  sessions: Session[];
+  messagesBySession: Record<string, Message[]>;
+  activeSession: string;
+};
+
 function formatRelativeTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -44,8 +53,31 @@ function buildSessionTitle(question: string) {
   return question.length > 14 ? `${question.slice(0, 14)}...` : question;
 }
 
+function loadPersistedAssistantState(householdId: string): PersistedAssistantState | null {
+  try {
+    const raw = localStorage.getItem(`${ASSISTANT_STORAGE_KEY}:${householdId}`);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedAssistantState>;
+    if (!Array.isArray(parsed.sessions) || !parsed.messagesBySession || typeof parsed.activeSession !== 'string') {
+      return null;
+    }
+
+    return {
+      sessions: parsed.sessions,
+      messagesBySession: parsed.messagesBySession,
+      activeSession: parsed.activeSession,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function AssistantPage() {
   const { t } = useI18n();
+  const navigate = useNavigate();
   const { currentHousehold, currentHouseholdId } = useHouseholdContext();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [messagesBySession, setMessagesBySession] = useState<Record<string, Message[]>>({});
@@ -60,15 +92,29 @@ export function AssistantPage() {
   const [actionDraft, setActionDraft] = useState<
     | { type: 'reminder'; message: Message; title: string; description: string; triggerAt: string }
     | { type: 'memory'; message: Message; title: string; summary: string }
-    | null
+      | null
   >(null);
+  const [storageReady, setStorageReady] = useState(false);
 
   useEffect(() => {
     if (!currentHouseholdId) {
+      setStorageReady(false);
       setSuggestions([]);
       setSessions([]);
       setMessagesBySession({});
       setActiveSession('');
+      return;
+    }
+
+    const persisted = loadPersistedAssistantState(currentHouseholdId);
+    setSessions(persisted?.sessions ?? []);
+    setMessagesBySession(persisted?.messagesBySession ?? {});
+    setActiveSession(persisted?.activeSession ?? '');
+    setStorageReady(true);
+  }, [currentHouseholdId]);
+
+  useEffect(() => {
+    if (!currentHouseholdId || !storageReady) {
       return;
     }
 
@@ -81,7 +127,8 @@ export function AssistantPage() {
         const result = await api.getFamilyQaSuggestions(currentHouseholdId);
         if (!cancelled) {
           setSuggestions(result.items.map(item => item.question));
-          if (result.items.length > 0 && sessions.length === 0) {
+          const persisted = loadPersistedAssistantState(currentHouseholdId);
+          if (result.items.length > 0 && (persisted?.sessions.length ?? 0) === 0) {
             const seedQuestion = result.items[0].question;
             const seedSessionId = `session-${Date.now()}`;
             setSessions([{ id: seedSessionId, title: buildSessionTitle(seedQuestion), lastMessage: seedQuestion, time: '刚刚', pinned: true }]);
@@ -108,7 +155,25 @@ export function AssistantPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentHouseholdId]);
+  }, [currentHouseholdId, storageReady]);
+
+  useEffect(() => {
+    if (!currentHouseholdId || !storageReady) {
+      return;
+    }
+
+    const payload: PersistedAssistantState = {
+      sessions,
+      messagesBySession,
+      activeSession,
+    };
+
+    try {
+      localStorage.setItem(`${ASSISTANT_STORAGE_KEY}:${currentHouseholdId}`, JSON.stringify(payload));
+    } catch {
+      // ignore storage errors
+    }
+  }, [activeSession, currentHouseholdId, messagesBySession, sessions, storageReady]);
 
   const activeMessages = messagesBySession[activeSession] ?? [];
   const activeSessionData = sessions.find(s => s.id === activeSession);
@@ -239,6 +304,16 @@ export function AssistantPage() {
     setError('');
   }
 
+  function openRelatedPage(target: 'family' | 'settings' | 'memories') {
+    const routeMap = {
+      family: '/family',
+      settings: '/settings',
+      memories: '/memories',
+    } as const;
+
+    navigate(routeMap[target]);
+  }
+
   async function submitActionDraft() {
     if (!currentHouseholdId || !actionDraft) {
       return;
@@ -346,7 +421,7 @@ export function AssistantPage() {
           </button>
         </div>
         <div className="assistant-sidebar__search">
-          <input type="text" placeholder={t('assistant.search')} className="search-input" disabled />
+          <div className="assistant-sidebar__search-note">会话搜索还没接服务端索引，当前先按时间保留最近会话。</div>
         </div>
         <div className="assistant-sidebar__list">
           {sessions.map(session => (
@@ -391,13 +466,16 @@ export function AssistantPage() {
                     {msg.degraded && <span className="message__memory-tag">⚠️ 当前回答已降级</span>}
                   </div>
                   {msg.role === 'assistant' && (
-                    <div className="message__actions">
-                      <button className="msg-action-btn" onClick={() => void submitQuestion(`继续追问：${msg.content.slice(0, 40)}`)}>{t('assistant.askFollow')}</button>
-                       <button className="msg-action-btn" onClick={() => openReminderDraft(msg)}>{t('assistant.toReminder')}</button>
-                       <button className="msg-action-btn" onClick={() => openMemoryDraft(msg)}>{t('assistant.toMemory')}</button>
-                      {(msg.suggestions ?? []).slice(0, 2).map(suggestion => (
-                        <button key={suggestion} className="msg-action-btn" onClick={() => void submitQuestion(suggestion)}>{suggestion}</button>
-                      ))}
+                      <div className="message__actions">
+                        <button className="msg-action-btn" onClick={() => void submitQuestion(`继续追问：${msg.content.slice(0, 40)}`)}>{t('assistant.askFollow')}</button>
+                        <button className="msg-action-btn" onClick={() => openReminderDraft(msg)}>{t('assistant.toReminder')}</button>
+                        <button className="msg-action-btn" onClick={() => openMemoryDraft(msg)}>{t('assistant.toMemory')}</button>
+                        <button className="msg-action-btn" onClick={() => openRelatedPage('family')}>去家庭页</button>
+                        <button className="msg-action-btn" onClick={() => openRelatedPage('settings')}>去设置页</button>
+                        <button className="msg-action-btn" onClick={() => openRelatedPage('memories')}>去记忆页</button>
+                        {(msg.suggestions ?? []).slice(0, 2).map(suggestion => (
+                          <button key={suggestion} className="msg-action-btn" onClick={() => void submitQuestion(suggestion)}>{suggestion}</button>
+                        ))}
                     </div>
                   )}
                 </div>
@@ -453,6 +531,7 @@ export function AssistantPage() {
               ))
             )}
             {loadingSuggestions && <div className="context-memory-item"><span>⏳</span> 正在加载推荐问题</div>}
+            <div className="context-memory-item"><span>🧭</span> 场景动作接口目前仍是 admin 保护，本轮先不在用户端直接触发。</div>
           </div>
         </div>
 
