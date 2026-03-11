@@ -2,6 +2,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
+from app.modules.agent.service import build_agent_runtime_context, resolve_effective_agent
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.agent.service import resolve_effective_agent
 from app.modules.family_qa import repository
@@ -21,6 +22,8 @@ from app.modules.household.models import Household
 from app.modules.member.models import Member
 from app.modules.ai_gateway.gateway_service import invoke_capability
 from app.modules.ai_gateway.schemas import AiGatewayInvokeRequest
+from app.modules.memory.schemas import EventRecordCreate
+from app.modules.memory.service import ingest_event_record_best_effort
 
 
 def create_query_log(db: Session, payload: QaQueryLogCreate) -> QaQueryLogRead:
@@ -70,11 +73,18 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
         household_id=payload.household_id,
         agent_id=payload.agent_id,
     )
+    agent_runtime_context = build_agent_runtime_context(
+        db,
+        household_id=payload.household_id,
+        agent_id=effective_agent.id,
+        requester_member_id=payload.requester_member_id,
+    )
 
     fact_view = build_qa_fact_view(
         db,
         household_id=payload.household_id,
         requester_member_id=payload.requester_member_id,
+        agent_id=effective_agent.id,
         actor=actor,
         question=payload.question,
     )
@@ -101,10 +111,18 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
                     "answer_type": answer_type,
                     "fact_count": len(facts),
                     "channel": payload.channel,
-                    "agent": {
-                        "id": effective_agent.id,
-                        "type": effective_agent.agent_type,
-                        "name": effective_agent.display_name,
+                    "agent_runtime_context": agent_runtime_context,
+                    "agent_memory_context": {
+                        "status": fact_view.memory_summary.status,
+                        "summary": fact_view.memory_summary.summary,
+                        "items": [
+                            {
+                                "label": item.label,
+                                "summary": str(item.extra.get("summary") or ""),
+                                "memory_type": str(item.extra.get("memory_type") or ""),
+                            }
+                            for item in fact_view.memory_summary.items[:5]
+                        ],
                     },
                 },
             ),
@@ -131,7 +149,7 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
         ai_provider_code=ai_provider_code,
         ai_degraded=ai_degraded,
     )
-    create_query_log(
+    query_log = create_query_log(
         db,
         QaQueryLogCreate(
             household_id=payload.household_id,
@@ -142,6 +160,33 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
             confidence=result.confidence,
             degraded=result.degraded,
             facts=result.facts,
+        ),
+    )
+    ingest_event_record_best_effort(
+        db,
+        EventRecordCreate(
+            household_id=payload.household_id,
+            event_type="family_event_occurred",
+            source_type="family_qa",
+            source_ref=query_log.id,
+            subject_member_id=payload.requester_member_id,
+            room_id=None,
+            payload={
+                "event_category": "agent_qa_interaction",
+                "agent_id": effective_agent.id,
+                "agent_type": effective_agent.agent_type,
+                "agent_name": effective_agent.display_name,
+                "question": payload.question,
+                "answer_type": result.answer_type,
+                "answer_summary": result.answer[:500],
+                "ai_degraded": result.ai_degraded,
+                "memory_summary": fact_view.memory_summary.summary,
+                "memory_status": fact_view.memory_summary.status,
+                "memory_item_count": len(fact_view.memory_summary.items),
+            },
+            dedupe_key=f"family_qa:{query_log.id}",
+            generate_memory_card=False,
+            occurred_at=query_log.created_at,
         ),
     )
     return result
@@ -166,6 +211,7 @@ def list_family_qa_suggestions(
         db,
         household_id=household_id,
         requester_member_id=requester_member_id,
+        agent_id=effective_agent.id,
         actor=actor,
         question=None,
     )

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
 from app.db.utils import load_json
+from app.modules.agent.service import build_agent_runtime_context
 from app.modules.context.service import get_context_overview
 from app.modules.device.models import Device
 from app.modules.family_qa.schemas import (
@@ -32,6 +33,7 @@ def build_qa_fact_view(
     *,
     household_id: str,
     requester_member_id: str | None = None,
+    agent_id: str | None = None,
     actor: ActorContext | None = None,
     question: str | None = None,
 ) -> QaFactViewRead:
@@ -180,6 +182,7 @@ def build_qa_fact_view(
             db,
             household_id=household_id,
             requester_member_id=requester_member_id,
+            agent_id=agent_id,
             actor=actor,
             question=question,
         ),
@@ -193,10 +196,17 @@ def _build_memory_summary(
     *,
     household_id: str,
     requester_member_id: str | None,
+    agent_id: str | None,
     actor: ActorContext | None,
     question: str | None,
 ) -> QaMemorySummary:
     effective_actor = actor or ActorContext(role="admin", actor_type="admin", actor_id=None)
+    agent_runtime_context = build_agent_runtime_context(
+        db,
+        household_id=household_id,
+        agent_id=agent_id,
+        requester_member_id=requester_member_id,
+    )
     bundle = build_memory_context_bundle(
         db,
         household_id=household_id,
@@ -205,7 +215,7 @@ def _build_memory_summary(
         question=question,
         capability="family_qa",
     )
-    items = [
+    raw_items = [
         QaFactReference(
             type=f"memory_{hit.card.memory_type}",
             label=hit.card.title,
@@ -220,16 +230,33 @@ def _build_memory_summary(
                 "matched_terms": hit.matched_terms,
                 "summary": hit.card.summary,
                 "subject_member_id": hit.card.subject_member_id,
+                "related_members": [
+                    {
+                        "member_id": related_member.member_id,
+                        "relation_role": related_member.relation_role,
+                    }
+                    for related_member in hit.card.related_members
+                ],
             },
         )
         for hit in bundle.query_result.items
     ]
+    items, scope_applied = _apply_agent_memory_scope_to_fact_references(
+        raw_items,
+        agent_runtime_context=agent_runtime_context,
+        requester_member_id=requester_member_id,
+    )
+
     if items:
-        summary = f"已命中 {len(items)} 条长期记忆，可用于补充回答。"
+        summary = (
+            f"已按当前 Agent 的记忆视角筛出 {len(items)} 条长期记忆，可用于补充回答。"
+            if scope_applied
+            else f"已命中 {len(items)} 条长期记忆，可用于补充回答。"
+        )
         status = "available"
         last_updated_at = max((item.occurred_at for item in items if item.occurred_at), default=None)
-    elif bundle.hot_summary.top_memories:
-        items = [
+    else:
+        hot_items = [
             QaFactReference(
                 type=f"memory_{item.memory_type}",
                 label=item.title,
@@ -245,13 +272,24 @@ def _build_memory_summary(
             )
             for item in bundle.hot_summary.top_memories
         ]
-        summary = f"当前没有直接命中的问题记忆，但已有 {len(bundle.hot_summary.top_memories)} 条热记忆可参考。"
-        status = "hot_summary_only"
-        last_updated_at = bundle.hot_summary.generated_at
-    else:
-        summary = "当前没有可用的长期记忆命中。"
-        status = "empty"
-        last_updated_at = bundle.generated_at
+        hot_items, hot_scope_applied = _apply_agent_memory_scope_to_fact_references(
+            hot_items,
+            agent_runtime_context=agent_runtime_context,
+            requester_member_id=requester_member_id,
+        )
+        if hot_items:
+            items = hot_items
+            summary = (
+                f"当前没有直接命中的问题记忆，但按当前 Agent 的记忆视角仍有 {len(hot_items)} 条热记忆可参考。"
+                if hot_scope_applied
+                else f"当前没有直接命中的问题记忆，但已有 {len(hot_items)} 条热记忆可参考。"
+            )
+            status = "hot_summary_only"
+            last_updated_at = bundle.hot_summary.generated_at
+        else:
+            summary = "当前没有可用的长期记忆命中。"
+            status = "empty"
+            last_updated_at = bundle.generated_at
     return QaMemorySummary(
         status=status,
         summary=summary,
@@ -260,6 +298,76 @@ def _build_memory_summary(
         items=items,
         degraded=bundle.degraded,
     )
+
+
+def _apply_agent_memory_scope_to_fact_references(
+    items: list[QaFactReference],
+    *,
+    agent_runtime_context: dict[str, object],
+    requester_member_id: str | None,
+) -> tuple[list[QaFactReference], bool]:
+    runtime_policy = agent_runtime_context.get("runtime_policy")
+    if not isinstance(runtime_policy, dict):
+        return items, False
+
+    memory_scope = runtime_policy.get("memory_scope")
+    if not isinstance(memory_scope, dict) or not memory_scope:
+        return items, False
+
+    preferred_memory_types = {
+        str(item).strip()
+        for item in memory_scope.get("preferred_memory_types", [])
+        if str(item).strip()
+    } if isinstance(memory_scope.get("preferred_memory_types"), list) else set()
+    focus_member_ids = {
+        str(item).strip()
+        for item in memory_scope.get("focus_member_ids", [])
+        if str(item).strip()
+    } if isinstance(memory_scope.get("focus_member_ids"), list) else set()
+    requester_only = bool(memory_scope.get("requester_only"))
+    max_items = memory_scope.get("max_items")
+    normalized_max_items = max(1, int(max_items)) if isinstance(max_items, int) and max_items > 0 else None
+
+    filtered = items
+
+    if preferred_memory_types:
+        filtered = [
+            item
+            for item in filtered
+            if str(item.extra.get("memory_type") or "").strip() in preferred_memory_types
+        ]
+
+    if requester_only and requester_member_id:
+        filtered = [
+            item
+            for item in filtered
+            if _matches_memory_member(item, {requester_member_id})
+        ]
+    elif focus_member_ids:
+        filtered = [
+            item
+            for item in filtered
+            if _matches_memory_member(item, focus_member_ids)
+        ]
+
+    if normalized_max_items is not None:
+        filtered = filtered[:normalized_max_items]
+
+    return filtered, True
+
+
+def _matches_memory_member(item: QaFactReference, member_ids: set[str]) -> bool:
+    subject_member_id = str(item.extra.get("subject_member_id") or "").strip()
+    if subject_member_id and subject_member_id in member_ids:
+        return True
+    related_members = item.extra.get("related_members")
+    if isinstance(related_members, list):
+        for related_member in related_members:
+            if isinstance(related_member, dict):
+                member_id = str(related_member.get("member_id") or "").strip()
+                if member_id in member_ids:
+                    return True
+    return False
 
 
 def trim_qa_fact_view(fact_view: QaFactViewRead) -> QaFactViewRead:

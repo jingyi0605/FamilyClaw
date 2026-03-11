@@ -64,6 +64,74 @@ def resolve_effective_agent(
     raise AgentNotFoundError(f"no agent configured for household {household_id}")
 
 
+def build_agent_runtime_context(
+    db: Session,
+    *,
+    household_id: str,
+    agent_id: str | None = None,
+    requester_member_id: str | None = None,
+) -> dict[str, object]:
+    effective_agent = resolve_effective_agent(
+        db,
+        household_id=household_id,
+        agent_id=agent_id,
+    )
+    soul = repository.get_active_soul_profile(db, agent_id=effective_agent.id)
+    runtime_policy = repository.get_runtime_policy(db, agent_id=effective_agent.id)
+    requester_cognition = (
+        repository.get_member_cognition(
+            db,
+            agent_id=effective_agent.id,
+            member_id=requester_member_id,
+        )
+        if requester_member_id is not None
+        else None
+    )
+
+    return {
+        "agent": {
+            "id": effective_agent.id,
+            "type": effective_agent.agent_type,
+            "name": effective_agent.display_name,
+            "is_primary": effective_agent.is_primary,
+            "status": effective_agent.status,
+        },
+        "identity": {
+            "self_identity": soul.self_identity if soul is not None else None,
+            "role_summary": soul.role_summary if soul is not None else None,
+            "intro_message": soul.intro_message if soul is not None else None,
+            "speaking_style": soul.speaking_style if soul is not None else None,
+            "personality_traits": _load_json_list(soul.personality_traits_json) if soul is not None else [],
+            "service_focus": _load_json_list(soul.service_focus_json) if soul is not None else [],
+            "service_boundaries": _load_json_dict(soul.service_boundaries_json) if soul is not None else None,
+        },
+        "requester_member_cognition": {
+            "member_id": requester_cognition.member_id,
+            "display_address": requester_cognition.display_address,
+            "closeness_level": requester_cognition.closeness_level,
+            "service_priority": requester_cognition.service_priority,
+            "communication_style": requester_cognition.communication_style,
+            "care_notes": _load_json_dict(requester_cognition.care_notes_json),
+            "prompt_notes": requester_cognition.prompt_notes,
+        }
+        if requester_cognition is not None
+        else None,
+        "runtime_policy": {
+            "conversation_enabled": runtime_policy.conversation_enabled,
+            "default_entry": runtime_policy.default_entry,
+            "routing_tags": _load_json_list(runtime_policy.routing_tags_json),
+            "memory_scope": _load_json_dict(runtime_policy.memory_scope_json),
+        }
+        if runtime_policy is not None
+        else {
+            "conversation_enabled": True,
+            "default_entry": False,
+            "routing_tags": [],
+            "memory_scope": None,
+        },
+    }
+
+
 def upsert_agent_soul(
     db: Session,
     *,

@@ -82,8 +82,10 @@ def build_template_fallback_output(
 ) -> dict[str, object]:
     if capability == "qa_generation":
         question = str(payload.get("question") or "当前问题")
+        agent_name = _read_agent_name_from_payload(payload)
+        memory_summary = _read_agent_memory_summary(payload)
         return {
-            "text": f"当前进入模板回答模式，先返回保守结论：{question} 需要结合结构化事实进一步确认。",
+            "text": f"{agent_name}当前进入模板回答模式，先返回保守结论：{question} 需要结合结构化事实进一步确认。{memory_summary}",
             "mode": "template_fallback",
         }
     if capability == "reminder_copywriting":
@@ -351,10 +353,12 @@ def _build_messages(
     if capability == "qa_generation":
         answer_draft = str(payload.get("answer_draft") or "")
         question = str(payload.get("question") or "")
+        agent_prompt = _build_agent_prompt(payload)
+        memory_prompt = _build_agent_memory_prompt(payload)
         return [
             {
                 "role": "system",
-                "content": "你是家庭服务助手。请基于提供的结构化事实，用中文输出简洁、可靠、可解释的回答。不要编造事实。",
+                "content": f"你是家庭服务助手。请基于提供的结构化事实，用中文输出简洁、可靠、可解释的回答。不要编造事实。{agent_prompt}{memory_prompt}",
             },
             {
                 "role": "user",
@@ -467,8 +471,10 @@ def _build_simulated_output(
 ) -> dict[str, object]:
     if capability == "qa_generation":
         question = str(payload.get("question") or "当前问题")
+        agent_name = _read_agent_name_from_payload(payload)
+        memory_summary = _read_agent_memory_summary(payload)
         return {
-            "text": f"[{provider_code}] 已根据结构化事实生成回答草稿：{question}",
+            "text": f"[{provider_code}] {agent_name}已根据结构化事实生成回答草稿：{question}{memory_summary}",
             "provider_code": provider_code,
             "model_name": model_name,
         }
@@ -491,3 +497,110 @@ def _build_simulated_output(
         "provider_code": provider_code,
         "model_name": model_name,
     }
+
+
+def _build_agent_prompt(payload: Mapping[str, object]) -> str:
+    runtime_context = payload.get("agent_runtime_context")
+    if not isinstance(runtime_context, Mapping):
+        return ""
+
+    prompt_parts: list[str] = []
+    agent = runtime_context.get("agent")
+    identity = runtime_context.get("identity")
+    requester_cognition = runtime_context.get("requester_member_cognition")
+
+    if isinstance(agent, Mapping):
+        agent_name = str(agent.get("name") or "").strip()
+        agent_type = str(agent.get("type") or "").strip()
+        if agent_name or agent_type:
+            prompt_parts.append(f"当前生效角色：{agent_name or '当前Agent'}（{agent_type or 'unknown'}）。")
+
+    if isinstance(identity, Mapping):
+        role_summary = str(identity.get("role_summary") or "").strip()
+        self_identity = str(identity.get("self_identity") or "").strip()
+        speaking_style = str(identity.get("speaking_style") or "").strip()
+        personality_traits = identity.get("personality_traits") if isinstance(identity.get("personality_traits"), list) else []
+        service_focus = identity.get("service_focus") if isinstance(identity.get("service_focus"), list) else []
+
+        if role_summary:
+            prompt_parts.append(f"角色定位：{role_summary}。")
+        if self_identity:
+            prompt_parts.append(f"自我认知：{self_identity}。")
+        if speaking_style:
+            prompt_parts.append(f"说话风格：{speaking_style}。")
+        if personality_traits:
+            prompt_parts.append(f"性格标签：{'、'.join(str(item) for item in personality_traits if str(item).strip())}。")
+        if service_focus:
+            prompt_parts.append(f"服务重点：{'、'.join(str(item) for item in service_focus if str(item).strip())}。")
+
+    if isinstance(requester_cognition, Mapping):
+        display_address = str(requester_cognition.get("display_address") or "").strip()
+        communication_style = str(requester_cognition.get("communication_style") or "").strip()
+        prompt_notes = str(requester_cognition.get("prompt_notes") or "").strip()
+        care_notes = requester_cognition.get("care_notes")
+
+        if display_address:
+            prompt_parts.append(f"当前对用户的称呼建议：{display_address}。")
+        if communication_style:
+            prompt_parts.append(f"与当前用户沟通时建议采用：{communication_style}。")
+        if prompt_notes:
+            prompt_parts.append(f"补充注意事项：{prompt_notes}。")
+        if isinstance(care_notes, Mapping) and care_notes:
+            prompt_parts.append(f"成员关怀说明：{json.dumps(care_notes, ensure_ascii=False)}。")
+
+    if not prompt_parts:
+        return ""
+    return "\n" + "\n".join(prompt_parts)
+
+
+def _read_agent_name_from_payload(payload: Mapping[str, object]) -> str:
+    runtime_context = payload.get("agent_runtime_context")
+    if not isinstance(runtime_context, Mapping):
+        return ""
+    agent = runtime_context.get("agent")
+    if not isinstance(agent, Mapping):
+        return ""
+    agent_name = str(agent.get("name") or "").strip()
+    if not agent_name:
+        return ""
+    return f"{agent_name}："
+
+
+def _build_agent_memory_prompt(payload: Mapping[str, object]) -> str:
+    memory_context = payload.get("agent_memory_context")
+    if not isinstance(memory_context, Mapping):
+        return ""
+
+    summary = str(memory_context.get("summary") or "").strip()
+    items = memory_context.get("items")
+    prompt_parts: list[str] = []
+
+    if summary:
+        prompt_parts.append(f"当前长期记忆视角：{summary}")
+
+    if isinstance(items, list) and items:
+        memory_lines: list[str] = []
+        for item in items[:5]:
+            if not isinstance(item, Mapping):
+                continue
+            label = str(item.get("label") or "").strip()
+            item_summary = str(item.get("summary") or "").strip()
+            memory_type = str(item.get("memory_type") or "").strip()
+            if label or item_summary:
+                memory_lines.append(f"- {label}（{memory_type}）：{item_summary}")
+        if memory_lines:
+            prompt_parts.append("可参考的长期记忆：\n" + "\n".join(memory_lines))
+
+    if not prompt_parts:
+        return ""
+    return "\n" + "\n".join(prompt_parts)
+
+
+def _read_agent_memory_summary(payload: Mapping[str, object]) -> str:
+    memory_context = payload.get("agent_memory_context")
+    if not isinstance(memory_context, Mapping):
+        return ""
+    summary = str(memory_context.get("summary") or "").strip()
+    if not summary:
+        return ""
+    return f" 当前记忆视角：{summary}"
