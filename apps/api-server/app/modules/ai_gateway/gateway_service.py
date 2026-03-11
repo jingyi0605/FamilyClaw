@@ -1,3 +1,4 @@
+from typing import cast
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -16,9 +17,14 @@ from app.modules.ai_gateway.schemas import (
     AiGatewayInvokeRequest,
     AiGatewayInvokeResponse,
     AiInvocationPlan,
+    AiModelCallStatus,
     AiModelCallLogCreate,
     AiPreparedPayload,
     AiProviderCandidate,
+    AiRoutingMode,
+    AiApiFamily,
+    AiPrivacyLevel,
+    AiTransportType,
 )
 from app.modules.ai_gateway.service import log_model_call, resolve_capability_route
 
@@ -274,6 +280,7 @@ def _build_runtime_default_plan(
     requester_member_id: str | None,
     trace_id: str | None,
 ) -> AiInvocationPlan:
+    default_routing_mode = cast(AiRoutingMode, settings.ai_runtime.default_routing_mode)
     provider_codes = [
         code
         for code in [
@@ -288,18 +295,19 @@ def _build_runtime_default_plan(
             provider_profile_id=row.id,
             provider_code=row.provider_code,
             display_name=row.display_name,
-            privacy_level=row.privacy_level,
-            transport_type=row.transport_type,
+            privacy_level=cast(AiPrivacyLevel, row.privacy_level),
+            transport_type=cast(AiTransportType, row.transport_type),
+            api_family=cast(AiApiFamily, row.api_family),
             order=index,
         )
         for index, row in enumerate(rows)
         if row is not None and row.enabled
     ]
-    providers = _reorder_candidates(providers, routing_mode=settings.ai_runtime.default_routing_mode)
+    providers = _reorder_candidates(providers, routing_mode=default_routing_mode)
     primary_provider = providers[0] if providers else None
     fallback_providers = providers[1:] if len(providers) > 1 else []
     blocked_reason = None
-    if primary_provider is None and settings.ai_runtime.default_routing_mode != "template_only":
+    if primary_provider is None and default_routing_mode != "template_only":
         blocked_reason = "运行时默认 AI 供应商未配置"
 
     return AiInvocationPlan(
@@ -307,7 +315,7 @@ def _build_runtime_default_plan(
         household_id=household_id,
         requester_member_id=requester_member_id,
         trace_id=trace_id or _new_trace_id(),
-        routing_mode=settings.ai_runtime.default_routing_mode,
+        routing_mode=default_routing_mode,
         timeout_ms=settings.ai_runtime.default_timeout_ms,
         max_retry_count=settings.ai_runtime.default_max_retry_count,
         allow_remote=settings.ai_runtime.default_allow_remote,
@@ -336,8 +344,9 @@ def _build_provider_candidates(
                 provider_profile_id=row.id,
                 provider_code=row.provider_code,
                 display_name=row.display_name,
-                privacy_level=row.privacy_level,
-                transport_type=row.transport_type,
+                privacy_level=cast(AiPrivacyLevel, row.privacy_level),
+                transport_type=cast(AiTransportType, row.transport_type),
+                api_family=cast(AiApiFamily, row.api_family),
                 order=index,
             )
         )
@@ -378,6 +387,7 @@ def _write_attempt_log(
     model_name: str | None = None,
     usage: dict[str, object] | None = None,
 ) -> AiGatewayAttemptResult:
+    attempt_status = cast(AiModelCallStatus, status)
     log_model_call(
         db,
         AiModelCallLogCreate(
@@ -391,7 +401,7 @@ def _write_attempt_log(
             masked_fields=masked_fields,
             latency_ms=latency_ms,
             usage=usage or {},
-            status=status,
+            status=attempt_status,
             fallback_used=fallback_used,
             error_code=error_code,
         ),
@@ -399,7 +409,7 @@ def _write_attempt_log(
     return AiGatewayAttemptResult(
         provider_code=candidate.provider_code,
         model_name=model_name or f"{candidate.provider_code}-{plan.capability}",
-        status=status,
+        status=attempt_status,
         latency_ms=latency_ms,
         error_code=error_code,
         fallback_used=fallback_used,
@@ -414,6 +424,7 @@ def _write_template_log(
     status: str,
     error_code: str | None,
 ) -> AiGatewayAttemptResult:
+    attempt_status = cast(AiModelCallStatus, status)
     log_model_call(
         db,
         AiModelCallLogCreate(
@@ -427,7 +438,7 @@ def _write_template_log(
             masked_fields=masked_fields,
             latency_ms=0,
             usage={},
-            status=status,
+            status=attempt_status,
             fallback_used=True,
             error_code=error_code,
         ),
@@ -435,7 +446,7 @@ def _write_template_log(
     return AiGatewayAttemptResult(
         provider_code="template",
         model_name="template-fallback",
-        status=status,
+        status=attempt_status,
         latency_ms=0,
         error_code=error_code,
         fallback_used=True,

@@ -16,6 +16,7 @@ class AiProviderProfile(Base):
     provider_code: Mapped[str] = mapped_column(String(100), nullable=False)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     transport_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    api_family: Mapped[str] = mapped_column(String(50), nullable=False)
     base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     api_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     secret_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)

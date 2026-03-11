@@ -14,6 +14,7 @@ AiCapability = Literal[
     "vision",
 ]
 AiTransportType = Literal["openai_compatible", "native_sdk", "local_gateway"]
+AiApiFamily = Literal["openai_chat_completions", "anthropic_messages", "gemini_generate_content"]
 AiPrivacyLevel = Literal["local_only", "private_cloud", "public_cloud"]
 AiRoutingMode = Literal[
     "template_only",
@@ -54,6 +55,7 @@ class AiProviderAdapterRead(BaseModel):
     display_name: str
     description: str
     transport_type: AiTransportType
+    api_family: AiApiFamily
     default_privacy_level: AiPrivacyLevel
     default_supported_capabilities: list[AiCapability] = Field(default_factory=list)
     field_schema: list[AiProviderFieldRead] = Field(default_factory=list)
@@ -63,6 +65,7 @@ class AiProviderProfileBase(BaseModel):
     provider_code: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_.-]+$")
     display_name: str = Field(min_length=1, max_length=100)
     transport_type: AiTransportType
+    api_family: AiApiFamily
     base_url: str | None = Field(default=None, max_length=500)
     api_version: str | None = Field(default=None, max_length=50)
     secret_ref: str | None = Field(default=None, min_length=1, max_length=255)
@@ -162,6 +165,7 @@ class AiProviderCandidate(BaseModel):
     display_name: str
     privacy_level: AiPrivacyLevel
     transport_type: AiTransportType
+    api_family: AiApiFamily
     order: int = Field(ge=0)
 
 

@@ -1,15 +1,22 @@
+from typing import cast
+
 from app.core.config import settings
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.ai_gateway import repository
 from app.modules.ai_gateway.models import AiCapabilityRoute, AiModelCallLog, AiProviderProfile
 from app.modules.ai_gateway.schemas import (
     AiCapability,
+    AiApiFamily,
     AiCapabilityRouteRead,
     AiCapabilityRouteUpsert,
     AiModelCallLogCreate,
     AiModelCallLogRead,
+    AiModelCallStatus,
+    AiPrivacyLevel,
     AiProviderProfileCreate,
     AiProviderProfileRead,
+    AiRoutingMode,
+    AiTransportType,
     AiProviderProfileUpdate,
 )
 from sqlalchemy.orm import Session
@@ -46,6 +53,7 @@ def create_provider_profile(db: Session, payload: AiProviderProfileCreate) -> Ai
         provider_code=payload.provider_code,
         display_name=payload.display_name,
         transport_type=payload.transport_type,
+        api_family=payload.api_family,
         base_url=payload.base_url,
         api_version=payload.api_version,
         secret_ref=payload.secret_ref,
@@ -76,6 +84,8 @@ def update_provider_profile(
         row.display_name = data["display_name"]
     if "transport_type" in data:
         row.transport_type = data["transport_type"]
+    if "api_family" in data:
+        row.api_family = data["api_family"]
     if "base_url" in data:
         row.base_url = data["base_url"]
     if "api_version" in data:
@@ -268,17 +278,21 @@ def _validate_capability_route(db: Session, payload: AiCapabilityRouteUpsert) ->
 
 
 def _to_provider_profile_read(row: AiProviderProfile) -> AiProviderProfileRead:
+    transport_type: AiTransportType = cast(AiTransportType, row.transport_type)
+    api_family: AiApiFamily = cast(AiApiFamily, row.api_family)
+    privacy_level: AiPrivacyLevel = cast(AiPrivacyLevel, row.privacy_level)
     return AiProviderProfileRead(
         id=row.id,
         provider_code=row.provider_code,
         display_name=row.display_name,
-        transport_type=row.transport_type,
+        transport_type=transport_type,
+        api_family=api_family,
         base_url=row.base_url,
         api_version=row.api_version,
         secret_ref=row.secret_ref,
         enabled=row.enabled,
         supported_capabilities=load_json(row.supported_capabilities_json) or [],
-        privacy_level=row.privacy_level,
+        privacy_level=privacy_level,
         latency_budget_ms=row.latency_budget_ms,
         cost_policy=load_json(row.cost_policy_json) or {},
         extra_config=load_json(row.extra_config_json) or {},
@@ -287,13 +301,15 @@ def _to_provider_profile_read(row: AiProviderProfile) -> AiProviderProfileRead:
 
 
 def _to_capability_route_read(row: AiCapabilityRoute) -> AiCapabilityRouteRead:
+    capability: AiCapability = cast(AiCapability, row.capability)
+    routing_mode: AiRoutingMode = cast(AiRoutingMode, row.routing_mode)
     return AiCapabilityRouteRead(
         id=row.id,
-        capability=row.capability,
+        capability=capability,
         household_id=row.household_id,
         primary_provider_profile_id=row.primary_provider_profile_id,
         fallback_provider_profile_ids=load_json(row.fallback_provider_profile_ids_json) or [],
-        routing_mode=row.routing_mode,
+        routing_mode=routing_mode,
         timeout_ms=row.timeout_ms,
         max_retry_count=row.max_retry_count,
         allow_remote=row.allow_remote,
@@ -305,9 +321,11 @@ def _to_capability_route_read(row: AiCapabilityRoute) -> AiCapabilityRouteRead:
 
 
 def _to_model_call_log_read(row: AiModelCallLog) -> AiModelCallLogRead:
+    capability: AiCapability = cast(AiCapability, row.capability)
+    status: AiModelCallStatus = cast(AiModelCallStatus, row.status)
     return AiModelCallLogRead(
         id=row.id,
-        capability=row.capability,
+        capability=capability,
         provider_code=row.provider_code,
         model_name=row.model_name,
         household_id=row.household_id,
@@ -317,7 +335,7 @@ def _to_model_call_log_read(row: AiModelCallLog) -> AiModelCallLogRead:
         masked_fields=load_json(row.masked_fields_json) or [],
         latency_ms=row.latency_ms,
         usage=load_json(row.usage_json) or {},
-        status=row.status,
+        status=status,
         fallback_used=row.fallback_used,
         error_code=row.error_code,
         created_at=row.created_at,

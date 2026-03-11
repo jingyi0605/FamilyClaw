@@ -16,6 +16,7 @@ def list_provider_adapters() -> list[AiProviderAdapterRead]:
             display_name=row["display_name"],
             description=row["description"],
             transport_type=row["transport_type"],
+            api_family=row["api_family"],
             default_privacy_level=row["default_privacy_level"],
             default_supported_capabilities=row["default_supported_capabilities"],
             field_schema=[

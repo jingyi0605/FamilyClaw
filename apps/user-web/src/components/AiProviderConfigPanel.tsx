@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Card } from './base';
 import { api } from '../lib/api';
 import {
+  assignProviderFormValue,
   AI_CAPABILITY_OPTIONS,
   buildCreateProviderPayload,
   buildProviderFormState,
@@ -10,6 +11,7 @@ import {
   getCapabilityLabel,
   getProviderAdapterCode,
   getProviderModelName,
+  readProviderFormValue,
   toProviderFormState,
 } from '../lib/aiConfig';
 import type { AiCapabilityRoute, AiProviderAdapter, AiProviderProfile } from '../lib/types';
@@ -373,51 +375,9 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
 }
 
 function readFieldValue(form: ProviderFormState, fieldKey: string) {
-  if (fieldKey === 'display_name') {
-    return form.displayName;
-  }
-  if (fieldKey === 'provider_code') {
-    return form.providerCode;
-  }
-  if (fieldKey === 'base_url') {
-    return form.baseUrl;
-  }
-  if (fieldKey === 'secret_ref') {
-    return form.secretRef;
-  }
-  if (fieldKey === 'model_name') {
-    return form.modelName;
-  }
-  if (fieldKey === 'privacy_level') {
-    return form.privacyLevel;
-  }
-  if (fieldKey === 'latency_budget_ms') {
-    return form.latencyBudgetMs;
-  }
-  return '';
+  return readProviderFormValue(form, fieldKey);
 }
 
 function assignFieldValue(form: ProviderFormState, fieldKey: string, value: string): ProviderFormState {
-  if (fieldKey === 'display_name') {
-    return { ...form, displayName: value };
-  }
-  if (fieldKey === 'provider_code') {
-    return { ...form, providerCode: value };
-  }
-  if (fieldKey === 'base_url') {
-    return { ...form, baseUrl: value };
-  }
-  if (fieldKey === 'secret_ref') {
-    return { ...form, secretRef: value };
-  }
-  if (fieldKey === 'model_name') {
-    return { ...form, modelName: value };
-  }
-  if (fieldKey === 'privacy_level') {
-    return { ...form, privacyLevel: value };
-  }
-  if (fieldKey === 'latency_budget_ms') {
-    return { ...form, latencyBudgetMs: value };
-  }
-  return form;
+  return assignProviderFormValue(form, fieldKey, value);
 }

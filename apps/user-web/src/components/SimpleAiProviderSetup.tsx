@@ -2,12 +2,17 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Card } from './base';
 import { api } from '../lib/api';
 import {
-  AI_CAPABILITY_OPTIONS,
+  assignProviderFormValue,
   buildCreateProviderPayload,
   buildProviderFormState,
   buildRoutePayload,
+  buildUpdateProviderPayload,
+  getProviderAdapterCode,
+  readProviderFormValue,
+  SETUP_ROUTE_CAPABILITIES,
+  toProviderFormState,
 } from '../lib/aiConfig';
-import type { AiProviderAdapter, AiProviderProfile } from '../lib/types';
+import type { AiCapabilityRoute, AiProviderAdapter, AiProviderProfile } from '../lib/types';
 
 type Props = {
   householdId: string;
@@ -21,6 +26,7 @@ const HIDDEN_SETUP_FIELDS = new Set(['provider_code', 'latency_budget_ms']);
 export function SimpleAiProviderSetup({ householdId, onCompleted }: Props) {
   const [adapters, setAdapters] = useState<AiProviderAdapter[]>([]);
   const [form, setForm] = useState<ProviderFormState>(buildProviderFormState());
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -37,10 +43,25 @@ export function SimpleAiProviderSetup({ householdId, onCompleted }: Props) {
       setLoading(true);
       setError('');
       try {
-        const adapterRows = await api.listAiProviderAdapters();
+        const [adapterRows, providerRows, routeRows] = await Promise.all([
+          api.listAiProviderAdapters(),
+          api.listHouseholdAiProviders(householdId),
+          api.listHouseholdAiRoutes(householdId),
+        ]);
         if (cancelled) return;
+
+        const existingProvider = pickSetupProvider(providerRows, routeRows);
+        const existingAdapter = existingProvider
+          ? adapterRows.find(item => item.adapter_code === getProviderAdapterCode(existingProvider)) ?? adapterRows[0] ?? null
+          : null;
+
         setAdapters(adapterRows);
-        setForm(current => current.adapterCode ? current : buildProviderFormState(adapterRows[0] ?? null));
+        setEditingProviderId(existingProvider?.id ?? null);
+        setForm(
+          existingProvider
+            ? toProviderFormState(existingProvider, existingAdapter)
+            : buildProviderFormState(adapterRows[0] ?? null),
+        );
       } catch (loadError) {
         if (!cancelled) {
           setError(loadError instanceof Error ? loadError.message : '加载供应商配置失败');
@@ -53,7 +74,7 @@ export function SimpleAiProviderSetup({ householdId, onCompleted }: Props) {
     }
     void load();
     return () => { cancelled = true; };
-  }, []);
+  }, [householdId]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -63,28 +84,43 @@ export function SimpleAiProviderSetup({ householdId, onCompleted }: Props) {
     }
     setSaving(true);
     setError('');
-    setStatus('正在创建供应商...');
+    setStatus(editingProviderId ? '正在保存供应商...' : '正在创建供应商...');
     try {
-      // 1. Create provider
-      const created = await api.createHouseholdAiProvider(
-        householdId, 
-        buildCreateProviderPayload(form, currentAdapter)
-      );
+      const providerId = editingProviderId
+        ? editingProviderId
+        : (
+          await api.createHouseholdAiProvider(
+            householdId,
+            buildCreateProviderPayload(form, currentAdapter),
+          )
+        ).id;
+
+      if (editingProviderId) {
+        await api.updateHouseholdAiProvider(
+          householdId,
+          editingProviderId,
+          buildUpdateProviderPayload(form, currentAdapter),
+        );
+      } else {
+        setEditingProviderId(providerId);
+      }
       
-      setStatus('正在配置全场景路由...');
-      // 2. Automatically bind all capabilities to this provider
-      const allCapabilities = AI_CAPABILITY_OPTIONS.map(item => item.value);
+      setStatus('正在配置默认能力路由...');
+      const supportedCapabilities = form.supportedCapabilities;
+
+      if (supportedCapabilities.length === 0) {
+        throw new Error('当前供应商没有可绑定的能力');
+      }
       
-      // Need to fetch current routes to build payload correctly
       const routes = await api.listHouseholdAiRoutes(householdId);
       
       await Promise.all(
-        allCapabilities.map(capability => {
+        supportedCapabilities.map(capability => {
           const currentRoute = routes.find(item => item.capability === capability);
           return api.upsertHouseholdAiRoute(
             householdId,
             capability,
-            buildRoutePayload(householdId, capability, currentRoute, created.id, true)
+            buildRoutePayload(householdId, capability, currentRoute, providerId, true)
           );
         })
       );
@@ -99,25 +135,11 @@ export function SimpleAiProviderSetup({ householdId, onCompleted }: Props) {
   }
 
   function readFieldValue(fieldKey: string) {
-    if (fieldKey === 'display_name') return form.displayName;
-    if (fieldKey === 'provider_code') return form.providerCode;
-    if (fieldKey === 'base_url') return form.baseUrl;
-    if (fieldKey === 'secret_ref') return form.secretRef;
-    if (fieldKey === 'model_name') return form.modelName;
-    if (fieldKey === 'privacy_level') return form.privacyLevel;
-    if (fieldKey === 'latency_budget_ms') return form.latencyBudgetMs;
-    return '';
+    return readProviderFormValue(form, fieldKey);
   }
 
   function assignFieldValue(fieldKey: string, value: string): ProviderFormState {
-    if (fieldKey === 'display_name') return { ...form, displayName: value };
-    if (fieldKey === 'provider_code') return { ...form, providerCode: value };
-    if (fieldKey === 'base_url') return { ...form, baseUrl: value };
-    if (fieldKey === 'secret_ref') return { ...form, secretRef: value };
-    if (fieldKey === 'model_name') return { ...form, modelName: value };
-    if (fieldKey === 'privacy_level') return { ...form, privacyLevel: value };
-    if (fieldKey === 'latency_budget_ms') return { ...form, latencyBudgetMs: value };
-    return form;
+    return assignProviderFormValue(form, fieldKey, value);
   }
 
   if (loading) {
@@ -134,6 +156,7 @@ export function SimpleAiProviderSetup({ householdId, onCompleted }: Props) {
             className="form-select"
             value={form.adapterCode}
             onChange={event => setForm(buildProviderFormState(adapters.find(item => item.adapter_code === event.target.value) ?? null))}
+            disabled={Boolean(editingProviderId)}
           >
             <option value="">请选择</option>
             {adapters.map(adapter => <option key={adapter.adapter_code} value={adapter.adapter_code}>{adapter.display_name}</option>)}
@@ -173,7 +196,7 @@ export function SimpleAiProviderSetup({ householdId, onCompleted }: Props) {
             </div>
             <div className="setup-inline-tip">
               <strong>提示：</strong>
-              <span>创建后，系统会自动将该供应商设置为所有场景的默认模型（包括文本、问答、多模态等）。如需更详细的路由设置，可在初始化完成后进入配置中心调整。</span>
+              <span>创建后，系统只会把这个供应商绑定到它明确支持的能力。别拿纯文本模型去硬绑语音、视觉、重排，那本来就该失败。</span>
             </div>
           </>
         )}
@@ -187,10 +210,25 @@ export function SimpleAiProviderSetup({ householdId, onCompleted }: Props) {
             type="submit"
             disabled={saving || !currentAdapter || !form.displayName.trim() || !form.modelName.trim()}
           >
-            {saving ? '正在绑定…' : '创建并应用到全场景'}
+            {saving ? '正在绑定…' : editingProviderId ? '保存并更新全场景' : '创建并应用到全场景'}
           </button>
         </div>
       </form>
     </Card>
   );
+}
+
+function pickSetupProvider(providers: AiProviderProfile[], routes: AiCapabilityRoute[]) {
+  const routeProviderIds = SETUP_ROUTE_CAPABILITIES
+    .map(capability => routes.find(item => item.capability === capability)?.primary_provider_profile_id)
+    .filter((providerId): providerId is string => Boolean(providerId));
+
+  for (const providerId of routeProviderIds) {
+    const matchedProvider = providers.find(item => item.id === providerId);
+    if (matchedProvider) {
+      return matchedProvider;
+    }
+  }
+
+  return providers[0] ?? null;
 }

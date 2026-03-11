@@ -1,6 +1,7 @@
 import type {
   AiCapabilityRoute,
   AiProviderAdapter,
+  AiProviderField,
   AiProviderProfile,
   AiProviderProfileCreatePayload,
   AiProviderProfileUpdatePayload,
@@ -19,6 +20,16 @@ export const AI_CAPABILITY_OPTIONS = [
 ] as const;
 
 export const SETUP_ROUTE_CAPABILITIES = ['qa_generation', 'qa_structured_answer'];
+
+const CORE_PROVIDER_FIELD_KEYS = new Set([
+  'display_name',
+  'provider_code',
+  'base_url',
+  'secret_ref',
+  'model_name',
+  'privacy_level',
+  'latency_budget_ms',
+]);
 
 export function getCapabilityLabel(capability: string) {
   return AI_CAPABILITY_OPTIONS.find(item => item.value === capability)?.label ?? capability;
@@ -43,6 +54,12 @@ export function getProviderAdapterCode(provider: AiProviderProfile) {
 }
 
 export function buildProviderFormState(adapter?: AiProviderAdapter | null) {
+  const dynamicFields = Object.fromEntries(
+    (adapter?.field_schema ?? [])
+      .filter(field => !CORE_PROVIDER_FIELD_KEYS.has(field.key))
+      .map(field => [field.key, readAdapterDefault(adapter, field.key)]),
+  );
+
   return {
     adapterCode: adapter?.adapter_code ?? '',
     displayName: '',
@@ -54,10 +71,17 @@ export function buildProviderFormState(adapter?: AiProviderAdapter | null) {
     latencyBudgetMs: String(readAdapterDefault(adapter, 'latency_budget_ms') ?? ''),
     enabled: true,
     supportedCapabilities: [...(adapter?.default_supported_capabilities ?? SETUP_ROUTE_CAPABILITIES)],
+    dynamicFields,
   };
 }
 
 export function toProviderFormState(provider: AiProviderProfile, adapter?: AiProviderAdapter | null) {
+  const dynamicFields = Object.fromEntries(
+    (adapter?.field_schema ?? [])
+      .filter(field => !CORE_PROVIDER_FIELD_KEYS.has(field.key))
+      .map(field => [field.key, readProviderExtraConfigValue(provider, field)]),
+  );
+
   return {
     adapterCode: getProviderAdapterCode(provider) || adapter?.adapter_code || '',
     displayName: provider.display_name,
@@ -69,6 +93,7 @@ export function toProviderFormState(provider: AiProviderProfile, adapter?: AiPro
     latencyBudgetMs: provider.latency_budget_ms ? String(provider.latency_budget_ms) : '',
     enabled: provider.enabled,
     supportedCapabilities: provider.supported_capabilities,
+    dynamicFields,
   };
 }
 
@@ -83,6 +108,7 @@ export function buildCreateProviderPayload(
     provider_code: normalizedProviderCode,
     display_name: normalizedDisplayName,
     transport_type: adapter.transport_type,
+    api_family: adapter.api_family,
     base_url: form.baseUrl.trim() || null,
     api_version: null,
     secret_ref: form.secretRef.trim() || null,
@@ -94,6 +120,7 @@ export function buildCreateProviderPayload(
     extra_config: {
       adapter_code: adapter.adapter_code,
       model_name: form.modelName.trim(),
+      ...buildDynamicExtraConfig(form.dynamicFields, adapter),
     },
   };
 }
@@ -105,6 +132,7 @@ export function buildUpdateProviderPayload(
   return {
     display_name: form.displayName.trim(),
     transport_type: adapter.transport_type,
+    api_family: adapter.api_family,
     base_url: form.baseUrl.trim() || null,
     api_version: null,
     secret_ref: form.secretRef.trim() || null,
@@ -116,6 +144,42 @@ export function buildUpdateProviderPayload(
     extra_config: {
       adapter_code: adapter.adapter_code,
       model_name: form.modelName.trim(),
+      ...buildDynamicExtraConfig(form.dynamicFields, adapter),
+    },
+  };
+}
+
+export function readProviderFormValue(
+  form: ReturnType<typeof buildProviderFormState>,
+  fieldKey: string,
+) {
+  if (fieldKey === 'display_name') return form.displayName;
+  if (fieldKey === 'provider_code') return form.providerCode;
+  if (fieldKey === 'base_url') return form.baseUrl;
+  if (fieldKey === 'secret_ref') return form.secretRef;
+  if (fieldKey === 'model_name') return form.modelName;
+  if (fieldKey === 'privacy_level') return form.privacyLevel;
+  if (fieldKey === 'latency_budget_ms') return form.latencyBudgetMs;
+  return form.dynamicFields[fieldKey] ?? '';
+}
+
+export function assignProviderFormValue(
+  form: ReturnType<typeof buildProviderFormState>,
+  fieldKey: string,
+  value: string,
+) {
+  if (fieldKey === 'display_name') return { ...form, displayName: value };
+  if (fieldKey === 'provider_code') return { ...form, providerCode: value };
+  if (fieldKey === 'base_url') return { ...form, baseUrl: value };
+  if (fieldKey === 'secret_ref') return { ...form, secretRef: value };
+  if (fieldKey === 'model_name') return { ...form, modelName: value };
+  if (fieldKey === 'privacy_level') return { ...form, privacyLevel: value };
+  if (fieldKey === 'latency_budget_ms') return { ...form, latencyBudgetMs: value };
+  return {
+    ...form,
+    dynamicFields: {
+      ...form.dynamicFields,
+      [fieldKey]: value,
     },
   };
 }
@@ -156,6 +220,55 @@ function readAdapterDefault(adapter: AiProviderAdapter | null | undefined, key: 
     return '';
   }
   return String(adapter.field_schema.find(item => item.key === key)?.default_value ?? '');
+}
+
+function readProviderExtraConfigValue(provider: AiProviderProfile, field: AiProviderField) {
+  const raw = provider.extra_config?.[field.key];
+  if (typeof raw === 'boolean') {
+    return raw ? 'true' : 'false';
+  }
+  if (typeof raw === 'number') {
+    return String(raw);
+  }
+  if (typeof raw === 'string') {
+    return raw;
+  }
+  return String(field.default_value ?? '');
+}
+
+function buildDynamicExtraConfig(
+  dynamicFields: Record<string, string>,
+  adapter: AiProviderAdapter,
+) {
+  const result: Record<string, string | number | boolean> = {};
+
+  for (const field of adapter.field_schema) {
+    if (CORE_PROVIDER_FIELD_KEYS.has(field.key)) {
+      continue;
+    }
+
+    const rawValue = dynamicFields[field.key] ?? '';
+    if (!rawValue.trim()) {
+      continue;
+    }
+
+    if (field.field_type === 'number') {
+      const parsed = Number(rawValue);
+      if (Number.isFinite(parsed)) {
+        result[field.key] = parsed;
+      }
+      continue;
+    }
+
+    if (field.field_type === 'boolean') {
+      result[field.key] = rawValue === 'true';
+      continue;
+    }
+
+    result[field.key] = rawValue.trim();
+  }
+
+  return result;
 }
 
 function buildSetupProviderCode(adapterCode: string) {

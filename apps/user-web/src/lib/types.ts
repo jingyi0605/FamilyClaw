@@ -36,6 +36,7 @@ export type AiProviderProfile = {
   provider_code: string;
   display_name: string;
   transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
+  api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   base_url: string | null;
   api_version: string | null;
   secret_ref: string | null;
@@ -69,6 +70,7 @@ export type AiProviderAdapter = {
   display_name: string;
   description: string;
   transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
+  api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   default_privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
   default_supported_capabilities: string[];
   field_schema: AiProviderField[];
@@ -78,6 +80,7 @@ export type AiProviderProfileCreatePayload = {
   provider_code: string;
   display_name: string;
   transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
+  api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   base_url: string | null;
   api_version: string | null;
   secret_ref: string | null;

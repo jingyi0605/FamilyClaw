@@ -45,6 +45,7 @@ class ProviderAdapter:
         timeout_ms: int | None = None,
     ) -> ProviderInvokeResult:
         extra_config = load_json(provider_profile.extra_config_json) or {}
+        api_family = str(getattr(provider_profile, "api_family", "") or "").strip().lower()
         if _should_fail(
             extra_config=extra_config,
             payload=payload,
@@ -54,13 +55,29 @@ class ProviderAdapter:
             error_code = str(extra_config.get("simulate_error_code") or "provider_failed")
             raise ProviderRuntimeError(error_code, f"{provider_profile.provider_code} simulated failure")
 
-        if self.transport_type in {"openai_compatible", "local_gateway"}:
+        if api_family == "openai_chat_completions" or self.transport_type in {"openai_compatible", "local_gateway"}:
             return _invoke_openai_compatible(
                 capability=capability,
                 provider_profile=provider_profile,
                 payload=payload,
                 timeout_ms=timeout_ms,
             )
+
+        if self.transport_type == "native_sdk":
+            if api_family == "anthropic_messages":
+                return _invoke_anthropic_messages(
+                    capability=capability,
+                    provider_profile=provider_profile,
+                    payload=payload,
+                    timeout_ms=timeout_ms,
+                )
+            if api_family == "gemini_generate_content":
+                return _invoke_gemini_generate_content(
+                    capability=capability,
+                    provider_profile=provider_profile,
+                    payload=payload,
+                    timeout_ms=timeout_ms,
+                )
 
         return _invoke_simulated(
             capability=capability,
@@ -154,6 +171,12 @@ def _invoke_openai_compatible(
     if isinstance(custom_headers, dict):
         request_headers.update({str(key): str(value) for key, value in custom_headers.items()})
 
+    _apply_provider_specific_headers(
+        request_headers=request_headers,
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+    )
+
     try:
         effective_timeout_ms = _resolve_effective_timeout_ms(
             provider_profile=provider_profile,
@@ -177,8 +200,6 @@ def _invoke_openai_compatible(
         if isinstance(exc.reason, TimeoutError | socket.timeout):
             raise ProviderRuntimeError("timeout", "provider request timeout") from exc
         raise ProviderRuntimeError("provider_failed", str(exc.reason)) from exc
-    except TimeoutError as exc:
-        raise ProviderRuntimeError("timeout", "provider request timeout") from exc
 
     try:
         response_json = json.loads(response_text)
@@ -218,7 +239,7 @@ def _invoke_simulated(
         model_name=model_name,
         payload=payload,
     )
-    latency_ms = max(int((perf_counter() - started_at) * 1000), int(extra_config.get("simulate_latency_ms") or 5))
+    latency_ms = max(int((perf_counter() - started_at) * 1000), _read_int_value(extra_config.get("simulate_latency_ms"), 5))
     return ProviderInvokeResult(
         provider_code=provider_profile.provider_code,
         model_name=model_name,
@@ -226,6 +247,128 @@ def _invoke_simulated(
         finish_reason="stop",
         normalized_output=normalized_output,
         raw_response_ref=f"simulated://{provider_profile.provider_code}/{capability}",
+    )
+
+
+def _invoke_anthropic_messages(
+    *,
+    capability: AiCapability,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None,
+) -> ProviderInvokeResult:
+    started_at = perf_counter()
+    extra_config = load_json(provider_profile.extra_config_json) or {}
+    model_name = _resolve_model_name(provider_profile)
+    api_key = _resolve_provider_secret(provider_profile, extra_config)
+    if not api_key:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缺少可用的密钥")
+
+    endpoint = _resolve_native_endpoint(provider_profile, extra_config, "/messages")
+    if not endpoint:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缺少可用的接口地址")
+
+    system_prompt, messages = _split_system_and_messages(_build_messages(capability=capability, payload=payload))
+    request_body: dict[str, object] = {
+        "model": model_name,
+        "messages": [
+            {"role": item["role"], "content": [{"type": "text", "text": item["content"]}]}
+            for item in messages
+        ],
+        "max_tokens": _default_max_tokens_for_capability(capability),
+    }
+    if system_prompt:
+        request_body["system"] = system_prompt
+
+    response_json = _post_json(
+        endpoint=endpoint,
+        request_body=request_body,
+        request_headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": str(extra_config.get("anthropic_version") or "2023-06-01"),
+        },
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+        timeout_ms=timeout_ms,
+    )
+
+    normalized_text = _extract_anthropic_response_text(response_json)
+    latency_ms = max(int((perf_counter() - started_at) * 1000), 1)
+    finish_reason = str(response_json.get("stop_reason") or "stop")
+    return ProviderInvokeResult(
+        provider_code=provider_profile.provider_code,
+        model_name=str(response_json.get("model") or model_name),
+        latency_ms=latency_ms,
+        finish_reason=finish_reason,
+        normalized_output={
+            "text": normalized_text,
+            "provider_code": provider_profile.provider_code,
+            "model_name": str(response_json.get("model") or model_name),
+        },
+        raw_response_ref=f"http://{provider_profile.provider_code}/messages",
+    )
+
+
+def _invoke_gemini_generate_content(
+    *,
+    capability: AiCapability,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None,
+) -> ProviderInvokeResult:
+    started_at = perf_counter()
+    extra_config = load_json(provider_profile.extra_config_json) or {}
+    model_name = _resolve_model_name(provider_profile)
+    api_key = _resolve_provider_secret(provider_profile, extra_config)
+    if not api_key:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缺少可用的密钥")
+
+    endpoint_base = _resolve_native_endpoint(provider_profile, extra_config, "")
+    if not endpoint_base:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缺少可用的接口地址")
+
+    system_prompt, messages = _split_system_and_messages(_build_messages(capability=capability, payload=payload))
+    endpoint = f"{endpoint_base.rstrip('/')}/models/{model_name}:generateContent?key={api_key}"
+    request_body: dict[str, object] = {
+        "contents": [
+            {
+                "role": "model" if item["role"] == "assistant" else "user",
+                "parts": [{"text": item["content"]}],
+            }
+            for item in messages
+        ],
+        "generationConfig": {
+            "temperature": extra_config.get("temperature", 0.2),
+            "maxOutputTokens": _default_max_tokens_for_capability(capability),
+        },
+    }
+    if system_prompt:
+        request_body["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+
+    response_json = _post_json(
+        endpoint=endpoint,
+        request_body=request_body,
+        request_headers={"Content-Type": "application/json"},
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+        timeout_ms=timeout_ms,
+    )
+
+    normalized_text = _extract_gemini_response_text(response_json)
+    latency_ms = max(int((perf_counter() - started_at) * 1000), 1)
+    finish_reason = _extract_gemini_finish_reason(response_json)
+    return ProviderInvokeResult(
+        provider_code=provider_profile.provider_code,
+        model_name=model_name,
+        latency_ms=latency_ms,
+        finish_reason=finish_reason,
+        normalized_output={
+            "text": normalized_text,
+            "provider_code": provider_profile.provider_code,
+            "model_name": model_name,
+        },
+        raw_response_ref=f"http://{provider_profile.provider_code}/generateContent",
     )
 
 
@@ -289,6 +432,76 @@ def _resolve_chat_endpoint(
     return endpoint.rstrip("/") + "/chat/completions"
 
 
+def _resolve_native_endpoint(
+    provider_profile: AiProviderProfile,
+    extra_config: dict[str, object],
+    suffix: str,
+) -> str:
+    endpoint = str(extra_config.get("native_api_base") or provider_profile.base_url or "").strip()
+    if not endpoint:
+        runtime_config = settings.ai_runtime.provider_configs.get(provider_profile.provider_code)
+        endpoint = (runtime_config.base_url or "").strip() if runtime_config else ""
+    if not endpoint:
+        return ""
+    if not suffix:
+        return endpoint.rstrip("/")
+    return endpoint.rstrip("/") + suffix
+
+
+def _post_json(
+    *,
+    endpoint: str,
+    request_body: dict[str, object],
+    request_headers: dict[str, str],
+    provider_profile: AiProviderProfile,
+    extra_config: dict[str, object],
+    timeout_ms: int | None,
+) -> dict[str, object]:
+    _apply_provider_specific_headers(
+        request_headers=request_headers,
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+    )
+
+    try:
+        effective_timeout_ms = _resolve_effective_timeout_ms(
+            provider_profile=provider_profile,
+            extra_config=extra_config,
+            requested_timeout_ms=timeout_ms,
+        )
+        raw_request = request.Request(
+            endpoint,
+            data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
+            headers=request_headers,
+            method="POST",
+        )
+        with request.urlopen(raw_request, timeout=effective_timeout_ms / 1000) as response:
+            response_text = response.read().decode("utf-8")
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        raise ProviderRuntimeError(_map_http_status_to_error_code(exc.code), detail or str(exc)) from exc
+    except socket.timeout as exc:
+        raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+    except error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError | socket.timeout):
+            raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+        raise ProviderRuntimeError("provider_failed", str(exc.reason)) from exc
+
+    try:
+        parsed = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        raise ProviderRuntimeError("validation_error", "provider returned invalid json") from exc
+    if not isinstance(parsed, dict):
+        raise ProviderRuntimeError("validation_error", "provider returned invalid payload")
+    return parsed
+
+
+def _split_system_and_messages(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, str]]]:
+    if messages and messages[0].get("role") == "system":
+        return messages[0].get("content", ""), messages[1:]
+    return "", messages
+
+
 def _default_max_tokens_for_capability(capability: AiCapability) -> int:
     if capability == "qa_generation":
         return 256
@@ -315,9 +528,27 @@ def _apply_provider_specific_defaults(
     if is_siliconflow and is_qwen_reasoning_model:
         request_body.setdefault("enable_thinking", False)
         if capability == "qa_generation":
-            request_body["max_tokens"] = min(int(request_body.get("max_tokens") or 256), 256)
+            request_body["max_tokens"] = min(_read_int_value(request_body.get("max_tokens"), 256), 256)
         elif capability in {"scene_explanation", "reminder_copywriting"}:
-            request_body["max_tokens"] = min(int(request_body.get("max_tokens") or 128), 128)
+            request_body["max_tokens"] = min(_read_int_value(request_body.get("max_tokens"), 128), 128)
+
+
+def _apply_provider_specific_headers(
+    *,
+    request_headers: dict[str, str],
+    provider_profile: AiProviderProfile,
+    extra_config: dict[str, object],
+) -> None:
+    _ = provider_profile
+    adapter_code = str(extra_config.get("adapter_code") or "").strip().lower()
+
+    if adapter_code == "openrouter":
+        site_url = str(extra_config.get("site_url") or "").strip()
+        app_name = str(extra_config.get("app_name") or "").strip()
+        if site_url:
+            request_headers.setdefault("HTTP-Referer", site_url)
+        if app_name:
+            request_headers.setdefault("X-Title", app_name)
 
 
 def _resolve_effective_timeout_ms(
@@ -427,12 +658,56 @@ def _extract_response_text(response_json: dict[str, object]) -> str:
     raise ProviderRuntimeError("validation_error", "provider response missing message content")
 
 
+def _extract_anthropic_response_text(response_json: dict[str, object]) -> str:
+    content = response_json.get("content")
+    if not isinstance(content, list) or not content:
+        raise ProviderRuntimeError("validation_error", "provider response missing content")
+    text_parts: list[str] = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+            text_parts.append(str(item.get("text")))
+    if text_parts:
+        return "\n".join(text_parts)
+    raise ProviderRuntimeError("validation_error", "provider response missing text content")
+
+
+def _extract_gemini_response_text(response_json: dict[str, object]) -> str:
+    candidates = response_json.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise ProviderRuntimeError("validation_error", "provider response missing candidates")
+    first_candidate = candidates[0]
+    if not isinstance(first_candidate, dict):
+        raise ProviderRuntimeError("validation_error", "provider response invalid candidate")
+    content = first_candidate.get("content")
+    if not isinstance(content, dict):
+        raise ProviderRuntimeError("validation_error", "provider response missing content")
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+        raise ProviderRuntimeError("validation_error", "provider response missing parts")
+    text_parts: list[str] = []
+    for item in parts:
+        if isinstance(item, dict) and isinstance(item.get("text"), str):
+            text_parts.append(str(item.get("text")))
+    if text_parts:
+        return "\n".join(text_parts)
+    raise ProviderRuntimeError("validation_error", "provider response missing text part")
+
+
 def _extract_finish_reason(response_json: dict[str, object]) -> str:
     choices = response_json.get("choices")
     if isinstance(choices, list) and choices and isinstance(choices[0], dict):
         finish_reason = choices[0].get("finish_reason")
         if isinstance(finish_reason, str) and finish_reason:
             return finish_reason
+    return "stop"
+
+
+def _extract_gemini_finish_reason(response_json: dict[str, object]) -> str:
+    candidates = response_json.get("candidates")
+    if isinstance(candidates, list) and candidates and isinstance(candidates[0], dict):
+        finish_reason = candidates[0].get("finishReason")
+        if isinstance(finish_reason, str) and finish_reason:
+            return finish_reason.lower()
     return "stop"
 
 
@@ -455,11 +730,27 @@ def _should_fail(
 ) -> bool:
     if bool(extra_config.get("simulate_failure")):
         return True
-    fail_capabilities = set(extra_config.get("simulate_fail_capabilities") or [])
+    raw_fail_capabilities = extra_config.get("simulate_fail_capabilities")
+    fail_capabilities = {
+        str(item)
+        for item in raw_fail_capabilities
+    } if isinstance(raw_fail_capabilities, list) else set()
     if capability in fail_capabilities:
         return True
-    payload_failures = set(payload.get("_simulate_fail_provider_codes") or [])
+    raw_payload_failures = payload.get("_simulate_fail_provider_codes")
+    payload_failures = {
+        str(item)
+        for item in raw_payload_failures
+    } if isinstance(raw_payload_failures, list) else set()
     return provider_code in payload_failures
+
+
+def _read_int_value(value: object, default: int) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return default
 
 
 def _build_simulated_output(
