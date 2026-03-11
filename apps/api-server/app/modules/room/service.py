@@ -2,8 +2,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.utils import new_uuid
+from app.modules.device.models import Device
 from app.modules.household.service import get_household_or_404
 from app.modules.room.models import Room
+from app.modules.room.schemas import RoomUpdate
 
 
 def create_room(
@@ -66,4 +68,22 @@ def list_rooms(
     )
     rooms = list(db.scalars(statement).all())
     return rooms, total
+
+
+def update_room(db: Session, room: Room, payload: RoomUpdate) -> tuple[Room, dict]:
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        return room, {}
+
+    for field_name, field_value in update_data.items():
+        setattr(room, field_name, field_value)
+
+    db.add(room)
+    return room, update_data
+
+
+def delete_room(db: Session, room: Room) -> dict[str, int]:
+    affected_devices = db.query(Device).filter(Device.room_id == room.id).count()
+    db.delete(room)
+    return {"affected_devices": affected_devices}
 

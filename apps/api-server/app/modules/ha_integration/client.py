@@ -28,6 +28,9 @@ class HomeAssistantClient:
         if not self.token:
             raise HomeAssistantClientError("home assistant token is not configured")
 
+    def get_base_url(self) -> str:
+        return self.base_url
+
     def get_states(self) -> list[dict]:
         payload = self._request_json("/api/states", method="GET")
         if not isinstance(payload, list):
@@ -72,23 +75,25 @@ class HomeAssistantClient:
         try:
             with request.urlopen(req, timeout=self.timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
-        except OSError:
-            return self._request_json_with_curl(url, method=method, body=body)
-        except error.HTTPError as exc:
-            try:
-                detail = exc.read().decode("utf-8")
-            except Exception:
-                detail = exc.reason
-            raise HomeAssistantClientError(
-                f"home assistant request failed with status {exc.code}: {detail}"
-            ) from exc
-        except error.URLError as exc:
-            try:
-                return self._request_json_with_curl(url, method=method, body=body)
-            except HomeAssistantClientError:
+        except Exception as exc:
+            if isinstance(exc, error.HTTPError):
+                try:
+                    detail = exc.read().decode("utf-8")
+                except Exception:
+                    detail = exc.reason
                 raise HomeAssistantClientError(
-                    f"home assistant connection failed: {exc.reason}"
+                    f"home assistant request failed with status {exc.code}: {detail}"
                 ) from exc
+
+            if isinstance(exc, error.URLError):
+                try:
+                    return self._request_json_with_curl(url, method=method, body=body)
+                except HomeAssistantClientError:
+                    raise HomeAssistantClientError(
+                        f"home assistant connection failed: {exc.reason}"
+                    ) from exc
+
+            raise
 
     def _request_json_with_curl(
         self,

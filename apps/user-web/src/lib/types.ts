@@ -248,10 +248,41 @@ export type HomeAssistantSyncResponse = {
   created_devices: number;
   updated_devices: number;
   created_bindings: number;
+  created_rooms: number;
+  assigned_rooms: number;
   skipped_entities: number;
   failed_entities: number;
   devices: Device[];
   failures: { entity_id: string | null; reason: string }[];
+};
+
+export type HomeAssistantConfig = {
+  household_id: string;
+  base_url: string | null;
+  token_configured: boolean;
+  sync_rooms_enabled: boolean;
+  last_device_sync_at: string | null;
+  updated_at: string | null;
+};
+
+export type HomeAssistantRoomSyncResponse = {
+  household_id: string;
+  created_rooms: number;
+  matched_entities: number;
+  skipped_entities: number;
+  rooms: Array<{ id: string; name: string }>;
+};
+
+export type HomeAssistantRoomCandidate = {
+  name: string;
+  entity_count: number;
+  exists_locally: boolean;
+  can_sync: boolean;
+};
+
+export type HomeAssistantRoomCandidatesResponse = {
+  household_id: string;
+  items: HomeAssistantRoomCandidate[];
 };
 
 export type FamilyQaFactReference = {

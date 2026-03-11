@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -8,8 +8,8 @@ from app.api.dependencies import ActorContext, pagination_params, require_admin_
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
-from app.modules.room.schemas import PrivacyLevel, RoomCreate, RoomListResponse, RoomRead, RoomType
-from app.modules.room.service import create_room, list_rooms
+from app.modules.room.schemas import PrivacyLevel, RoomCreate, RoomListResponse, RoomRead, RoomType, RoomUpdate
+from app.modules.room.service import create_room, delete_room, get_room_or_404, list_rooms, update_room
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
@@ -71,4 +71,56 @@ def list_rooms_endpoint(
         page_size=page_size,
         total=total,
     )
+
+
+@router.patch("/{room_id}", response_model=RoomRead)
+def update_room_endpoint(
+    room_id: str,
+    payload: RoomUpdate,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> RoomRead:
+    room = get_room_or_404(db, room_id)
+    room, changed_fields = update_room(db, room, payload)
+    if changed_fields:
+        write_audit_log(
+            db,
+            household_id=room.household_id,
+            actor=actor,
+            action="room.update",
+            target_type="room",
+            target_id=room.id,
+            result="success",
+            details={"changed_fields": changed_fields},
+        )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+    db.refresh(room)
+    return RoomRead.model_validate(room)
+
+
+@router.delete("/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_room_endpoint(
+    room_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> Response:
+    room = get_room_or_404(db, room_id)
+    details = delete_room(db, room)
+    write_audit_log(
+        db,
+        household_id=room.household_id,
+        actor=actor,
+        action="room.delete",
+        target_type="room",
+        target_id=room.id,
+        result="success",
+        details=details,
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 

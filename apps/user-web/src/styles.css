@@ -2255,6 +2255,24 @@ input, select, textarea {
   gap: var(--spacing-md);
 }
 
+.integration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.integration-action-tooltip {
+  display: inline-flex;
+}
+
+.integration-action-tooltip .btn:disabled {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
 .integration-status__indicator {
   width: 12px;
   height: 12px;
@@ -2265,6 +2283,21 @@ input, select, textarea {
 .integration-status__indicator--online {
   background: var(--color-success);
   box-shadow: 0 0 6px var(--color-success);
+}
+
+.integration-status__indicator--warning {
+  background: var(--color-warning);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-warning) 60%, transparent);
+}
+
+.integration-status__indicator--offline {
+  background: var(--color-danger);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 50%, transparent);
+}
+
+.integration-status__indicator--idle {
+  background: var(--border);
+  box-shadow: none;
 }
 
 .integration-status__text {
@@ -2283,6 +2316,87 @@ input, select, textarea {
   color: var(--text-secondary);
 }
 
+.integration-config-form {
+  max-width: 100%;
+  margin-top: var(--spacing-lg);
+}
+
+.ha-config-modal {
+  max-width: 720px;
+}
+
+.integration-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.integration-config-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.device-card__actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.device-card__editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--spacing-sm);
+  margin: var(--spacing-md) 0;
+}
+
+.ha-room-modal {
+  max-width: 680px;
+}
+
+.ha-room-modal__list {
+  display: grid;
+  gap: var(--spacing-sm);
+  max-height: 380px;
+  overflow: auto;
+  margin-top: var(--spacing-md);
+}
+
+.ha-room-option {
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: flex-start;
+  padding: var(--spacing-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+
+.ha-room-option input {
+  margin-top: 0.25rem;
+}
+
+.ha-room-option--disabled {
+  opacity: 0.6;
+  background: color-mix(in srgb, var(--bg-card) 82%, var(--color-warning-light));
+}
+
+.ha-room-option__body {
+  flex: 1;
+}
+
+.ha-room-option__title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: 0.25rem;
+}
+
 .device-list {
   display: flex;
   flex-direction: column;
@@ -2294,6 +2408,11 @@ input, select, textarea {
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-md) var(--spacing-lg) !important;
+}
+
+.device-card--editor {
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .device-card__name {
