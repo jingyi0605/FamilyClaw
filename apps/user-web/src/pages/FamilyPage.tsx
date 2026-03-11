@@ -1825,6 +1825,14 @@ type DynamicGraphPoint = {
   y: number;
 };
 
+type DynamicGraphLabelLayout = {
+  id: string;
+  label: string;
+  width: number;
+  height: number;
+  anchor: DynamicGraphPoint;
+};
+
 type GraphViewport = {
   scale: number;
   x: number;
@@ -1863,6 +1871,16 @@ function hashGraphEdge(value: string) {
     hash = (hash * 33 + value.charCodeAt(index)) % 10007;
   }
   return hash;
+}
+
+function getGraphEdgePalette(edgeId: string) {
+  const hue = (hashGraphEdge(edgeId) * 53) % 360;
+  return {
+    line: `hsl(${hue} 88% 68%)`,
+    labelText: `hsl(${hue} 72% 34%)`,
+    labelFill: `hsla(${hue} 95% 88% / 0.96)`,
+    labelStroke: `hsla(${hue} 84% 54% / 0.55)`,
+  };
 }
 
 function getGraphUnitVector(from: DynamicGraphPoint, to: DynamicGraphPoint) {
@@ -1935,11 +1953,53 @@ function getDynamicEdgeGeometry(source: DynamicGraphPoint, target: DynamicGraphP
 
   return {
     path: `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`,
+    labelBase,
+    labelNormal,
     labelAnchor: {
       x: labelBase.x + labelNormal.x * 18,
       y: labelBase.y + labelNormal.y * 18,
     },
   };
+}
+
+function doGraphLabelBoxesOverlap(a: DynamicGraphLabelLayout, b: DynamicGraphLabelLayout) {
+  return Math.abs(a.anchor.x - b.anchor.x) < (a.width + b.width) / 2 + 10
+    && Math.abs(a.anchor.y - b.anchor.y) < (a.height + b.height) / 2 + 8;
+}
+
+function resolveGraphLabelOverlaps(labels: Array<DynamicGraphLabelLayout & { normal: DynamicGraphPoint; base: DynamicGraphPoint }>) {
+  const resolved = labels.map(label => ({ ...label, anchor: { ...label.anchor } }));
+
+  for (let iteration = 0; iteration < 8; iteration += 1) {
+    let moved = false;
+
+    for (let i = 0; i < resolved.length; i += 1) {
+      for (let j = i + 1; j < resolved.length; j += 1) {
+        const current = resolved[i];
+        const other = resolved[j];
+        if (!doGraphLabelBoxesOverlap(current, other)) {
+          continue;
+        }
+
+        const separation = 10 + iteration * 4;
+        current.anchor = clampGraphPoint({
+          x: current.anchor.x + current.normal.x * separation,
+          y: current.anchor.y + current.normal.y * separation,
+        });
+        other.anchor = clampGraphPoint({
+          x: other.anchor.x - other.normal.x * separation,
+          y: other.anchor.y - other.normal.y * separation,
+        });
+        moved = true;
+      }
+    }
+
+    if (!moved) {
+      break;
+    }
+  }
+
+  return resolved;
 }
 
 function buildDynamicGraphData(
@@ -2055,7 +2115,7 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
   }, [nodes, fixedNodes]);
 
   useEffect(() => {
-    if (nodes.length === 0) {
+    if (nodes.length === 0 || dragState) {
       return;
     }
 
@@ -2163,7 +2223,7 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
 
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [nodes, edges, fixedNodes]);
+  }, [nodes, edges, fixedNodes, dragState]);
 
   useEffect(() => {
     if (!dragState) {
@@ -2260,6 +2320,47 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
 
   const getPos = (id: string) => positions[id] ?? nodes.find(node => node.id === id) ?? DYNAMIC_GRAPH_CENTER;
 
+  const edgeLayouts = useMemo(() => {
+    const layouts = edges.map(edge => {
+      const source = getPos(edge.source);
+      const target = getPos(edge.target);
+      const geometry = getDynamicEdgeGeometry(source, target, edge.id);
+      const isHighlighted = Boolean(selectedMemberId && (edge.source === selectedMemberId || edge.target === selectedMemberId));
+      const isDimmed = Boolean(selectedMemberId && !isHighlighted);
+      const label = selectedMemberId && isHighlighted
+        ? getEdgeLabelForPerspective(edge, selectedMemberId, relationships)
+        : edge.label;
+
+      return {
+        edge,
+        source,
+        target,
+        geometry,
+        palette: getGraphEdgePalette(edge.id),
+        isHighlighted,
+        isDimmed,
+        label,
+        labelWidth: Math.max(48, label.length * 16),
+      };
+    });
+
+    const resolvedLabels = resolveGraphLabelOverlaps(layouts.map(layout => ({
+      id: layout.edge.id,
+      label: layout.label,
+      width: layout.labelWidth,
+      height: 24,
+      anchor: layout.geometry.labelAnchor,
+      base: layout.geometry.labelBase,
+      normal: layout.geometry.labelNormal,
+    })));
+
+    const labelMap = new Map(resolvedLabels.map(label => [label.id, label.anchor]));
+    return layouts.map(layout => ({
+      ...layout,
+      labelAnchor: labelMap.get(layout.edge.id) ?? layout.geometry.labelAnchor,
+    }));
+  }, [edges, positions, nodes, selectedMemberId, relationships]);
+
   function zoomGraph(nextScale: number, focusPoint: DynamicGraphPoint = DYNAMIC_GRAPH_CENTER) {
     const currentViewport = viewportRef.current;
     const normalizedScale = clampGraphValue(nextScale, 0.65, 2.2);
@@ -2324,6 +2425,7 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
           zoomGraph(viewportRef.current.scale * scaleFactor, { x: transformed.x, y: transformed.y });
         }}
         onPointerDown={event => {
+          event.preventDefault();
           const target = event.target as SVGElement;
           if (target.closest('.graph-node')) {
             return;
@@ -2348,36 +2450,30 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
         </defs>
         <rect x="0" y="0" width={DYNAMIC_GRAPH_WIDTH} height={DYNAMIC_GRAPH_HEIGHT} className="graph-grid" />
         <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`}>
-        {edges.map(edge => {
-          const source = getPos(edge.source);
-          const target = getPos(edge.target);
-          const geometry = getDynamicEdgeGeometry(source, target, edge.id);
-          const isHighlighted = selectedMemberId && (edge.source === selectedMemberId || edge.target === selectedMemberId);
-          const isDimmed = selectedMemberId && !isHighlighted;
-          const label = selectedMemberId && isHighlighted
-            ? getEdgeLabelForPerspective(edge, selectedMemberId, relationships)
-            : edge.label;
-          const labelWidth = Math.max(48, label.length * 16);
+        {edgeLayouts.map(({ edge, geometry, palette, isHighlighted, isDimmed, label, labelWidth, labelAnchor }) => {
 
           return (
             <g key={edge.id}>
               <path
                 d={geometry.path}
                 className={`graph-edge ${isHighlighted ? 'graph-edge--highlight' : ''} ${isDimmed ? 'graph-edge--dim' : ''}`}
+                style={{ stroke: palette.line }}
               />
               <rect
-                x={geometry.labelAnchor.x - labelWidth / 2}
-                y={geometry.labelAnchor.y - 12}
+                x={labelAnchor.x - labelWidth / 2}
+                y={labelAnchor.y - 12}
                 width={labelWidth}
                 height={24}
                 rx={6}
                 className={`graph-edge-label-bg ${isDimmed ? 'graph-edge-label-bg--dim' : ''}`}
+                style={{ fill: palette.labelFill, stroke: palette.labelStroke }}
               />
               <text
-                x={geometry.labelAnchor.x}
-                y={geometry.labelAnchor.y + 4}
+                x={labelAnchor.x}
+                y={labelAnchor.y + 4}
                 textAnchor="middle"
                 className={`graph-edge-label ${isHighlighted ? 'graph-edge-label--highlight' : ''} ${isDimmed ? 'graph-edge-label--dim' : ''}`}
+                style={{ fill: palette.labelText }}
               >
                 {label}
               </text>
@@ -2401,6 +2497,7 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
               transform={`translate(${pos.x},${pos.y})`}
               className={`graph-node ${isSelected ? 'graph-node--selected' : ''} ${isFixed ? 'graph-node--fixed' : ''} ${isDimmed ? 'graph-node--dim' : ''}`}
               onPointerDown={event => {
+                event.preventDefault();
                 event.stopPropagation();
                 const svg = svgRef.current;
                 if (!svg) {

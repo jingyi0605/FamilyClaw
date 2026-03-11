@@ -2971,6 +2971,8 @@ body::before {
   position: relative;
   overflow: hidden;
   border-radius: var(--radius-xl);
+  -webkit-user-select: none;
+  user-select: none;
   background:
     radial-gradient(circle at top, rgba(214, 120, 74, 0.08), transparent 36%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.94));
@@ -3035,6 +3037,8 @@ body::before {
   display: block;
   cursor: grab;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .relationship-graph__hint {
