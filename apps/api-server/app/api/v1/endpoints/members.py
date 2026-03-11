@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import ActorContext, pagination_params, require_admin_actor
+from app.api.dependencies import (
+    ActorContext,
+    ensure_actor_can_access_household,
+    pagination_params,
+    require_admin_actor,
+    require_bound_member_actor,
+)
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
@@ -20,6 +26,7 @@ def create_member_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> MemberRead:
+    ensure_actor_can_access_household(actor, payload.household_id)
     member = create_member(db, payload)
     db.flush()
     write_audit_log(
@@ -48,7 +55,9 @@ def list_members_endpoint(
     pagination: tuple[int, int] = Depends(pagination_params),
     status_value: Annotated[MemberStatus | None, Query(alias="status")] = None,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemberListResponse:
+    ensure_actor_can_access_household(actor, household_id)
     page, page_size = pagination
     members, total = list_members(
         db,
@@ -73,6 +82,7 @@ def update_member_endpoint(
     actor: ActorContext = Depends(require_admin_actor),
 ) -> MemberRead:
     member = get_member_or_404(db, member_id)
+    ensure_actor_can_access_household(actor, member.household_id)
     member, changed_fields = update_member(db, member, payload)
     if changed_fields:
         write_audit_log(

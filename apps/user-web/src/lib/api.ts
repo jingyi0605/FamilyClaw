@@ -1,10 +1,15 @@
 import type {
   AgentDetail,
   AgentListResponse,
+  AgentRuntimePolicy,
+  AgentUpdatePayload,
+  AgentMemberCognition,
   AiCapabilityRoute,
   AiCapabilityRouteUpsertPayload,
+  AiProviderAdapter,
   AiProviderProfile,
   AiProviderProfileCreatePayload,
+  AiProviderProfileUpdatePayload,
   ContextConfigRead,
   ContextOverviewRead,
   Device,
@@ -31,6 +36,7 @@ import type {
 } from './types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
+const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? 8000);
 
 export class ApiError extends Error {
   status: number;
@@ -86,11 +92,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    credentials: 'include',
-    headers,
-  });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    window.clearTimeout(timeoutId);
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError(0, '请求超时，请确认后端服务是否可用', null);
+    }
+    throw error;
+  }
+
+  window.clearTimeout(timeoutId);
 
   const contentType = response.headers.get('content-type') ?? '';
   const isJsonResponse = contentType.includes('application/json');
@@ -152,6 +174,54 @@ export const api = {
   },
   getHouseholdSetupStatus(householdId: string) {
     return request<HouseholdSetupStatus>(`/households/${encodeURIComponent(householdId)}/setup-status`);
+  },
+  listAiProviderAdapters() {
+    return request<AiProviderAdapter[]>('/ai-config/provider-adapters');
+  },
+  listHouseholdAiProviders(householdId: string, options?: { enabled?: boolean; capability?: string }) {
+    const params = new URLSearchParams();
+    if (options?.enabled !== undefined) {
+      params.set('enabled', String(options.enabled));
+    }
+    if (options?.capability) {
+      params.set('capability', options.capability);
+    }
+    const query = params.toString();
+    return request<AiProviderProfile[]>(
+      `/ai-config/${encodeURIComponent(householdId)}/provider-profiles${query ? `?${query}` : ''}`,
+    );
+  },
+  createHouseholdAiProvider(householdId: string, payload: AiProviderProfileCreatePayload) {
+    return request<AiProviderProfile>(`/ai-config/${encodeURIComponent(householdId)}/provider-profiles`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  updateHouseholdAiProvider(householdId: string, profileId: string, payload: AiProviderProfileUpdatePayload) {
+    return request<AiProviderProfile>(
+      `/ai-config/${encodeURIComponent(householdId)}/provider-profiles/${encodeURIComponent(profileId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  deleteHouseholdAiProvider(householdId: string, profileId: string) {
+    return request<void>(`/ai-config/${encodeURIComponent(householdId)}/provider-profiles/${encodeURIComponent(profileId)}`, {
+      method: 'DELETE',
+    });
+  },
+  listHouseholdAiRoutes(householdId: string) {
+    return request<AiCapabilityRoute[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-routes`);
+  },
+  upsertHouseholdAiRoute(householdId: string, capability: string, payload: AiCapabilityRouteUpsertPayload) {
+    return request<AiCapabilityRoute>(
+      `/ai-config/${encodeURIComponent(householdId)}/provider-routes/${encodeURIComponent(capability)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
   },
   listAiProviders() {
     return request<AiProviderProfile[]>('/ai/providers?enabled=true');
@@ -348,6 +418,55 @@ export const api = {
   },
   getAgentDetail(householdId: string, agentId: string) {
     return request<AgentDetail>(`/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}`);
+  },
+  updateAgent(householdId: string, agentId: string, payload: AgentUpdatePayload) {
+    return request<AgentDetail>(`/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+  upsertAgentSoul(householdId: string, agentId: string, payload: {
+    self_identity: string;
+    role_summary: string;
+    intro_message?: string | null;
+    speaking_style?: string | null;
+    personality_traits: string[];
+    service_focus: string[];
+    service_boundaries?: Record<string, unknown> | null;
+    created_by?: string;
+  }) {
+    return request<AgentDetail['soul']>(`/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}/soul`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+  upsertAgentRuntimePolicy(householdId: string, agentId: string, payload: Omit<AgentRuntimePolicy, 'agent_id' | 'updated_at'>) {
+    return request<AgentRuntimePolicy>(
+      `/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}/runtime-policy`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  upsertAgentMemberCognitions(householdId: string, agentId: string, payload: {
+    items: Array<{
+      member_id: string;
+      display_address?: string | null;
+      closeness_level: number;
+      service_priority: number;
+      communication_style?: string | null;
+      care_notes?: Record<string, unknown> | null;
+      prompt_notes?: string | null;
+    }>;
+  }) {
+    return request<AgentMemberCognition[]>(
+      `/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}/member-cognitions`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
   },
   getFamilyQaSuggestions(householdId: string, requesterMemberId?: string, agentId?: string) {
     const params = new URLSearchParams({ household_id: householdId });

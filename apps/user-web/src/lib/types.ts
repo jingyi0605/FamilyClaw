@@ -48,6 +48,32 @@ export type AiProviderProfile = {
   updated_at: string;
 };
 
+export type AiProviderFieldOption = {
+  label: string;
+  value: string;
+};
+
+export type AiProviderField = {
+  key: string;
+  label: string;
+  field_type: 'text' | 'secret' | 'number' | 'select' | 'boolean';
+  required: boolean;
+  placeholder: string | null;
+  help_text: string | null;
+  default_value: string | number | boolean | null;
+  options: AiProviderFieldOption[];
+};
+
+export type AiProviderAdapter = {
+  adapter_code: string;
+  display_name: string;
+  description: string;
+  transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
+  default_privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
+  default_supported_capabilities: string[];
+  field_schema: AiProviderField[];
+};
+
 export type AiProviderProfileCreatePayload = {
   provider_code: string;
   display_name: string;
@@ -62,6 +88,8 @@ export type AiProviderProfileCreatePayload = {
   cost_policy: Record<string, unknown>;
   extra_config: Record<string, unknown>;
 };
+
+export type AiProviderProfileUpdatePayload = Partial<Omit<AiProviderProfileCreatePayload, 'provider_code'>>;
 
 export type AiCapabilityRoute = {
   id: string;
@@ -494,6 +522,12 @@ export type AgentSummary = {
   conversation_enabled: boolean;
   default_entry: boolean;
   updated_at: string;
+};
+
+export type AgentUpdatePayload = {
+  display_name?: string;
+  status?: AgentStatus;
+  sort_order?: number;
 };
 
 export type AgentDetail = {

@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import ActorContext, require_admin_actor
+from app.api.dependencies import ActorContext, ensure_actor_can_access_household, require_admin_actor, require_bound_member_actor
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
+from app.modules.member.service import get_member_or_404
 from app.modules.audit.service import write_audit_log
 from app.modules.permission.schemas import (
     MemberPermissionListResponse,
@@ -23,6 +24,8 @@ def replace_member_permissions_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> MemberPermissionListResponse:
+    member = get_member_or_404(db, member_id)
+    ensure_actor_can_access_household(actor, member.household_id)
     member, permissions = replace_member_permissions(db, member_id=member_id, payload=payload)
     db.flush()
     write_audit_log(
@@ -53,8 +56,10 @@ def replace_member_permissions_endpoint(
 def get_member_permissions_endpoint(
     member_id: str,
     db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemberPermissionListResponse:
+    member = get_member_or_404(db, member_id)
+    ensure_actor_can_access_household(actor, member.household_id)
     member, permissions = list_member_permissions(db, member_id)
     return MemberPermissionListResponse(
         member_id=member.id,

@@ -3708,6 +3708,34 @@ body::before {
   gap: var(--spacing-md);
 }
 
+.ai-provider-center__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.ai-route-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.ai-route-card {
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+}
+
+.ai-route-card__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
 .ai-config-detail-card h4 {
   margin: 0;
 }

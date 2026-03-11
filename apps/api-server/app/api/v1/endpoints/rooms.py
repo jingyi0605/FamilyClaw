@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import ActorContext, pagination_params, require_admin_actor
+from app.api.dependencies import (
+    ActorContext,
+    ensure_actor_can_access_household,
+    pagination_params,
+    require_admin_actor,
+    require_bound_member_actor,
+)
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
@@ -20,6 +26,7 @@ def create_room_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> RoomRead:
+    ensure_actor_can_access_household(actor, payload.household_id)
     room = create_room(
         db,
         household_id=payload.household_id,
@@ -55,7 +62,9 @@ def list_rooms_endpoint(
     room_type: Annotated[RoomType | None, Query()] = None,
     privacy_level: Annotated[PrivacyLevel | None, Query()] = None,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> RoomListResponse:
+    ensure_actor_can_access_household(actor, household_id)
     page, page_size = pagination
     rooms, total = list_rooms(
         db,
@@ -81,6 +90,7 @@ def update_room_endpoint(
     actor: ActorContext = Depends(require_admin_actor),
 ) -> RoomRead:
     room = get_room_or_404(db, room_id)
+    ensure_actor_can_access_household(actor, room.household_id)
     room, changed_fields = update_room(db, room, payload)
     if changed_fields:
         write_audit_log(
@@ -110,6 +120,7 @@ def delete_room_endpoint(
     actor: ActorContext = Depends(require_admin_actor),
 ) -> Response:
     room = get_room_or_404(db, room_id)
+    ensure_actor_can_access_household(actor, room.household_id)
     details = delete_room(db, room)
     write_audit_log(
         db,

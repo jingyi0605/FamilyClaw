@@ -160,7 +160,7 @@
   - 怎么验证：
     - 人工走查
     - 按不同账号类型回放核心接口
-  - 当前进度：已完成第二批高风险接口收口，覆盖 `context`、`devices`、`device-actions`、`reminders`、`scenes` 的家庭访问校验；普通家庭账号现在会被限制在自己的家庭范围内。后续还需要继续清理剩余接口，并在前端切换到真实登录态后做一轮联调回放，再把本检查点标成完成。
+  - 当前进度：已完成多轮接口收口，覆盖 `households`、`family-qa`、`memories`、`context`、`devices`、`device-actions`、`reminders`、`scenes`、`rooms`、`members`、`member-relationships`、`member-preferences`、`member-permissions`、`audit-logs`、`ai-config` 等主要接口；普通家庭账号现在会被限制在自己的家庭范围内，且不能再靠请求参数或旧 Header 冒充别的成员。后续主要剩联调补洞和少量边缘接口回放，再把本检查点标成完成。
   - 对应需求：`requirements.md` 需求 2、需求 3、需求 6
   - 对应设计：`design.md` §2.3、§4.1、§5.1、§5.2
 
@@ -213,5 +213,6 @@
     3. 别人打开这份 Spec 就知道下一步该改哪里
   - 怎么验证：
     - 按需求、设计、任务三份文档逐项核对
+  - 当前进度：已补一批关键后端自动化测试，覆盖 Bootstrap 账号创建、正式账号切换、默认口令失效、会话解析、家庭访问拦截、初始化状态推进；当前使用 `python -m unittest apps.api-server.tests.test_auth_bootstrap_flow` 可直接回放主链路。完整联调和更多边缘测试还要继续补。
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文

@@ -38,6 +38,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setActor(null);
         return;
       }
+      if (error instanceof Error) {
+        setLoginError(error.message);
+      }
       throw error;
     } finally {
       setAuthLoading(false);
