@@ -13,6 +13,194 @@
 3. 再把 `AI配置` 和 `对话` 两个前端入口分开
 4. 最后再做外观生成、治理和验收
 
+## 当前优先落地拆分
+
+上面的阶段任务能用，但它们现在更适合当**父任务**，不适合直接拿去排今天和这周的开发活。
+
+原因很简单：
+
+- `1.1 新增多 Agent 基础模型` 这种标题太大，里面混了迁移、模型、Schema、Repository、接口约束
+- `1.2 做 AI配置聚合读模型` 又把后端接口和前端接入揉在一起
+- 当前你已经明确：**先不动 `user-web`，先做后端和 `admin-web`**
+
+所以当前真正能直接开的活，应该先拆成下面这 8 个小任务。
+
+### A1 先建多 Agent 数据表和迁移
+
+- 状态：TODO
+- 这一步到底做什么：先把 `family_agents`、`family_agent_soul_profiles`、`family_agent_member_cognitions`、`family_agent_runtime_policies` 这些核心表和迁移建出来。
+- 做完你能看到什么：数据库里已经有多 Agent 的真实骨架，不再只有设计文档。
+- 先依赖什么：无
+- 主要改哪里：
+  - `apps/api-server/migrations/versions/`
+  - `apps/api-server/app/modules/agent/models.py`
+- 这一步先不做什么：先不做外观生成表，先不碰 `user-web`
+- 怎么算完成：
+  1. 核心表结构已落库
+  2. 一个家庭可以挂多个 Agent
+  3. `is_primary` 能表达主管家
+- 怎么验证：
+  - `cd apps/api-server && pytest -q`
+  - 人工检查迁移和 ORM 是否一致
+- 对应父任务：1.1
+
+### A2 补 Agent 的 Schema、Repository 和服务骨架
+
+- 状态：TODO
+- 这一步到底做什么：把 Agent 的读写 Schema、Repository 和最小服务层先立住，别让接口层直接硬写 SQLAlchemy。
+- 做完你能看到什么：后端已经有稳定的 Agent 模块入口，不是散在各个 endpoint 里的临时代码。
+- 先依赖什么：A1
+- 主要改哪里：
+  - `apps/api-server/app/modules/agent/schemas.py`
+  - `apps/api-server/app/modules/agent/repository.py`
+  - `apps/api-server/app/modules/agent/service.py`
+- 这一步先不做什么：先不接运行时上下文，不做对话路由
+- 怎么算完成：
+  1. Agent 列表、详情、创建、更新所需 Schema 已齐
+  2. Repository 封装了基础查询和写入
+  3. 服务层能读主管家和普通 Agent
+- 怎么验证：
+  - `cd apps/api-server && pytest -q`
+  - 人工检查 service 不直接耦合 HTTP 层
+- 对应父任务：1.1、1.2
+
+### A3 做 AI配置列表接口和单 Agent 详情接口
+
+- 状态：TODO
+- 这一步到底做什么：先把 `AI配置` 真正需要的两个核心接口做出来：Agent 列表摘要、单 Agent 详情。
+- 做完你能看到什么：`admin-web` 已经有东西可接，不再只能对着 mock 或设计图发呆。
+- 先依赖什么：A2
+- 主要改哪里：
+  - `apps/api-server/app/api/v1/endpoints/`
+  - `apps/api-server/app/modules/agent/service.py`
+- 建议最小接口：
+  1. `GET /api/v1/ai-config/{household_id}`
+  2. `GET /api/v1/ai-config/{household_id}/agents/{agent_id}`
+- 这一步先不做什么：先不做新增角色向导，先不做复杂筛选
+- 怎么算完成：
+  1. 能返回多个 Agent 摘要
+  2. 能返回单 Agent 的人格、成员认知、运行时策略摘要
+  3. 不影响现有成员和图谱接口
+- 怎么验证：
+  - `cd apps/api-server && pytest -q`
+  - 人工调用接口检查返回字段
+- 对应父任务：1.2
+
+### A4 做 Soul、成员认知、运行时策略更新接口
+
+- 状态：TODO
+- 这一步到底做什么：把 `admin-web` 真要编辑的内容接成真保存，而不是只停留在只读详情。
+- 做完你能看到什么：可以单独修改某个 Agent 的人格、成员认知和运行时策略。
+- 先依赖什么：A3
+- 主要改哪里：
+  - `apps/api-server/app/api/v1/endpoints/`
+  - `apps/api-server/app/modules/agent/service.py`
+  - `apps/api-server/app/modules/agent/repository.py`
+- 建议最小接口：
+  1. `PUT /api/v1/ai-config/{household_id}/agents/{agent_id}/soul`
+  2. `PUT /api/v1/ai-config/{household_id}/agents/{agent_id}/member-cognitions`
+  3. `PUT /api/v1/ai-config/{household_id}/agents/{agent_id}/runtime-policy`
+- 这一步先不做什么：先不做批量导入，不做复杂审批流
+- 怎么算完成：
+  1. `soul` 可单独保存并版本化
+  2. 成员认知可按 Agent 更新
+  3. 是否可在对话页直达等策略可单独保存
+- 怎么验证：
+  - `cd apps/api-server && pytest -q`
+  - 人工检查更新后重新读取接口结果
+- 对应父任务：2.1、2.2
+
+### A5 补主管家兜底和多 Agent 运行时选择骨架
+
+- 状态：TODO
+- 这一步到底做什么：先把运行时“默认用主管家、允许指定其他 Agent”的服务骨架立住，别等对话页开做时再现补。
+- 做完你能看到什么：后端已经能回答“当前这次请求到底该用哪个 Agent”。
+- 先依赖什么：A4
+- 主要改哪里：
+  - `apps/api-server/app/modules/agent/service.py`
+  - `apps/api-server/app/modules/family_qa/`
+- 这一步先不做什么：先不做复杂自动路由推荐
+- 怎么算完成：
+  1. 没指定 Agent 时默认回主管家
+  2. 指定 Agent 时能读取对应人格和策略
+  3. 无效 Agent 会安全降级
+- 怎么验证：
+  - `cd apps/api-server && pytest -q`
+  - 人工检查主管家兜底逻辑
+- 对应父任务：2.1、2.4
+
+### A6 在 `admin-web` 做 AI配置列表页
+
+- 状态：TODO
+- 这一步到底做什么：先把 `admin-web` 里的 AI配置总览页做出来，展示多个 Agent 的列表、角色、状态和主 Agent 标记。
+- 做完你能看到什么：团队终于有一个能看多 Agent 全貌的管理入口。
+- 先依赖什么：A3
+- 主要改哪里：
+  - `apps/admin-web/src/App.tsx`
+  - `apps/admin-web/src/pages/`
+  - `apps/admin-web/src/lib/api.ts`
+- 这一步先不做什么：先不做复杂视觉打磨
+- 怎么算完成：
+  1. 能看到多个 Agent 卡片或列表
+  2. 能区分主管家和专业 Agent
+  3. 能点击进入单 Agent 配置页
+- 怎么验证：
+  - `cd apps/admin-web && npm.cmd run build`
+  - 人工走查列表加载、空态和错误态
+- 对应父任务：3.1
+
+### A7 在 `admin-web` 做单 Agent 配置页
+
+- 状态：TODO
+- 这一步到底做什么：把单个 Agent 的 `soul`、成员认知和运行时策略做成真实可编辑表单。
+- 做完你能看到什么：管理员可以真正改主管家、营养师、健身教练这些角色的配置。
+- 先依赖什么：A4、A6
+- 主要改哪里：
+  - `apps/admin-web/src/pages/`
+  - `apps/admin-web/src/components/`
+  - `apps/admin-web/src/lib/api.ts`
+- 这一步先不做什么：先不做外观生成和图片管理
+- 怎么算完成：
+  1. `soul` 可编辑并保存
+  2. 成员认知可查看和保存
+  3. 运行时策略可编辑并保存
+- 怎么验证：
+  - `cd apps/admin-web && npm.cmd run build`
+  - 人工修改后刷新，确认保存结果一致
+- 对应父任务：3.1、3.2
+
+### A8 当前阶段检查：确认已经能支撑 AI配置页联调
+
+- 状态：TODO
+- 这一步到底做什么：只检查当前这轮“后端 + admin-web”是不是已经能支撑真实联调，不去顺手扩 `user-web`。
+- 做完你能看到什么：你可以很明确地说，这套多 Agent 不是停在设计稿，而是已经有后端和管理入口。
+- 先依赖什么：A1、A2、A3、A4、A5、A6、A7
+- 主要改哪里：
+  - 当前 Spec
+  - `apps/api-server/`
+  - `apps/admin-web/`
+- 这一步先不做什么：先不扩 `user-web` 的 AI配置页和对话页
+- 怎么算完成：
+  1. 后端接口可联调
+  2. `admin-web` 可查看和编辑多 Agent 配置
+  3. 主管家兜底逻辑明确
+- 怎么验证：
+  - `cd apps/api-server && pytest -q`
+  - `cd apps/admin-web && npm.cmd run build`
+  - 人工按联调清单走一遍
+- 对应父任务：1.3、2.5、3.4
+
+## 父任务和当前拆分的对应关系
+
+- `1.1 新增多 Agent 基础模型` = A1 + A2
+- `1.2 做 AI配置聚合读模型` = A3
+- `2.1 接各 Agent 的 Soul 配置与运行时人格上下文` = A4 + A5 的一部分
+- `2.2 接各 Agent 的成员认知` = A4
+- `2.4 做对话页的 Agent 上下文切换能力` = A5 的后端部分
+- `3.1 保留 AI配置 作为统一多Agent设置入口` = A6 + A7 的管理侧部分
+
+如果按你现在的优先级，真正应该排活的是：**A1 → A2 → A3 → A4 → A6 → A7 → A5 → A8**。
+
 ---
 
 ## 阶段 1：先把多Agent骨架搭出来
