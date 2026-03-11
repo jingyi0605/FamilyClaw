@@ -55,6 +55,7 @@ def query_family_qa_endpoint(
 def list_family_qa_suggestions_endpoint(
     household_id: str,
     requester_member_id: str | None = None,
+    agent_id: str | None = None,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(get_actor_context),
 ) -> FamilyQaSuggestionsResponse:
@@ -68,6 +69,7 @@ def list_family_qa_suggestions_endpoint(
         db,
         household_id=household_id,
         requester_member_id=payload_requester_id,
+        agent_id=agent_id,
         actor=actor,
     )
 

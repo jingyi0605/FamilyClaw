@@ -132,13 +132,18 @@
 
 ### A5 补主管家兜底和多 Agent 运行时选择骨架
 
-- 状态：TODO
+- 状态：DONE
 - 这一步到底做什么：先把运行时“默认用主管家、允许指定其他 Agent”的服务骨架立住，别等对话页开做时再现补。
 - 做完你能看到什么：后端已经能回答“当前这次请求到底该用哪个 Agent”。
 - 先依赖什么：A4
 - 主要改哪里：
   - `apps/api-server/app/modules/agent/service.py`
   - `apps/api-server/app/modules/family_qa/`
+- 实际完成：
+  - 已在 `apps/api-server/app/modules/agent/service.py` 提供 `resolve_effective_agent`
+  - 已给 `FamilyQaQueryRequest` 增加可选 `agent_id`
+  - 已在 `family_qa` 查询与建议链路中接入主管家兜底和显式 Agent 选择
+  - 已在问答与建议响应中回写当前生效的 Agent 信息
 - 这一步先不做什么：先不做复杂自动路由推荐
 - 怎么算完成：
   1. 没指定 Agent 时默认回主管家
@@ -176,7 +181,7 @@
 
 ### A7 在 `admin-web` 做单 Agent 配置页
 
-- 状态：TODO
+- 状态：DONE
 - 这一步到底做什么：把单个 Agent 的 `soul`、成员认知和运行时策略做成真实可编辑表单。
 - 做完你能看到什么：管理员可以真正改主管家、营养师、健身教练这些角色的配置。
 - 先依赖什么：A4、A6
@@ -184,6 +189,11 @@
   - `apps/admin-web/src/pages/`
   - `apps/admin-web/src/components/`
   - `apps/admin-web/src/lib/api.ts`
+- 实际完成：
+  - 已把 `apps/admin-web/src/pages/AiConfigPage.tsx` 从只读详情页升级成可编辑配置页
+  - 已在 `apps/admin-web/src/lib/api.ts` 新增 3 个更新接口调用
+  - 已在 `apps/admin-web/src/types.ts` 新增 A7 所需 payload 类型
+  - 已补人格、运行时策略、成员认知三块保存表单
 - 这一步先不做什么：先不做外观生成和图片管理
 - 怎么算完成：
   1. `soul` 可编辑并保存

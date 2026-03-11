@@ -119,6 +119,7 @@ class QaFactViewRead(BaseModel):
 class FamilyQaQueryRequest(BaseModel):
     household_id: str = Field(min_length=1)
     requester_member_id: str | None = Field(default=None, min_length=1)
+    agent_id: str | None = Field(default=None, min_length=1)
     question: str = Field(min_length=1, max_length=500)
     channel: str = Field(default="admin_web", min_length=1, max_length=30)
     context: dict[str, Any] = Field(default_factory=dict)
@@ -131,6 +132,9 @@ class FamilyQaQueryResponse(BaseModel):
     facts: list[QaFactReference] = Field(default_factory=list)
     degraded: bool = False
     suggestions: list[str] = Field(default_factory=list)
+    effective_agent_id: str | None = None
+    effective_agent_type: str | None = None
+    effective_agent_name: str | None = None
     ai_trace_id: str | None = None
     ai_provider_code: str | None = None
     ai_degraded: bool = False
@@ -144,4 +148,7 @@ class FamilyQaSuggestionItem(BaseModel):
 
 class FamilyQaSuggestionsResponse(BaseModel):
     household_id: str
+    effective_agent_id: str | None = None
+    effective_agent_type: str | None = None
+    effective_agent_name: str | None = None
     items: list[FamilyQaSuggestionItem] = Field(default_factory=list)

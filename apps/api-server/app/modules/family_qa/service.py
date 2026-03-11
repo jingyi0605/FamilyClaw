@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
+from app.modules.agent.service import resolve_effective_agent
 from app.modules.family_qa import repository
 from app.modules.family_qa.fact_view_service import build_qa_fact_view
 from app.modules.family_qa.models import QaQueryLog
@@ -64,6 +65,11 @@ def list_query_logs(
 def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorContext) -> FamilyQaQueryResponse:
     _ensure_household_exists(db, payload.household_id)
     _validate_requester_member(db, payload.household_id, payload.requester_member_id)
+    effective_agent = resolve_effective_agent(
+        db,
+        household_id=payload.household_id,
+        agent_id=payload.agent_id,
+    )
 
     fact_view = build_qa_fact_view(
         db,
@@ -95,6 +101,11 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
                     "answer_type": answer_type,
                     "fact_count": len(facts),
                     "channel": payload.channel,
+                    "agent": {
+                        "id": effective_agent.id,
+                        "type": effective_agent.agent_type,
+                        "name": effective_agent.display_name,
+                    },
                 },
             ),
         )
@@ -113,6 +124,9 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
         facts=facts,
         degraded=degraded,
         suggestions=suggestions,
+        effective_agent_id=effective_agent.id,
+        effective_agent_type=effective_agent.agent_type,
+        effective_agent_name=effective_agent.display_name,
         ai_trace_id=ai_trace_id,
         ai_provider_code=ai_provider_code,
         ai_degraded=ai_degraded,
@@ -138,10 +152,16 @@ def list_family_qa_suggestions(
     *,
     household_id: str,
     requester_member_id: str | None = None,
+    agent_id: str | None = None,
     actor: ActorContext,
 ) -> FamilyQaSuggestionsResponse:
     _ensure_household_exists(db, household_id)
     _validate_requester_member(db, household_id, requester_member_id)
+    effective_agent = resolve_effective_agent(
+        db,
+        household_id=household_id,
+        agent_id=agent_id,
+    )
     fact_view = build_qa_fact_view(
         db,
         household_id=household_id,
@@ -210,7 +230,13 @@ def list_family_qa_suggestions(
                 reason="默认建议问题",
             )
         )
-    return FamilyQaSuggestionsResponse(household_id=household_id, items=items[:6])
+    return FamilyQaSuggestionsResponse(
+        household_id=household_id,
+        effective_agent_id=effective_agent.id,
+        effective_agent_type=effective_agent.agent_type,
+        effective_agent_name=effective_agent.display_name,
+        items=items[:6],
+    )
 
 
 def _ensure_household_exists(db: Session, household_id: str) -> None:

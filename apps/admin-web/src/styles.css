@@ -416,6 +416,11 @@ pre {
   box-shadow: 0 0 0 3px rgba(91, 137, 255, 0.16);
 }
 
+.admin-agent-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .chip-list {
   display: flex;
   flex-wrap: wrap;

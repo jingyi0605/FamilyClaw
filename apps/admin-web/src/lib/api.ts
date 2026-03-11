@@ -1,6 +1,12 @@
 import type {
   AgentDetail,
   AgentListResponse,
+  AgentMemberCognition,
+  AgentMemberCognitionsUpsertPayload,
+  AgentRuntimePolicy,
+  AgentRuntimePolicyUpsertPayload,
+  AgentSoulProfile,
+  AgentSoulProfileUpsertPayload,
   AiCallLog,
   AiCapabilityRoute,
   AiCapabilityRouteUpsertPayload,
@@ -535,6 +541,30 @@ export const api = {
   },
   getAgentDetail(householdId: string, agentId: string) {
     return request<AgentDetail>(`/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}`);
+  },
+  updateAgentSoul(householdId: string, agentId: string, payload: AgentSoulProfileUpsertPayload) {
+    return request<AgentSoulProfile>(`/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}/soul`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  updateAgentMemberCognitions(householdId: string, agentId: string, payload: AgentMemberCognitionsUpsertPayload) {
+    return request<AgentMemberCognition[]>(
+      `/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}/member-cognitions`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  updateAgentRuntimePolicy(householdId: string, agentId: string, payload: AgentRuntimePolicyUpsertPayload) {
+    return request<AgentRuntimePolicy>(
+      `/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}/runtime-policy`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    );
   },
   listAiProviders(enabled?: boolean) {
     const params = new URLSearchParams();

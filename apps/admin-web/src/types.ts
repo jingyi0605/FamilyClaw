@@ -794,6 +794,38 @@ export type AgentListResponse = {
   items: AgentSummary[];
 };
 
+export type AgentSoulProfileUpsertPayload = {
+  self_identity: string;
+  role_summary: string;
+  intro_message: string | null;
+  speaking_style: string | null;
+  personality_traits: string[];
+  service_focus: string[];
+  service_boundaries: Record<string, unknown> | null;
+  created_by: string;
+};
+
+export type AgentMemberCognitionUpsertItemPayload = {
+  member_id: string;
+  display_address: string | null;
+  closeness_level: number;
+  service_priority: number;
+  communication_style: string | null;
+  care_notes: Record<string, unknown> | null;
+  prompt_notes: string | null;
+};
+
+export type AgentMemberCognitionsUpsertPayload = {
+  items: AgentMemberCognitionUpsertItemPayload[];
+};
+
+export type AgentRuntimePolicyUpsertPayload = {
+  conversation_enabled: boolean;
+  default_entry: boolean;
+  routing_tags: string[];
+  memory_scope: Record<string, unknown> | null;
+};
+
 export type AiCapabilityRoute = {
   id: string;
   capability: string;
