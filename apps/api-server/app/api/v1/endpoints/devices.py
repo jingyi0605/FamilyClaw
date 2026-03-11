@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import ActorContext, pagination_params, require_admin_actor
+from app.api.dependencies import (
+    ActorContext,
+    ensure_actor_can_access_household,
+    pagination_params,
+    require_admin_actor,
+    require_bound_member_actor,
+)
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
@@ -44,7 +50,9 @@ def list_devices_endpoint(
     device_type: Annotated[DeviceType | None, Query()] = None,
     status_value: Annotated[DeviceStatus | None, Query(alias="status")] = None,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> DeviceListResponse:
+    ensure_actor_can_access_household(actor, household_id)
     page, page_size = pagination
     devices, total = list_devices(
         db,
@@ -99,6 +107,7 @@ def sync_home_assistant_devices_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> HomeAssistantSyncResponse:
+    ensure_actor_can_access_household(actor, payload.household_id)
     try:
         summary = sync_home_assistant_devices(
             db,
@@ -179,7 +188,9 @@ def sync_home_assistant_devices_endpoint(
 def list_home_assistant_device_candidates_endpoint(
     household_id: str,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> HomeAssistantDeviceCandidatesResponse:
+    ensure_actor_can_access_household(actor, household_id)
     try:
         items = list_home_assistant_device_candidates(db, household_id=household_id)
     except HomeAssistantClientError as exc:
@@ -206,7 +217,9 @@ def list_home_assistant_device_candidates_endpoint(
 def get_home_assistant_config_endpoint(
     household_id: str,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> HomeAssistantConfigRead:
+    ensure_actor_can_access_household(actor, household_id)
     return HomeAssistantConfigRead.model_validate(get_home_assistant_config_view(db, household_id))
 
 
@@ -217,6 +230,7 @@ def upsert_home_assistant_config_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> HomeAssistantConfigRead:
+    ensure_actor_can_access_household(actor, household_id)
     config = upsert_household_ha_config(
         db,
         household_id=household_id,
@@ -250,6 +264,7 @@ def sync_home_assistant_rooms_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> HomeAssistantRoomSyncResponse:
+    ensure_actor_can_access_household(actor, payload.household_id)
     try:
         summary = sync_home_assistant_rooms(
             db,
@@ -292,7 +307,9 @@ def sync_home_assistant_rooms_endpoint(
 def list_home_assistant_room_candidates_endpoint(
     household_id: str,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> HomeAssistantRoomCandidatesResponse:
+    ensure_actor_can_access_household(actor, household_id)
     try:
         items = list_home_assistant_room_candidates(db, household_id=household_id)
     except HomeAssistantClientError as exc:

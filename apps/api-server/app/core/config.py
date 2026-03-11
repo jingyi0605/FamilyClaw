@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     home_assistant_token: str | None = None
     home_assistant_timeout_seconds: float = 10.0
     context_cache_enabled: bool = True
+    auth_session_cookie_name: str = "familyclaw_session"
+    auth_session_ttl_hours: int = 24 * 7
+    auth_legacy_header_enabled: bool = True
+    bootstrap_admin_username: str | None = None
+    bootstrap_admin_password: str | None = None
+    bootstrap_household_username: str = "user"
+    bootstrap_household_password: str = "user"
     ai_gateway_enabled: bool = True
     ai_default_provider_code: str | None = None
     ai_default_fallback_provider_codes: list[str] = Field(default_factory=list)

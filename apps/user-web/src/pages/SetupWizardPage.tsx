@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Card, EmptyState, PageHeader, Section } from '../components/base';
 import { api } from '../lib/api';
 import type { AgentSummary, AiCapabilityRoute, AiProviderProfile, HouseholdSetupStepCode, Member } from '../lib/types';
+import { useAuthContext } from '../state/auth';
 import { useHouseholdContext } from '../state/household';
 import { useSetupContext } from '../state/setup';
 
@@ -36,6 +37,7 @@ function buildWizardProviderCode(householdId: string) {
 }
 
 export function SetupWizardPage() {
+  const { refreshAuth } = useAuthContext();
   const {
     currentHousehold,
     currentHouseholdId,
@@ -54,6 +56,9 @@ export function SetupWizardPage() {
     gender: '' as '' | NonNullable<Member['gender']>,
     age_group: 'adult' as NonNullable<Member['age_group']>,
     phone: '',
+    username: 'user',
+    password: '',
+    confirmPassword: '',
   });
   const [providerMode, setProviderMode] = useState<'existing' | 'simulated'>('simulated');
   const [providerForm, setProviderForm] = useState({ providerId: '', displayName: '', modelName: 'familyclaw-simulated-qa' });
@@ -184,7 +189,13 @@ export function SetupWizardPage() {
     setMemberError('');
     setMemberStatus('');
     try {
-      await api.createMember({
+      if (!memberForm.password.trim()) {
+        throw new Error('请先设置正式密码');
+      }
+      if (memberForm.password !== memberForm.confirmPassword) {
+        throw new Error('两次输入的密码不一致');
+      }
+      const member = await api.createMember({
         household_id: currentHouseholdId,
         name: memberForm.name.trim(),
         nickname: memberForm.nickname.trim() || null,
@@ -194,9 +205,18 @@ export function SetupWizardPage() {
         phone: memberForm.phone.trim() || null,
         guardian_member_id: null,
       });
+      await api.completeBootstrapAccount({
+        household_id: currentHouseholdId,
+        member_id: member.id,
+        username: memberForm.username.trim() || 'user',
+        password: memberForm.password,
+      });
+      await refreshAuth();
+      await refreshHouseholds();
+      await refreshCurrentHousehold(currentHouseholdId);
       await refreshSetupStatus(currentHouseholdId);
-      setMemberStatus('首位成员已创建。');
-      setMemberForm(current => ({ ...current, name: '', nickname: '', phone: '' }));
+      setMemberStatus('首位成员和正式账号已创建，默认 user/user 已失效。');
+      setMemberForm(current => ({ ...current, name: '', nickname: '', phone: '', password: '', confirmPassword: '' }));
     } catch (error) {
       setMemberError(error instanceof Error ? error.message : '创建首位成员失败');
     } finally {
@@ -316,9 +336,15 @@ export function SetupWizardPage() {
             <div className="form-group"><label htmlFor="setup-member-gender">性别</label><select id="setup-member-gender" className="form-select" value={memberForm.gender} onChange={event => setMemberForm(current => ({ ...current, gender: event.target.value as '' | NonNullable<Member['gender']> }))}><option value="">暂不填写</option><option value="male">男</option><option value="female">女</option></select></div>
             <div className="form-group"><label htmlFor="setup-member-phone">手机号</label><input id="setup-member-phone" className="form-input" value={memberForm.phone} onChange={event => setMemberForm(current => ({ ...current, phone: event.target.value }))} /></div>
           </div>
+          <div className="setup-inline-tip"><strong>账号说明：</strong><span>初始化阶段默认口令是 `user/user`。这一步会创建正式账号，并立刻让默认口令失效。</span></div>
+          <div className="setup-form-grid">
+            <div className="form-group"><label htmlFor="setup-member-username">正式用户名</label><input id="setup-member-username" className="form-input" value={memberForm.username} onChange={event => setMemberForm(current => ({ ...current, username: event.target.value }))} required /></div>
+            <div className="form-group"><label htmlFor="setup-member-password">正式密码</label><input id="setup-member-password" type="password" className="form-input" value={memberForm.password} onChange={event => setMemberForm(current => ({ ...current, password: event.target.value }))} required /></div>
+          </div>
+          <div className="form-group"><label htmlFor="setup-member-password-confirm">确认密码</label><input id="setup-member-password-confirm" type="password" className="form-input" value={memberForm.confirmPassword} onChange={event => setMemberForm(current => ({ ...current, confirmPassword: event.target.value }))} required /></div>
           {memberError && <div className="form-error">{memberError}</div>}
           {memberStatus && <div className="setup-form-status">{memberStatus}</div>}
-          <div className="setup-form-actions"><button type="submit" className="btn btn--primary" disabled={memberSubmitting || !memberForm.name.trim()}>{memberSubmitting ? '创建中…' : '创建首位成员'}</button></div>
+          <div className="setup-form-actions"><button type="submit" className="btn btn--primary" disabled={memberSubmitting || !memberForm.name.trim() || !memberForm.username.trim() || !memberForm.password || !memberForm.confirmPassword}>{memberSubmitting ? '创建中…' : '创建首位成员并完成账号初始化'}</button></div>
         </form>
       );
     }

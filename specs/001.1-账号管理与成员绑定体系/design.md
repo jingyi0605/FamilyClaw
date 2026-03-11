@@ -292,3 +292,10 @@
 - 登录会话：登录成功后能拿到 `auth/me`，登出后立即失效
 - 权限上下文：家庭账号访问接口时，后端能拿到成员 ID、家庭 ID、成员角色
 - Bootstrap 收口：初始化完成后默认 `user/user` 无法继续登录
+
+## 8. 迁移规则
+
+- 每次数据库结构变化都必须带 Alembic 迁移，不能只改 ORM 模型
+- 新迁移必须使用唯一 revision ID，并接到当前最新链路后面，避免重复编号
+- 发布前必须至少验证一次从旧版本数据库执行 `python -m alembic upgrade head`
+- 如果历史上已经出现分叉，必须尽快通过 merge revision 或重排链路收口，不能长期让用户执行 `upgrade heads`

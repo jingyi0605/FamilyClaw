@@ -26,6 +26,7 @@ import type {
   HomeAssistantRoomSyncResponse,
   HomeAssistantSyncResponse,
   Household,
+  LoginResponse,
   MemoryCard,
   MemoryContextBundleRead,
   MemoryCardRevision,
@@ -51,6 +52,7 @@ import type {
   ScenePreviewResponse,
   SceneTemplate,
   SceneTemplatePresetItem,
+  AuthActor,
 } from "../types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
@@ -83,12 +85,14 @@ function resolveErrorMessage(payload: unknown, fallbackMessage: string): string 
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers ?? {});
+  if (!headers.has("Content-Type") && init?.body) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      "X-Actor-Role": "admin",
-      ...(init?.headers ?? {}),
-    },
+    credentials: "include",
+    headers,
     ...init,
   });
 
@@ -115,6 +119,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  login(payload: { username: string; password: string }) {
+    return request<LoginResponse>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  getAuthMe() {
+    return request<LoginResponse>("/auth/me");
+  },
+  logout() {
+    return request<void>("/auth/logout", {
+      method: "POST",
+    });
+  },
   listHouseholds() {
     return request<PaginatedResponse<Household>>("/households");
   },

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import ActorContext, require_admin_actor
+from app.api.dependencies import ActorContext, ensure_actor_can_access_household, require_admin_actor
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
@@ -47,6 +47,7 @@ def execute_device_action_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> DeviceActionExecuteResponse:
+    ensure_actor_can_access_household(actor, payload.household_id)
     try:
         response, audit_context = execute_device_action(db, payload=payload)
         _write_device_action_audit_best_effort(

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import ActorContext, require_admin_actor
+from app.api.dependencies import ActorContext, ensure_actor_can_access_household, require_admin_actor, require_bound_member_actor
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
@@ -36,8 +36,9 @@ def list_reminders_endpoint(
     household_id: str,
     enabled: bool | None = None,
     db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> list[ReminderTaskRead]:
+    ensure_actor_can_access_household(actor, household_id)
     return list_tasks(db, household_id=household_id, enabled=enabled)
 
 
@@ -47,6 +48,7 @@ def create_reminder_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> ReminderTaskRead:
+    ensure_actor_can_access_household(actor, payload.household_id)
     try:
         result = create_task(db, payload)
         write_audit_log(
@@ -130,8 +132,9 @@ def delete_reminder_endpoint(
 def reminder_overview_endpoint(
     household_id: str,
     db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> ReminderOverviewRead:
+    ensure_actor_can_access_household(actor, household_id)
     return build_reminder_overview(db, household_id=household_id)
 
 
@@ -169,6 +172,7 @@ def dispatch_reminder_scheduler_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> ReminderSchedulerDispatchResponse:
+    ensure_actor_can_access_household(actor, household_id)
     try:
         result = dispatch_due_reminders(db, household_id=household_id)
         write_audit_log(

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import ActorContext, require_admin_actor
+from app.api.dependencies import ActorContext, ensure_actor_can_access_household, require_admin_actor, require_bound_member_actor
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
@@ -64,8 +64,9 @@ def ingest_presence_event_endpoint(
 def get_context_overview_endpoint(
     household_id: str,
     db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> ContextOverviewRead:
+    ensure_actor_can_access_household(actor, household_id)
     return get_context_overview(db, household_id)
 
 
@@ -73,8 +74,9 @@ def get_context_overview_endpoint(
 def get_context_config_endpoint(
     household_id: str,
     db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> ContextConfigRead:
+    ensure_actor_can_access_household(actor, household_id)
     return get_context_config(db, household_id)
 
 
@@ -85,6 +87,7 @@ def upsert_context_config_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> ContextConfigRead:
+    ensure_actor_can_access_household(actor, household_id)
     context_config = upsert_context_config(
         db,
         household_id=household_id,

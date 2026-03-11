@@ -4,6 +4,7 @@
 import { NavLink } from 'react-router-dom';
 import { Home, Users, MessageSquareText, BookOpenText, Settings } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { useAuthContext } from '../state/auth';
 import { useHouseholdContext } from '../state/household';
 
 const navItems = [
@@ -16,6 +17,7 @@ const navItems = [
 
 export function ShellNav() {
   const { t } = useI18n();
+  const { actor, logout } = useAuthContext();
   const { currentHousehold, households, setCurrentHouseholdId } = useHouseholdContext();
 
   return (
@@ -59,6 +61,10 @@ export function ShellNav() {
       </nav>
 
       <div className="shell-nav__footer">
+        <div className="shell-nav__account">{actor?.username ?? '未登录'}</div>
+        <button className="shell-nav__logout" type="button" onClick={() => void logout()}>
+          退出登录
+        </button>
         <span className="shell-nav__version">v0.1.0</span>
       </div>
     </aside>

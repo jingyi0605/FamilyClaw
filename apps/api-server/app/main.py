@@ -7,6 +7,8 @@ from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.session import ensure_sqlite_schema
+from app.db.session import SessionLocal
+from app.modules.account.service import ensure_bootstrap_admin_account, ensure_pending_household_bootstrap_accounts
 
 setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
@@ -16,6 +18,12 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     logger.info("Starting %s", settings.app_name)
     ensure_sqlite_schema()
+    db = SessionLocal()
+    try:
+        ensure_bootstrap_admin_account(db)
+        ensure_pending_household_bootstrap_accounts(db)
+    finally:
+        db.close()
     yield
     logger.info("Stopping %s", settings.app_name)
 

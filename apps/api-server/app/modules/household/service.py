@@ -1,10 +1,12 @@
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from typing import cast
 
 from app.db.utils import new_uuid
 from app.modules.agent.models import FamilyAgent
 from app.modules.ai_gateway.models import AiCapabilityRoute
+from app.modules.account.service import ensure_household_bootstrap_account
 from app.modules.household.models import Household
 from app.modules.household.schemas import (
     HouseholdCreate,
@@ -38,6 +40,8 @@ def create_household(db: Session, payload: HouseholdCreate) -> Household:
         setup_status="pending",
     )
     db.add(household)
+    db.flush()
+    ensure_household_bootstrap_account(db, household.id)
     return household
 
 
@@ -93,15 +97,19 @@ def get_household_setup_status(db: Session, household_id: str) -> HouseholdSetup
         "provider_setup": provider_setup_completed,
         "first_butler_agent": first_butler_agent_completed,
     }
-    completed_steps = [step for step in SETUP_REQUIRED_STEPS if completion_by_step[step]]
-    missing_requirements = [step for step in SETUP_REQUIRED_STEPS if not completion_by_step[step]]
-    required_steps = SETUP_REQUIRED_STEPS if is_new_household else HISTORICAL_REQUIRED_STEPS
-    blocking_missing_steps = [step for step in required_steps if not completion_by_step[step]]
+    completed_steps: list[HouseholdSetupStepCode] = [step for step in SETUP_REQUIRED_STEPS if completion_by_step[step]]
+    missing_requirements: list[HouseholdSetupStepCode] = [step for step in SETUP_REQUIRED_STEPS if not completion_by_step[step]]
+    required_steps: tuple[HouseholdSetupStepCode, ...] = (
+        SETUP_REQUIRED_STEPS if is_new_household else HISTORICAL_REQUIRED_STEPS
+    )
+    blocking_missing_steps: list[HouseholdSetupStepCode] = [
+        step for step in required_steps if not completion_by_step[step]
+    ]
     all_required_completed = len(blocking_missing_steps) == 0
     has_progress = len(completed_steps) > 0
 
     if all_required_completed:
-        current_step: HouseholdSetupStepCode = "finish"
+        current_step: HouseholdSetupStepCode = cast(HouseholdSetupStepCode, "finish")
         setup_status = "completed"
     else:
         current_step = blocking_missing_steps[0]

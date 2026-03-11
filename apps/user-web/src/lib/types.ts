@@ -100,6 +100,25 @@ export type PaginatedResponse<T> = {
   total: number;
 };
 
+export type AuthActor = {
+  account_id: string;
+  username: string;
+  account_type: string;
+  account_status: string;
+  household_id: string | null;
+  member_id: string | null;
+  member_role: string | null;
+  role: string;
+  actor_type: string;
+  actor_id: string | null;
+  must_change_password: boolean;
+  authenticated: boolean;
+};
+
+export type LoginResponse = {
+  actor: AuthActor;
+};
+
 export type Member = {
   id: string;
   household_id: string;

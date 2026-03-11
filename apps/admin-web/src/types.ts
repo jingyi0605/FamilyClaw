@@ -3,6 +3,7 @@ import type { RoomType } from "./lib/roomTypes";
 export type Household = {
   id: string;
   name: string;
+  city?: string | null;
   timezone: string;
   locale: string;
   status: string;
@@ -131,6 +132,25 @@ export type PaginatedResponse<T> = {
   page: number;
   page_size: number;
   total: number;
+};
+
+export type AuthActor = {
+  account_id: string;
+  username: string;
+  account_type: string;
+  account_status: string;
+  household_id: string | null;
+  member_id: string | null;
+  member_role: string | null;
+  role: string;
+  actor_type: string;
+  actor_id: string | null;
+  must_change_password: boolean;
+  authenticated: boolean;
+};
+
+export type LoginResponse = {
+  actor: AuthActor;
 };
 
 export type HomeAssistantSyncResponse = {

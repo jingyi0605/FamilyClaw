@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import ActorContext, require_admin_actor
+from app.api.dependencies import ActorContext, ensure_actor_can_access_household, require_admin_actor, require_bound_member_actor
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
@@ -34,6 +34,7 @@ def list_scene_template_presets_endpoint(
     household_id: str,
     actor: ActorContext = Depends(require_admin_actor),
 ) -> list[SceneTemplatePresetItem]:
+    ensure_actor_can_access_household(actor, household_id)
     return list_builtin_scene_templates(household_id, updated_by=actor.actor_id or actor.actor_type)
 
 
@@ -42,8 +43,9 @@ def list_scene_templates_endpoint(
     household_id: str,
     enabled: bool | None = Query(default=None),
     db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> list[SceneTemplateRead]:
+    ensure_actor_can_access_household(actor, household_id)
     return list_templates(db, household_id=household_id, enabled=enabled)
 
 
@@ -54,6 +56,7 @@ def upsert_scene_template_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> SceneTemplateRead:
+    ensure_actor_can_access_household(actor, payload.household_id)
     if payload.template_code != template_code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="path template_code 与 payload 不一致")
     try:
@@ -83,8 +86,9 @@ def preview_scene_template_endpoint(
     template_code: str,
     payload: ScenePreviewRequest,
     db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> ScenePreviewResponse:
+    ensure_actor_can_access_household(actor, payload.household_id)
     return preview_template(db, household_id=payload.household_id, template_code=template_code, payload=payload)
 
 
@@ -95,6 +99,7 @@ def trigger_scene_template_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> SceneExecutionDetailRead:
+    ensure_actor_can_access_household(actor, payload.household_id)
     try:
         result = trigger_template(db, household_id=payload.household_id, template_code=template_code, payload=payload)
         write_audit_log(
@@ -144,8 +149,9 @@ def list_scene_executions_endpoint(
     template_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> list[SceneExecutionRead]:
+    ensure_actor_can_access_household(actor, household_id)
     return list_executions(db, household_id=household_id, template_id=template_id, limit=limit)
 
 

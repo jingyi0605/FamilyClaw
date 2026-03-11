@@ -68,7 +68,7 @@ def list_households_endpoint(
     actor: ActorContext = Depends(require_authenticated_actor),
 ) -> HouseholdListResponse:
     page, page_size = pagination
-    if actor.role == "admin":
+    if actor.account_type == "system":
         households, total = list_households(
             db,
             page=page,

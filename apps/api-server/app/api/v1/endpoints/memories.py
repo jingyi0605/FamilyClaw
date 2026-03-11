@@ -2,7 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import ActorContext, get_actor_context, pagination_params, require_admin_actor
+from app.api.dependencies import (
+    ActorContext,
+    ensure_actor_can_access_household,
+    get_actor_context,
+    pagination_params,
+    require_admin_actor,
+    require_bound_member_actor,
+)
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
@@ -115,14 +122,15 @@ def list_memory_cards_endpoint(
     query: str | None = None,
     pagination: tuple[int, int] = Depends(pagination_params),
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(get_actor_context),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemoryCardListResponse:
+    ensure_actor_can_access_household(actor, household_id)
     page, page_size = pagination
     query_result = query_memory_cards(
         db,
         payload=MemoryQueryRequest(
             household_id=household_id,
-            requester_member_id=actor.actor_id if actor.role != "admin" else None,
+            requester_member_id=actor.member_id if actor.role != "admin" else None,
             member_id=member_id,
             memory_type=memory_type,
             status=status,
@@ -145,15 +153,14 @@ def list_memory_cards_endpoint(
 @router.get("/cards/{memory_id}", response_model=MemoryCardRead)
 def get_memory_card_detail_endpoint(
     memory_id: str,
-    requester_member_id: str | None = None,
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(get_actor_context),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemoryCardRead:
     return get_visible_memory_card_or_404(
         db,
         memory_id=memory_id,
         actor=actor,
-        requester_member_id=requester_member_id,
+        requester_member_id=actor.member_id if actor.role != "admin" else None,
     )
 
 
@@ -161,12 +168,13 @@ def get_memory_card_detail_endpoint(
 def create_manual_memory_card_endpoint(
     payload: MemoryCardManualCreate,
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(get_actor_context),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemoryCardRead:
+    ensure_actor_can_access_household(actor, payload.household_id)
     if actor.role != "admin":
-        if actor.actor_id is None:
+        if actor.member_id is None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="member actor required")
-        if payload.subject_member_id is not None and payload.subject_member_id != actor.actor_id:
+        if payload.subject_member_id is not None and payload.subject_member_id != actor.member_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="member actor cannot create memory for another member")
         if payload.visibility == "sensitive":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="member actor cannot create sensitive memory")
@@ -192,15 +200,14 @@ def create_manual_memory_card_endpoint(
 @router.get("/cards/{memory_id}/revisions", response_model=MemoryCardRevisionListResponse)
 def list_memory_card_revisions_endpoint(
     memory_id: str,
-    requester_member_id: str | None = None,
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(get_actor_context),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemoryCardRevisionListResponse:
     get_visible_memory_card_or_404(
         db,
         memory_id=memory_id,
         actor=actor,
-        requester_member_id=requester_member_id,
+        requester_member_id=actor.member_id if actor.role != "admin" else None,
     )
     return list_memory_card_revisions(db, memory_id=memory_id)
 
@@ -208,15 +215,15 @@ def list_memory_card_revisions_endpoint(
 @router.get("/hot-summary", response_model=MemoryHotSummaryRead)
 def get_memory_hot_summary_endpoint(
     household_id: str,
-    requester_member_id: str | None = None,
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(get_actor_context),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemoryHotSummaryRead:
+    ensure_actor_can_access_household(actor, household_id)
     return get_memory_hot_summary(
         db,
         household_id=household_id,
         actor=actor,
-        requester_member_id=requester_member_id,
+        requester_member_id=actor.member_id if actor.role != "admin" else None,
     )
 
 
@@ -224,11 +231,12 @@ def get_memory_hot_summary_endpoint(
 def query_memory_cards_endpoint(
     payload: MemoryQueryRequest,
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(get_actor_context),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemoryQueryResponse:
+    ensure_actor_can_access_household(actor, payload.household_id)
     normalized_payload = payload
     if actor.role != "admin":
-        normalized_payload = payload.model_copy(update={"requester_member_id": actor.actor_id})
+        normalized_payload = payload.model_copy(update={"requester_member_id": actor.member_id})
     return query_memory_cards(db, payload=normalized_payload, actor=actor)
 
 
@@ -236,11 +244,12 @@ def query_memory_cards_endpoint(
 def preview_memory_context_bundle_endpoint(
     payload: MemoryContextPreviewRequest,
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(get_actor_context),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemoryContextBundleRead:
+    ensure_actor_can_access_household(actor, payload.household_id)
     normalized_requester_member_id = payload.requester_member_id
     if actor.role != "admin":
-        normalized_requester_member_id = actor.actor_id
+        normalized_requester_member_id = actor.member_id
     return build_memory_context_bundle(
         db,
         household_id=payload.household_id,
@@ -256,14 +265,14 @@ def correct_memory_card_endpoint(
     memory_id: str,
     payload: MemoryCardCorrectionPayload,
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(get_actor_context),
+    actor: ActorContext = Depends(require_bound_member_actor),
 ) -> MemoryCardRead:
     ensure_can_mutate_memory_card(
         db,
         memory_id=memory_id,
         actor=actor,
         action=payload.action,
-        requester_member_id=actor.actor_id if actor.role != "admin" else None,
+        requester_member_id=actor.member_id if actor.role != "admin" else None,
     )
     card = correct_memory_card(
         db,

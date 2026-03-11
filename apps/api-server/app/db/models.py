@@ -1,3 +1,4 @@
+from app.modules.account.models import Account, AccountMemberBinding, AccountSession
 from app.modules.agent.models import (
     FamilyAgent,
     FamilyAgentMemberCognition,
@@ -21,6 +22,9 @@ from app.modules.scene.models import SceneExecution, SceneExecutionStep, SceneTe
 from app.modules.room.models import Room
 
 __all__ = [
+    "Account",
+    "AccountMemberBinding",
+    "AccountSession",
     "FamilyAgent",
     "FamilyAgentMemberCognition",
     "FamilyAgentRuntimePolicy",

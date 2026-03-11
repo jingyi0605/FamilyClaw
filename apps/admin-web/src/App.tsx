@@ -1,5 +1,8 @@
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 
+import { LoginPage } from "./pages/LoginPage";
+import { useAuth } from "./state/auth";
+import { HouseholdProvider } from "./state/household";
 import { AiConfigPage } from "./pages/AiConfigPage";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { AiProviderConfigPage } from "./pages/AiProviderConfigPage";
@@ -97,8 +100,9 @@ function matchNavItem(pathname: string, item: NavItem) {
   return pathname.startsWith(item.to);
 }
 
-export default function App() {
+function AppShell() {
   const location = useLocation();
+  const { actor, logout } = useAuth();
   const {
     household,
     households,
@@ -147,6 +151,10 @@ export default function App() {
             <span className="topbar-kicker">FamilyClaw Console</span>
             <h2>{currentNavItem.title}</h2>
             <p>{currentNavItem.description}</p>
+            <div className="topbar-auth-meta">
+              <span>当前账号：{actor?.username ?? "未登录"}</span>
+              <span>身份：{actor?.role ?? "unknown"}</span>
+            </div>
           </div>
           <div className="household-badge">
             <span>当前家庭</span>
@@ -168,6 +176,9 @@ export default function App() {
                 ))}
               </select>
             </div>
+            <button className="ghost logout-button" type="button" onClick={() => void logout()}>
+              退出登录
+            </button>
           </div>
         </header>
 
@@ -186,5 +197,23 @@ export default function App() {
         </Routes>
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  const { actor, authLoading } = useAuth();
+
+  if (authLoading) {
+    return <div className="auth-loading">正在校验登录状态...</div>;
+  }
+
+  if (!actor || !actor.authenticated) {
+    return <LoginPage />;
+  }
+
+  return (
+    <HouseholdProvider>
+      <AppShell />
+    </HouseholdProvider>
   );
 }

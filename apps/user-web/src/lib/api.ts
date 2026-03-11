@@ -17,6 +17,7 @@ import type {
   HomeAssistantSyncResponse,
   Household,
   HouseholdSetupStatus,
+  LoginResponse,
   MemoryCard,
   MemoryCardRevision,
   MemoryType,
@@ -30,8 +31,6 @@ import type {
 } from './types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
-const ACTOR_ROLE = import.meta.env.VITE_API_ACTOR_ROLE ?? 'admin';
-const ACTOR_ID = import.meta.env.VITE_API_ACTOR_ID;
 
 export class ApiError extends Error {
   status: number;
@@ -86,13 +85,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  headers.set('X-Actor-Role', ACTOR_ROLE);
-  if (ACTOR_ID) {
-    headers.set('X-Actor-Id', ACTOR_ID);
-  }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
+    credentials: 'include',
     headers,
   });
 
@@ -117,6 +113,31 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  login(payload: { username: string; password: string }) {
+    return request<LoginResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  getAuthMe() {
+    return request<LoginResponse>('/auth/me');
+  },
+  logout() {
+    return request<void>('/auth/logout', {
+      method: 'POST',
+    });
+  },
+  completeBootstrapAccount(payload: {
+    household_id: string;
+    member_id: string;
+    username: string;
+    password: string;
+  }) {
+    return request<LoginResponse>('/auth/bootstrap/complete', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
   listHouseholds() {
     return request<PaginatedResponse<Household>>('/households?page_size=100');
   },

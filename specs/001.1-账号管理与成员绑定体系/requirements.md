@@ -117,11 +117,13 @@
 
 1. WHEN 老数据还没有账号记录 THEN System SHALL 提供迁移或补录路径，不要求手工直接改库。
 2. WHEN 现有接口逐步迁移到新认证模型 THEN System SHALL 允许按阶段收口，避免一次性把所有链路打断。
+3. WHEN 项目发布新版本 THEN System SHALL 支持通过标准数据库迁移命令把旧版本数据库升级到新版本，而不是要求用户手工补字段。
 
 ### 非功能需求 3：可维护性
 
 1. WHEN 后续增加更多登录方式 THEN System SHALL 复用同一套账号和会话主模型，而不是再造一套用户表。
 2. WHEN 排查越权、登录失败、账号禁用问题 THEN System SHALL 能在审计日志中定位到具体账号和成员绑定关系。
+3. WHEN 新增数据库字段或表 THEN System SHALL 为该变更提供唯一、可追溯、可连续执行的迁移版本，不允许出现重复 revision ID 或长期分叉不收口。
 
 ## 成功定义
 

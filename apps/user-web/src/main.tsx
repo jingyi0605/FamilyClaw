@@ -6,8 +6,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider } from './theme';
 import { I18nProvider } from './i18n';
-import { HouseholdProvider } from './state/household';
-import { SetupProvider } from './state/setup';
+import { AuthProvider } from './state/auth';
 import App from './App';
 import './styles.css';
 
@@ -16,11 +15,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <BrowserRouter>
       <ThemeProvider>
         <I18nProvider>
-          <HouseholdProvider>
-            <SetupProvider>
+          <AuthProvider>
               <App />
-            </SetupProvider>
-          </HouseholdProvider>
+          </AuthProvider>
         </I18nProvider>
       </ThemeProvider>
     </BrowserRouter>

@@ -4,6 +4,9 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from './layouts/AppLayout';
 import { SetupGuard } from './layouts/SetupGuard';
+import { HouseholdProvider } from './state/household';
+import { SetupProvider } from './state/setup';
+import { useAuthContext } from './state/auth';
 import { HomePage } from './pages/HomePage';
 import { FamilyLayout, FamilyOverview, FamilyRooms, FamilyMembers, FamilyRelationships } from './pages/FamilyPage';
 import { AssistantPage } from './pages/AssistantPage';
@@ -18,9 +21,12 @@ import {
   SettingsAccessibility,
   SettingsIntegrations,
 } from './pages/SettingsPage';
+import { LoginPage } from './pages/LoginPage';
 
-export default function App() {
+function AuthenticatedUserApp() {
   return (
+    <HouseholdProvider>
+      <SetupProvider>
     <Routes>
       <Route
         path="/setup"
@@ -82,5 +88,21 @@ export default function App() {
         </Route>
       </Route>
     </Routes>
+      </SetupProvider>
+    </HouseholdProvider>
   );
+}
+
+export default function App() {
+  const { actor, authLoading } = useAuthContext();
+
+  if (authLoading) {
+    return <div className="auth-screen__loading">正在确认登录状态...</div>;
+  }
+
+  if (!actor || !actor.authenticated) {
+    return <LoginPage />;
+  }
+
+  return <AuthenticatedUserApp />;
 }
