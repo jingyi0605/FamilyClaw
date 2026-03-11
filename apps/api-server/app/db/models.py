@@ -1,8 +1,15 @@
+from app.modules.agent.models import (
+    FamilyAgent,
+    FamilyAgentMemberCognition,
+    FamilyAgentRuntimePolicy,
+    FamilyAgentSoulProfile,
+)
 from app.modules.ai_gateway.models import AiCapabilityRoute, AiModelCallLog, AiProviderProfile
 from app.modules.audit.models import AuditLog
 from app.modules.context.models import ContextConfig
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.family_qa.models import QaQueryLog
+from app.modules.ha_integration.models import HouseholdHaConfig
 from app.modules.household.models import Household
 from app.modules.member.models import Member, MemberPreference
 from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember, MemoryCardRevision
@@ -14,6 +21,10 @@ from app.modules.scene.models import SceneExecution, SceneExecutionStep, SceneTe
 from app.modules.room.models import Room
 
 __all__ = [
+    "FamilyAgent",
+    "FamilyAgentMemberCognition",
+    "FamilyAgentRuntimePolicy",
+    "FamilyAgentSoulProfile",
     "AiCapabilityRoute",
     "AiModelCallLog",
     "AiProviderProfile",
@@ -33,6 +44,7 @@ __all__ = [
     "EventRecord",
     "PresenceEvent",
     "QaQueryLog",
+    "HouseholdHaConfig",
     "ReminderAckEvent",
     "ReminderDeliveryAttempt",
     "ReminderRun",

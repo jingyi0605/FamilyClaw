@@ -404,6 +404,18 @@ pre {
   color: #667694;
 }
 
+.admin-agent-card {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border: 1px solid #e6edf7;
+}
+
+.admin-agent-card--selected {
+  border-color: #8cb3ff;
+  box-shadow: 0 0 0 3px rgba(91, 137, 255, 0.16);
+}
+
 .chip-list {
   display: flex;
   flex-wrap: wrap;

@@ -138,10 +138,41 @@ export type HomeAssistantSyncResponse = {
   created_devices: number;
   updated_devices: number;
   created_bindings: number;
+  created_rooms: number;
+  assigned_rooms: number;
   skipped_entities: number;
   failed_entities: number;
   devices: Device[];
   failures: { entity_id: string | null; reason: string }[];
+};
+
+export type HomeAssistantConfig = {
+  household_id: string;
+  base_url: string | null;
+  token_configured: boolean;
+  sync_rooms_enabled: boolean;
+  last_device_sync_at: string | null;
+  updated_at: string | null;
+};
+
+export type HomeAssistantRoomSyncResponse = {
+  household_id: string;
+  created_rooms: number;
+  matched_entities: number;
+  skipped_entities: number;
+  rooms: Array<{ id: string; name: string }>;
+};
+
+export type HomeAssistantRoomCandidate = {
+  name: string;
+  entity_count: number;
+  exists_locally: boolean;
+  can_sync: boolean;
+};
+
+export type HomeAssistantRoomCandidatesResponse = {
+  household_id: string;
+  items: HomeAssistantRoomCandidate[];
 };
 
 export type ContextHomeMode = "home" | "away" | "night" | "sleep" | "custom";
@@ -678,6 +709,90 @@ export type AiProviderProfileCreatePayload = {
 };
 
 export type AiProviderProfileUpdatePayload = Partial<AiProviderProfileCreatePayload>;
+
+export type AgentType =
+  | "butler"
+  | "nutritionist"
+  | "fitness_coach"
+  | "study_coach"
+  | "custom";
+
+export type AgentStatus = "draft" | "active" | "inactive";
+
+export type AgentSoulProfile = {
+  id: string;
+  agent_id: string;
+  version: number;
+  self_identity: string;
+  role_summary: string;
+  intro_message: string | null;
+  speaking_style: string | null;
+  personality_traits: string[];
+  service_focus: string[];
+  service_boundaries: Record<string, unknown> | null;
+  is_active: boolean;
+  created_by: string;
+  created_at: string;
+};
+
+export type AgentMemberCognition = {
+  id: string;
+  agent_id: string;
+  member_id: string;
+  display_address: string | null;
+  closeness_level: number;
+  service_priority: number;
+  communication_style: string | null;
+  care_notes: Record<string, unknown> | null;
+  prompt_notes: string | null;
+  version: number;
+  updated_at: string;
+};
+
+export type AgentRuntimePolicy = {
+  agent_id: string;
+  conversation_enabled: boolean;
+  default_entry: boolean;
+  routing_tags: string[];
+  memory_scope: Record<string, unknown> | null;
+  updated_at: string;
+};
+
+export type AgentSummary = {
+  id: string;
+  household_id: string;
+  code: string;
+  agent_type: AgentType;
+  display_name: string;
+  status: AgentStatus;
+  is_primary: boolean;
+  sort_order: number;
+  summary: string | null;
+  conversation_enabled: boolean;
+  default_entry: boolean;
+  updated_at: string;
+};
+
+export type AgentDetail = {
+  id: string;
+  household_id: string;
+  code: string;
+  agent_type: AgentType;
+  display_name: string;
+  status: AgentStatus;
+  is_primary: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  soul: AgentSoulProfile | null;
+  member_cognitions: AgentMemberCognition[];
+  runtime_policy: AgentRuntimePolicy | null;
+};
+
+export type AgentListResponse = {
+  household_id: string;
+  items: AgentSummary[];
+};
 
 export type AiCapabilityRoute = {
   id: string;

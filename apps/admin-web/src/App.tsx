@@ -1,5 +1,6 @@
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 
+import { AiConfigPage } from "./pages/AiConfigPage";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { AiProviderConfigPage } from "./pages/AiProviderConfigPage";
 import { ContextCenterPage } from "./pages/ContextCenterPage";
@@ -21,8 +22,14 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   {
-    to: "/ai-provider-config",
+    to: "/ai-config",
     label: "AI 配置",
+    title: "多 Agent AI 配置",
+    description: "查看家庭下的主管家和专业 Agent，先把角色、状态和人格摘要理清。 ",
+  },
+  {
+    to: "/ai-provider-config",
+    label: "模型供应商",
     title: "AI 模型供应商配置",
     description: "手动配置供应商、能力路由和预览调用，方便完整测试。",
   },
@@ -165,6 +172,7 @@ export default function App() {
         </header>
 
         <Routes>
+          <Route path="/ai-config" element={<AiConfigPage />} />
           <Route path="/ai-provider-config" element={<AiProviderConfigPage />} />
           <Route path="/context-center" element={<ContextCenterPage />} />
           <Route path="/memory-center" element={<MemoryCenterPage />} />

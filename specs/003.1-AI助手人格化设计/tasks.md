@@ -27,13 +27,17 @@
 
 ### A1 先建多 Agent 数据表和迁移
 
-- 状态：TODO
+- 状态：DONE
 - 这一步到底做什么：先把 `family_agents`、`family_agent_soul_profiles`、`family_agent_member_cognitions`、`family_agent_runtime_policies` 这些核心表和迁移建出来。
 - 做完你能看到什么：数据库里已经有多 Agent 的真实骨架，不再只有设计文档。
 - 先依赖什么：无
 - 主要改哪里：
   - `apps/api-server/migrations/versions/`
   - `apps/api-server/app/modules/agent/models.py`
+- 实际完成：
+  - 已新增 `apps/api-server/app/modules/agent/models.py`
+  - 已新增 `apps/api-server/migrations/versions/20260311_0007_create_agent_foundation.py`
+  - 已在 `apps/api-server/app/db/models.py` 注册新模型
 - 这一步先不做什么：先不做外观生成表，先不碰 `user-web`
 - 怎么算完成：
   1. 核心表结构已落库
@@ -46,7 +50,7 @@
 
 ### A2 补 Agent 的 Schema、Repository 和服务骨架
 
-- 状态：TODO
+- 状态：DONE
 - 这一步到底做什么：把 Agent 的读写 Schema、Repository 和最小服务层先立住，别让接口层直接硬写 SQLAlchemy。
 - 做完你能看到什么：后端已经有稳定的 Agent 模块入口，不是散在各个 endpoint 里的临时代码。
 - 先依赖什么：A1
@@ -54,6 +58,11 @@
   - `apps/api-server/app/modules/agent/schemas.py`
   - `apps/api-server/app/modules/agent/repository.py`
   - `apps/api-server/app/modules/agent/service.py`
+- 实际完成：
+  - 已新增 `apps/api-server/app/modules/agent/schemas.py`
+  - 已新增 `apps/api-server/app/modules/agent/repository.py`
+  - 已新增 `apps/api-server/app/modules/agent/service.py`
+  - 已补主管家兜底读取骨架 `resolve_effective_agent`
 - 这一步先不做什么：先不接运行时上下文，不做对话路由
 - 怎么算完成：
   1. Agent 列表、详情、创建、更新所需 Schema 已齐
@@ -66,13 +75,18 @@
 
 ### A3 做 AI配置列表接口和单 Agent 详情接口
 
-- 状态：TODO
+- 状态：DONE
 - 这一步到底做什么：先把 `AI配置` 真正需要的两个核心接口做出来：Agent 列表摘要、单 Agent 详情。
 - 做完你能看到什么：`admin-web` 已经有东西可接，不再只能对着 mock 或设计图发呆。
 - 先依赖什么：A2
 - 主要改哪里：
   - `apps/api-server/app/api/v1/endpoints/`
   - `apps/api-server/app/modules/agent/service.py`
+- 实际完成：
+  - 已新增 `apps/api-server/app/api/v1/endpoints/ai_config.py`
+  - 已在 `apps/api-server/app/api/v1/router.py` 注册 `ai-config` 路由
+  - 已实现 `GET /api/v1/ai-config/{household_id}`
+  - 已实现 `GET /api/v1/ai-config/{household_id}/agents/{agent_id}`
 - 建议最小接口：
   1. `GET /api/v1/ai-config/{household_id}`
   2. `GET /api/v1/ai-config/{household_id}/agents/{agent_id}`
@@ -88,7 +102,7 @@
 
 ### A4 做 Soul、成员认知、运行时策略更新接口
 
-- 状态：TODO
+- 状态：DONE
 - 这一步到底做什么：把 `admin-web` 真要编辑的内容接成真保存，而不是只停留在只读详情。
 - 做完你能看到什么：可以单独修改某个 Agent 的人格、成员认知和运行时策略。
 - 先依赖什么：A3
@@ -96,6 +110,12 @@
   - `apps/api-server/app/api/v1/endpoints/`
   - `apps/api-server/app/modules/agent/service.py`
   - `apps/api-server/app/modules/agent/repository.py`
+- 实际完成：
+  - 已在 `apps/api-server/app/modules/agent/schemas.py` 新增更新用 Schema
+  - 已在 `apps/api-server/app/modules/agent/service.py` 实现 `upsert_agent_soul`
+  - 已在 `apps/api-server/app/modules/agent/service.py` 实现 `upsert_agent_member_cognitions`
+  - 已在 `apps/api-server/app/modules/agent/service.py` 实现 `upsert_agent_runtime_policy`
+  - 已在 `apps/api-server/app/api/v1/endpoints/ai_config.py` 新增 3 个 `PUT` 接口
 - 建议最小接口：
   1. `PUT /api/v1/ai-config/{household_id}/agents/{agent_id}/soul`
   2. `PUT /api/v1/ai-config/{household_id}/agents/{agent_id}/member-cognitions`
@@ -131,7 +151,7 @@
 
 ### A6 在 `admin-web` 做 AI配置列表页
 
-- 状态：TODO
+- 状态：DONE
 - 这一步到底做什么：先把 `admin-web` 里的 AI配置总览页做出来，展示多个 Agent 的列表、角色、状态和主 Agent 标记。
 - 做完你能看到什么：团队终于有一个能看多 Agent 全貌的管理入口。
 - 先依赖什么：A3
@@ -139,6 +159,11 @@
   - `apps/admin-web/src/App.tsx`
   - `apps/admin-web/src/pages/`
   - `apps/admin-web/src/lib/api.ts`
+- 实际完成：
+  - 已新增 `apps/admin-web/src/pages/AiConfigPage.tsx`
+  - 已在 `apps/admin-web/src/App.tsx` 注册 `/ai-config` 路由
+  - 已在 `apps/admin-web/src/lib/api.ts` 新增 Agent 列表和详情读取方法
+  - 已在 `apps/admin-web/src/types.ts` 新增 Agent 相关类型
 - 这一步先不做什么：先不做复杂视觉打磨
 - 怎么算完成：
   1. 能看到多个 Agent 卡片或列表
@@ -206,7 +231,8 @@
 ## 阶段 1：先把多Agent骨架搭出来
 
 - [ ] 1.1 新增多 Agent 基础模型
-  - 状态：TODO
+  - 状态：DONE
+  - 当前进度：A1 和 A2 已完成，核心表、ORM、Alembic 迁移、Schema、Repository 和服务骨架都已落地。下一步进入 1.2 和阶段检查。
   - 这一步到底做什么：为家庭新增统一的 Agent 数据模型和 Schema，包括 Agent 基础身份、`soul`、成员认知、外观档案和运行时策略。
   - 做完你能看到什么：后端里终于有多 Agent 的正式骨架，不再只有一个模糊助手对象。
   - 先依赖什么：无
@@ -228,7 +254,8 @@
   - 对应设计：`design.md` §3.1、§3.4、§4.1
 
 - [ ] 1.2 做 AI配置聚合读模型
-  - 状态：TODO
+  - 状态：IN_PROGRESS
+  - 当前进度：A3 已完成最小只读接口，A4 也已完成最小写接口，现在已经能读 Agent 列表 / 详情，并更新 `soul`、成员认知和运行时策略。后续如果要把外观摘要也并进来，再继续扩这一层读模型。
   - 这一步到底做什么：把多个 Agent 的摘要、状态、角色类型和配置入口聚合成一份给 AI配置页面用的读模型。
   - 做完你能看到什么：前端有稳定的 AI配置数据入口，不用自己拼一堆接口。
   - 先依赖什么：1.1
@@ -275,7 +302,8 @@
 ## 阶段 2：把人格、认知和记忆真正接到多Agent运行时
 
 - [ ] 2.1 接各 Agent 的 Soul 配置与运行时人格上下文
-  - 状态：TODO
+  - 状态：IN_PROGRESS
+  - 当前进度：A4 已完成 `soul` 的写接口和主管家兜底骨架，但真正把人格接进 `family_qa` 运行时上下文还没开始。
   - 这一步到底做什么：让每个 Agent 的响应都不再只靠临时 prompt，而是读取各自生效的 `soul` 配置。
   - 做完你能看到什么：管家、营养师、健身教练不再只是换个名字，而是有各自稳定人格。
   - 先依赖什么：1.3
@@ -298,7 +326,8 @@
   - 对应设计：`design.md` §5.3、§8.1、§8.2、§8.3
 
 - [ ] 2.2 接各 Agent 的成员认知
-  - 状态：TODO
+  - 状态：IN_PROGRESS
+  - 当前进度：A4 已完成成员认知的写接口，但还没把这些认知真正接进问答运行时和管理页展示。
   - 这一步到底做什么：让不同 Agent 知道它面对的是谁、该怎么称呼、该注意什么。
   - 做完你能看到什么：同一个家庭成员面对不同 Agent 时，能感受到合理的角色差异。
   - 先依赖什么：2.1

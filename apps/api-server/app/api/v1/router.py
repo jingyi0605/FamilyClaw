@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.api.v1.endpoints.ai_config import router as ai_config_router
 from app.api.v1.endpoints.ai_admin import router as ai_admin_router
 from app.api.v1.endpoints.audit_logs import router as audit_logs_router
 from app.api.v1.endpoints.context import router as context_router
@@ -19,6 +20,7 @@ from app.api.v1.endpoints.rooms import router as rooms_router
 from app.api.v1.endpoints.scenes import router as scenes_router
 
 router = APIRouter()
+router.include_router(ai_config_router)
 router.include_router(ai_admin_router)
 router.include_router(audit_logs_router)
 router.include_router(context_router)

@@ -1,4 +1,6 @@
 import type {
+  AgentDetail,
+  AgentListResponse,
   AiCallLog,
   AiCapabilityRoute,
   AiCapabilityRouteUpsertPayload,
@@ -13,6 +15,9 @@ import type {
   Device,
   FamilyQaQueryResponse,
   FamilyQaSuggestionsResponse,
+  HomeAssistantConfig,
+  HomeAssistantRoomCandidatesResponse,
+  HomeAssistantRoomSyncResponse,
   HomeAssistantSyncResponse,
   Household,
   MemoryCard,
@@ -215,6 +220,17 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  updateRoom(roomId: string, payload: Partial<Pick<Room, "name" | "room_type" | "privacy_level">>) {
+    return request<Room>(`/rooms/${encodeURIComponent(roomId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+  deleteRoom(roomId: string) {
+    return request<void>(`/rooms/${encodeURIComponent(roomId)}`, {
+      method: "DELETE",
+    });
+  },
   listDevices(householdId: string) {
     return request<PaginatedResponse<Device>>(
       `/devices?household_id=${encodeURIComponent(householdId)}`,
@@ -226,10 +242,39 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  getHomeAssistantConfig(householdId: string) {
+    return request<HomeAssistantConfig>(`/devices/ha-config/${encodeURIComponent(householdId)}`);
+  },
+  updateHomeAssistantConfig(householdId: string, payload: {
+    base_url: string | null;
+    access_token?: string | null;
+    clear_access_token?: boolean;
+    sync_rooms_enabled: boolean;
+  }) {
+    return request<HomeAssistantConfig>(`/devices/ha-config/${encodeURIComponent(householdId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
   syncHomeAssistant(householdId: string) {
     return request<HomeAssistantSyncResponse>("/devices/sync/ha", {
       method: "POST",
       body: JSON.stringify({ household_id: householdId }),
+    });
+  },
+  syncHomeAssistantRooms(householdId: string) {
+    return request<HomeAssistantRoomSyncResponse>("/devices/rooms/sync/ha", {
+      method: "POST",
+      body: JSON.stringify({ household_id: householdId, room_names: [] }),
+    });
+  },
+  listHomeAssistantRoomCandidates(householdId: string) {
+    return request<HomeAssistantRoomCandidatesResponse>(`/devices/rooms/ha-candidates/${encodeURIComponent(householdId)}`);
+  },
+  syncSelectedHomeAssistantRooms(householdId: string, roomNames: string[]) {
+    return request<HomeAssistantRoomSyncResponse>("/devices/rooms/sync/ha", {
+      method: "POST",
+      body: JSON.stringify({ household_id: householdId, room_names: roomNames }),
     });
   },
   listAuditLogs(householdId: string) {
@@ -484,6 +529,12 @@ export const api = {
   },
   getAiRuntimeDefaults() {
     return request<Record<string, unknown>>("/ai/runtime-defaults");
+  },
+  listAgents(householdId: string) {
+    return request<AgentListResponse>(`/ai-config/${encodeURIComponent(householdId)}`);
+  },
+  getAgentDetail(householdId: string, agentId: string) {
+    return request<AgentDetail>(`/ai-config/${encodeURIComponent(householdId)}/agents/${encodeURIComponent(agentId)}`);
   },
   listAiProviders(enabled?: boolean) {
     const params = new URLSearchParams();
