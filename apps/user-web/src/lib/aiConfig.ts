@@ -76,9 +76,12 @@ export function buildCreateProviderPayload(
   form: ReturnType<typeof buildProviderFormState>,
   adapter: AiProviderAdapter,
 ): AiProviderProfileCreatePayload {
+  const normalizedDisplayName = form.displayName.trim();
+  const normalizedProviderCode = form.providerCode.trim() || buildSetupProviderCode(adapter.adapter_code);
+
   return {
-    provider_code: form.providerCode.trim(),
-    display_name: form.displayName.trim(),
+    provider_code: normalizedProviderCode,
+    display_name: normalizedDisplayName,
     transport_type: adapter.transport_type,
     base_url: form.baseUrl.trim() || null,
     api_version: null,
@@ -153,4 +156,8 @@ function readAdapterDefault(adapter: AiProviderAdapter | null | undefined, key: 
     return '';
   }
   return String(adapter.field_schema.find(item => item.key === key)?.default_value ?? '');
+}
+
+function buildSetupProviderCode(adapterCode: string) {
+  return `setup-${adapterCode}-${Date.now()}`;
 }

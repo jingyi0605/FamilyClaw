@@ -21,7 +21,8 @@ def list_provider_adapters() -> list[dict[str, Any]]:
                     "text",
                     required=False,
                     placeholder="https://api.openai.com/v1",
-                    help_text="留空时你自己负责在部署环境里补默认值，别指望系统替你猜。",
+                    default_value="https://api.openai.com/v1",
+                    help_text="默认就是 OpenAI 官方兼容地址，通常不用改。",
                 ),
                 _field("secret_ref", "密钥引用", "secret", required=True, placeholder="例如：OPENAI_API_KEY"),
                 _field("model_name", "模型名", "text", required=True, placeholder="例如：gpt-4o-mini"),
@@ -57,7 +58,7 @@ def list_provider_adapters() -> list[dict[str, Any]]:
             "field_schema": [
                 _field("display_name", "显示名称", "text", required=True, placeholder="例如：GLM 家庭问答"),
                 _field("provider_code", "供应商编码", "text", required=True, placeholder="例如：family-glm-main"),
-                _field("base_url", "Base URL", "text", required=False, placeholder="填写 GLM 官方兼容接口地址"),
+                _field("base_url", "Base URL", "text", required=False, placeholder="填写 GLM 官方兼容接口地址", default_value="https://open.bigmodel.cn/api/paas/v4"),
                 _field("secret_ref", "密钥引用", "secret", required=True, placeholder="例如：GLM_API_KEY"),
                 _field("model_name", "模型名", "text", required=True, placeholder="例如：glm-4-flash"),
                 _field(
@@ -83,7 +84,7 @@ def list_provider_adapters() -> list[dict[str, Any]]:
             "field_schema": [
                 _field("display_name", "显示名称", "text", required=True, placeholder="例如：硅基流动主模型"),
                 _field("provider_code", "供应商编码", "text", required=True, placeholder="例如：family-siliconflow-main"),
-                _field("base_url", "Base URL", "text", required=False, placeholder="填写硅基流动兼容接口地址"),
+                _field("base_url", "Base URL", "text", required=False, placeholder="填写硅基流动兼容接口地址", default_value="https://api.siliconflow.cn/v1"),
                 _field("secret_ref", "密钥引用", "secret", required=True, placeholder="例如：SILICONFLOW_API_KEY"),
                 _field("model_name", "模型名", "text", required=True, placeholder="例如：Qwen/Qwen2.5-72B-Instruct"),
                 _field(
@@ -109,7 +110,7 @@ def list_provider_adapters() -> list[dict[str, Any]]:
             "field_schema": [
                 _field("display_name", "显示名称", "text", required=True, placeholder="例如：KIMI 家庭助手"),
                 _field("provider_code", "供应商编码", "text", required=True, placeholder="例如：family-kimi-main"),
-                _field("base_url", "Base URL", "text", required=False, placeholder="填写 KIMI 官方兼容接口地址"),
+                _field("base_url", "Base URL", "text", required=False, placeholder="填写 KIMI 官方兼容接口地址", default_value="https://api.moonshot.cn/v1"),
                 _field("secret_ref", "密钥引用", "secret", required=True, placeholder="例如：KIMI_API_KEY"),
                 _field("model_name", "模型名", "text", required=True, placeholder="例如：moonshot-v1-8k"),
                 _field(
@@ -135,7 +136,7 @@ def list_provider_adapters() -> list[dict[str, Any]]:
             "field_schema": [
                 _field("display_name", "显示名称", "text", required=True, placeholder="例如：MiniMax 主模型"),
                 _field("provider_code", "供应商编码", "text", required=True, placeholder="例如：family-minimax-main"),
-                _field("base_url", "Base URL", "text", required=False, placeholder="填写 MINIMAX 兼容接口地址"),
+                _field("base_url", "Base URL", "text", required=False, placeholder="填写 MINIMAX 兼容接口地址", default_value="https://api.minimax.chat/v1"),
                 _field("secret_ref", "密钥引用", "secret", required=True, placeholder="例如：MINIMAX_API_KEY"),
                 _field("model_name", "模型名", "text", required=True, placeholder="例如：MiniMax-Text-01"),
                 _field(

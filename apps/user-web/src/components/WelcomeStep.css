@@ -1,0 +1,131 @@
+.welcome-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-app);
+  z-index: 9999;
+  overflow: hidden;
+  font-family: inherit;
+}
+
+.welcome-content {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  z-index: 2;
+  position: relative;
+}
+
+.welcome-logo-wrapper {
+  animation: logoPop 1.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  transform: scale(0);
+}
+
+.welcome-logo {
+  font-size: 5rem;
+  filter: drop-shadow(0 0 20px rgba(117, 179, 255, 0.4));
+  line-height: 1;
+}
+
+.welcome-text-wrapper {
+  overflow: hidden;
+  padding: 0 1rem;
+}
+
+.welcome-text {
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 800;
+  color: var(--text-primary);
+  opacity: 0;
+  transform: translateY(30px);
+  animation: textFadeUp 1s cubic-bezier(0.2, 0.8, 0.2, 1) 1.2s forwards;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.welcome-subtext {
+  font-size: clamp(1.1rem, 3vw, 1.5rem);
+  color: var(--text-secondary);
+  opacity: 0;
+  transform: translateY(20px);
+  animation: textFadeUp 1s cubic-bezier(0.2, 0.8, 0.2, 1) 2.5s forwards;
+  margin: 0;
+  font-weight: 500;
+}
+
+.welcome-action {
+  opacity: 0;
+  animation: fadeIn 1.5s ease-out 4.0s forwards;
+  margin-top: 2rem;
+}
+
+.welcome-btn {
+  padding: 0.875rem 3.5rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  border-radius: 50px;
+  background: var(--brand-primary);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(117, 179, 255, 0.3);
+  transition: all 0.3s ease;
+}
+
+.welcome-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(117, 179, 255, 0.4);
+}
+
+.welcome-btn:active {
+  transform: translateY(0);
+}
+
+@keyframes logoPop {
+  0% { transform: scale(0) rotate(-15deg); opacity: 0; }
+  60% { transform: scale(1.2) rotate(5deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+@keyframes textFadeUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 粒子动画效果 */
+.welcome-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.particle {
+  position: absolute;
+  background: var(--brand-primary);
+  border-radius: 50%;
+  opacity: 0.2;
+  animation: floatParticle 4s infinite ease-in-out alternate;
+}
+
+@keyframes floatParticle {
+  from { transform: translateY(0) scale(1) rotate(0deg); }
+  to { transform: translateY(-30px) scale(1.5) rotate(180deg); }
+}
+
+.welcome-fade-out {
+  animation: fadeOutContainer 0.5s ease forwards;
+}
+
+@keyframes fadeOutContainer {
+  to { opacity: 0; visibility: hidden; }
+}

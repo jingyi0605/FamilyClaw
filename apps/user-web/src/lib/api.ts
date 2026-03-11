@@ -165,6 +165,12 @@ export const api = {
   listHouseholds() {
     return request<PaginatedResponse<Household>>('/households?page_size=100');
   },
+  createHousehold(payload: Pick<Household, 'name' | 'city' | 'timezone' | 'locale'>) {
+    return request<Household>('/households', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
   getHousehold(householdId: string) {
     return request<Household>(`/households/${encodeURIComponent(householdId)}`);
   },

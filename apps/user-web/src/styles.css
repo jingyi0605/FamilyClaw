@@ -4071,3 +4071,137 @@ body::before {
     min-height: 240px;
   }
 }
+
+/* ---- Setup Wizard Simple Page ---- */
+.setup-wizard-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+.setup-stepper {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+  position: relative;
+  z-index: 1;
+}
+.setup-stepper::before {
+  content: "";
+  position: absolute;
+  top: 15px;
+  left: 20px;
+  right: 20px;
+  height: 2px;
+  background: var(--border-light);
+  z-index: -1;
+}
+.setup-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--bg-app);
+  padding: 0 10px;
+}
+.setup-step__indicator {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: all var(--transition);
+}
+.setup-step--active .setup-step__indicator {
+  border-color: var(--brand-primary);
+  background: var(--brand-primary);
+  color: var(--text-inverse);
+  box-shadow: 0 0 0 4px var(--brand-primary-light);
+}
+.setup-step--completed .setup-step__indicator {
+  border-color: var(--brand-primary);
+  background: var(--brand-primary);
+  color: var(--text-inverse);
+}
+.setup-step__label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.setup-step--active .setup-step__label {
+  color: var(--brand-primary);
+  font-weight: 700;
+}
+.setup-wizard-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  padding: 3rem;
+  border: 1px solid var(--border-light);
+}
+.setup-wizard-card--transparent {
+  padding: 1rem 0;
+}
+.setup-wizard-header {
+  text-align: center;
+  margin-bottom: 2.5rem;
+}
+.setup-wizard-header h2, .setup-wizard-header h3 {
+  font-size: var(--font-size-xxl);
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+.setup-wizard-header h3 {
+  font-size: var(--font-size-xl);
+}
+.setup-wizard-header p {
+  color: var(--text-secondary);
+}
+.setup-wizard-footer {
+  text-align: center;
+  margin-top: 2rem;
+}
+.setup-page--centered {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 85vh;
+}
+
+
+/* ---- Password Strength ---- */
+.password-strength {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+.password-strength__bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-input);
+  transition: all var(--transition);
+}
+.password-strength__bar--active-weak {
+  background: var(--color-danger);
+}
+.password-strength__bar--active-fair {
+  background: var(--color-warning);
+}
+.password-strength__bar--active-good {
+  background: var(--brand-secondary);
+}
+.password-strength__bar--active-strong {
+  background: var(--color-success);
+}
+.password-strength-text {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  text-align: right;
+}
+

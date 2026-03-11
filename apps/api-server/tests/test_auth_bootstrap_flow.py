@@ -82,6 +82,19 @@ class AuthBootstrapFlowTests(unittest.TestCase):
         self.assertTrue(bootstrap.must_change_password)
         self.assertIsNone(bootstrap.household_id)
 
+    def test_global_bootstrap_can_list_and_access_pending_household(self) -> None:
+        ensure_pending_household_bootstrap_accounts(self.db)
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Test Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.commit()
+
+        bootstrap = authenticate_account(self.db, "user", "user")
+        actor_context = ActorContext.from_authenticated_actor(bootstrap)
+
+        ensure_actor_can_access_household(actor_context, household.id)
+
     def test_complete_bootstrap_account_disables_default_credentials(self) -> None:
         ensure_pending_household_bootstrap_accounts(self.db)
         household = create_household(

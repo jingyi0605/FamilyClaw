@@ -87,6 +87,8 @@ def require_bound_member_actor(
 def ensure_actor_can_access_household(actor: ActorContext, household_id: str) -> None:
     if actor.account_type == "system":
         return
+    if actor.account_type == "bootstrap" and actor.household_id is None:
+        return
     if not actor.is_authenticated:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
