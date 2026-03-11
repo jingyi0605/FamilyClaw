@@ -18,8 +18,94 @@ down_revision: str = "20260311_0009"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+EXPECTED_TABLES: dict[str, set[str]] = {
+    "accounts": {
+        "id",
+        "username",
+        "password_hash",
+        "account_type",
+        "status",
+        "household_id",
+        "must_change_password",
+        "created_at",
+        "updated_at",
+    },
+    "account_member_bindings": {
+        "account_id",
+        "member_id",
+        "household_id",
+        "binding_status",
+        "created_at",
+        "updated_at",
+    },
+    "account_sessions": {
+        "id",
+        "account_id",
+        "session_token_hash",
+        "status",
+        "expires_at",
+        "last_seen_at",
+        "created_at",
+    },
+}
+
+EXPECTED_INDEXES: dict[str, set[str]] = {
+    "accounts": {
+        "idx_accounts_account_type",
+        "idx_accounts_household_id",
+        "idx_accounts_status",
+    },
+    "account_member_bindings": {
+        "idx_account_member_bindings_household_id",
+        "idx_account_member_bindings_status",
+    },
+    "account_sessions": {
+        "idx_account_sessions_account_id",
+        "idx_account_sessions_expires_at",
+        "idx_account_sessions_status",
+    },
+}
+
+
+def _validate_existing_account_schema(inspector: sa.Inspector) -> None:
+    for table_name, expected_columns in EXPECTED_TABLES.items():
+        actual_columns = {column["name"] for column in inspector.get_columns(table_name)}
+        missing_columns = sorted(expected_columns - actual_columns)
+        if missing_columns:
+            raise RuntimeError(
+                f"Migration {revision} found existing table '{table_name}' but it is missing columns: "
+                f"{', '.join(missing_columns)}. Check the schema manually and use 'alembic stamp {revision}' "
+                "only after the table matches the migration."
+            )
+
+        actual_indexes = {index["name"] for index in inspector.get_indexes(table_name)}
+        missing_indexes = sorted(EXPECTED_INDEXES[table_name] - actual_indexes)
+        if missing_indexes:
+            raise RuntimeError(
+                f"Migration {revision} found existing table '{table_name}' but it is missing indexes: "
+                f"{', '.join(missing_indexes)}. Check the schema manually and use 'alembic stamp {revision}' "
+                "only after the table matches the migration."
+            )
+
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_tables = set(inspector.get_table_names())
+    present_tables = sorted(table_name for table_name in EXPECTED_TABLES if table_name in existing_tables)
+
+    if present_tables:
+        if len(present_tables) != len(EXPECTED_TABLES):
+            missing_tables = sorted(set(EXPECTED_TABLES) - set(present_tables))
+            raise RuntimeError(
+                f"Migration {revision} found a partial account schema. Existing tables: {', '.join(present_tables)}; "
+                f"missing tables: {', '.join(missing_tables)}. This database is in an inconsistent state. "
+                "Check the schema manually, repair it, then use Alembic stamp/upgrade to continue."
+            )
+
+        _validate_existing_account_schema(inspector)
+        return
+
     op.create_table(
         "accounts",
         sa.Column("id", sa.Text(), primary_key=True),

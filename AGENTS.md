@@ -63,3 +63,12 @@
 - `specs/000-Spec规范/Spec模板/` 下的模板必须保持人话风格
 - 后续创建新 Spec 时，默认沿用人话模板
 - 如果模板变回黑话，优先修模板，不要把垃圾继续复制到新 Spec
+
+## 数据库迁移规则
+
+1. 只有 Alembic 可以修改数据库表结构。
+2. 严禁在应用启动、业务代码、脚本里使用 `Base.metadata.create_all()`、`drop_all()`、自动补表、自动补列。
+3. 新增表、字段、索引、约束时，必须编写 Alembic migration，不允许只改 model。
+4. 如果数据库表已经存在但版本号没跟上，先核对结构，再用 `alembic stamp` 校准；不要靠重复建表碰运气。
+5. AI IDE 修改后端数据库相关代码时，必须优先检查 `migrations/` 和 `alembic_version` 的一致性，不能自行绕过迁移系统建表。
+6. 进行任何数据库字段操作前，必须先阅读：apps\api-server\migrations\20260311-数据库迁移规范.md。
