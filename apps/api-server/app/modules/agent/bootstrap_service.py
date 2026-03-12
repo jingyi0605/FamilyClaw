@@ -42,6 +42,25 @@ def start_butler_bootstrap_session(
     """启动管家引导会话。"""
     _ensure_bootstrap_allowed(db, household_id=household_id)
 
+    existing_session = repository.get_latest_bootstrap_session(
+        db,
+        household_id=household_id,
+        include_completed=False,
+    )
+    if existing_session is not None:
+        return _to_session_read(existing_session)
+
+    return restart_butler_bootstrap_session(db, household_id=household_id)
+
+
+def restart_butler_bootstrap_session(
+    db: Session,
+    *,
+    household_id: str,
+) -> ButlerBootstrapSessionRead:
+    """重新开始管家引导会话。"""
+    _ensure_bootstrap_allowed(db, household_id=household_id)
+
     draft = ButlerBootstrapDraft(household_id=household_id)
     assistant_message = _build_opening_message(db, household_id=household_id)
     session = FamilyAgentBootstrapSession(
@@ -57,6 +76,19 @@ def start_butler_bootstrap_session(
     repository.add_bootstrap_session(db, session)
     db.flush()
     return _to_session_read(session, assistant_message=assistant_message)
+
+
+def get_latest_butler_bootstrap_session(
+    db: Session,
+    *,
+    household_id: str,
+) -> ButlerBootstrapSessionRead | None:
+    """读取最近一次管家引导会话。"""
+    _ensure_bootstrap_allowed(db, household_id=household_id)
+    session = repository.get_latest_bootstrap_session(db, household_id=household_id)
+    if session is None:
+        return None
+    return _to_session_read(session)
 
 
 def advance_butler_bootstrap_session(
@@ -431,6 +463,7 @@ def _to_session_read(
         pending_field=pending_field,
         draft=draft,
         assistant_message=latest_message,
+        messages=transcript,
         can_confirm=session.status == "reviewing",
     )
 

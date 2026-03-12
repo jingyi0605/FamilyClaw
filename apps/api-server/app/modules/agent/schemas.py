@@ -116,6 +116,7 @@ class ButlerBootstrapSessionRead(BaseModel):
     pending_field: ButlerBootstrapField | None = None
     draft: ButlerBootstrapDraft
     assistant_message: str = Field(min_length=1)
+    messages: list[dict[str, str]] = Field(default_factory=list)
     can_confirm: bool = False
 
 

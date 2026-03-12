@@ -9,6 +9,8 @@ from app.db.session import get_db
 from app.modules.agent.bootstrap_service import (
     advance_butler_bootstrap_session,
     confirm_butler_bootstrap_session,
+    get_latest_butler_bootstrap_session,
+    restart_butler_bootstrap_session,
     start_butler_bootstrap_session,
     stream_butler_bootstrap_session,
 )
@@ -235,6 +237,32 @@ def create_butler_bootstrap_session_endpoint(
     ensure_actor_can_access_household(actor, household_id)
     try:
         result = start_butler_bootstrap_session(db, household_id=household_id)
+        db.commit()
+        return result
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.get("/{household_id}/butler-bootstrap/sessions/latest", response_model=ButlerBootstrapSessionRead | None)
+def get_latest_butler_bootstrap_session_endpoint(
+    household_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> ButlerBootstrapSessionRead | None:
+    ensure_actor_can_access_household(actor, household_id)
+    return get_latest_butler_bootstrap_session(db, household_id=household_id)
+
+
+@router.post("/{household_id}/butler-bootstrap/sessions/restart", response_model=ButlerBootstrapSessionRead, status_code=status.HTTP_201_CREATED)
+def restart_butler_bootstrap_session_endpoint(
+    household_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> ButlerBootstrapSessionRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = restart_butler_bootstrap_session(db, household_id=household_id)
         db.commit()
         return result
     except IntegrityError as exc:

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 
 import { Card } from './base';
 import { api } from '../lib/api';
@@ -18,11 +18,75 @@ type TranscriptMessage = {
   content: string;
 };
 
+type PersistedBootstrapConversation = {
+  sessionId: string;
+  messages: TranscriptMessage[];
+};
+
 function newMessageId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function toTranscriptMessages(session: ButlerBootstrapSession): TranscriptMessage[] {
+  const source = session.messages.length > 0
+    ? session.messages
+    : [{ role: 'assistant' as const, content: session.assistant_message }];
+  return source.map(message => ({
+    id: newMessageId(),
+    role: message.role,
+    content: message.content,
+  }));
+}
+
+function getBootstrapStorageKey(householdId: string): string {
+  return `familyclaw:butler-bootstrap:${householdId}`;
+}
+
+function loadPersistedConversation(householdId: string): PersistedBootstrapConversation | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(getBootstrapStorageKey(householdId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as PersistedBootstrapConversation;
+    if (!parsed || typeof parsed.sessionId !== 'string' || !Array.isArray(parsed.messages)) {
+      return null;
+    }
+    return {
+      sessionId: parsed.sessionId,
+      messages: parsed.messages.filter(message => (
+        message
+        && typeof message.id === 'string'
+        && (message.role === 'assistant' || message.role === 'user')
+        && typeof message.content === 'string'
+      )),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedConversation(householdId: string, sessionId: string, messages: TranscriptMessage[]): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.setItem(
+    getBootstrapStorageKey(householdId),
+    JSON.stringify({ sessionId, messages }),
+  );
+}
+
+function clearPersistedConversation(householdId: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.removeItem(getBootstrapStorageKey(householdId));
 }
 
 // 根据管家名字选择合适的 emoji 头像
@@ -67,6 +131,7 @@ export function ButlerBootstrapConversation({
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [createdAgent, setCreatedAgent] = useState<AgentDetail | null>(null);
@@ -79,6 +144,7 @@ export function ButlerBootstrapConversation({
     setLoading(false);
     setSending(false);
     setConfirming(false);
+    setRestarting(false);
     setError('');
     setStatus('');
     setCreatedAgent(null);
@@ -86,27 +152,58 @@ export function ButlerBootstrapConversation({
   }, [householdId]);
 
   useEffect(() => {
+    if (!session || messages.length === 0 || createdAgent) {
+      return;
+    }
+    savePersistedConversation(householdId, session.session_id, messages);
+  }, [createdAgent, householdId, messages, session]);
+
+  useEffect(() => {
     if (existingButlerAgent || createdAgent || session || loading || autoStartedRef.current === householdId) {
       return;
     }
     autoStartedRef.current = householdId;
-    void startSession();
+    void loadOrStartSession();
   }, [createdAgent, existingButlerAgent, householdId, loading, session]);
 
-  async function startSession() {
+  async function loadOrStartSession() {
     setLoading(true);
     setError('');
     setStatus('');
     try {
-      const nextSession = await api.createButlerBootstrapSession(householdId);
+      const existingSession = await api.getLatestButlerBootstrapSession(householdId);
+      const nextSession = existingSession ?? await api.createButlerBootstrapSession(householdId);
+      const persisted = loadPersistedConversation(householdId);
       setSession(nextSession);
-      setMessages([{ id: newMessageId(), role: 'assistant', content: nextSession.assistant_message }]);
+      setMessages(
+        persisted && persisted.sessionId === nextSession.session_id && persisted.messages.length > 0
+          ? persisted.messages
+          : toTranscriptMessages(nextSession),
+      );
     } catch (sessionError) {
       setError(sessionError instanceof Error ? sessionError.message : '启动首个管家引导失败');
       setSession(null);
       setMessages([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleRestart() {
+    setRestarting(true);
+    setError('');
+    setStatus('');
+    try {
+      const nextSession = await api.restartButlerBootstrapSession(householdId);
+      clearPersistedConversation(householdId);
+      setSession(nextSession);
+      setMessages(toTranscriptMessages(nextSession));
+      setInput('');
+      setStatus('已重新开始对话，你可以重新设定 AI 管家。');
+    } catch (restartError) {
+      setError(restartError instanceof Error ? restartError.message : '重新开始引导失败');
+    } finally {
+      setRestarting(false);
     }
   }
 
@@ -124,6 +221,14 @@ export function ButlerBootstrapConversation({
     const userMessage = input.trim();
 
     const assistantMessageId = newMessageId();
+    const abortController = new AbortController();
+    let settled = false;
+    let activityAt = Date.now();
+    const inactivityTimer = window.setInterval(() => {
+      if (Date.now() - activityAt > 12000) {
+        abortController.abort('stream-timeout');
+      }
+    }, 1000);
 
     setInput('');
     setMessages(current => {
@@ -142,6 +247,7 @@ export function ButlerBootstrapConversation({
           message: userMessage,
         },
         (chunk) => {
+          activityAt = Date.now();
           setMessages(current => {
             return current.map(message => (
               message.id === assistantMessageId
@@ -151,22 +257,64 @@ export function ButlerBootstrapConversation({
           });
         },
         (nextSession) => {
+          settled = true;
+          window.clearInterval(inactivityTimer);
           setSession(nextSession);
           setSending(false);
         },
         (errorMsg) => {
+          settled = true;
+          window.clearInterval(inactivityTimer);
           setError(errorMsg);
           setSending(false);
         },
         // 实时更新 draft（用于更新管家名称和头像）
         (updatedDraft) => {
+          activityAt = Date.now();
           setSession(current => current ? { ...current, draft: updatedDraft } : current);
         },
+        abortController.signal,
       );
     } catch (messageError) {
+      window.clearInterval(inactivityTimer);
+      const isAbortError = messageError instanceof DOMException && messageError.name === 'AbortError';
+      if (!settled && isAbortError) {
+        try {
+          const nextSession = await api.sendButlerBootstrapMessage(householdId, session.session_id, {
+            message: userMessage,
+          });
+          setSession(nextSession);
+          setMessages(current => current.map(message => (
+            message.id === assistantMessageId
+              ? { ...message, content: nextSession.assistant_message }
+              : message
+          )));
+          setSending(false);
+          setStatus('本轮流式输出超时，已自动切换为普通回复。');
+          return;
+        } catch (fallbackError) {
+          setError(fallbackError instanceof Error ? fallbackError.message : '发送引导消息失败');
+          setSending(false);
+          return;
+        }
+      }
+
       setError(messageError instanceof Error ? messageError.message : '发送引导消息失败');
       setSending(false);
+    } finally {
+      window.clearInterval(inactivityTimer);
     }
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    if (sending || !input.trim()) {
+      return;
+    }
+    event.currentTarget.form?.requestSubmit();
   }
 
   async function handleConfirm() {
@@ -180,6 +328,7 @@ export function ButlerBootstrapConversation({
         draft: session.draft,
         created_by: source,
       });
+      clearPersistedConversation(householdId);
       setCreatedAgent(created);
       setStatus('管家创建完成！');
       await onCreated?.(created);
@@ -206,6 +355,8 @@ export function ButlerBootstrapConversation({
   // 动态获取管家名称和头像
   const butlerName = session?.draft.display_name || 'AI 管家';
   const butlerEmoji = session?.draft.display_name ? getButlerEmoji(session.draft.display_name) : '🤖';
+  const userName = '你';
+  const userAvatar = '你';
 
   return (
     <div className="butler-bootstrap">
@@ -222,6 +373,14 @@ export function ButlerBootstrapConversation({
                 {session.status === 'collecting' ? '正在了解自己...' : '准备好了！'}
               </p>
             </div>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => void handleRestart()}
+              disabled={loading || sending || confirming || restarting}
+            >
+              {restarting ? '重开中...' : '重新开始'}
+            </button>
           </div>
         )}
 
@@ -232,19 +391,24 @@ export function ButlerBootstrapConversation({
         {!loading && session && (
           <div className="butler-bootstrap__chat">
             <div className="butler-bootstrap__messages">
-              {messages.map((message, index) => (
+              {messages.map((message) => (
                 <div
-                  key={`${message.role}-${index}`}
+                  key={message.id}
                   className={`butler-bootstrap__message butler-bootstrap__message--${message.role}`}
                 >
-                  {message.role === 'assistant' && (
-                    <span className="butler-bootstrap__message-avatar">{butlerEmoji}</span>
-                  )}
+                  <span
+                    className={`butler-bootstrap__message-avatar butler-bootstrap__message-avatar--${message.role}`}
+                    aria-hidden="true"
+                  >
+                    {message.role === 'assistant' ? butlerEmoji : userAvatar}
+                  </span>
                   <div className="butler-bootstrap__message-content">
                     <span className="butler-bootstrap__message-role">
-                      {message.role === 'assistant' ? butlerName : '你'}
+                      {message.role === 'assistant' ? butlerName : userName}
                     </span>
-                    <p>{message.content}</p>
+                    <div className="butler-bootstrap__message-bubble">
+                      <p>{message.content || (message.role === 'assistant' && sending ? '正在输入...' : '')}</p>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -252,16 +416,22 @@ export function ButlerBootstrapConversation({
 
             {session.status === 'collecting' && (
               <form className="butler-bootstrap__composer" onSubmit={handleSend}>
-                <textarea
-                  className="form-input"
-                  value={input}
-                  onChange={event => setInput(event.target.value)}
-                  placeholder="直接说就行..."
-                  rows={2}
-                />
-                <button type="submit" className="btn btn--primary" disabled={sending || !input.trim()}>
-                  {sending ? '...' : '发送'}
-                </button>
+                <div className="butler-bootstrap__composer-shell">
+                  <textarea
+                    className="form-input butler-bootstrap__composer-input"
+                    value={input}
+                    onChange={event => setInput(event.target.value)}
+                    onKeyDown={handleComposerKeyDown}
+                    placeholder="直接说就行，告诉我你心里的理想管家。"
+                    rows={3}
+                  />
+                  <div className="butler-bootstrap__composer-footer">
+                    <span className="butler-bootstrap__composer-hint">Enter 发送，Shift + Enter 换行</span>
+                    <button type="submit" className="btn btn--primary" disabled={sending || !input.trim()}>
+                      {sending ? '发送中...' : '发送'}
+                    </button>
+                  </div>
+                </div>
               </form>
             )}
 

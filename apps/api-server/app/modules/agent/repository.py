@@ -70,6 +70,22 @@ def add_bootstrap_session(db: Session, row: FamilyAgentBootstrapSession) -> Fami
     return row
 
 
+def get_latest_bootstrap_session(
+    db: Session,
+    *,
+    household_id: str,
+    include_completed: bool = True,
+) -> FamilyAgentBootstrapSession | None:
+    stmt = (
+        select(FamilyAgentBootstrapSession)
+        .where(FamilyAgentBootstrapSession.household_id == household_id)
+        .order_by(FamilyAgentBootstrapSession.updated_at.desc(), FamilyAgentBootstrapSession.created_at.desc())
+    )
+    if not include_completed:
+        stmt = stmt.where(FamilyAgentBootstrapSession.status != "completed")
+    return db.scalar(stmt)
+
+
 def get_active_soul_profile(db: Session, *, agent_id: str) -> FamilyAgentSoulProfile | None:
     stmt = select(FamilyAgentSoulProfile).where(
         FamilyAgentSoulProfile.agent_id == agent_id,

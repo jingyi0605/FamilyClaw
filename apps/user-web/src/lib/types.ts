@@ -567,12 +567,18 @@ export type ButlerBootstrapDraft = {
   personality_traits: string[];
 };
 
+export type ButlerBootstrapMessage = {
+  role: 'assistant' | 'user';
+  content: string;
+};
+
 export type ButlerBootstrapSession = {
   session_id: string;
   status: ButlerBootstrapStatus;
   pending_field: ButlerBootstrapField | null;
   draft: ButlerBootstrapDraft;
   assistant_message: string;
+  messages: ButlerBootstrapMessage[];
   can_confirm: boolean;
 };
 

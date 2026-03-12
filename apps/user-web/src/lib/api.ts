@@ -409,6 +409,20 @@ export const api = {
       60000, // LLM 调用需要更长超时
     );
   },
+  getLatestButlerBootstrapSession(householdId: string) {
+    return request<ButlerBootstrapSession | null>(
+      `/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions/latest`,
+      { method: 'GET' },
+      60000,
+    );
+  },
+  restartButlerBootstrapSession(householdId: string) {
+    return request<ButlerBootstrapSession>(
+      `/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions/restart`,
+      { method: 'POST' },
+      60000,
+    );
+  },
   sendButlerBootstrapMessage(householdId: string, sessionId: string, payload: ButlerBootstrapMessagePayload) {
     return request<ButlerBootstrapSession>(
       `/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions/${encodeURIComponent(sessionId)}/messages`,
@@ -434,12 +448,14 @@ export const api = {
     onDone: (session: ButlerBootstrapSession) => void,
     onError: (error: string) => void,
     onDraftUpdate?: (draft: ButlerBootstrapSession['draft']) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions/${encodeURIComponent(sessionId)}/stream-messages`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal,
     });
 
     if (!response.ok) {
