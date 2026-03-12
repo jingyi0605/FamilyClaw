@@ -636,48 +636,67 @@ export function ConversationPage() {
             <div className="assistant-main__messages">
               {activeMessages.length > 0 ? activeMessages.map(msg => (
                 <div key={msg.id} className={`message message--${msg.role}`}>
-                  <div className="message__bubble">
-                    {msg.role === 'assistant' && msg.effectiveAgentName && (
-                      <span className="message__agent-tag">{msg.effectiveAgentName}</span>
-                    )}
-                    <p className="message__content">{msg.content}</p>
-                    {msg.usedMemory && <span className="message__memory-tag">🧠 引用了家庭记忆</span>}
-                    {msg.degraded && <span className="message__memory-tag">⚠️ 当前回答已降级</span>}
+                  <div className="message__identity">
+                    <span className={`message__avatar message__avatar--${msg.role}`} aria-hidden="true">
+                      {msg.role === 'assistant'
+                        ? (selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : '🤖')
+                        : '你'
+                      }
+                    </span>
+                    <span className="message__role-name">
+                      {msg.role === 'assistant'
+                        ? (msg.effectiveAgentName ?? selectedAgent?.display_name ?? 'AI 助手')
+                        : '你'
+                      }
+                    </span>
                   </div>
-                  {msg.role === 'assistant' && (
-                    <div className="message__actions">
-                      <button className="msg-action-btn" onClick={() => void submitQuestion(`继续追问：${msg.content.slice(0, 40)}`)}>{t('assistant.askFollow')}</button>
-                      <button className="msg-action-btn" onClick={() => openReminderDraft(msg)}>{t('assistant.toReminder')}</button>
-                      <button className="msg-action-btn" onClick={() => openMemoryDraft(msg)}>{t('assistant.toMemory')}</button>
-                      <button className="msg-action-btn" onClick={() => openRelatedPage('family')}>去家庭页</button>
-                      <button className="msg-action-btn" onClick={() => openRelatedPage('settings')}>去 AI 配置</button>
-                      <button className="msg-action-btn" onClick={() => openRelatedPage('memories')}>去记忆页</button>
-                      {(msg.suggestions ?? []).slice(0, 2).map(suggestion => (
-                        <button key={suggestion} className="msg-action-btn" onClick={() => void submitQuestion(suggestion)}>{suggestion}</button>
-                      ))}
+                  <div className="message__content-wrapper">
+                    <div className="message__bubble">
+                      <p className="message__content">{msg.content}</p>
+                      {msg.usedMemory && <span className="message__memory-tag">🧠 引用了家庭记忆</span>}
+                      {msg.degraded && <span className="message__memory-tag">⚠️ 当前回答已降级</span>}
                     </div>
-                  )}
+                    {msg.role === 'assistant' && (
+                      <div className="message__actions">
+                        <button className="msg-action-btn" onClick={() => void submitQuestion(`继续追问：${msg.content.slice(0, 40)}`)}>{t('assistant.askFollow')}</button>
+                        <button className="msg-action-btn" onClick={() => openReminderDraft(msg)}>{t('assistant.toReminder')}</button>
+                        <button className="msg-action-btn" onClick={() => openMemoryDraft(msg)}>{t('assistant.toMemory')}</button>
+                        <button className="msg-action-btn" onClick={() => openRelatedPage('family')}>去家庭页</button>
+                        <button className="msg-action-btn" onClick={() => openRelatedPage('settings')}>去 AI 配置</button>
+                        <button className="msg-action-btn" onClick={() => openRelatedPage('memories')}>去记忆页</button>
+                        {(msg.suggestions ?? []).slice(0, 2).map(suggestion => (
+                          <button key={suggestion} className="msg-action-btn" onClick={() => void submitQuestion(suggestion)}>{suggestion}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )) : (
                 <EmptyState icon="💬" title={t('assistant.welcome')} description={t('assistant.welcomeHint')} />
               )}
             </div>
             <div className="assistant-main__input">
-              <input
-                type="text"
-                value={inputValue}
-                onChange={event => setInputValue(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' && !sending) {
-                    void submitQuestion(inputValue);
-                  }
-                }}
-                placeholder={t('assistant.inputPlaceholder')}
-                className="chat-input"
-              />
-              <button className="btn btn--primary" onClick={() => void submitQuestion(inputValue)} disabled={sending || !currentHouseholdId}>
-                {sending ? '发送中...' : t('assistant.send')}
-              </button>
+              <form className="chat-composer" onSubmit={event => { event.preventDefault(); void submitQuestion(inputValue); }}>
+                <textarea
+                  value={inputValue}
+                  onChange={event => setInputValue(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && !event.shiftKey && !sending) {
+                      event.preventDefault();
+                      void submitQuestion(inputValue);
+                    }
+                  }}
+                  placeholder={t('assistant.inputPlaceholder')}
+                  className="chat-composer__input form-input"
+                  rows={2}
+                />
+                <div className="chat-composer__footer">
+                  <span className="chat-composer__hint">Enter 发送，Shift + Enter 换行</span>
+                  <button type="submit" className="btn btn--primary" disabled={sending || !inputValue.trim() || !currentHouseholdId}>
+                    {sending ? '发送中...' : t('assistant.send')}
+                  </button>
+                </div>
+              </form>
             </div>
             {(error || actionStatus) && <div className="text-text-secondary" style={{ marginTop: '0.75rem' }}>{error || actionStatus}</div>}
           </>
