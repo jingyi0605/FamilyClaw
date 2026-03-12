@@ -1,0 +1,16 @@
+{
+  "id": "health-basic-reader",
+  "name": "健康基础数据插件",
+  "version": "0.1.0",
+  "types": ["connector", "memory-ingestor"],
+  "permissions": [
+    "health.read",
+    "memory.write.observation"
+  ],
+  "risk_level": "low",
+  "triggers": ["manual", "schedule"],
+  "entrypoints": {
+    "connector": "app.plugins.builtin.health_basic.connector.sync",
+    "memory_ingestor": "app.plugins.builtin.health_basic.ingestor.transform"
+  }
+}
