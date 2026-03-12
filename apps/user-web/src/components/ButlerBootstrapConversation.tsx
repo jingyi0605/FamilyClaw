@@ -3,7 +3,13 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { Card } from './base';
 import { api } from '../lib/api';
 import { parseTags, stringifyTags } from '../lib/aiConfig';
+import {
+  createButlerBootstrapRealtimeClient,
+  newRealtimeRequestId,
+  type ButlerBootstrapRealtimeClient,
+} from '../lib/butlerBootstrapRealtime';
 import type { AgentDetail, AgentSummary, ButlerBootstrapSession } from '../lib/types';
+import type { BootstrapRealtimeEvent, BootstrapRealtimeSessionSnapshot } from '../lib/realtime';
 
 type Props = {
   householdId: string;
@@ -14,13 +20,9 @@ type Props = {
 
 type TranscriptMessage = {
   id: string;
+  requestId?: string | null;
   role: 'assistant' | 'user';
   content: string;
-};
-
-type PersistedBootstrapConversation = {
-  sessionId: string;
-  messages: TranscriptMessage[];
 };
 
 function newMessageId(): string {
@@ -35,58 +37,11 @@ function toTranscriptMessages(session: ButlerBootstrapSession): TranscriptMessag
     ? session.messages
     : [{ role: 'assistant' as const, content: session.assistant_message }];
   return source.map(message => ({
-    id: newMessageId(),
+    id: message.id ?? `${message.request_id ?? 'message'}:${message.seq ?? newMessageId()}`,
+    requestId: message.request_id ?? null,
     role: message.role,
     content: message.content,
   }));
-}
-
-function getBootstrapStorageKey(householdId: string): string {
-  return `familyclaw:butler-bootstrap:${householdId}`;
-}
-
-function loadPersistedConversation(householdId: string): PersistedBootstrapConversation | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    const raw = window.localStorage.getItem(getBootstrapStorageKey(householdId));
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as PersistedBootstrapConversation;
-    if (!parsed || typeof parsed.sessionId !== 'string' || !Array.isArray(parsed.messages)) {
-      return null;
-    }
-    return {
-      sessionId: parsed.sessionId,
-      messages: parsed.messages.filter(message => (
-        message
-        && typeof message.id === 'string'
-        && (message.role === 'assistant' || message.role === 'user')
-        && typeof message.content === 'string'
-      )),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function savePersistedConversation(householdId: string, sessionId: string, messages: TranscriptMessage[]): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.localStorage.setItem(
-    getBootstrapStorageKey(householdId),
-    JSON.stringify({ sessionId, messages }),
-  );
-}
-
-function clearPersistedConversation(householdId: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.localStorage.removeItem(getBootstrapStorageKey(householdId));
 }
 
 // 根据管家名字选择合适的 emoji 头像
@@ -136,12 +91,17 @@ export function ButlerBootstrapConversation({
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [realtimeReady, setRealtimeReady] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [createdAgent, setCreatedAgent] = useState<AgentDetail | null>(null);
   const autoStartedRef = useRef<string | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const realtimeClientRef = useRef<ButlerBootstrapRealtimeClient | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
   const [composerHeight, setComposerHeight] = useState(0);
 
   useEffect(() => {
@@ -152,18 +112,17 @@ export function ButlerBootstrapConversation({
     setSending(false);
     setConfirming(false);
     setRestarting(false);
+    setRealtimeReady(false);
     setError('');
     setStatus('');
     setCreatedAgent(null);
     autoStartedRef.current = null;
-  }, [householdId]);
-
-  useEffect(() => {
-    if (!session || messages.length === 0 || createdAgent) {
-      return;
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
     }
-    savePersistedConversation(householdId, session.session_id, messages);
-  }, [createdAgent, householdId, messages, session]);
+    reconnectAttemptsRef.current = 0;
+  }, [householdId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -217,6 +176,74 @@ export function ButlerBootstrapConversation({
     void loadOrStartSession();
   }, [createdAgent, existingButlerAgent, householdId, loading, session]);
 
+  useEffect(() => {
+    if (!session?.session_id || createdAgent) {
+      realtimeClientRef.current?.close();
+      realtimeClientRef.current = null;
+      activeSessionIdRef.current = null;
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      reconnectAttemptsRef.current = 0;
+      setRealtimeReady(false);
+      return;
+    }
+    if (activeSessionIdRef.current === session.session_id) {
+      return;
+    }
+
+    realtimeClientRef.current?.close();
+    setRealtimeReady(false);
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    activeSessionIdRef.current = session.session_id;
+    realtimeClientRef.current = createButlerBootstrapRealtimeClient({
+      householdId,
+      sessionId: session.session_id,
+      onEvent: handleRealtimeEvent,
+      onOpen: () => {
+        reconnectAttemptsRef.current = 0;
+        setRealtimeReady(true);
+        setStatus('实时连接已建立。');
+      },
+      onClose: (event) => {
+        if (activeSessionIdRef.current !== session.session_id) {
+          return;
+        }
+        realtimeClientRef.current = null;
+        activeSessionIdRef.current = null;
+        setRealtimeReady(false);
+        if (!event.wasClean && !createdAgent) {
+          const delayMs = Math.min(1000 * (reconnectAttemptsRef.current + 1), 5000);
+          reconnectAttemptsRef.current += 1;
+          setStatus(`实时连接已断开，${Math.ceil(delayMs / 1000)} 秒后自动重连...`);
+          reconnectTimerRef.current = window.setTimeout(() => {
+            reconnectTimerRef.current = null;
+            void syncLatestSession(session.session_id);
+          }, delayMs);
+        }
+      },
+      onError: () => {
+        setRealtimeReady(false);
+        setError('实时连接异常，请稍后重试。');
+      },
+    });
+
+    return () => {
+      realtimeClientRef.current?.close();
+      realtimeClientRef.current = null;
+      activeSessionIdRef.current = null;
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      setRealtimeReady(false);
+    };
+  }, [createdAgent, householdId, session?.session_id]);
+
   async function loadOrStartSession() {
     setLoading(true);
     setError('');
@@ -224,13 +251,8 @@ export function ButlerBootstrapConversation({
     try {
       const existingSession = await api.getLatestButlerBootstrapSession(householdId);
       const nextSession = existingSession ?? await api.createButlerBootstrapSession(householdId);
-      const persisted = loadPersistedConversation(householdId);
       setSession(nextSession);
-      setMessages(
-        persisted && persisted.sessionId === nextSession.session_id && persisted.messages.length > 0
-          ? persisted.messages
-          : toTranscriptMessages(nextSession),
-      );
+      setMessages(toTranscriptMessages(nextSession));
     } catch (sessionError) {
       setError(sessionError instanceof Error ? sessionError.message : '启动首个管家引导失败');
       setSession(null);
@@ -246,7 +268,9 @@ export function ButlerBootstrapConversation({
     setStatus('');
     try {
       const nextSession = await api.restartButlerBootstrapSession(householdId);
-      clearPersistedConversation(householdId);
+      realtimeClientRef.current?.close();
+      realtimeClientRef.current = null;
+      activeSessionIdRef.current = null;
       setSession(nextSession);
       setMessages(toTranscriptMessages(nextSession));
       setInput('');
@@ -269,91 +293,114 @@ export function ButlerBootstrapConversation({
     }
     setSending(true);
     setError('');
+    setStatus('');
     const userMessage = input.trim();
-
-    const assistantMessageId = newMessageId();
-    const abortController = new AbortController();
-    let settled = false;
-    let activityAt = Date.now();
-    const inactivityTimer = window.setInterval(() => {
-      if (Date.now() - activityAt > 12000) {
-        abortController.abort('stream-timeout');
-      }
-    }, 1000);
+    const requestId = newRealtimeRequestId();
 
     setInput('');
     setMessages(current => {
       return [
         ...current,
-        { id: newMessageId(), role: 'user', content: userMessage },
-        { id: assistantMessageId, role: 'assistant', content: '' },
+        { id: `user:${requestId}`, requestId, role: 'user', content: userMessage },
+        { id: `assistant:${requestId}`, requestId, role: 'assistant', content: '' },
       ];
     });
 
     try {
-      await api.streamButlerBootstrapMessage(
-        householdId,
-        session.session_id,
-        {
-          message: userMessage,
-        },
-        (chunk) => {
-          activityAt = Date.now();
-          setMessages(current => {
-            return current.map(message => (
-              message.id === assistantMessageId
-                ? { ...message, content: message.content + chunk }
-                : message
-            ));
-          });
-        },
-        (nextSession) => {
-          settled = true;
-          window.clearInterval(inactivityTimer);
-          setSession(nextSession);
-          setSending(false);
-        },
-        (errorMsg) => {
-          settled = true;
-          window.clearInterval(inactivityTimer);
-          setError(errorMsg);
-          setSending(false);
-        },
-        // 实时更新 draft（用于更新管家名称和头像）
-        (updatedDraft) => {
-          activityAt = Date.now();
-          setSession(current => current ? { ...current, draft: updatedDraft } : current);
-        },
-        abortController.signal,
-      );
+      realtimeClientRef.current?.sendUserMessage(requestId, userMessage);
     } catch (messageError) {
-      window.clearInterval(inactivityTimer);
-      const isAbortError = messageError instanceof DOMException && messageError.name === 'AbortError';
-      if (!settled && isAbortError) {
-        try {
-          const nextSession = await api.sendButlerBootstrapMessage(householdId, session.session_id, {
-            message: userMessage,
-          });
-          setSession(nextSession);
-          setMessages(current => current.map(message => (
-            message.id === assistantMessageId
-              ? { ...message, content: nextSession.assistant_message }
-              : message
-          )));
-          setSending(false);
-          setStatus('本轮流式输出超时，已自动切换为普通回复。');
-          return;
-        } catch (fallbackError) {
-          setError(fallbackError instanceof Error ? fallbackError.message : '发送引导消息失败');
-          setSending(false);
-          return;
-        }
-      }
-
+      setMessages(current => current.filter(message => message.requestId !== requestId));
       setError(messageError instanceof Error ? messageError.message : '发送引导消息失败');
       setSending(false);
-    } finally {
-      window.clearInterval(inactivityTimer);
+    }
+  }
+
+  function handleRealtimeEvent(event: BootstrapRealtimeEvent) {
+    if (event.type === 'session.ready') {
+      return;
+    }
+
+    if (event.type === 'session.snapshot') {
+      const nextSession = (event.payload as { snapshot: BootstrapRealtimeSessionSnapshot }).snapshot;
+      setSession(nextSession);
+      setMessages(toTranscriptMessages(nextSession));
+      setSending(Boolean(nextSession.current_request_id));
+      setStatus(nextSession.current_request_id ? '已恢复当前会话，正在等待这一轮完成。' : '已同步最新会话快照。');
+      return;
+    }
+
+    if (event.type === 'user.message.accepted') {
+      setSending(true);
+      setSession(current => current ? { ...current, current_request_id: event.request_id ?? null } : current);
+      return;
+    }
+
+    if (event.type === 'agent.chunk') {
+      const payload = event.payload as { text: string };
+      setMessages(current => {
+        const targetId = `assistant:${event.request_id}`;
+        const existing = current.find(message => message.id === targetId);
+        if (existing) {
+          return current.map(message => (
+            message.id === targetId
+              ? { ...message, content: message.content + payload.text }
+              : message
+          ));
+        }
+        return [...current, {
+          id: targetId,
+          requestId: event.request_id,
+          role: 'assistant',
+          content: payload.text,
+        }];
+      });
+      return;
+    }
+
+    if (event.type === 'agent.state_patch') {
+      setSession(current => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          draft: {
+            ...current.draft,
+            ...event.payload,
+          },
+        };
+      });
+      return;
+    }
+
+    if (event.type === 'agent.done') {
+      setSending(false);
+      void syncLatestSession(session?.session_id);
+      return;
+    }
+
+    if (event.type === 'agent.error') {
+      const payload = event.payload as { detail: string };
+      setSending(false);
+      setError(payload.detail);
+      void syncLatestSession(session?.session_id);
+    }
+  }
+
+  async function syncLatestSession(expectedSessionId?: string | null) {
+    try {
+      const nextSession = await api.getLatestButlerBootstrapSession(householdId);
+      if (!nextSession) {
+        return;
+      }
+      if (expectedSessionId && nextSession.session_id !== expectedSessionId && activeSessionIdRef.current === expectedSessionId) {
+        return;
+      }
+      setSession(nextSession);
+      setMessages(toTranscriptMessages(nextSession));
+      setSending(Boolean(nextSession.current_request_id));
+    } catch {
+      // 这里不覆盖原始错误，避免把更有用的业务错误刷掉
     }
   }
 
@@ -379,7 +426,6 @@ export function ButlerBootstrapConversation({
         draft: session.draft,
         created_by: source,
       });
-      clearPersistedConversation(householdId);
       setCreatedAgent(created);
       setStatus('管家创建完成！');
       await onCreated?.(created);
@@ -480,7 +526,7 @@ export function ButlerBootstrapConversation({
                   />
                   <div className="butler-bootstrap__composer-footer">
                     <span className="butler-bootstrap__composer-hint">Enter 发送，Shift + Enter 换行</span>
-                    <button type="submit" className="btn btn--primary" disabled={sending || !input.trim()}>
+                    <button type="submit" className="btn btn--primary" disabled={sending || !input.trim() || !realtimeReady}>
                       {sending ? '发送中...' : '发送'}
                     </button>
                   </div>

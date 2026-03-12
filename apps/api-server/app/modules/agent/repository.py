@@ -140,7 +140,7 @@ def get_latest_bootstrap_session(
         .order_by(FamilyAgentBootstrapSession.updated_at.desc(), FamilyAgentBootstrapSession.created_at.desc())
     )
     if not include_completed:
-        stmt = stmt.where(FamilyAgentBootstrapSession.status != "completed")
+        stmt = stmt.where(FamilyAgentBootstrapSession.status.not_in(["completed", "cancelled"]))
     return db.scalar(stmt)
 
 

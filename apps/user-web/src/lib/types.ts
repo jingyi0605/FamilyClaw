@@ -554,7 +554,7 @@ export type AgentListResponse = {
   items: AgentSummary[];
 };
 
-export type ButlerBootstrapStatus = 'collecting' | 'reviewing' | 'completed';
+export type ButlerBootstrapStatus = 'collecting' | 'reviewing' | 'completed' | 'cancelled';
 export type ButlerBootstrapField =
   | 'display_name'
   | 'speaking_style'

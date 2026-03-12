@@ -26,9 +26,10 @@ export type BootstrapRealtimeSessionSnapshot = {
   status: 'collecting' | 'reviewing' | 'completed' | 'cancelled';
   pending_field: 'display_name' | 'speaking_style' | 'personality_traits' | null;
   draft: ButlerBootstrapDraft;
+  assistant_message: string;
   messages: Array<{
     id?: string;
-    role: 'assistant' | 'user' | 'system';
+    role: 'assistant' | 'user';
     content: string;
     request_id?: string | null;
     seq?: number;

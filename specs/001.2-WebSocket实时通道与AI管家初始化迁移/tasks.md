@@ -157,8 +157,8 @@
 
 ### 阶段检查
 
-- [ ] 2.3 阶段检查：确认后端 WebSocket 主链路已经可用
-  - 状态：TODO
+- [x] 2.3 阶段检查：确认后端 WebSocket 主链路已经可用
+  - 状态：DONE
   - 这一步到底做什么：检查后端是否已经真正能稳定跑通一轮到多轮对话，而不是只建了个连接壳子。
   - 做完你能看到什么：前端接入前，后端主链路已经是可验证状态。
   - 先依赖什么：2.1、2.2
@@ -174,6 +174,12 @@
   - 怎么验证：
     - 人工走查
     - 自动化测试回放
+  - 本次检查结论：
+    - WebSocket 主链路已经不是空壳：当前可以稳定完成 `session.ready -> session.snapshot -> user.message.accepted -> agent.chunk -> agent.state_patch -> agent.done/error`。
+    - 成功轮次和失败轮次都已有自动化回放，`request_id` 会落到明确终态，不再出现已 accepted 但无结束事件的悬空轮次。
+    - 快照和消息表已经一致：实时轮次结束后，消息表、请求表、会话草稿和 `session.snapshot` 返回内容能对应上。
+    - 初始化链路的展示文本已经不再依赖 `<config>`、`<json>`、`---` 标签协议；结构化状态改走独立二次提取调用，满足文本与状态分离要求。
+    - 已补的阶段验证覆盖：`python -m unittest tests.test_realtime_ws tests.test_realtime_protocol tests.test_bootstrap_storage`。其中 `tests.test_realtime_ws` 现在同时覆盖建连成功、未知会话、完整成功轮次、失败轮次 4 类核心场景。
   - 对应需求：`requirements.md` 需求 2、需求 3、需求 4
   - 对应设计：`design.md` §2.3、§4、§5、§6
 
@@ -181,8 +187,8 @@
 
 ## 阶段 3：迁移前端初始化页面并补恢复能力
 
-- [ ] 3.1 把 AI 管家初始化页面改成 WebSocket 客户端
-  - 状态：TODO
+- [x] 3.1 把 AI 管家初始化页面改成 WebSocket 客户端
+  - 状态：DONE
   - 这一步到底做什么：让页面通过统一事件协议收消息、更新 UI、处理轮次结束，而不是继续读 SSE 流，也不再从文本里反解析状态。
   - 做完你能看到什么：初始化对话页面能稳定逐字输出，并能继续多轮对话，前端代码里不再有 `<config>` 清洗或文本反解析逻辑。
   - 先依赖什么：2.3
@@ -202,11 +208,17 @@
     - `cd apps/user-web && npm.cmd run build`
     - 人工连续多轮测试
     - 人工检查前端不再依赖标签清洗逻辑
+  - 本次落地记录：
+    - 已在 `apps/user-web/src/components/ButlerBootstrapConversation.tsx` 把发送链路从 SSE 切到 WebSocket，页面现在直接消费 `session.snapshot`、`user.message.accepted`、`agent.chunk`、`agent.state_patch`、`agent.done`、`agent.error`。
+    - 已在 `apps/user-web/src/lib/butlerBootstrapRealtime.ts` 新增最小 WebSocket 客户端，统一处理连接、事件解析、`user.message` 发送和请求 ID 生成。
+    - 已在 `apps/user-web/src/lib/realtime.ts` 补齐快照类型字段，在 `apps/user-web/src/lib/types.ts` 放宽 `ButlerBootstrapStatus` 以匹配实时快照状态集合。
+    - 已在 `apps/user-web/src/lib/api.ts` 删除前端已不再使用的 `streamButlerBootstrapMessage` / `sendButlerBootstrapMessage`，前端代码不再依赖 `/stream-messages` SSE 接口。
+    - 已完成验证：`cd apps/user-web && npm.cmd run build`，并人工 grep 确认 `apps/user-web/src/` 已不再引用 `stream-messages`、`streamButlerBootstrapMessage`、`sendButlerBootstrapMessage`。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 2.1
   - 对应设计：`design.md` §2.1.1、§2.3.1、§3.3.1、§3.3.4、§3.3.5
 
-- [ ] 3.2 做刷新恢复、断线恢复和重新开始
-  - 状态：TODO
+- [x] 3.2 做刷新恢复、断线恢复和重新开始
+  - 状态：DONE
   - 这一步到底做什么：让页面刷新、重连、重新开始都以服务端快照为准，不再靠本地拼凑历史记录。
   - 做完你能看到什么：页面刷新后还能看到当前会话历史，重新开始会创建全新会话。
   - 先依赖什么：3.1
@@ -226,13 +238,20 @@
     - 人工刷新页面
     - 人工断网重连
     - 人工重新开始验证
+  - 本次落地记录：
+    - 已在 `apps/user-web/src/components/ButlerBootstrapConversation.tsx` 去掉本地 `localStorage` 会话缓存，页面首次进入和重连后都改成以服务端 `latest session` + `session.snapshot` 为准恢复历史消息和草稿状态。
+    - 已在同一文件补了最小自动重连逻辑：WebSocket 异常断开后会延迟重连，重连前先拉一次最新快照，避免前端继续拿断线前的旧内存状态硬撑。
+    - 已在重新开始逻辑里主动关闭旧 WebSocket，并在后端 `apps/api-server/app/modules/agent/bootstrap_service.py` 把旧未完成会话标记成 `cancelled`，同时把仍在 `running` 的旧 request 标记成 `cancelled`，避免旧会话继续追加消息。
+    - 已在 `apps/api-server/app/modules/agent/repository.py` 和 `apps/api-server/app/modules/agent/schemas.py` 补齐 `cancelled` 状态处理，避免服务端把已废弃会话又当成可继续会话复用。
+    - 已在 `apps/api-server/tests/test_bootstrap_storage.py` 新增“重新开始会取消旧会话和旧 request”的测试。
+    - 已完成验证：`python -m unittest tests.test_bootstrap_storage tests.test_realtime_ws tests.test_realtime_protocol`、`python -m py_compile app/modules/agent/bootstrap_service.py app/modules/agent/repository.py app/modules/agent/schemas.py`、`python -m alembic upgrade head`、`cd apps/user-web && npm.cmd run build`。
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 5
   - 对应设计：`design.md` §2.3.3、§3.3.2、§3.3.3、§6.2
 
 ### 最终检查
 
-- [ ] 3.3 最终检查：确认初始化链路已经彻底脱离 SSE
-  - 状态：TODO
+- [x] 3.3 最终检查：确认初始化链路已经彻底脱离 SSE
+  - 状态：DONE
   - 这一步到底做什么：确认 AI 管家初始化这条链路真的已经站稳，能作为后续实时能力的模板，而不是只是把问题换了个地方躲起来，同时确认标签协议已经从这条链路里被彻底清掉。
   - 做完你能看到什么：有一条稳定、可恢复、可复用的实时主链路。
   - 先依赖什么：3.1、3.2
@@ -252,5 +271,11 @@
     - 连续 20 轮人工回放
     - 前后端测试与联调记录
     - 全链路检查不再出现 `<config>`、`<json>`、`---` 分隔块
+  - 本次检查结论：
+    - 初始化页面、实时协议、后端执行器三段链路已经全部切到 WebSocket 事件流；前端源码已不再引用 `stream-messages`、`streamButlerBootstrapMessage`、`sendButlerBootstrapMessage`、`EventSource`。
+    - 成功轮次、失败轮次、刷新恢复、断线后快照恢复、重新开始取消旧会话这几类核心场景，已经分别由 `tests.test_realtime_ws`、`tests.test_bootstrap_storage`、`tests.test_realtime_protocol` 覆盖。
+    - 初始化链路内部已不再依赖 `<config>`、`<json>`、`---` 这类标签协议；展示文本由 `agent.chunk` 承载，结构化状态由 `agent.state_patch` / 二次提取调用承载。
+    - 已知残留项已经明确：仓库里仍保留旧 `/stream-messages` HTTP 端点和 `vite.config.ts` 里的老代理规则，主要用于兼容未迁走的旧路径，但当前 AI 管家初始化前后端主链路已不再依赖它们。
+    - 已完成验证：`python -m unittest tests.test_bootstrap_storage tests.test_realtime_ws tests.test_realtime_protocol`、`cd apps/user-web && npm.cmd run build`，以及针对 `apps/user-web/src/`、`apps/api-server/app/modules/agent/` 的 grep 走查。
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文

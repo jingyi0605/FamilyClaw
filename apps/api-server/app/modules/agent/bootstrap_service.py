@@ -66,6 +66,14 @@ def restart_butler_bootstrap_session(
     """重新开始管家引导会话。"""
     _ensure_bootstrap_allowed(db, household_id=household_id)
 
+    existing_session = repository.get_latest_bootstrap_session(
+        db,
+        household_id=household_id,
+        include_completed=False,
+    )
+    if existing_session is not None:
+        _cancel_bootstrap_session(db, session=existing_session, reason="session_restarted")
+
     draft = ButlerBootstrapDraft(household_id=household_id)
     assistant_message = _build_opening_message(db, household_id=household_id)
     session = FamilyAgentBootstrapSession(
@@ -716,7 +724,7 @@ def _to_session_read(
     pending_field = cast(ButlerBootstrapField | None, session.pending_field if session.pending_field in BOOTSTRAP_FIELD_ORDER else None)
     status_value: ButlerBootstrapStatus = cast(
         ButlerBootstrapStatus,
-        session.status if session.status in {"collecting", "reviewing", "completed"} else "collecting",
+        session.status if session.status in {"collecting", "reviewing", "completed", "cancelled"} else "collecting",
     )
     latest_message = assistant_message or next(
         (item["content"] for item in reversed(transcript) if item["role"] == "assistant"),
@@ -800,6 +808,29 @@ def _build_self_identity(draft: ButlerBootstrapDraft) -> str:
 
 def _build_intro_message(draft: ButlerBootstrapDraft) -> str:
     return f"你好，我是{draft.display_name}。很高兴认识你，接下来我会尽力帮助这个家庭。"
+
+
+def _cancel_bootstrap_session(
+    db: Session,
+    *,
+    session: FamilyAgentBootstrapSession,
+    reason: str,
+) -> None:
+    now = utc_now_iso()
+    request_id = session.current_request_id
+    session.status = "cancelled"
+    session.pending_field = None
+    session.current_request_id = None
+    session.completed_at = now
+    session.updated_at = now
+
+    if request_id:
+        request_row = repository.get_bootstrap_request(db, request_id=str(request_id))
+        if request_row is not None and request_row.status == "running":
+            request_row.status = "cancelled"
+            request_row.error_code = reason
+            request_row.finished_at = now
+    db.flush()
 
 
 async def _broadcast_realtime_event(

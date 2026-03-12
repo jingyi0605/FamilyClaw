@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
@@ -11,6 +12,7 @@ import app.db.models  # noqa: F401
 from app.core.config import settings
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.agent import repository as agent_repository
+from app.modules.agent.bootstrap_service import restart_butler_bootstrap_session
 from app.modules.agent.models import (
     FamilyAgentBootstrapMessage,
     FamilyAgentBootstrapRequest,
@@ -108,6 +110,66 @@ class BootstrapStorageTests(unittest.TestCase):
         self.assertEqual("succeeded", request_rows[0].status)
         self.assertEqual(user_message.id, request_rows[0].user_message_id)
         self.assertEqual(3, agent_repository.get_next_bootstrap_message_seq(self.db, session_id=session.id))
+
+    def test_restart_creates_new_session_and_cancels_previous_running_request(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Restart Home", city="Hangzhou", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        session = FamilyAgentBootstrapSession(
+            id=new_uuid(),
+            household_id=household.id,
+            status="collecting",
+            pending_field="display_name",
+            draft_json="{}",
+            transcript_json="[]",
+            current_request_id="request-running",
+            last_event_seq=3,
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        agent_repository.add_bootstrap_session(self.db, session)
+        user_message = FamilyAgentBootstrapMessage(
+            id=new_uuid(),
+            session_id=session.id,
+            request_id="request-running",
+            role="user",
+            content="我想换个名字。",
+            seq=1,
+            created_at=utc_now_iso(),
+        )
+        agent_repository.add_bootstrap_message(self.db, user_message)
+        agent_repository.add_bootstrap_request(
+            self.db,
+            FamilyAgentBootstrapRequest(
+                id="request-running",
+                session_id=session.id,
+                status="running",
+                user_message_id=user_message.id,
+                assistant_message_id=None,
+                error_code=None,
+                started_at=utc_now_iso(),
+                finished_at=None,
+            ),
+        )
+        self.db.commit()
+
+        with patch("app.modules.agent.bootstrap_service._ensure_bootstrap_allowed", return_value=None):
+            new_session = restart_butler_bootstrap_session(self.db, household_id=household.id)
+        self.db.commit()
+
+        previous_session = agent_repository.get_bootstrap_session(self.db, household_id=household.id, session_id=session.id)
+        request_row = agent_repository.get_bootstrap_request(self.db, request_id="request-running")
+
+        assert previous_session is not None
+        assert request_row is not None
+        self.assertEqual("cancelled", previous_session.status)
+        self.assertEqual("cancelled", request_row.status)
+        self.assertEqual("session_restarted", request_row.error_code)
+        self.assertNotEqual(session.id, new_session.session_id)
+        self.assertEqual("collecting", new_session.status)
 
 
 if __name__ == "__main__":

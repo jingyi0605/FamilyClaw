@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 AgentType = Literal["butler", "nutritionist", "fitness_coach", "study_coach", "custom"]
 AgentStatus = Literal["draft", "active", "inactive"]
-ButlerBootstrapStatus = Literal["collecting", "reviewing", "completed"]
+ButlerBootstrapStatus = Literal["collecting", "reviewing", "completed", "cancelled"]
 ButlerBootstrapField = Literal[
     "display_name",
     "speaking_style",
