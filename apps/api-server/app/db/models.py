@@ -11,6 +11,7 @@ from app.modules.agent.models import (
 from app.modules.ai_gateway.models import AiCapabilityRoute, AiModelCallLog, AiProviderProfile
 from app.modules.audit.models import AuditLog
 from app.modules.context.models import ContextConfig
+from app.modules.conversation.models import ConversationMemoryCandidate, ConversationMessage, ConversationSession
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.family_qa.models import QaQueryLog
 from app.modules.ha_integration.models import HouseholdHaConfig
@@ -40,6 +41,9 @@ __all__ = [
     "AiProviderProfile",
     "AuditLog",
     "ContextConfig",
+    "ConversationSession",
+    "ConversationMessage",
+    "ConversationMemoryCandidate",
     "Device",
     "DeviceBinding",
     "Household",

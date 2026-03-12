@@ -97,6 +97,7 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
     ai_provider_code: str | None = None
     ai_degraded = False
     degraded = False
+    conversation_history = _normalize_conversation_history(payload.context.get("conversation_history"))
 
     try:
         ai_response = invoke_capability(
@@ -111,6 +112,7 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
                     "answer_type": answer_type,
                     "fact_count": len(facts),
                     "channel": payload.channel,
+                    "conversation_history": conversation_history,
                     "agent_runtime_context": agent_runtime_context,
                     "agent_memory_context": {
                         "status": fact_view.memory_summary.status,
@@ -461,3 +463,21 @@ def _should_answer_from_memory(question: str) -> bool:
         question,
         ["喜欢", "偏好", "习惯", "记得", "记住", "回忆", "上次", "以前", "关系", "不吃", "联系方式", "生日", "温度"],
     )
+
+
+def _normalize_conversation_history(raw_value: object) -> list[dict[str, str]]:
+    if not isinstance(raw_value, list):
+        return []
+
+    messages: list[dict[str, str]] = []
+    for item in raw_value[:12]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if role not in {"user", "assistant", "system"}:
+            continue
+        if not content:
+            continue
+        messages.append({"role": role, "content": content})
+    return messages

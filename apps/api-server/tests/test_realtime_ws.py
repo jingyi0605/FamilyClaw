@@ -23,8 +23,12 @@ from app.modules.account.service import (
     create_account_session,
     ensure_pending_household_bootstrap_accounts,
 )
+from app.modules.agent.schemas import AgentCreate
+from app.modules.agent.service import create_agent
 from app.modules.agent import repository as agent_repository
 from app.modules.agent.models import FamilyAgentBootstrapMessage, FamilyAgentBootstrapSession
+from app.modules.conversation.service import create_conversation_session
+from app.modules.conversation.schemas import ConversationSessionCreate
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.llm_task.invoke import LlmResult, LlmStreamEvent
@@ -140,6 +144,46 @@ class RealtimeWsTests(unittest.TestCase):
         self.household_id = household.id
         self.session_id = session.id
         self.cookie_header = f"{settings.auth_session_cookie_name}={token}"
+        self.member_id = member.id
+
+        agent = create_agent(
+            self.db,
+            household_id=household.id,
+            payload=AgentCreate(
+                display_name="笨笨",
+                agent_type="butler",
+                self_identity="我是家庭主管家",
+                role_summary="负责家庭问答",
+                personality_traits=["细心", "稳重"],
+                service_focus=["家庭问答"],
+                default_entry=True,
+            ),
+        )
+        self.db.flush()
+        from app.api.dependencies import ActorContext
+        self.member_actor = ActorContext(
+            role="admin",
+            actor_type="member",
+            actor_id=member.id,
+            account_id=account.id,
+            account_type="household",
+            account_status="active",
+            username="owner",
+            household_id=household.id,
+            member_id=member.id,
+            member_role="admin",
+            is_authenticated=True,
+        )
+        conversation_session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=household.id,
+                active_agent_id=agent.id,
+            ),
+            actor=self.member_actor,
+        )
+        self.db.commit()
+        self.conversation_session_id = conversation_session.id
 
     def tearDown(self) -> None:
         self.db.close()
@@ -282,6 +326,76 @@ class RealtimeWsTests(unittest.TestCase):
 
         self.assertFalse(websocket.accepted)
         self.assertEqual(1008, websocket.close_code)
+
+    def test_conversation_websocket_connects_and_pushes_ready_snapshot_and_pong(self) -> None:
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[{"type": "ping", "session_id": self.conversation_session_id, "payload": {"nonce": "conversation-ping"}}],
+        )
+
+        asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
+
+        self.assertTrue(websocket.accepted)
+        self.assertEqual(["session.ready", "session.snapshot", "pong"], [item["type"] for item in websocket.sent_messages])
+        self.assertEqual(self.conversation_session_id, websocket.sent_messages[1]["payload"]["snapshot"]["id"])
+
+    def test_conversation_websocket_successful_turn_emits_chunk_done_and_snapshot(self) -> None:
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[
+                {
+                    "type": "user.message",
+                    "session_id": self.conversation_session_id,
+                    "request_id": "conversation-request-1",
+                    "payload": {"text": "你好"},
+                }
+            ],
+        )
+
+        from app.modules.conversation import service as conversation_service_module
+        from app.modules.family_qa.schemas import FamilyQaQueryResponse
+
+        class _FakeMemoryResult:
+            def __init__(self):
+                self.data = None
+
+        with patch.object(
+            conversation_service_module,
+            "query_family_qa",
+            return_value=FamilyQaQueryResponse(
+                answer_type="general",
+                answer="你好，我是笨笨。",
+                confidence=0.91,
+                facts=[],
+                degraded=False,
+                suggestions=["现在家里什么状态？"],
+                effective_agent_id=None,
+                effective_agent_type="butler",
+                effective_agent_name="笨笨",
+                ai_trace_id="trace-conversation",
+                ai_provider_code="mock-provider",
+                ai_degraded=False,
+            ),
+        ), patch.object(
+            conversation_service_module,
+            "invoke_llm",
+            return_value=_FakeMemoryResult(),
+        ):
+            asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
+
+        event_types = [item["type"] for item in websocket.sent_messages]
+        self.assertEqual(
+            ["session.ready", "session.snapshot", "user.message.accepted", "agent.chunk", "agent.done", "session.snapshot"],
+            event_types,
+        )
+        final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
+        self.assertEqual(2, len(final_snapshot["messages"]))
+        self.assertEqual("assistant", final_snapshot["messages"][1]["role"])
+        self.assertEqual("你好，我是笨笨。", final_snapshot["messages"][1]["content"])
 
 
 if __name__ == "__main__":

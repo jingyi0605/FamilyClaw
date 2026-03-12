@@ -15,6 +15,12 @@ from app.modules.agent.bootstrap_service import (
     get_butler_bootstrap_session_snapshot,
     run_butler_bootstrap_realtime_turn,
 )
+from app.modules.conversation.service import (
+    ConversationNotFoundError,
+    get_conversation_session_snapshot,
+    run_conversation_realtime_turn,
+)
+from app.modules.conversation import repository as conversation_repository
 from app.modules.realtime.connection_manager import realtime_connection_manager
 from app.modules.realtime.schemas import BootstrapRealtimeClientEvent, build_bootstrap_realtime_event
 
@@ -128,6 +134,115 @@ async def realtime_agent_bootstrap_websocket(websocket: WebSocket) -> None:
         db.close()
 
 
+@router.websocket("/realtime/conversation")
+async def realtime_conversation_websocket(websocket: WebSocket) -> None:
+    db = SessionLocal()
+    accepted = False
+    household_id = ""
+    session_id = ""
+    try:
+        household_id = (websocket.query_params.get("household_id") or "").strip()
+        session_id = (websocket.query_params.get("session_id") or "").strip()
+        actor_context = _authenticate_member_websocket_actor(db, websocket)
+        session_snapshot = get_conversation_session_snapshot(db, session_id=session_id, actor=actor_context)
+        if not household_id:
+            household_id = session_snapshot.household_id
+        if household_id != session_snapshot.household_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot access another household conversation")
+
+        await websocket.accept()
+        accepted = True
+        realtime_connection_manager.register(household_id=household_id, session_id=session_id, websocket=websocket)
+
+        await _send_event(
+            db,
+            websocket,
+            event_type="session.ready",
+            session_id=session_id,
+            payload={},
+        )
+        await _send_event(
+            db,
+            websocket,
+            event_type="session.snapshot",
+            session_id=session_id,
+            payload={"snapshot": session_snapshot.model_dump(mode="json")},
+        )
+
+        while True:
+            client_event = BootstrapRealtimeClientEvent.model_validate(await websocket.receive_json())
+            if client_event.session_id != session_id:
+                await _send_event(
+                    db,
+                    websocket,
+                    event_type="agent.error",
+                    session_id=session_id,
+                    request_id=client_event.request_id,
+                    payload={
+                        "detail": "session_id 不匹配",
+                        "error_code": "invalid_event_payload",
+                    },
+                )
+                continue
+
+            if client_event.type == "ping":
+                ping_payload = cast(dict[str, Any], client_event.payload.model_dump(mode="json"))
+                await _send_event(
+                    db,
+                    websocket,
+                    event_type="pong",
+                    session_id=session_id,
+                    payload={"nonce": ping_payload.get("nonce")},
+                )
+                continue
+
+            if client_event.type == "user.message":
+                message_payload = cast(dict[str, Any], client_event.payload.model_dump(mode="json"))
+                await run_conversation_realtime_turn(
+                    db,
+                    session_id=session_id,
+                    request_id=client_event.request_id or "",
+                    user_message=str(message_payload.get("text") or ""),
+                    actor=actor_context,
+                    connection_manager=realtime_connection_manager,
+                )
+                continue
+
+            await _send_event(
+                db,
+                websocket,
+                event_type="agent.error",
+                session_id=session_id,
+                request_id=client_event.request_id,
+                payload={
+                    "detail": "未知的实时事件类型",
+                    "error_code": "invalid_event_payload",
+                },
+            )
+    except ConversationNotFoundError:
+        if accepted:
+            await _send_error_and_close(
+                db,
+                websocket,
+                session_id=session_id,
+                detail="会话不存在",
+                error_code="session_not_found",
+            )
+        else:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    except WebSocketDisconnect:
+        return
+    except Exception:
+        if accepted:
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        else:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    finally:
+        if accepted and household_id and session_id:
+            realtime_connection_manager.unregister(household_id=household_id, session_id=session_id, websocket=websocket)
+        db.close()
+
+
 def _authenticate_websocket_actor(db: Session, websocket: WebSocket) -> ActorContext:
     session_token = _extract_session_token(websocket)
     actor = resolve_authenticated_actor_by_session_token(db, session_token)
@@ -137,6 +252,17 @@ def _authenticate_websocket_actor(db: Session, websocket: WebSocket) -> ActorCon
     actor_context = ActorContext.from_authenticated_actor(actor)
     if actor_context.role != "admin":
         raise PermissionError("admin role required")
+    return actor_context
+
+
+def _authenticate_member_websocket_actor(db: Session, websocket: WebSocket) -> ActorContext:
+    session_token = _extract_session_token(websocket)
+    actor = resolve_authenticated_actor_by_session_token(db, session_token)
+    if actor is None:
+        raise PermissionError("authentication required")
+    actor_context = ActorContext.from_authenticated_actor(actor)
+    if actor_context.member_id is None and actor_context.account_type != "system":
+        raise PermissionError("member role required")
     return actor_context
 
 
@@ -161,12 +287,18 @@ async def _send_event(
     payload: dict,
     request_id: str | None = None,
 ) -> None:
-    session = agent_repository.get_bootstrap_session(db, household_id=(websocket.query_params.get("household_id") or "").strip(), session_id=session_id)
-    if session is None:
-        seq = 0
-    else:
-        seq = agent_repository.claim_next_bootstrap_event_seq(db, session=session)
+    household_id = (websocket.query_params.get("household_id") or "").strip()
+    bootstrap_session = agent_repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+    if bootstrap_session is not None:
+        seq = agent_repository.claim_next_bootstrap_event_seq(db, session=bootstrap_session)
         db.commit()
+    else:
+        conversation_session = conversation_repository.get_session(db, session_id)
+        if conversation_session is not None:
+            seq = conversation_repository.claim_next_event_seq(db, session=conversation_session)
+            db.commit()
+        else:
+            seq = 0
     event = build_bootstrap_realtime_event(
         event_type=event_type,
         session_id=session_id,

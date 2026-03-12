@@ -6,6 +6,7 @@ from app.api.v1.endpoints.ai_config import router as ai_config_router
 from app.api.v1.endpoints.ai_admin import router as ai_admin_router
 from app.api.v1.endpoints.audit_logs import router as audit_logs_router
 from app.api.v1.endpoints.context import router as context_router
+from app.api.v1.endpoints.conversations import router as conversations_router
 from app.api.v1.endpoints.device_actions import router as device_actions_router
 from app.api.v1.endpoints.devices import router as devices_router
 from app.api.v1.endpoints.family_qa import router as family_qa_router
@@ -29,6 +30,7 @@ router.include_router(ai_config_router)
 router.include_router(ai_admin_router)
 router.include_router(audit_logs_router)
 router.include_router(context_router)
+router.include_router(conversations_router)
 router.include_router(device_actions_router)
 router.include_router(devices_router)
 router.include_router(family_qa_router)

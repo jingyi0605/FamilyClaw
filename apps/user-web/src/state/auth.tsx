@@ -10,6 +10,11 @@ import {
 import { ApiError, api } from '../lib/api';
 import type { AuthActor } from '../lib/types';
 
+const CLIENT_ONLY_STORAGE_PREFIXES = [
+  'familyclaw-conversation-sessions',
+  'familyclaw-assistant-sessions',
+];
+
 interface AuthContextValue {
   actor: AuthActor | null;
   authLoading: boolean;
@@ -65,6 +70,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api.logout();
     } finally {
+      try {
+        const keys = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index)).filter(Boolean) as string[];
+        for (const key of keys) {
+          if (CLIENT_ONLY_STORAGE_PREFIXES.some(prefix => key.startsWith(prefix))) {
+            window.localStorage.removeItem(key);
+          }
+        }
+      } catch {
+        // 忽略本地存储清理异常
+      }
       setActor(null);
       setLoginError('');
     }

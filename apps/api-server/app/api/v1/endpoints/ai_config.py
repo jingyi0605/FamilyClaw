@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -12,7 +11,6 @@ from app.modules.agent.bootstrap_service import (
     get_latest_butler_bootstrap_session,
     restart_butler_bootstrap_session,
     start_butler_bootstrap_session,
-    stream_butler_bootstrap_session,
 )
 from app.modules.agent.schemas import (
     AgentCreate,
@@ -291,32 +289,6 @@ def append_butler_bootstrap_message_endpoint(
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
-
-
-@router.post("/{household_id}/butler-bootstrap/sessions/{session_id}/stream-messages")
-def stream_butler_bootstrap_message_endpoint(
-    household_id: str,
-    session_id: str,
-    payload: ButlerBootstrapMessageCreate,
-    db: Session = Depends(get_db),
-    actor: ActorContext = Depends(require_admin_actor),
-):
-    """流式管家引导对话端点"""
-    ensure_actor_can_access_household(actor, household_id)
-    return StreamingResponse(
-        stream_butler_bootstrap_session(
-            db=db,
-            household_id=household_id,
-            session_id=session_id,
-            payload=payload,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 @router.post("/{household_id}/butler-bootstrap/sessions/{session_id}/confirm", response_model=AgentDetailRead, status_code=status.HTTP_201_CREATED)

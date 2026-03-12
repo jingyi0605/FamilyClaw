@@ -13,6 +13,10 @@ import type {
   AiProviderProfileUpdatePayload,
   ContextConfigRead,
   ContextOverviewRead,
+  ConversationMemoryCandidateActionResponse,
+  ConversationSessionDetail,
+  ConversationSessionListResponse,
+  ConversationTurnResponse,
   Device,
   FamilyQaQueryResponse,
   FamilyQaSuggestionsResponse,
@@ -531,6 +535,57 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+  createConversationSession(payload: {
+    household_id: string;
+    requester_member_id?: string;
+    active_agent_id?: string;
+    session_mode?: 'family_chat' | 'agent_bootstrap' | 'agent_config';
+    title?: string;
+  }) {
+    return request<ConversationSessionDetail>('/conversations/sessions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  listConversationSessions(params: {
+    household_id: string;
+    requester_member_id?: string;
+    limit?: number;
+  }) {
+    const query = new URLSearchParams({
+      household_id: params.household_id,
+      limit: String(params.limit ?? 50),
+    });
+    if (params.requester_member_id) {
+      query.set('requester_member_id', params.requester_member_id);
+    }
+    return request<ConversationSessionListResponse>(`/conversations/sessions?${query.toString()}`);
+  },
+  getConversationSession(sessionId: string) {
+    return request<ConversationSessionDetail>(`/conversations/sessions/${encodeURIComponent(sessionId)}`);
+  },
+  createConversationTurn(sessionId: string, payload: {
+    message: string;
+    agent_id?: string;
+    channel?: string;
+  }) {
+    return request<ConversationTurnResponse>(`/conversations/sessions/${encodeURIComponent(sessionId)}/turns`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  confirmConversationMemoryCandidate(candidateId: string) {
+    return request<ConversationMemoryCandidateActionResponse>(
+      `/conversations/memory-candidates/${encodeURIComponent(candidateId)}/confirm`,
+      { method: 'POST' },
+    );
+  },
+  dismissConversationMemoryCandidate(candidateId: string) {
+    return request<ConversationMemoryCandidateActionResponse>(
+      `/conversations/memory-candidates/${encodeURIComponent(candidateId)}/dismiss`,
+      { method: 'POST' },
+    );
   },
   listMemoryCards(params: { householdId: string; memoryType?: MemoryType; pageSize?: number }) {
     const query = new URLSearchParams({

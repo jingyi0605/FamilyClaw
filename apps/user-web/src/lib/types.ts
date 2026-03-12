@@ -470,6 +470,91 @@ export type FamilyQaSuggestionsResponse = {
   }>;
 };
 
+export type ConversationSessionMode = 'family_chat' | 'agent_bootstrap' | 'agent_config';
+export type ConversationSessionStatus = 'active' | 'archived' | 'failed';
+export type ConversationMessageRole = 'user' | 'assistant' | 'system';
+export type ConversationMessageType = 'text' | 'error' | 'memory_candidate_notice';
+export type ConversationMessageStatus = 'pending' | 'streaming' | 'completed' | 'failed';
+export type ConversationCandidateStatus = 'pending_review' | 'confirmed' | 'dismissed';
+
+export type ConversationMessage = {
+  id: string;
+  session_id: string;
+  request_id: string | null;
+  seq: number;
+  role: ConversationMessageRole;
+  message_type: ConversationMessageType;
+  content: string;
+  status: ConversationMessageStatus;
+  effective_agent_id: string | null;
+  ai_provider_code: string | null;
+  ai_trace_id: string | null;
+  degraded: boolean;
+  error_code: string | null;
+  facts: FamilyQaFactReference[];
+  suggestions: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConversationMemoryCandidate = {
+  id: string;
+  session_id: string;
+  source_message_id: string | null;
+  requester_member_id: string | null;
+  status: ConversationCandidateStatus;
+  memory_type: string;
+  title: string;
+  summary: string;
+  content: Record<string, unknown>;
+  confidence: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConversationSession = {
+  id: string;
+  household_id: string;
+  requester_member_id: string | null;
+  session_mode: ConversationSessionMode;
+  active_agent_id: string | null;
+  active_agent_name: string | null;
+  active_agent_type: string | null;
+  title: string;
+  status: ConversationSessionStatus;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  latest_message_preview: string | null;
+};
+
+export type ConversationSessionDetail = ConversationSession & {
+  messages: ConversationMessage[];
+  memory_candidates: ConversationMemoryCandidate[];
+};
+
+export type ConversationSessionListResponse = {
+  household_id: string;
+  requester_member_id: string | null;
+  items: ConversationSession[];
+};
+
+export type ConversationTurnResponse = {
+  request_id: string;
+  session_id: string;
+  user_message_id: string;
+  assistant_message_id: string;
+  outcome: 'completed' | 'failed';
+  error_message: string | null;
+  session: ConversationSessionDetail;
+};
+
+export type ConversationMemoryCandidateActionResponse = {
+  candidate: ConversationMemoryCandidate;
+  memory_card_id: string | null;
+};
+
 export type AgentType = 'butler' | 'nutritionist' | 'fitness_coach' | 'study_coach' | 'custom';
 export type AgentStatus = 'draft' | 'active' | 'inactive';
 

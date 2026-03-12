@@ -737,16 +737,20 @@ def _build_messages(
         question = str(payload.get("question") or "")
         agent_prompt = _build_agent_prompt(payload)
         memory_prompt = _build_agent_memory_prompt(payload)
-        return [
+        messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": f"你是家庭服务助手。请基于提供的结构化事实，用中文输出简洁、可靠、可解释的回答。不要编造事实。{agent_prompt}{memory_prompt}",
-            },
+            }
+        ]
+        messages.extend(_build_conversation_history_messages(payload))
+        messages.append(
             {
                 "role": "user",
                 "content": f"用户问题：{question}\n当前规则回答草稿：{answer_draft}\n请在不改变事实的前提下润色成自然中文。",
-            },
-        ]
+            }
+        )
+        return messages
     if capability == "reminder_copywriting":
         title = str(payload.get("title") or "提醒")
         return [
@@ -1046,3 +1050,22 @@ def _read_agent_memory_summary(payload: Mapping[str, object]) -> str:
     if not summary:
         return ""
     return f" 当前记忆视角：{summary}"
+
+
+def _build_conversation_history_messages(payload: Mapping[str, object]) -> list[dict[str, str]]:
+    raw_history = payload.get("conversation_history")
+    if not isinstance(raw_history, list):
+        return []
+
+    messages: list[dict[str, str]] = []
+    for item in raw_history[:12]:
+        if not isinstance(item, Mapping):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if role not in {"user", "assistant", "system"}:
+            continue
+        if not content:
+            continue
+        messages.append({"role": role, "content": content})
+    return messages

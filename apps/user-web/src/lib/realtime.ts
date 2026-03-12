@@ -150,3 +150,13 @@ export function buildBootstrapRealtimeUrl(sessionId: string, householdId: string
   resolvedUrl.searchParams.set('household_id', householdId);
   return resolvedUrl.toString();
 }
+
+export function buildConversationRealtimeUrl(sessionId: string, householdId: string, baseUrl?: string): string {
+  const configuredBaseUrl = baseUrl ?? import.meta.env.VITE_REALTIME_BASE_URL ?? import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
+  const resolvedUrl = new URL(configuredBaseUrl, window.location.origin);
+  resolvedUrl.protocol = resolvedUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  resolvedUrl.pathname = `${resolvedUrl.pathname.replace(/\/$/, '')}/realtime/conversation`;
+  resolvedUrl.searchParams.set('session_id', sessionId);
+  resolvedUrl.searchParams.set('household_id', householdId);
+  return resolvedUrl.toString();
+}

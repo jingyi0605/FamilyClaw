@@ -1,8 +1,5 @@
 """管家引导服务 - 通过 AI 对话创建首个管家。"""
-
-import json
 import logging
-from collections.abc import Generator
 from typing import Any, cast
 
 from fastapi import HTTPException, status
@@ -357,106 +354,6 @@ def advance_butler_bootstrap_session(
     session_read = _build_next_session(session_id=session_id, draft=next_draft, assistant_message=result.text)
     _save_session_state(db, session=session, session_read=session_read, transcript=transcript)
     return session_read
-
-
-def stream_butler_bootstrap_session(
-    db: Session,
-    *,
-    household_id: str,
-    session_id: str,
-    payload: ButlerBootstrapMessageCreate,
-) -> Generator[str, None, None]:
-    """流式推进管家引导会话。"""
-    _ensure_bootstrap_allowed(db, household_id=household_id)
-    session = _get_bootstrap_session(db, household_id=household_id, session_id=session_id)
-
-    message = payload.message.strip()
-    if not message:
-        yield _sse_data({"error": "message 不能为空"})
-        return
-
-    draft = _load_draft(session, household_id=household_id)
-    transcript = _load_transcript(db, session)
-    request_id = new_uuid()
-    request_started_at = utc_now_iso()
-    user_message = _append_bootstrap_message(
-        db,
-        session_id=session.id,
-        request_id=request_id,
-        role="user",
-        content=message,
-        created_at=request_started_at,
-    )
-    request_row = repository.add_bootstrap_request(
-        db,
-        row=_build_bootstrap_request(
-            request_id=request_id,
-            session_id=session.id,
-            user_message_id=user_message.id,
-            started_at=request_started_at,
-        ),
-    )
-    session.current_request_id = request_id
-    db.flush()
-
-    latest_draft = draft
-
-    try:
-        for event in stream_llm(
-            db,
-            task_type="butler_bootstrap",
-            variables={
-                "collected_info": _format_collected_info(draft),
-                "user_message": message,
-                "user_context": _build_user_context(db, household_id),
-            },
-            household_id=household_id,
-            conversation_history=transcript,
-        ):
-            if event.event_type == "chunk":
-                yield _sse_data({"type": "chunk", "content": event.content})
-                continue
-
-            if event.event_type == "parsed" and isinstance(event.parsed, ButlerBootstrapOutput):
-                latest_draft = _merge_extracted_data(latest_draft, event.parsed)
-                yield _sse_data({"type": "draft_update", "draft": latest_draft.model_dump(mode="json")})
-                continue
-
-            if event.event_type == "done" and event.result is not None:
-                final_draft = latest_draft
-                if isinstance(event.result.data, ButlerBootstrapOutput):
-                    final_draft = _merge_extracted_data(final_draft, event.result.data)
-
-                session_read = _build_next_session(
-                    session_id=session_id,
-                    draft=final_draft,
-                    assistant_message=event.result.text,
-                )
-                assistant_message = _append_bootstrap_message(
-                    db,
-                    session_id=session.id,
-                    request_id=request_id,
-                    role="assistant",
-                    content=session_read.assistant_message,
-                )
-                request_row.status = "succeeded"
-                request_row.assistant_message_id = assistant_message.id
-                request_row.finished_at = utc_now_iso()
-                _save_session_state(db, session=session, session_read=session_read, transcript=transcript)
-                db.commit()
-                yield _sse_data({"type": "done", "session": session_read.model_dump(mode="json")})
-    except HTTPException as exc:
-        request_row.status = "failed"
-        request_row.error_code = "provider_stream_failed"
-        request_row.finished_at = utc_now_iso()
-        db.rollback()
-        yield _sse_data({"error": str(exc.detail)})
-    except Exception as exc:
-        request_row.status = "failed"
-        request_row.error_code = "provider_stream_failed"
-        request_row.finished_at = utc_now_iso()
-        db.rollback()
-        yield _sse_data({"error": str(exc)})
 
 
 def confirm_butler_bootstrap_session(
@@ -907,7 +804,3 @@ def _resolve_realtime_error_code(exc: Exception) -> str:
         if exc.status_code == status.HTTP_400_BAD_REQUEST:
             return "invalid_event_payload"
     return "provider_stream_failed"
-
-
-def _sse_data(payload: dict[str, Any]) -> str:
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
