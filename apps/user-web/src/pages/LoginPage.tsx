@@ -1,11 +1,103 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 
 import { useAuthContext } from '../state/auth';
+import { useI18n } from '../i18n/I18nProvider';
+import { ThemeSwitcher } from '../components/ThemeSwitcher';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
+
+// 浮动粒子组件
+function FloatingParticles() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let animationId: number;
+    const particles: Array<{
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      size: number;
+      opacity: number;
+      color: string;
+    }> = [];
+
+    const resizeCanvas = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // 创建粒子
+    const colors = ['#d97756', '#7c9ef5', '#b480ff', '#52a960', '#ffd700'];
+    for (let i = 0; i < 50; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        vx: (Math.random() - 0.5) * 0.5,
+        vy: (Math.random() - 0.5) * 0.5,
+        size: Math.random() * 4 + 1,
+        opacity: Math.random() * 0.5 + 0.1,
+        color: colors[Math.floor(Math.random() * colors.length)],
+      });
+    }
+
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+
+        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.opacity;
+        ctx.fill();
+      });
+
+      ctx.globalAlpha = 1;
+      animationId = requestAnimationFrame(animate);
+    };
+
+    animate();
+
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+      cancelAnimationFrame(animationId);
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="login-particles" />;
+}
+
+// 浮动装饰形状
+function FloatingShapes() {
+  return (
+    <div className="login-shapes">
+      <div className="login-shape login-shape--1" />
+      <div className="login-shape login-shape--2" />
+      <div className="login-shape login-shape--3" />
+      <div className="login-shape login-shape--4" />
+    </div>
+  );
+}
 
 export function LoginPage() {
   const { login, loginPending, loginError } = useAuthContext();
+  const { t } = useI18n();
   const [username, setUsername] = useState('user');
   const [password, setPassword] = useState('user');
+  const [focusedField, setFocusedField] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -17,44 +109,148 @@ export function LoginPage() {
   }
 
   return (
-    <div className="auth-screen">
-      <div className="auth-screen__panel auth-screen__panel--hero">
-        <span className="auth-screen__kicker">FamilyClaw Home</span>
-        <h1>先登录，再进家庭空间</h1>
-        <p>
-          这边先接真实会话能力。现在默认支持家庭账号登录；初始化阶段的
-          Bootstrap 口令链路后面继续接。
-        </p>
+    <div className="login-page">
+      {/* 动态背景 */}
+      <div className="login-bg">
+        <div className="login-bg__gradient" />
+        <FloatingShapes />
+        <FloatingParticles />
       </div>
 
-      <form className="auth-screen__panel auth-screen__form" onSubmit={(event) => void handleSubmit(event)}>
-        <label>
-          用户名
-          <input
-            autoComplete="username"
-            value={username}
-            onChange={event => setUsername(event.target.value)}
-            placeholder="请输入用户名"
-          />
-        </label>
+      {/* 右上角控制栏 */}
+      <div className="login-controls">
+        <LanguageSwitcher />
+        <ThemeSwitcher />
+      </div>
 
-        <label>
-          密码
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={event => setPassword(event.target.value)}
-            placeholder="请输入密码"
-          />
-        </label>
+      {/* 主内容 */}
+      <div className="login-container">
+        {/* 左侧品牌区 */}
+        <div className="login-brand">
+          <div className="login-brand__content">
+            <div className="login-brand__logo">
+              <span className="login-brand__logo-icon">🏠</span>
+              <span className="login-brand__logo-text">FamilyClaw</span>
+            </div>
+            <h1 className="login-brand__title">
+              {t('login.welcome')}
+            </h1>
+            <p className="login-brand__desc">
+              {t('login.subtitle')}
+            </p>
+            <div className="login-brand__features">
+              <div className="login-brand__feature">
+                <span className="login-brand__feature-icon">💬</span>
+                <span>{t('login.feature1')}</span>
+              </div>
+              <div className="login-brand__feature">
+                <span className="login-brand__feature-icon">🧠</span>
+                <span>{t('login.feature2')}</span>
+              </div>
+              <div className="login-brand__feature">
+                <span className="login-brand__feature-icon">🔒</span>
+                <span>{t('login.feature3')}</span>
+              </div>
+            </div>
+          </div>
+          <div className="login-brand__decoration">
+            <div className="login-brand__orb login-brand__orb--1" />
+            <div className="login-brand__orb login-brand__orb--2" />
+            <div className="login-brand__orb login-brand__orb--3" />
+          </div>
+        </div>
 
-        {loginError ? <div className="auth-screen__error">{loginError}</div> : null}
+        {/* 右侧登录表单 */}
+        <div className="login-form-wrapper">
+          <form className="login-form" onSubmit={(event) => void handleSubmit(event)}>
+            <div className="login-form__header">
+              <h2 className="login-form__title">{t('login.title')}</h2>
+              <p className="login-form__subtitle">{t('login.formSubtitle')}</p>
+            </div>
 
-        <button className="btn btn--primary auth-screen__submit" type="submit" disabled={loginPending || !username.trim() || !password}>
-          {loginPending ? '登录中...' : '进入家庭空间'}
-        </button>
-      </form>
+            <div className={`login-form__field ${focusedField === 'username' ? 'login-form__field--focused' : ''}`}>
+              <label className="login-form__label" htmlFor="username">
+                {t('login.username')}
+              </label>
+              <div className="login-form__input-wrapper">
+                <span className="login-form__input-icon">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                </span>
+                <input
+                  id="username"
+                  type="text"
+                  autoComplete="username"
+                  value={username}
+                  onChange={event => setUsername(event.target.value)}
+                  onFocus={() => setFocusedField('username')}
+                  onBlur={() => setFocusedField(null)}
+                  placeholder={t('login.usernamePlaceholder')}
+                  className="login-form__input"
+                />
+              </div>
+            </div>
+
+            <div className={`login-form__field ${focusedField === 'password' ? 'login-form__field--focused' : ''}`}>
+              <label className="login-form__label" htmlFor="password">
+                {t('login.password')}
+              </label>
+              <div className="login-form__input-wrapper">
+                <span className="login-form__input-icon">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                </span>
+                <input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={event => setPassword(event.target.value)}
+                  onFocus={() => setFocusedField('password')}
+                  onBlur={() => setFocusedField(null)}
+                  placeholder={t('login.passwordPlaceholder')}
+                  className="login-form__input"
+                />
+              </div>
+            </div>
+
+            {loginError && (
+              <div className="login-form__error">
+                <span className="login-form__error-icon">⚠️</span>
+                <span>{loginError}</span>
+              </div>
+            )}
+
+            <button
+              className="login-form__submit"
+              type="submit"
+              disabled={loginPending || !username.trim() || !password}
+            >
+              {loginPending ? (
+                <>
+                  <span className="login-form__spinner" />
+                  <span>{t('login.loggingIn')}</span>
+                </>
+              ) : (
+                <>
+                  <span>{t('login.submit')}</span>
+                  <span className="login-form__submit-arrow">→</span>
+                </>
+              )}
+            </button>
+
+          </form>
+        </div>
+      </div>
+
+      {/* 底部版权 */}
+      <div className="login-footer">
+        <p>© 2024 FamilyClaw · {t('login.footer')}</p>
+      </div>
     </div>
   );
 }

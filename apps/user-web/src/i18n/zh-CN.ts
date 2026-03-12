@@ -192,6 +192,23 @@ const zhCN = {
   'household.current': '当前家庭',
   'household.none': '未选择家庭',
 
+  /* 登录页面 */
+  'login.welcome': '欢迎来到智能家庭空间',
+  'login.subtitle': '一个温暖、智能、关怀的家庭助手，让每一天都充满可能',
+  'login.feature1': '智能对话助手',
+  'login.feature2': '家庭记忆中心',
+  'login.feature3': '隐私安全保障',
+  'login.title': '登录',
+  'login.formSubtitle': '使用您的家庭账号进入',
+  'login.username': '用户名',
+  'login.usernamePlaceholder': '请输入用户名',
+  'login.password': '密码',
+  'login.passwordPlaceholder': '请输入密码',
+  'login.loggingIn': '登录中...',
+  'login.submit': '进入家庭空间',
+  'login.footer': '让科技温暖每个家庭',
+  'auth.loading': '加载中...',
+
   /* 通用 */
   'common.save': '保存',
   'common.cancel': '取消',

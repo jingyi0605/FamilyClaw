@@ -194,6 +194,23 @@ const enUS: LocaleMessages = {
   'household.current': 'Current Family',
   'household.none': 'No Family Selected',
 
+  /* 登录页面 */
+  'login.welcome': 'Welcome to Your Smart Home',
+  'login.subtitle': 'A warm, intelligent family assistant that makes every day possible',
+  'login.feature1': 'Smart Conversation',
+  'login.feature2': 'Family Memories',
+  'login.feature3': 'Privacy & Security',
+  'login.title': 'Sign In',
+  'login.formSubtitle': 'Enter with your family account',
+  'login.username': 'Username',
+  'login.usernamePlaceholder': 'Enter your username',
+  'login.password': 'Password',
+  'login.passwordPlaceholder': 'Enter your password',
+  'login.loggingIn': 'Signing in...',
+  'login.submit': 'Enter Home',
+  'login.footer': 'Technology that warms every family',
+  'auth.loading': 'Loading...',
+
   /* 通用 */
   'common.save': 'Save',
   'common.cancel': 'Cancel',
