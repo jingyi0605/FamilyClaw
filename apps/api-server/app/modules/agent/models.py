@@ -112,3 +112,24 @@ class FamilyAgentRuntimePolicy(Base):
     memory_scope_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
 
+
+class FamilyAgentBootstrapSession(Base):
+    __tablename__ = "family_agent_bootstrap_sessions"
+    __table_args__ = (
+        Index("idx_family_agent_bootstrap_sessions_household_id", "household_id"),
+        Index("idx_family_agent_bootstrap_sessions_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    household_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="collecting")
+    pending_field: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    draft_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    transcript_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
+    completed_at: Mapped[str | None] = mapped_column(Text, nullable=True)

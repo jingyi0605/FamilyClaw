@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.agent.models import (
     FamilyAgent,
+    FamilyAgentBootstrapSession,
     FamilyAgentMemberCognition,
     FamilyAgentRuntimePolicy,
     FamilyAgentSoulProfile,
@@ -47,6 +48,24 @@ def list_agents(
 
 
 def add_agent(db: Session, row: FamilyAgent) -> FamilyAgent:
+    db.add(row)
+    return row
+
+
+def get_bootstrap_session(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+) -> FamilyAgentBootstrapSession | None:
+    stmt = select(FamilyAgentBootstrapSession).where(
+        FamilyAgentBootstrapSession.id == session_id,
+        FamilyAgentBootstrapSession.household_id == household_id,
+    )
+    return db.scalar(stmt)
+
+
+def add_bootstrap_session(db: Session, row: FamilyAgentBootstrapSession) -> FamilyAgentBootstrapSession:
     db.add(row)
     return row
 
@@ -116,4 +135,3 @@ def get_runtime_policy(db: Session, *, agent_id: str) -> FamilyAgentRuntimePolic
 def add_runtime_policy(db: Session, row: FamilyAgentRuntimePolicy) -> FamilyAgentRuntimePolicy:
     db.add(row)
     return row
-

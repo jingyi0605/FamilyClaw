@@ -17,11 +17,40 @@ export function SetupGuard({
   children: ReactNode;
 }) {
   const location = useLocation();
-  const { currentHouseholdId, householdsLoading } = useHouseholdContext();
+  const { currentHouseholdId, householdsLoading, households } = useHouseholdContext();
   const { setupStatus, setupStatusLoading, setupStatusError, refreshSetupStatus } = useSetupContext();
 
+  // 当没有选中家庭时，需要判断是正在加载还是确实没有家庭
   if (!currentHouseholdId) {
-    return <>{children}</>;
+    // 正在加载家庭列表，显示加载状态
+    if (householdsLoading) {
+      return (
+        <div className="setup-guard">
+          <Card className="setup-guard__card">
+            <h2>正在加载家庭信息</h2>
+            <p>请稍候...</p>
+          </Card>
+        </div>
+      );
+    }
+    // 加载完成但没有家庭
+    if (households.length === 0) {
+      // 如果已经在 /setup 页面，直接放行让 SetupWizardPage 处理
+      if (location.pathname === '/setup') {
+        return <>{children}</>;
+      }
+      // 其他页面需要重定向到初始化向导创建家庭
+      return <Navigate to="/setup" replace state={{ from: location.pathname }} />;
+    }
+    // 有家庭但未选中（理论上 HouseholdProvider 会自动选择第一个），暂时显示加载状态
+    return (
+      <div className="setup-guard">
+        <Card className="setup-guard__card">
+          <h2>正在选择家庭</h2>
+          <p>请稍候...</p>
+        </Card>
+      </div>
+    );
   }
 
   if (householdsLoading || setupStatusLoading) {

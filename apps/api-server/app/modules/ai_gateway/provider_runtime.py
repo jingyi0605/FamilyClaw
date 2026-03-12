@@ -224,6 +224,139 @@ def _invoke_openai_compatible(
     )
 
 
+def _stream_openai_compatible(
+    *,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None,
+):
+    """流式调用 OpenAI 兼容 API，生成器模式"""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    extra_config = load_json(provider_profile.extra_config_json) or {}
+    model_name = _resolve_model_name(provider_profile)
+    api_key = _resolve_provider_secret(provider_profile, extra_config)
+    endpoint = _resolve_chat_endpoint(provider_profile, extra_config)
+    if not endpoint:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缺少可用的接口地址")
+
+    messages = _build_messages(capability="qa_generation", payload=payload)
+    request_body: dict[str, object] = {
+        "model": model_name,
+        "messages": messages,
+        "temperature": payload.get("temperature", extra_config.get("temperature", 0.7)),
+        "max_tokens": payload.get("max_tokens", extra_config.get("max_tokens", 512)),
+        "stream": True,
+    }
+    if isinstance(extra_config.get("default_request_body"), dict):
+        request_body = {
+            **extra_config["default_request_body"],
+            **request_body,
+        }
+
+    # 应用供应商特定默认值（如关闭硅基流动 Qwen 的 think 模式）
+    _apply_provider_specific_defaults(
+        request_body=request_body,
+        provider_profile=provider_profile,
+        model_name=model_name,
+        capability="qa_generation",
+    )
+
+    logger.info(f"[Stream] Calling {endpoint} with model={model_name}, body_keys={list(request_body.keys())}")
+
+    request_headers = {"Content-Type": "application/json"}
+    if api_key:
+        request_headers["Authorization"] = f"Bearer {api_key}"
+    custom_headers = extra_config.get("headers")
+    if isinstance(custom_headers, dict):
+        request_headers.update({str(key): str(value) for key, value in custom_headers.items()})
+
+    _apply_provider_specific_headers(
+        request_headers=request_headers,
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+    )
+
+    effective_timeout_ms = _resolve_effective_timeout_ms(
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+        requested_timeout_ms=timeout_ms,
+    )
+    logger.info(f"[Stream] Timeout: {effective_timeout_ms}ms")
+
+    raw_request = request.Request(
+        endpoint,
+        data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
+        headers=request_headers,
+        method="POST",
+    )
+
+    try:
+        with request.urlopen(raw_request, timeout=effective_timeout_ms / 1000) as response:
+            buffer = ""
+            for chunk in response:
+                chunk_text = chunk.decode("utf-8")
+                buffer += chunk_text
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line == "data: [DONE]":
+                        return
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        try:
+                            data = json.loads(data_str)
+                            choices = data.get("choices", [])
+                            if choices and isinstance(choices, list) and len(choices) > 0:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        raise ProviderRuntimeError(_map_http_status_to_error_code(exc.code), detail or str(exc)) from exc
+    except socket.timeout as exc:
+        raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+    except error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError | socket.timeout):
+            raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+        raise ProviderRuntimeError("provider_failed", str(exc.reason)) from exc
+
+
+def stream_provider_invoke(
+    *,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None = None,
+):
+    """流式调用供应商 API"""
+    api_family = str(getattr(provider_profile, "api_family", "") or "").strip().lower()
+    transport_type = str(getattr(provider_profile, "transport_type", "") or "").strip().lower()
+
+    if api_family == "openai_chat_completions" or transport_type in {"openai_compatible", "local_gateway"}:
+        yield from _stream_openai_compatible(
+            provider_profile=provider_profile,
+            payload=payload,
+            timeout_ms=timeout_ms,
+        )
+    else:
+        # 不支持流式的 API，降级为普通调用后一次性返回
+        from app.modules.ai_gateway.provider_runtime import ProviderAdapter
+        adapter = ProviderAdapter(transport_type=transport_type)
+        result = adapter.invoke(
+            capability="qa_generation",
+            provider_profile=provider_profile,
+            payload=payload,
+            timeout_ms=timeout_ms,
+        )
+        yield result.normalized_output.get("text", "")
+
+
 def _invoke_simulated(
     *,
     capability: AiCapability,
@@ -523,10 +656,22 @@ def _apply_provider_specific_defaults(
     normalized_model_name = model_name.lower()
 
     is_siliconflow = "siliconflow.cn" in base_url
-    is_qwen_reasoning_model = "qwen/" in normalized_model_name or normalized_model_name.startswith("qwen/")
+    # SiliconFlow 文档里 Qwen3 / Qwen3.5 / DeepSeek 等模型都支持 enable_thinking。
+    # 之前把 Qwen3.5 排除掉了，结果请求体里没有这个字段，模型会先走长思考再吐最终内容，
+    # 流式场景下看起来就像长时间卡住。
+    is_qwen3_thinking = (
+        "qwen3-" in normalized_model_name or
+        normalized_model_name.endswith("qwen3") or
+        "/qwen3" in normalized_model_name
+    ) and "qwen3-235b" not in normalized_model_name
+    is_qwen35_thinking = "qwen3.5-" in normalized_model_name or "/qwen3.5" in normalized_model_name
+    is_deepseek_r1 = "deepseek-r1" in normalized_model_name
+    is_thinking_model = is_qwen3_thinking or is_qwen35_thinking or is_deepseek_r1
 
-    if is_siliconflow and is_qwen_reasoning_model:
-        request_body.setdefault("enable_thinking", False)
+    if is_siliconflow and is_thinking_model:
+        # 只对支持 thinking 的模型强制关闭思考模式，避免先长时间空转再吐字
+        request_body["enable_thinking"] = False
+        request_body.setdefault("thinking_budget", 128)
         if capability == "qa_generation":
             request_body["max_tokens"] = min(_read_int_value(request_body.get("max_tokens"), 256), 256)
         elif capability in {"scene_explanation", "reminder_copywriting"}:
@@ -581,6 +726,12 @@ def _build_messages(
     capability: AiCapability,
     payload: Mapping[str, object],
 ) -> list[dict[str, str]]:
+    # 支持 payload 中直接传入 messages（llm_task 模块使用）
+    if "messages" in payload:
+        messages = payload.get("messages")
+        if isinstance(messages, list) and messages:
+            return list(messages)
+
     if capability == "qa_generation":
         answer_draft = str(payload.get("answer_draft") or "")
         question = str(payload.get("question") or "")

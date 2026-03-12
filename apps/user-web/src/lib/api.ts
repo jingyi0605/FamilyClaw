@@ -88,14 +88,14 @@ async function readResponsePayload(response: Response, isJsonResponse: boolean):
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
   const headers = new Headers(init?.headers ?? {});
   if (init?.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs ?? API_TIMEOUT_MS);
 
   let response: Response;
 
@@ -403,9 +403,11 @@ export const api = {
     return request<ReminderOverviewRead>(`/reminders/overview?household_id=${encodeURIComponent(householdId)}`);
   },
   createButlerBootstrapSession(householdId: string) {
-    return request<ButlerBootstrapSession>(`/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions`, {
-      method: 'POST',
-    });
+    return request<ButlerBootstrapSession>(
+      `/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions`,
+      { method: 'POST' },
+      60000, // LLM 调用需要更长超时
+    );
   },
   sendButlerBootstrapMessage(householdId: string, sessionId: string, payload: ButlerBootstrapMessagePayload) {
     return request<ButlerBootstrapSession>(
@@ -414,7 +416,78 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       },
+      60000, // LLM 调用需要更长超时
     );
+  },
+  /**
+   * 流式发送管家引导消息
+   * @param onChunk 收到文本块的回调
+   * @param onDone 完成时的回调，返回最终 session 状态
+   * @param onError 错误回调
+   * @param onDraftUpdate 草稿更新回调（可选，用于实时更新 UI）
+   */
+  async streamButlerBootstrapMessage(
+    householdId: string,
+    sessionId: string,
+    payload: ButlerBootstrapMessagePayload,
+    onChunk: (text: string) => void,
+    onDone: (session: ButlerBootstrapSession) => void,
+    onError: (error: string) => void,
+    onDraftUpdate?: (draft: ButlerBootstrapSession['draft']) => void,
+  ): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/ai-config/${encodeURIComponent(householdId)}/butler-bootstrap/sessions/${encodeURIComponent(sessionId)}/stream-messages`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      onError(`请求失败: ${response.status} ${errorText}`);
+      return;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      onError('无法读取响应流');
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'chunk' && data.content) {
+                onChunk(data.content);
+              } else if (data.type === 'draft_update' && data.draft && onDraftUpdate) {
+                onDraftUpdate(data.draft as ButlerBootstrapSession['draft']);
+              } else if (data.type === 'done' && data.session) {
+                onDone(data.session as ButlerBootstrapSession);
+              } else if (data.error) {
+                onError(data.error);
+              }
+            } catch {
+              // 忽略解析错误
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   },
   confirmButlerBootstrapSession(
     householdId: string,

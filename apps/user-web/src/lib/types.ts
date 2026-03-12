@@ -557,18 +557,14 @@ export type AgentListResponse = {
 export type ButlerBootstrapStatus = 'collecting' | 'reviewing' | 'completed';
 export type ButlerBootstrapField =
   | 'display_name'
-  | 'role_summary'
   | 'speaking_style'
-  | 'personality_traits'
-  | 'service_focus';
+  | 'personality_traits';
 
 export type ButlerBootstrapDraft = {
   household_id: string;
   display_name: string;
-  role_summary: string;
   speaking_style: string;
   personality_traits: string[];
-  service_focus: string[];
 };
 
 export type ButlerBootstrapSession = {
@@ -582,8 +578,6 @@ export type ButlerBootstrapSession = {
 
 export type ButlerBootstrapMessagePayload = {
   message: string;
-  draft: ButlerBootstrapDraft;
-  pending_field: ButlerBootstrapField | null;
 };
 
 export type MemoryType = 'fact' | 'event' | 'preference' | 'relation' | 'growth';

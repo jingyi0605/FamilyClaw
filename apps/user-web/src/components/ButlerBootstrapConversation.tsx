@@ -13,9 +13,47 @@ type Props = {
 };
 
 type TranscriptMessage = {
+  id: string;
   role: 'assistant' | 'user';
   content: string;
 };
+
+function newMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// 根据管家名字选择合适的 emoji 头像
+function getButlerEmoji(name: string): string {
+  const nameLower = name.toLowerCase();
+
+  // 根据名字关键词匹配
+  if (nameLower.includes('笨') || nameLower.includes('傻')) return '🤖';
+  if (nameLower.includes('萌') || nameLower.includes('可爱')) return '🥰';
+  if (nameLower.includes('智') || nameLower.includes('慧')) return '🧠';
+  if (nameLower.includes('暖') || nameLower.includes('温')) return '☀️';
+  if (nameLower.includes('星') || nameLower.includes('闪')) return '⭐';
+  if (nameLower.includes('月') || nameLower.includes('夜')) return '🌙';
+  if (nameLower.includes('云') || nameLower.includes('雾')) return '☁️';
+  if (nameLower.includes('风') || nameLower.includes('飞')) return '🍃';
+  if (nameLower.includes('小')) return '🐱';
+  if (nameLower.includes('大')) return '🦁';
+  if (nameLower.includes('花') || nameLower.includes('朵')) return '🌸';
+  if (nameLower.includes('猫') || nameLower.includes('喵')) return '😺';
+  if (nameLower.includes('狗') || nameLower.includes('汪')) return '🐕';
+  if (nameLower.includes('熊')) return '🐻';
+  if (nameLower.includes('兔')) return '🐰';
+  if (nameLower.includes('狐')) return '🦊';
+  if (nameLower.includes('龙')) return '🐉';
+  if (nameLower.includes('凤')) return '🦅';
+
+  // 默认根据名字长度选择
+  const defaultEmojis = ['🤖', '🧞', '🦸', '🥷', '🎭', '🎩', '✨', '🌟'];
+  const index = name.length % defaultEmojis.length;
+  return defaultEmojis[index];
+}
 
 export function ButlerBootstrapConversation({
   householdId,
@@ -62,7 +100,7 @@ export function ButlerBootstrapConversation({
     try {
       const nextSession = await api.createButlerBootstrapSession(householdId);
       setSession(nextSession);
-      setMessages([{ role: 'assistant', content: nextSession.assistant_message }]);
+      setMessages([{ id: newMessageId(), role: 'assistant', content: nextSession.assistant_message }]);
     } catch (sessionError) {
       setError(sessionError instanceof Error ? sessionError.message : '启动首个管家引导失败');
       setSession(null);
@@ -83,24 +121,50 @@ export function ButlerBootstrapConversation({
     }
     setSending(true);
     setError('');
-    setStatus('');
     const userMessage = input.trim();
-    try {
-      const nextSession = await api.sendButlerBootstrapMessage(householdId, session.session_id, {
-        message: userMessage,
-        draft: session.draft,
-        pending_field: session.pending_field,
-      });
-      setMessages(current => [
+
+    const assistantMessageId = newMessageId();
+
+    setInput('');
+    setMessages(current => {
+      return [
         ...current,
-        { role: 'user', content: userMessage },
-        { role: 'assistant', content: nextSession.assistant_message },
-      ]);
-      setSession(nextSession);
-      setInput('');
+        { id: newMessageId(), role: 'user', content: userMessage },
+        { id: assistantMessageId, role: 'assistant', content: '' },
+      ];
+    });
+
+    try {
+      await api.streamButlerBootstrapMessage(
+        householdId,
+        session.session_id,
+        {
+          message: userMessage,
+        },
+        (chunk) => {
+          setMessages(current => {
+            return current.map(message => (
+              message.id === assistantMessageId
+                ? { ...message, content: message.content + chunk }
+                : message
+            ));
+          });
+        },
+        (nextSession) => {
+          setSession(nextSession);
+          setSending(false);
+        },
+        (errorMsg) => {
+          setError(errorMsg);
+          setSending(false);
+        },
+        // 实时更新 draft（用于更新管家名称和头像）
+        (updatedDraft) => {
+          setSession(current => current ? { ...current, draft: updatedDraft } : current);
+        },
+      );
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : '发送引导消息失败');
-    } finally {
       setSending(false);
     }
   }
@@ -111,17 +175,16 @@ export function ButlerBootstrapConversation({
     }
     setConfirming(true);
     setError('');
-    setStatus('');
     try {
       const created = await api.confirmButlerBootstrapSession(householdId, session.session_id, {
         draft: session.draft,
         created_by: source,
       });
       setCreatedAgent(created);
-      setStatus('首个管家已经创建完成。接下来改细节，走普通 Agent 配置页就行。');
+      setStatus('管家创建完成！');
       await onCreated?.(created);
     } catch (confirmError) {
-      setError(confirmError instanceof Error ? confirmError.message : '确认创建首个管家失败');
+      setError(confirmError instanceof Error ? confirmError.message : '确认创建失败');
     } finally {
       setConfirming(false);
     }
@@ -132,71 +195,79 @@ export function ButlerBootstrapConversation({
       <Card className="butler-bootstrap">
         <div className="butler-bootstrap__summary">
           <div>
-            <h3>首个管家已经存在</h3>
-            <p>这个家庭已经有启用中的管家了，别重复造轮子。后续维护直接走下面的 Agent 配置中心。</p>
-          </div>
-          <div className="butler-bootstrap__agent-pill">
-            <strong>{existingButlerAgent.display_name}</strong>
-            <span>{existingButlerAgent.code}</span>
+            <h3>管家已存在</h3>
+            <p>这个家庭已有管家 {existingButlerAgent.display_name}，无需重复创建。</p>
           </div>
         </div>
       </Card>
     );
   }
 
+  // 动态获取管家名称和头像
+  const butlerName = session?.draft.display_name || 'AI 管家';
+  const butlerEmoji = session?.draft.display_name ? getButlerEmoji(session.draft.display_name) : '🤖';
+
   return (
     <div className="butler-bootstrap">
       <Card className="butler-bootstrap__hero">
-        <div className="setup-step-panel__header">
-          <div>
-            <h3>首个管家对话式创建</h3>
-            <p>这一步只做 onboarding。先通过几轮对话把首个管家定下来，创建成功后再去普通 Agent 编辑器里细调。</p>
+        {/* 管家头像和名称 - 实时更新 */}
+        {session && (
+          <div className="butler-bootstrap__avatar-header">
+            <div className="butler-bootstrap__avatar">
+              <span className="butler-bootstrap__avatar-emoji">{butlerEmoji}</span>
+            </div>
+            <div className="butler-bootstrap__avatar-info">
+              <h3>{butlerName}</h3>
+              <p className="butler-bootstrap__avatar-hint">
+                {session.status === 'collecting' ? '正在了解自己...' : '准备好了！'}
+              </p>
+            </div>
           </div>
-          <div className="setup-form-actions">
-            <button type="button" className="btn btn--outline" onClick={() => void startSession()} disabled={loading || sending || confirming}>
-              重新开始
-            </button>
-          </div>
-        </div>
+        )}
+
         {error && <p className="form-error">{error}</p>}
         {status && <div className="setup-form-status">{status}</div>}
-        {loading && <p>正在准备首个管家引导…</p>}
+        {loading && <p>正在准备...</p>}
+
         {!loading && session && (
-          <div className="butler-bootstrap__layout">
+          <div className="butler-bootstrap__chat">
             <div className="butler-bootstrap__messages">
               {messages.map((message, index) => (
                 <div
                   key={`${message.role}-${index}`}
                   className={`butler-bootstrap__message butler-bootstrap__message--${message.role}`}
                 >
-                  <span className="butler-bootstrap__message-role">{message.role === 'assistant' ? '引导助手' : '你'}</span>
-                  <p>{message.content}</p>
+                  {message.role === 'assistant' && (
+                    <span className="butler-bootstrap__message-avatar">{butlerEmoji}</span>
+                  )}
+                  <div className="butler-bootstrap__message-content">
+                    <span className="butler-bootstrap__message-role">
+                      {message.role === 'assistant' ? butlerName : '你'}
+                    </span>
+                    <p>{message.content}</p>
+                  </div>
                 </div>
               ))}
             </div>
 
             {session.status === 'collecting' && (
               <form className="butler-bootstrap__composer" onSubmit={handleSend}>
-                <label htmlFor={`butler-bootstrap-input-${householdId}`}>继续回答当前问题</label>
                 <textarea
-                  id={`butler-bootstrap-input-${householdId}`}
-                  className="form-input setup-textarea"
+                  className="form-input"
                   value={input}
                   onChange={event => setInput(event.target.value)}
-                  placeholder="直接说人话就行，不需要写成规范文档。"
+                  placeholder="直接说就行..."
+                  rows={2}
                 />
-                <div className="setup-form-actions">
-                  <button type="submit" className="btn btn--primary" disabled={sending || !input.trim()}>
-                    {sending ? '发送中…' : '发送回答'}
-                  </button>
-                </div>
+                <button type="submit" className="btn btn--primary" disabled={sending || !input.trim()}>
+                  {sending ? '...' : '发送'}
+                </button>
               </form>
             )}
 
             {session.status === 'reviewing' && (
-              <Card className="ai-config-detail-card">
-                <h4>创建草稿</h4>
-                <div className="setup-form-grid">
+              <div className="butler-bootstrap__confirm">
+                <div className="butler-bootstrap__review-grid">
                   <div className="form-group">
                     <label>管家名称</label>
                     <input
@@ -214,52 +285,50 @@ export function ButlerBootstrapConversation({
                     />
                   </div>
                   <div className="form-group">
-                    <label>角色摘要</label>
-                    <textarea
-                      className="form-input setup-textarea"
-                      value={session.draft.role_summary}
-                      onChange={event => updateDraft({ ...session.draft, role_summary: event.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>人格特征</label>
+                    <label>性格特点</label>
                     <input
                       className="form-input"
                       value={stringifyTags(session.draft.personality_traits)}
-                      onChange={event => updateDraft({ ...session.draft, personality_traits: parseTags(event.target.value) })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>服务重点</label>
-                    <input
-                      className="form-input"
-                      value={stringifyTags(session.draft.service_focus)}
-                      onChange={event => updateDraft({ ...session.draft, service_focus: parseTags(event.target.value) })}
+                      onChange={event => updateDraft({
+                        ...session.draft,
+                        personality_traits: parseTags(event.target.value),
+                      })}
                     />
                   </div>
                 </div>
-                <div className="setup-form-actions">
-                  <button type="button" className="btn btn--primary" onClick={() => void handleConfirm()} disabled={confirming}>
-                    {confirming ? '创建中…' : '确认创建首个管家'}
-                  </button>
-                </div>
-              </Card>
+                <button
+                  type="button"
+                  className="btn btn--primary btn--large"
+                  onClick={() => void handleConfirm()}
+                  disabled={
+                    confirming
+                    || !session.draft.display_name.trim()
+                    || !session.draft.speaking_style.trim()
+                    || session.draft.personality_traits.length < 2
+                  }
+                >
+                  {confirming ? '创建中...' : `确认创建 ${session.draft.display_name}`}
+                </button>
+              </div>
             )}
           </div>
         )}
 
         {!loading && !session && !existingButlerAgent && (
           <div className="setup-inline-tip">
-            <strong>当前还没法开始：</strong>
-            <span>通常是 AI 供应商还没配好，或者这个家庭其实已经有首个管家了。把前置条件补齐后再重试。</span>
+            <span>请先完成 AI 供应商配置</span>
           </div>
         )}
 
         {createdAgent && (
           <Card className="butler-bootstrap__result">
-            <h4>已创建：{createdAgent.display_name}</h4>
-            <p>类型：首个管家 · 编号：{createdAgent.code}</p>
-            <p>{createdAgent.soul?.role_summary ?? '人格摘要已创建。'}</p>
+            <div className="butler-bootstrap__created">
+              <span className="butler-bootstrap__avatar-emoji butler-bootstrap__avatar-emoji--large">
+                {getButlerEmoji(createdAgent.display_name)}
+              </span>
+              <h4>{createdAgent.display_name}</h4>
+              <p>已加入家庭！</p>
+            </div>
           </Card>
         )}
       </Card>

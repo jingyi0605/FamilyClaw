@@ -64,6 +64,17 @@ class Settings(BaseSettings):
     ai_local_preferred: bool = False
     ai_secret_ref_prefix: str = "env://"
     ai_provider_configs: dict[str, AiProviderRuntimeConfig] = Field(default_factory=dict)
+    cors_allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://localhost:4174",
+            "http://127.0.0.1:4174",
+        ]
+    )
+    cors_allow_origin_regex: str | None = Field(
+        default=r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+):(?:4174|5174)",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="FAMILYCLAW_",

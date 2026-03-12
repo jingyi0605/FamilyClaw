@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -9,6 +10,7 @@ from app.modules.agent.bootstrap_service import (
     advance_butler_bootstrap_session,
     confirm_butler_bootstrap_session,
     start_butler_bootstrap_session,
+    stream_butler_bootstrap_session,
 )
 from app.modules.agent.schemas import (
     AgentCreate,
@@ -231,7 +233,13 @@ def create_butler_bootstrap_session_endpoint(
     actor: ActorContext = Depends(require_admin_actor),
 ) -> ButlerBootstrapSessionRead:
     ensure_actor_can_access_household(actor, household_id)
-    return start_butler_bootstrap_session(db, household_id=household_id)
+    try:
+        result = start_butler_bootstrap_session(db, household_id=household_id)
+        db.commit()
+        return result
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
 
 
 @router.post("/{household_id}/butler-bootstrap/sessions/{session_id}/messages", response_model=ButlerBootstrapSessionRead)
@@ -243,11 +251,43 @@ def append_butler_bootstrap_message_endpoint(
     actor: ActorContext = Depends(require_admin_actor),
 ) -> ButlerBootstrapSessionRead:
     ensure_actor_can_access_household(actor, household_id)
-    return advance_butler_bootstrap_session(
-        db,
-        household_id=household_id,
-        session_id=session_id,
-        payload=payload,
+    try:
+        result = advance_butler_bootstrap_session(
+            db,
+            household_id=household_id,
+            session_id=session_id,
+            payload=payload,
+        )
+        db.commit()
+        return result
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.post("/{household_id}/butler-bootstrap/sessions/{session_id}/stream-messages")
+def stream_butler_bootstrap_message_endpoint(
+    household_id: str,
+    session_id: str,
+    payload: ButlerBootstrapMessageCreate,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+):
+    """流式管家引导对话端点"""
+    ensure_actor_can_access_household(actor, household_id)
+    return StreamingResponse(
+        stream_butler_bootstrap_session(
+            db=db,
+            household_id=household_id,
+            session_id=session_id,
+            payload=payload,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -260,7 +300,12 @@ def confirm_butler_bootstrap_session_endpoint(
     actor: ActorContext = Depends(require_admin_actor),
 ) -> AgentDetailRead:
     ensure_actor_can_access_household(actor, household_id)
-    result = confirm_butler_bootstrap_session(db, household_id=household_id, payload=payload)
+    result = confirm_butler_bootstrap_session(
+        db,
+        household_id=household_id,
+        session_id=session_id,
+        payload=payload,
+    )
     write_audit_log(
         db,
         household_id=household_id,

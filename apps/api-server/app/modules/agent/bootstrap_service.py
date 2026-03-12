@@ -1,8 +1,15 @@
+"""管家引导服务 - 通过 AI 对话创建首个管家。"""
+
+import json
+from collections.abc import Generator
+from typing import Any, cast
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.db.utils import new_uuid
+from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.agent import repository
+from app.modules.agent.models import FamilyAgentBootstrapSession
 from app.modules.agent.schemas import (
     AgentCreate,
     AgentDetailRead,
@@ -10,18 +17,20 @@ from app.modules.agent.schemas import (
     ButlerBootstrapDraft,
     ButlerBootstrapField,
     ButlerBootstrapMessageCreate,
+    ButlerBootstrapStatus,
     ButlerBootstrapSessionRead,
 )
 from app.modules.agent.service import create_agent
 from app.modules.ai_gateway.service import resolve_capability_route
+from app.modules.llm_task import invoke_llm, stream_llm
+from app.modules.llm_task.output_models import ButlerBootstrapOutput
+from app.modules.member import service as member_service
 
 REQUIRED_PROVIDER_CAPABILITY = "qa_generation"
 BOOTSTRAP_FIELD_ORDER: tuple[ButlerBootstrapField, ...] = (
     "display_name",
-    "role_summary",
-    "speaking_style",
     "personality_traits",
-    "service_focus",
+    "speaking_style",
 )
 
 
@@ -30,19 +39,24 @@ def start_butler_bootstrap_session(
     *,
     household_id: str,
 ) -> ButlerBootstrapSessionRead:
+    """启动管家引导会话。"""
     _ensure_bootstrap_allowed(db, household_id=household_id)
+
     draft = ButlerBootstrapDraft(household_id=household_id)
-    return ButlerBootstrapSessionRead(
-        session_id=new_uuid(),
+    assistant_message = _build_opening_message(db, household_id=household_id)
+    session = FamilyAgentBootstrapSession(
+        id=new_uuid(),
+        household_id=household_id,
         status="collecting",
         pending_field="display_name",
-        draft=draft,
-        assistant_message=(
-            "我们别再填冷冰冰的表了。我用几轮对话帮你把首个管家定下来。"
-            "先给这个管家起个名字。"
-        ),
-        can_confirm=False,
+        draft_json=dump_json(draft.model_dump(mode="json")) or "{}",
+        transcript_json=dump_json([{"role": "assistant", "content": assistant_message}]) or "[]",
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
     )
+    repository.add_bootstrap_session(db, session)
+    db.flush()
+    return _to_session_read(session, assistant_message=assistant_message)
 
 
 def advance_butler_bootstrap_session(
@@ -52,45 +66,118 @@ def advance_butler_bootstrap_session(
     session_id: str,
     payload: ButlerBootstrapMessageCreate,
 ) -> ButlerBootstrapSessionRead:
+    """推进管家引导会话。"""
     _ensure_bootstrap_allowed(db, household_id=household_id)
-    draft = _normalize_draft(payload.draft, household_id=household_id)
-    pending_field = payload.pending_field or _next_pending_field(draft) or "display_name"
+    session = _get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message 不能为空")
 
-    _apply_answer(draft, pending_field, message)
-    next_field = _next_pending_field(draft)
+    draft = _load_draft(session, household_id=household_id)
+    transcript = _load_transcript(session)
 
-    if next_field is None:
-        return ButlerBootstrapSessionRead(
-            session_id=session_id,
-            status="reviewing",
-            pending_field=None,
-            draft=draft,
-            assistant_message=_build_review_message(draft),
-            can_confirm=True,
-        )
-
-    return ButlerBootstrapSessionRead(
-        session_id=session_id,
-        status="collecting",
-        pending_field=next_field,
-        draft=draft,
-        assistant_message=_build_prompt(next_field, draft),
-        can_confirm=False,
+    result = invoke_llm(
+        db,
+        task_type="butler_bootstrap",
+        variables={
+            "collected_info": _format_collected_info(draft),
+            "user_message": message,
+            "user_context": _build_user_context(db, household_id),
+        },
+        household_id=household_id,
+        conversation_history=transcript,
     )
+
+    next_draft = draft
+    if isinstance(result.data, ButlerBootstrapOutput):
+        next_draft = _merge_extracted_data(draft, result.data)
+
+    session_read = _build_next_session(session_id=session_id, draft=next_draft, assistant_message=result.text)
+    transcript.append({"role": "user", "content": message})
+    transcript.append({"role": "assistant", "content": session_read.assistant_message})
+    _save_session_state(db, session=session, session_read=session_read, transcript=transcript)
+    return session_read
+
+
+def stream_butler_bootstrap_session(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+    payload: ButlerBootstrapMessageCreate,
+) -> Generator[str, None, None]:
+    """流式推进管家引导会话。"""
+    _ensure_bootstrap_allowed(db, household_id=household_id)
+    session = _get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+
+    message = payload.message.strip()
+    if not message:
+        yield _sse_data({"error": "message 不能为空"})
+        return
+
+    draft = _load_draft(session, household_id=household_id)
+    transcript = _load_transcript(session)
+
+    latest_draft = draft
+
+    try:
+        for event in stream_llm(
+            db,
+            task_type="butler_bootstrap",
+            variables={
+                "collected_info": _format_collected_info(draft),
+                "user_message": message,
+                "user_context": _build_user_context(db, household_id),
+            },
+            household_id=household_id,
+            conversation_history=transcript,
+        ):
+            if event.event_type == "chunk":
+                yield _sse_data({"type": "chunk", "content": event.content})
+                continue
+
+            if event.event_type == "parsed" and isinstance(event.parsed, ButlerBootstrapOutput):
+                latest_draft = _merge_extracted_data(latest_draft, event.parsed)
+                yield _sse_data({"type": "draft_update", "draft": latest_draft.model_dump(mode="json")})
+                continue
+
+            if event.event_type == "done" and event.result is not None:
+                final_draft = latest_draft
+                if isinstance(event.result.data, ButlerBootstrapOutput):
+                    final_draft = _merge_extracted_data(final_draft, event.result.data)
+
+                session_read = _build_next_session(
+                    session_id=session_id,
+                    draft=final_draft,
+                    assistant_message=event.result.text,
+                )
+                transcript.append({"role": "user", "content": message})
+                transcript.append({"role": "assistant", "content": session_read.assistant_message})
+                _save_session_state(db, session=session, session_read=session_read, transcript=transcript)
+                db.commit()
+                yield _sse_data({"type": "done", "session": session_read.model_dump(mode="json")})
+    except HTTPException as exc:
+        db.rollback()
+        yield _sse_data({"error": str(exc.detail)})
+    except Exception as exc:
+        db.rollback()
+        yield _sse_data({"error": str(exc)})
 
 
 def confirm_butler_bootstrap_session(
     db: Session,
     *,
     household_id: str,
+    session_id: str,
     payload: ButlerBootstrapConfirm,
 ) -> AgentDetailRead:
+    """确认创建管家。"""
     _ensure_bootstrap_allowed(db, household_id=household_id)
+    session = _get_bootstrap_session(db, household_id=household_id, session_id=session_id)
     draft = _normalize_draft(payload.draft, household_id=household_id)
-    missing_fields = [field for field in BOOTSTRAP_FIELD_ORDER if not _field_completed(draft, field)]
+
+    missing_fields = _get_missing_fields(draft)
     if missing_fields:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -101,17 +188,36 @@ def confirm_butler_bootstrap_session(
         display_name=draft.display_name,
         agent_type="butler",
         self_identity=_build_self_identity(draft),
-        role_summary=draft.role_summary,
+        role_summary="AI管家，协助家庭日常事务",
         intro_message=_build_intro_message(draft),
         speaking_style=draft.speaking_style or None,
         personality_traits=draft.personality_traits,
-        service_focus=draft.service_focus,
+        service_focus=[],
         service_boundaries=None,
         conversation_enabled=True,
         default_entry=True,
         created_by=payload.created_by,
     )
-    return create_agent(db, household_id=household_id, payload=agent_payload)
+    result = create_agent(db, household_id=household_id, payload=agent_payload)
+
+    session.status = "completed"
+    session.pending_field = None
+    session.draft_json = dump_json(draft.model_dump(mode="json")) or "{}"
+    session.updated_at = utc_now_iso()
+    session.completed_at = utc_now_iso()
+    db.flush()
+    return result
+
+
+def _build_opening_message(db: Session, *, household_id: str) -> str:
+    members, _ = member_service.list_members(db, household_id=household_id, page=1, page_size=1, status_value="active")
+    first_member = members[0] if members else None
+    greeting_name = (first_member.nickname or first_member.name) if first_member else "朋友"
+    return (
+        f"你好，{greeting_name}！我是即将加入你们家庭的 AI 管家，很高兴认识你。\n\n"
+        "在正式开始服务之前，我想先了解一下你希望我成为什么样的管家。"
+        "首先，你想给我起个什么名字呢？"
+    )
 
 
 def _ensure_bootstrap_allowed(db: Session, *, household_id: str) -> None:
@@ -120,11 +226,7 @@ def _ensure_bootstrap_allowed(db: Session, *, household_id: str) -> None:
             status_code=status.HTTP_409_CONFLICT,
             detail="当前家庭已经有启用中的管家，不需要再走首个管家引导。",
         )
-    route = resolve_capability_route(
-        db,
-        capability=REQUIRED_PROVIDER_CAPABILITY,
-        household_id=household_id,
-    )
+    route = resolve_capability_route(db, capability=REQUIRED_PROVIDER_CAPABILITY, household_id=household_id)
     if route is None or not route.enabled or not route.primary_provider_profile_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -139,14 +241,58 @@ def _has_active_butler(db: Session, *, household_id: str) -> bool:
     )
 
 
+def _get_bootstrap_session(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+) -> FamilyAgentBootstrapSession:
+    session = repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="引导会话不存在")
+    if session.status == "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="引导会话已完成")
+    return session
+
+
+def _build_user_context(db: Session, household_id: str) -> str:
+    members, _ = member_service.list_members(db, household_id=household_id, page=1, page_size=10, status_value="active")
+    if not members:
+        return "这是一个新家庭，暂时还没有家庭成员信息。"
+
+    role_map = {
+        "admin": "管理员",
+        "adult": "成年人",
+        "child": "儿童",
+        "elder": "长辈",
+        "guest": "访客",
+    }
+    lines: list[str] = []
+    for member in members:
+        info = f"- {member.name}（{role_map.get(member.role, member.role)}）"
+        if member.nickname:
+            info += f"，昵称：{member.nickname}"
+        lines.append(info)
+    return "家庭成员：\n" + "\n".join(lines)
+
+
+def _format_collected_info(draft: ButlerBootstrapDraft) -> str:
+    parts: list[str] = []
+    if draft.display_name:
+        parts.append(f"- 名字：{draft.display_name}")
+    if draft.speaking_style:
+        parts.append(f"- 说话风格：{draft.speaking_style}")
+    if draft.personality_traits:
+        parts.append(f"- 性格特点：{', '.join(draft.personality_traits)}")
+    return "\n".join(parts) if parts else "暂无（刚开始对话）"
+
+
 def _normalize_draft(draft: ButlerBootstrapDraft, *, household_id: str) -> ButlerBootstrapDraft:
     return ButlerBootstrapDraft(
         household_id=household_id,
         display_name=draft.display_name.strip(),
-        role_summary=draft.role_summary.strip(),
         speaking_style=draft.speaking_style.strip(),
         personality_traits=_normalize_tags(draft.personality_traits),
-        service_focus=_normalize_tags(draft.service_focus),
     )
 
 
@@ -159,82 +305,145 @@ def _normalize_tags(values: list[str]) -> list[str]:
     return result
 
 
-def _apply_answer(draft: ButlerBootstrapDraft, field: ButlerBootstrapField, message: str) -> None:
-    if field == "display_name":
-        draft.display_name = message[:100]
-        return
-    if field == "role_summary":
-        draft.role_summary = message[:2000]
-        return
-    if field == "speaking_style":
-        draft.speaking_style = message[:2000]
-        return
-    if field == "personality_traits":
-        draft.personality_traits = _parse_tags(message)
-        return
-    draft.service_focus = _parse_tags(message)
+def _merge_extracted_data(draft: ButlerBootstrapDraft, extracted: ButlerBootstrapOutput) -> ButlerBootstrapDraft:
+    return ButlerBootstrapDraft(
+        household_id=draft.household_id,
+        display_name=(extracted.display_name or draft.display_name).strip(),
+        speaking_style=(extracted.speaking_style or draft.speaking_style).strip(),
+        personality_traits=_merge_traits(draft.personality_traits, extracted.personality_traits),
+    )
 
 
-def _parse_tags(message: str) -> list[str]:
-    separators = [",", "，", "、", "\n", ";", "；", "/", "|"]
-    normalized = message.strip()
-    for separator in separators:
-        normalized = normalized.replace(separator, ",")
-    parts = [item.strip() for item in normalized.split(",")]
-    tags = [item for item in parts if item]
-    if not tags and message.strip():
-        return [message.strip()]
-    result: list[str] = []
-    for tag in tags:
-        if tag not in result:
-            result.append(tag[:100])
-    return result
+def _merge_traits(current: list[str], extracted: list[str]) -> list[str]:
+    if extracted:
+        return _normalize_tags(extracted)
+    return _normalize_tags(current)
 
 
-def _next_pending_field(draft: ButlerBootstrapDraft) -> ButlerBootstrapField | None:
-    for field in BOOTSTRAP_FIELD_ORDER:
-        if not _field_completed(draft, field):
-            return field
-    return None
+def _get_missing_fields(draft: ButlerBootstrapDraft) -> list[ButlerBootstrapField]:
+    return [field for field in BOOTSTRAP_FIELD_ORDER if not _field_completed(draft, field)]
 
 
 def _field_completed(draft: ButlerBootstrapDraft, field: ButlerBootstrapField) -> bool:
     if field == "display_name":
         return bool(draft.display_name)
-    if field == "role_summary":
-        return bool(draft.role_summary)
     if field == "speaking_style":
         return bool(draft.speaking_style)
     if field == "personality_traits":
-        return len(draft.personality_traits) > 0
-    return len(draft.service_focus) > 0
+        return len(draft.personality_traits) >= 2
+    return False
 
 
-def _build_prompt(field: ButlerBootstrapField, draft: ButlerBootstrapDraft) -> str:
-    if field == "role_summary":
-        return f"名字收到，就叫“{draft.display_name}”。现在告诉我，这个管家最主要负责什么？用一句人话说清。"
-    if field == "speaking_style":
-        return "好，职责有了。它跟家人说话时应该是什么风格？比如温和直接、活泼一点、少废话。"
-    if field == "personality_traits":
-        return "再给我 2 到 4 个性格关键词，最好用逗号隔开，比如“细心，稳重，有边界感”。"
-    return "最后说一下它的服务重点。也用逗号隔开，比如“家庭问答，提醒复盘，成员关怀”。"
+def _append_review_hint(message: str, draft: ButlerBootstrapDraft) -> str:
+    traits = "、".join(draft.personality_traits) if draft.personality_traits else "无"
+    style = draft.speaking_style or "未设定"
+    review = (
+        "\n\n信息已经收集好了，你可以直接确认，"
+        "也可以先手动改一下下面这几个字段。\n"
+        f"- 名字：{draft.display_name}\n"
+        f"- 说话风格：{style}\n"
+        f"- 性格特点：{traits}"
+    )
+    return (message.strip() + review).strip()
 
 
-def _build_review_message(draft: ButlerBootstrapDraft) -> str:
-    traits = "、".join(draft.personality_traits)
-    focus = "、".join(draft.service_focus)
-    return (
-        f"草稿已经齐了：名字是“{draft.display_name}”，主要职责是“{draft.role_summary}”，"
-        f"说话风格偏“{draft.speaking_style}”，人格特征是“{traits}”，服务重点是“{focus}”。"
-        " 你可以先在下面微调，再确认创建。"
+def _build_next_session(
+    *,
+    session_id: str,
+    draft: ButlerBootstrapDraft,
+    assistant_message: str,
+) -> ButlerBootstrapSessionRead:
+    missing_fields = _get_missing_fields(draft)
+    if not missing_fields:
+        return ButlerBootstrapSessionRead(
+            session_id=session_id,
+            status="reviewing",
+            pending_field=None,
+            draft=draft,
+            assistant_message=_append_review_hint(assistant_message, draft),
+            can_confirm=True,
+        )
+
+    return ButlerBootstrapSessionRead(
+        session_id=session_id,
+        status="collecting",
+        pending_field=cast(ButlerBootstrapField, missing_fields[0]),
+        draft=draft,
+        assistant_message=assistant_message.strip(),
+        can_confirm=False,
+    )
+
+
+def _load_draft(session: FamilyAgentBootstrapSession, *, household_id: str) -> ButlerBootstrapDraft:
+    data = load_json(session.draft_json) or {}
+    if isinstance(data, dict):
+        data = {key: value for key, value in data.items() if key != "household_id"}
+    return _normalize_draft(ButlerBootstrapDraft(household_id=household_id, **data), household_id=household_id)
+
+
+def _load_transcript(session: FamilyAgentBootstrapSession) -> list[dict[str, str]]:
+    items = load_json(session.transcript_json) or []
+    transcript: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "")
+        if role in {"user", "assistant"} and content:
+            transcript.append({"role": role, "content": content})
+    return transcript
+
+
+def _save_session_state(
+    db: Session,
+    *,
+    session: FamilyAgentBootstrapSession,
+    session_read: ButlerBootstrapSessionRead,
+    transcript: list[dict[str, str]],
+) -> None:
+    session.status = session_read.status
+    session.pending_field = session_read.pending_field
+    session.draft_json = dump_json(session_read.draft.model_dump(mode="json")) or "{}"
+    session.transcript_json = dump_json(transcript) or "[]"
+    session.updated_at = utc_now_iso()
+    db.flush()
+
+
+def _to_session_read(
+    session: FamilyAgentBootstrapSession,
+    *,
+    assistant_message: str | None = None,
+) -> ButlerBootstrapSessionRead:
+    draft = _load_draft(session, household_id=session.household_id)
+    transcript = _load_transcript(session)
+    pending_field = cast(ButlerBootstrapField | None, session.pending_field if session.pending_field in BOOTSTRAP_FIELD_ORDER else None)
+    status_value: ButlerBootstrapStatus = cast(
+        ButlerBootstrapStatus,
+        session.status if session.status in {"collecting", "reviewing", "completed"} else "collecting",
+    )
+    latest_message = assistant_message or next(
+        (item["content"] for item in reversed(transcript) if item["role"] == "assistant"),
+        "你好，我们开始吧。",
+    )
+    return ButlerBootstrapSessionRead(
+        session_id=session.id,
+        status=status_value,
+        pending_field=pending_field,
+        draft=draft,
+        assistant_message=latest_message,
+        can_confirm=session.status == "reviewing",
     )
 
 
 def _build_self_identity(draft: ButlerBootstrapDraft) -> str:
-    focus = "、".join(draft.service_focus[:3])
-    return f"我是{draft.display_name}，这个家的首个 AI 管家，主要负责{draft.role_summary}。我会重点处理{focus}。"
+    traits = "、".join(draft.personality_traits[:3]) if draft.personality_traits else "友善"
+    style = draft.speaking_style or "亲切自然"
+    return f"我是{draft.display_name}，这个家的 AI 管家。我性格{traits}，说话风格是{style}。"
 
 
 def _build_intro_message(draft: ButlerBootstrapDraft) -> str:
-    focus = "、".join(draft.service_focus[:2])
-    return f"你好，我是{draft.display_name}。接下来我会先帮你处理{focus}。"
+    return f"你好，我是{draft.display_name}。很高兴认识你，接下来我会尽力帮助这个家庭。"
+
+
+def _sse_data(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"

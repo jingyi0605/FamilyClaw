@@ -4,7 +4,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-app);
+  background: var(--bg-app, #f7f5f2);
   z-index: 9999;
   overflow: hidden;
   font-family: inherit;
@@ -39,7 +39,7 @@
 .welcome-text {
   font-size: clamp(2rem, 5vw, 3rem);
   font-weight: 800;
-  color: var(--text-primary);
+  color: var(--text-primary, #1a1a2e);
   opacity: 0;
   transform: translateY(30px);
   animation: textFadeUp 1s cubic-bezier(0.2, 0.8, 0.2, 1) 1.2s forwards;
@@ -49,7 +49,7 @@
 
 .welcome-subtext {
   font-size: clamp(1.1rem, 3vw, 1.5rem);
-  color: var(--text-secondary);
+  color: var(--text-secondary, #666);
   opacity: 0;
   transform: translateY(20px);
   animation: textFadeUp 1s cubic-bezier(0.2, 0.8, 0.2, 1) 2.5s forwards;
@@ -68,7 +68,7 @@
   font-size: 1.25rem;
   font-weight: 600;
   border-radius: 50px;
-  background: var(--brand-primary);
+  background: var(--brand-primary, #75b3ff);
   color: #fff;
   border: none;
   cursor: pointer;
@@ -111,7 +111,7 @@
 
 .particle {
   position: absolute;
-  background: var(--brand-primary);
+  background: var(--brand-primary, #75b3ff);
   border-radius: 50%;
   opacity: 0.2;
   animation: floatParticle 4s infinite ease-in-out alternate;

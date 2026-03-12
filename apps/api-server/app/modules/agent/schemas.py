@@ -7,10 +7,8 @@ AgentStatus = Literal["draft", "active", "inactive"]
 ButlerBootstrapStatus = Literal["collecting", "reviewing", "completed"]
 ButlerBootstrapField = Literal[
     "display_name",
-    "role_summary",
     "speaking_style",
     "personality_traits",
-    "service_focus",
 ]
 
 
@@ -105,12 +103,11 @@ class AgentCreate(BaseModel):
 
 
 class ButlerBootstrapDraft(BaseModel):
+    """管家引导草稿（简化版，只收集称呼、性格、说话风格）"""
     household_id: str = Field(min_length=1)
     display_name: str = Field(default="", max_length=100)
-    role_summary: str = Field(default="", max_length=2000)
     speaking_style: str = Field(default="", max_length=2000)
     personality_traits: list[str] = Field(default_factory=list, max_length=20)
-    service_focus: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ButlerBootstrapSessionRead(BaseModel):
@@ -124,8 +121,6 @@ class ButlerBootstrapSessionRead(BaseModel):
 
 class ButlerBootstrapMessageCreate(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
-    draft: ButlerBootstrapDraft
-    pending_field: ButlerBootstrapField | None = None
 
 
 class ButlerBootstrapConfirm(BaseModel):
