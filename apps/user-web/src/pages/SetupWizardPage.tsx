@@ -502,7 +502,7 @@ export function SetupWizardPage() {
         <div className="setup-wizard-card--transparent">
           <div className="setup-wizard-header">
             <h2>定制您的专属 AI 管家</h2>
-            <p>通过对话来描述您心目中管家的形象、性格以及服务偏好，系统将自动生成他的设定档案。</p>
+            <p>和你的管家认识一下吧！讲讲你心目中管家的形象、性格以及服务偏好，系统将自动生成他的设定档案。</p>
           </div>
           <ButlerBootstrapConversation
             householdId={currentHouseholdId}

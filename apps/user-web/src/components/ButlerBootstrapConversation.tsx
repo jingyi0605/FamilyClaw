@@ -119,6 +119,10 @@ function getButlerEmoji(name: string): string {
   return defaultEmojis[index];
 }
 
+function normalizeMessageContent(content: string): string {
+  return content.replace(/\r\n/g, '\n').replace(/\n{2,}/g, '\n').trim();
+}
+
 export function ButlerBootstrapConversation({
   householdId,
   source = 'user-web',
@@ -136,6 +140,9 @@ export function ButlerBootstrapConversation({
   const [status, setStatus] = useState('');
   const [createdAgent, setCreatedAgent] = useState<AgentDetail | null>(null);
   const autoStartedRef = useRef<string | null>(null);
+  const composerRef = useRef<HTMLFormElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const [composerHeight, setComposerHeight] = useState(0);
 
   useEffect(() => {
     setSession(null);
@@ -157,6 +164,50 @@ export function ButlerBootstrapConversation({
     }
     savePersistedConversation(householdId, session.session_id, messages);
   }, [createdAgent, householdId, messages, session]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ block: 'end' });
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [messages, session?.status]);
+
+  useEffect(() => {
+    if (session?.status !== 'collecting') {
+      setComposerHeight(0);
+      return;
+    }
+
+    const composerElement = composerRef.current;
+    if (!composerElement) {
+      return;
+    }
+
+    const updateComposerHeight = () => {
+      setComposerHeight(composerElement.getBoundingClientRect().height);
+    };
+
+    updateComposerHeight();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateComposerHeight);
+      return () => window.removeEventListener('resize', updateComposerHeight);
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateComposerHeight();
+    });
+    resizeObserver.observe(composerElement);
+    window.addEventListener('resize', updateComposerHeight);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updateComposerHeight);
+    };
+  }, [session?.status]);
 
   useEffect(() => {
     if (existingButlerAgent || createdAgent || session || loading || autoStartedRef.current === householdId) {
@@ -361,61 +412,63 @@ export function ButlerBootstrapConversation({
   return (
     <div className="butler-bootstrap">
       <Card className="butler-bootstrap__hero">
-        {/* 管家头像和名称 - 实时更新 */}
-        {session && (
-          <div className="butler-bootstrap__avatar-header">
-            <div className="butler-bootstrap__avatar">
-              <span className="butler-bootstrap__avatar-emoji">{butlerEmoji}</span>
-            </div>
-            <div className="butler-bootstrap__avatar-info">
-              <h3>{butlerName}</h3>
-              <p className="butler-bootstrap__avatar-hint">
-                {session.status === 'collecting' ? '正在了解自己...' : '准备好了！'}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={() => void handleRestart()}
-              disabled={loading || sending || confirming || restarting}
-            >
-              {restarting ? '重开中...' : '重新开始'}
-            </button>
-          </div>
-        )}
-
         {error && <p className="form-error">{error}</p>}
         {status && <div className="setup-form-status">{status}</div>}
         {loading && <p>正在准备...</p>}
 
         {!loading && session && (
           <div className="butler-bootstrap__chat">
-            <div className="butler-bootstrap__messages">
+            <div className="butler-bootstrap__chat-actions">
+              <button
+                type="button"
+                className="butler-bootstrap__restart-btn"
+                onClick={() => void handleRestart()}
+                disabled={loading || sending || confirming || restarting}
+              >
+                {restarting ? '重新生成中...' : '↻ 重新开始'}
+              </button>
+            </div>
+
+            <div
+              className="butler-bootstrap__messages"
+              style={session.status === 'collecting' ? { paddingBottom: `${composerHeight + 24}px` } : undefined}
+            >
               {messages.map((message) => (
                 <div
                   key={message.id}
                   className={`butler-bootstrap__message butler-bootstrap__message--${message.role}`}
                 >
-                  <span
-                    className={`butler-bootstrap__message-avatar butler-bootstrap__message-avatar--${message.role}`}
-                    aria-hidden="true"
-                  >
-                    {message.role === 'assistant' ? butlerEmoji : userAvatar}
-                  </span>
-                  <div className="butler-bootstrap__message-content">
+                  <div className="butler-bootstrap__message-identity">
+                    <span
+                      className={`butler-bootstrap__message-avatar butler-bootstrap__message-avatar--${message.role}`}
+                      aria-hidden="true"
+                    >
+                      {message.role === 'assistant' ? butlerEmoji : userAvatar}
+                    </span>
                     <span className="butler-bootstrap__message-role">
                       {message.role === 'assistant' ? butlerName : userName}
                     </span>
+                  </div>
+                  <div className="butler-bootstrap__message-content">
                     <div className="butler-bootstrap__message-bubble">
-                      <p>{message.content || (message.role === 'assistant' && sending ? '正在输入...' : '')}</p>
+                      <p>
+                        {normalizeMessageContent(
+                          message.content || (message.role === 'assistant' && sending ? '正在输入...' : ''),
+                        )}
+                      </p>
                     </div>
                   </div>
                 </div>
               ))}
+              <div
+                ref={messagesEndRef}
+                className="butler-bootstrap__messages-anchor"
+                style={session.status === 'collecting' ? { scrollMarginBottom: `${composerHeight + 40}px` } : undefined}
+              />
             </div>
 
             {session.status === 'collecting' && (
-              <form className="butler-bootstrap__composer" onSubmit={handleSend}>
+              <form ref={composerRef} className="butler-bootstrap__composer" onSubmit={handleSend}>
                 <div className="butler-bootstrap__composer-shell">
                   <textarea
                     className="form-input butler-bootstrap__composer-input"
@@ -423,7 +476,7 @@ export function ButlerBootstrapConversation({
                     onChange={event => setInput(event.target.value)}
                     onKeyDown={handleComposerKeyDown}
                     placeholder="直接说就行，告诉我你心里的理想管家。"
-                    rows={3}
+                    rows={2}
                   />
                   <div className="butler-bootstrap__composer-footer">
                     <span className="butler-bootstrap__composer-hint">Enter 发送，Shift + Enter 换行</span>
