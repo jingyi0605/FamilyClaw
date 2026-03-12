@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.modules.agent.models import (
     FamilyAgent,
+    FamilyAgentBootstrapMessage,
+    FamilyAgentBootstrapRequest,
     FamilyAgentBootstrapSession,
     FamilyAgentMemberCognition,
     FamilyAgentRuntimePolicy,
@@ -68,6 +70,62 @@ def get_bootstrap_session(
 def add_bootstrap_session(db: Session, row: FamilyAgentBootstrapSession) -> FamilyAgentBootstrapSession:
     db.add(row)
     return row
+
+
+def claim_next_bootstrap_event_seq(db: Session, *, session: FamilyAgentBootstrapSession) -> int:
+    session.last_event_seq += 1
+    db.flush()
+    return session.last_event_seq
+
+
+def list_bootstrap_messages(
+    db: Session,
+    *,
+    session_id: str,
+) -> Sequence[FamilyAgentBootstrapMessage]:
+    stmt = (
+        select(FamilyAgentBootstrapMessage)
+        .where(FamilyAgentBootstrapMessage.session_id == session_id)
+        .order_by(FamilyAgentBootstrapMessage.seq.asc(), FamilyAgentBootstrapMessage.created_at.asc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def get_next_bootstrap_message_seq(db: Session, *, session_id: str) -> int:
+    stmt = select(func.max(FamilyAgentBootstrapMessage.seq)).where(FamilyAgentBootstrapMessage.session_id == session_id)
+    current = db.scalar(stmt)
+    return (current or 0) + 1
+
+
+def add_bootstrap_message(db: Session, row: FamilyAgentBootstrapMessage) -> FamilyAgentBootstrapMessage:
+    db.add(row)
+    return row
+
+
+def add_bootstrap_request(db: Session, row: FamilyAgentBootstrapRequest) -> FamilyAgentBootstrapRequest:
+    db.add(row)
+    return row
+
+
+def get_bootstrap_request(
+    db: Session,
+    *,
+    request_id: str,
+) -> FamilyAgentBootstrapRequest | None:
+    return db.get(FamilyAgentBootstrapRequest, request_id)
+
+
+def list_bootstrap_requests(
+    db: Session,
+    *,
+    session_id: str,
+) -> Sequence[FamilyAgentBootstrapRequest]:
+    stmt = (
+        select(FamilyAgentBootstrapRequest)
+        .where(FamilyAgentBootstrapRequest.session_id == session_id)
+        .order_by(FamilyAgentBootstrapRequest.started_at.asc(), FamilyAgentBootstrapRequest.id.asc())
+    )
+    return list(db.scalars(stmt).all())
 
 
 def get_latest_bootstrap_session(

@@ -568,8 +568,12 @@ export type ButlerBootstrapDraft = {
 };
 
 export type ButlerBootstrapMessage = {
+  id?: string;
+  request_id?: string | null;
   role: 'assistant' | 'user';
   content: string;
+  seq?: number;
+  created_at?: string;
 };
 
 export type ButlerBootstrapSession = {
@@ -580,6 +584,8 @@ export type ButlerBootstrapSession = {
   assistant_message: string;
   messages: ButlerBootstrapMessage[];
   can_confirm: boolean;
+  current_request_id?: string | null;
+  last_event_seq?: number;
 };
 
 export type ButlerBootstrapMessagePayload = {

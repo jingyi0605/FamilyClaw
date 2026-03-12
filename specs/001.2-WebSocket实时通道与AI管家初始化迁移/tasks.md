@@ -11,8 +11,8 @@
 
 ## 阶段 1：先把实时协议和会话模型定下来
 
-- [ ] 1.1 定义统一实时事件协议
-  - 状态：TODO
+- [x] 1.1 定义统一实时事件协议
+  - 状态：DONE
   - 这一步到底做什么：把实时事件的公共结构、事件类型、字段约束先定死，并明确展示文本和结构化状态必须走两条分开的事件链路。
   - 做完你能看到什么：不再出现每个接口自己拼 `chunk`、`done`、`error` 的临时 JSON，也不会再把 `<config>` 这种控制协议塞进展示文本。
   - 先依赖什么：无
@@ -30,11 +30,15 @@
   - 怎么验证：
     - 后端单元测试
     - 前端类型检查
+  - 本次落地记录：
+    - 已在 `apps/api-server/app/modules/realtime/schemas.py` 落地统一事件模型、事件类型、按类型分发的 payload 校验，以及 `agent.chunk` / `agent.state_patch` 的硬边界校验。
+    - 已在 `apps/user-web/src/lib/realtime.ts` 落地同名事件类型、前端运行时断言和 WebSocket URL 构造，前后端开始共用同一套事件语义。
+    - 已完成验证：`python -m unittest tests.test_realtime_protocol`、`cd apps/user-web && npm.cmd run build`。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 2.1
   - 对应设计：`design.md` §2.1、§2.1.1、§3.3.4
 
-- [ ] 1.2 建立初始化会话、消息、轮次的数据模型
-  - 状态：TODO
+- [x] 1.2 建立初始化会话、消息、轮次的数据模型
+  - 状态：DONE
   - 这一步到底做什么：把“会话”“消息”“请求轮次”从一坨 JSON 里拆出来，让恢复和排查有明确落点。
   - 做完你能看到什么：数据库里能清楚看出这轮是谁发的、回了什么、有没有结束。
   - 先依赖什么：1.1
@@ -52,13 +56,19 @@
   - 怎么验证：
     - `python -m alembic upgrade head`
     - 人工检查表结构和基础读写
+  - 本次落地记录：
+    - 已在 `apps/api-server/app/modules/agent/models.py` 给 `family_agent_bootstrap_sessions` 增加 `current_request_id`、`last_event_seq`，并新增 `family_agent_bootstrap_messages`、`family_agent_bootstrap_requests` 两张表。
+    - 已在 `apps/api-server/migrations/versions/20260312_0015_add_bootstrap_messages_and_requests.py` 落地 Alembic migration，并把旧 `transcript_json` 里的历史消息回填到新消息表，避免已有会话直接丢历史。
+    - 已在 `apps/api-server/app/modules/agent/repository.py` 和 `apps/api-server/app/modules/agent/bootstrap_service.py` 切到新消息表 / 轮次表做基础读写；当前仍保留 `transcript_json` 作为兼容字段，后续阶段再彻底收口。
+    - 已同步补齐前端类型 `apps/user-web/src/lib/types.ts`，避免接口返回扩展字段后前端类型直接炸。
+    - 已完成验证：`python -m alembic upgrade head`、`python -m unittest tests.test_bootstrap_storage tests.test_realtime_protocol`、`python -m py_compile app/modules/agent/bootstrap_service.py app/modules/agent/repository.py app/modules/agent/models.py`、`cd apps/user-web && npm.cmd run build`。
   - 对应需求：`requirements.md` 需求 3、需求 4
   - 对应设计：`design.md` §3.2、§4.1、§4.2
 
 ### 阶段检查
 
-- [ ] 1.3 阶段检查：确认实时基础层已经站稳
-  - 状态：TODO
+- [x] 1.3 阶段检查：确认实时基础层已经站稳
+  - 状态：DONE
   - 这一步到底做什么：检查现在是不是已经有一套明确的协议和数据模型，而不是边写边猜。
   - 做完你能看到什么：后面迁移 AI 对话时不会再把结构问题带进去。
   - 先依赖什么：1.1、1.2
@@ -73,6 +83,11 @@
     2. 已知边界和风险已经写清楚
   - 怎么验证：
     - 人工走查
+  - 本次检查结论：
+    - 事件协议已经落地到前后端两边，`agent.chunk` 和 `agent.state_patch` 的职责边界已经有代码级校验，不再只是文档口头约束。
+    - 会话、消息、请求轮次已经有独立表结构，足够支撑“一轮请求有用户消息、有 assistant 消息、有请求状态”的最小闭环。
+    - 当前阶段还保留 `transcript_json` 兼容字段，原因是 2.2 之前还没把旧 SSE / 旧 LLM 标签链路彻底拔干净；这个风险已知，但不影响 2.1 开始接 WebSocket 入口。
+    - 进入 2.x 前最关键的边界已经明确：WebSocket 只运事件；消息历史和草稿状态以服务端表数据为准；禁止从展示文本反解析状态。
   - 对应需求：`requirements.md` 需求 1、需求 3、需求 4
   - 对应设计：`design.md` §2、§3.2、§4
 
@@ -80,8 +95,8 @@
 
 ## 阶段 2：把后端实时链路迁到 WebSocket
 
-- [ ] 2.1 建 WebSocket 入口和连接管理
-  - 状态：TODO
+- [x] 2.1 建 WebSocket 入口和连接管理
+  - 状态：DONE
   - 这一步到底做什么：把鉴权、会话订阅、事件发送、连接关闭这些公共问题收口到统一管理里。
   - 做完你能看到什么：后端已经能建立稳定的初始化实时连接，不再依赖 SSE 端点。
   - 先依赖什么：1.3
@@ -98,11 +113,17 @@
   - 怎么验证：
     - WebSocket 集成测试
     - 人工握手和连接关闭测试
+  - 本次落地记录：
+    - 已在 `apps/api-server/app/api/v1/endpoints/realtime.py` 新增 `/api/v1/realtime/agent-bootstrap` WebSocket 入口，接入 session cookie 鉴权、家庭访问校验、会话校验、`session.ready` / `session.snapshot` 推送和 `ping` / `pong` 保活。
+    - 已在 `apps/api-server/app/modules/realtime/connection_manager.py` 落地按 `household_id + session_id` 管理连接的最小连接管理器，统一处理注册、移除、单连接发送和后续广播入口。
+    - 已在 `apps/api-server/app/modules/agent/repository.py` 增加 `claim_next_bootstrap_event_seq`，让 WebSocket 发出的事件能复用服务端会话序号，不再让连接层自己瞎编序号。
+    - 已在 `apps/api-server/tests/test_realtime_ws.py` 补了最小 WebSocket 测试，覆盖认证拒绝、成功建连后收到 `session.ready` / `session.snapshot`、未知会话返回 `agent.error`、以及 `ping` / `pong`。
+    - 已完成验证：`python -m unittest tests.test_realtime_ws tests.test_realtime_protocol`、`python -m py_compile app/api/v1/endpoints/realtime.py app/modules/realtime/connection_manager.py app/modules/agent/bootstrap_service.py`、`python -m alembic upgrade head`、`cd apps/user-web && npm.cmd run build`。
   - 对应需求：`requirements.md` 需求 1、需求 4
   - 对应设计：`design.md` §2.2、§3.1、§3.3.1
 
-- [ ] 2.2 重写 AI 管家初始化实时执行器
-  - 状态：TODO
+- [x] 2.2 重写 AI 管家初始化实时执行器
+  - 状态：DONE
   - 这一步到底做什么：把当前初始化对话的“收用户消息、跑 LLM、发 chunk、更新草稿、结束一轮”改成真正按 request_id 驱动，并彻底去掉标签协议。
   - 做完你能看到什么：一轮对话有明确 accepted、chunk、state_patch、done/error，不会再挂着不结束，也不会再在文本里看到 `<config>`、`<json>` 或 `---` 分隔块。
   - 先依赖什么：2.1
@@ -124,6 +145,13 @@
     - 后端集成测试
     - 人工连续发送 20 轮消息检查无挂起
     - 人工检查展示文本中不再出现标签协议
+  - 本次落地记录：
+    - 已在 `apps/api-server/app/modules/agent/bootstrap_service.py` 新增按 `request_id` 驱动的 WebSocket 实时执行入口，完整串起 `user.message.accepted -> agent.chunk -> agent.state_patch -> agent.done/error`，并把轮次状态、消息落库和快照更新收回服务端处理。
+    - 已在 `apps/api-server/app/api/v1/endpoints/realtime.py` 接入 `user.message` 客户端事件，WebSocket 现在不再只是能连上，而是能真正驱动一轮初始化对话。
+    - 已在 `apps/api-server/app/modules/llm_task/definitions.py` 去掉 `butler_bootstrap` 的 `<config>` / `---` 标签协议，展示文本改成纯自然语言；结构化状态改走单独的 `butler_bootstrap_extract` 二次提取调用，符合“供应商不支持结构化输出时单独提取”的 spec 要求。
+    - 已在 `apps/api-server/app/modules/realtime/schemas.py` 补了 `user.message` 客户端事件校验，强制要求 `request_id` 和纯文本 payload，避免前端乱发无效包。
+    - 已在 `apps/api-server/tests/test_realtime_ws.py` 补了完整轮次测试，覆盖 `accepted/chunk/state_patch/done` 事件顺序和消息/请求落库结果；并继续保留协议与存储测试 `tests.test_realtime_protocol`、`tests.test_bootstrap_storage`。
+    - 已完成验证：`python -m unittest tests.test_realtime_ws tests.test_realtime_protocol tests.test_bootstrap_storage`、`python -m py_compile app/modules/llm_task/definitions.py app/modules/agent/bootstrap_service.py app/api/v1/endpoints/realtime.py app/modules/realtime/schemas.py`、`python -m alembic upgrade head`、`cd apps/user-web && npm.cmd run build`。
   - 对应需求：`requirements.md` 需求 2、需求 2.1、需求 3
   - 对应设计：`design.md` §2.1.1、§2.3.2、§3.3.5、§4.2、§5.3、§6.1、§6.3、§6.4
 

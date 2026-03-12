@@ -1,6 +1,8 @@
 from app.modules.account.models import Account, AccountMemberBinding, AccountSession
 from app.modules.agent.models import (
     FamilyAgent,
+    FamilyAgentBootstrapMessage,
+    FamilyAgentBootstrapRequest,
     FamilyAgentBootstrapSession,
     FamilyAgentMemberCognition,
     FamilyAgentRuntimePolicy,
@@ -27,6 +29,8 @@ __all__ = [
     "AccountMemberBinding",
     "AccountSession",
     "FamilyAgent",
+    "FamilyAgentBootstrapMessage",
+    "FamilyAgentBootstrapRequest",
     "FamilyAgentBootstrapSession",
     "FamilyAgentMemberCognition",
     "FamilyAgentRuntimePolicy",

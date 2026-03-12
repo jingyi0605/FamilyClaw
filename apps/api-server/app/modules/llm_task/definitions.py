@@ -126,23 +126,39 @@ register(
 ## 对话规则
 1. 用温暖、自然的方式与用户对话，保持简洁
 2. 每次只问一个问题，2-3 轮对话内完成收集
-3. **回复格式要求**：
-   - 先输出你的对话内容（这是用户会直接看到的）
-   - 对话结束后，单独一行输出 "---"
-   - 然后在最后输出配置块（这部分会被系统解析，不会显示给用户）：
-
-<config>
-{output_format}
-</config>
-
-注意：即使只收集到部分信息，也要输出 config 块，未收集的字段留空即可。只有当所有字段都有值时，is_complete 才设为 true。
+3. 只输出用户会直接看到的自然中文回复，不要输出 JSON、标签、分隔线、配置块或任何给程序看的隐藏协议。
+4. 如果信息还没收齐，就继续问下一个最关键的问题；如果已经基本收齐，就用一句自然的话提醒用户可以确认或补充修改。
 
 ## 已收集的管家信息
 {collected_info}""",
         user_prompt="{user_message}",
-        output_model=ButlerBootstrapOutput,
         temperature=0.7,
         max_tokens=512,
+    )
+)
+
+
+register(
+    LlmTaskDef(
+        task_type="butler_bootstrap_extract",
+        system_prompt="""你是结构化提取器。请根据这轮初始化对话内容，提取 AI 管家的结构化状态。
+
+输出规则：
+1. 只输出一个 JSON 对象
+2. 不要输出解释、标签、代码块或分隔线
+3. 未确认的字段用空字符串或空数组
+4. personality_traits 只保留简洁中文标签，去重后最多 5 个
+
+输出字段：
+{output_format}""",
+        user_prompt="""当前草稿：{collected_info}
+用户本轮输入：{user_message}
+AI 本轮回复：{assistant_message}
+
+请提取最新草稿。""",
+        output_model=ButlerBootstrapOutput,
+        temperature=0.1,
+        max_tokens=256,
     )
 )
 

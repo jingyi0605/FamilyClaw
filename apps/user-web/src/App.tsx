@@ -2,6 +2,7 @@
  * App 路由配置
  * ============================================================ */
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { useI18n } from './i18n';
 import { AppLayout } from './layouts/AppLayout';
 import { SetupGuard } from './layouts/SetupGuard';
 import { HouseholdProvider } from './state/household';
@@ -27,67 +28,62 @@ function AuthenticatedUserApp() {
   return (
     <HouseholdProvider>
       <SetupProvider>
-    <Routes>
-      <Route
-        path="/setup"
-        element={(
-          <SetupGuard mode="setup">
-            <SetupWizardPage />
-          </SetupGuard>
-        )}
-      />
-
-      <Route element={<AppLayout />}>
-        {/* 首页 */}
-        <Route
-          path="/"
-          element={(
-            <SetupGuard mode="protected">
-              <HomePage />
-            </SetupGuard>
-          )}
-        />
-
-        {/* 家庭 */}
-        <Route path="/family" element={<FamilyLayout />}>
-          <Route index element={<FamilyOverview />} />
-          <Route path="rooms" element={<FamilyRooms />} />
-          <Route path="members" element={<FamilyMembers />} />
-          <Route path="relationships" element={<FamilyRelationships />} />
-        </Route>
-
-        {/* 对话 */}
-        <Route
-          path="/conversation"
-          element={(
-            <SetupGuard mode="protected">
-              <AssistantPage />
-            </SetupGuard>
-          )}
-        />
-        <Route path="/assistant" element={<Navigate to="/conversation" replace />} />
-
-        {/* 记忆 */}
-        <Route path="/memories" element={<MemoriesPage />} />
-
-        {/* 设置 */}
-        <Route path="/settings" element={<SettingsLayout />}>
-          <Route path="appearance" element={<SettingsAppearance />} />
+        <Routes>
           <Route
-            path="ai"
+            path="/setup"
             element={(
-              <SetupGuard mode="protected">
-                <SettingsAi />
+              <SetupGuard mode="setup">
+                <SetupWizardPage />
               </SetupGuard>
             )}
           />
-          <Route path="language" element={<SettingsLanguage />} />
-          <Route path="notifications" element={<SettingsNotifications />} />
-          <Route path="accessibility" element={<SettingsAccessibility />} />
-          <Route path="integrations" element={<SettingsIntegrations />} />
-        </Route>
-      </Route>
-    </Routes>
+
+          <Route element={<AppLayout />}>
+            <Route
+              path="/"
+              element={(
+                <SetupGuard mode="protected">
+                  <HomePage />
+                </SetupGuard>
+              )}
+            />
+
+            <Route path="/family" element={<FamilyLayout />}>
+              <Route index element={<FamilyOverview />} />
+              <Route path="rooms" element={<FamilyRooms />} />
+              <Route path="members" element={<FamilyMembers />} />
+              <Route path="relationships" element={<FamilyRelationships />} />
+            </Route>
+
+            <Route
+              path="/conversation"
+              element={(
+                <SetupGuard mode="protected">
+                  <AssistantPage />
+                </SetupGuard>
+              )}
+            />
+            <Route path="/assistant" element={<Navigate to="/conversation" replace />} />
+
+            <Route path="/memories" element={<MemoriesPage />} />
+
+            <Route path="/settings" element={<SettingsLayout />}>
+              <Route path="appearance" element={<SettingsAppearance />} />
+              <Route
+                path="ai"
+                element={(
+                  <SetupGuard mode="protected">
+                    <SettingsAi />
+                  </SetupGuard>
+                )}
+              />
+              <Route path="language" element={<SettingsLanguage />} />
+              <Route path="notifications" element={<SettingsNotifications />} />
+              <Route path="accessibility" element={<SettingsAccessibility />} />
+              <Route path="integrations" element={<SettingsIntegrations />} />
+            </Route>
+          </Route>
+        </Routes>
       </SetupProvider>
     </HouseholdProvider>
   );
@@ -95,9 +91,10 @@ function AuthenticatedUserApp() {
 
 export default function App() {
   const { actor, authLoading } = useAuthContext();
+  const { t } = useI18n();
 
   if (authLoading) {
-    return <div className="auth-screen__loading">正在确认登录状态...</div>;
+    return <div className="auth-screen__loading">{t('auth.loading')}</div>;
   }
 
   if (!actor || !actor.authenticated) {

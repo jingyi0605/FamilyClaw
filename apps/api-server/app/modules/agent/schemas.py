@@ -110,14 +110,25 @@ class ButlerBootstrapDraft(BaseModel):
     personality_traits: list[str] = Field(default_factory=list, max_length=20)
 
 
+class ButlerBootstrapMessageRead(BaseModel):
+    id: str = Field(min_length=1)
+    request_id: str | None = None
+    role: Literal["assistant", "user"]
+    content: str = Field(min_length=1)
+    seq: int = Field(ge=1)
+    created_at: str = Field(min_length=1)
+
+
 class ButlerBootstrapSessionRead(BaseModel):
     session_id: str = Field(min_length=1)
     status: ButlerBootstrapStatus
     pending_field: ButlerBootstrapField | None = None
     draft: ButlerBootstrapDraft
     assistant_message: str = Field(min_length=1)
-    messages: list[dict[str, str]] = Field(default_factory=list)
+    messages: list[ButlerBootstrapMessageRead] = Field(default_factory=list)
     can_confirm: bool = False
+    current_request_id: str | None = None
+    last_event_seq: int = Field(default=0, ge=0)
 
 
 class ButlerBootstrapMessageCreate(BaseModel):

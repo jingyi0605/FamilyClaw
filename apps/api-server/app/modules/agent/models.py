@@ -130,6 +130,50 @@ class FamilyAgentBootstrapSession(Base):
     pending_field: Mapped[str | None] = mapped_column(String(50), nullable=True)
     draft_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     transcript_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    current_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_event_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
     completed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class FamilyAgentBootstrapMessage(Base):
+    __tablename__ = "family_agent_bootstrap_messages"
+    __table_args__ = (
+        UniqueConstraint("session_id", "seq", name="uq_family_agent_bootstrap_messages_session_seq"),
+        Index("idx_family_agent_bootstrap_messages_session_id", "session_id"),
+        Index("idx_family_agent_bootstrap_messages_request_id", "request_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("family_agent_bootstrap_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+
+
+class FamilyAgentBootstrapRequest(Base):
+    __tablename__ = "family_agent_bootstrap_requests"
+    __table_args__ = (
+        Index("idx_family_agent_bootstrap_requests_session_id", "session_id"),
+        Index("idx_family_agent_bootstrap_requests_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("family_agent_bootstrap_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    user_message_id: Mapped[str] = mapped_column(Text, nullable=False)
+    assistant_message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    finished_at: Mapped[str | None] = mapped_column(Text, nullable=True)

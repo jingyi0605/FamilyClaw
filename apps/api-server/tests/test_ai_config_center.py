@@ -148,6 +148,7 @@ class AiConfigCenterTests(unittest.TestCase):
                 provider_code="family-chatgpt-main",
                 display_name="家庭主模型",
                 transport_type="openai_compatible",
+                api_family="openai_chat_completions",
                 base_url="https://api.openai.com/v1",
                 api_version=None,
                 secret_ref="OPENAI_API_KEY",
@@ -212,6 +213,7 @@ class AiConfigCenterTests(unittest.TestCase):
                 provider_code="bootstrap-chatgpt-main",
                 display_name="Bootstrap 模型",
                 transport_type="openai_compatible",
+                api_family="openai_chat_completions",
                 base_url="https://api.openai.com/v1",
                 api_version=None,
                 secret_ref="OPENAI_API_KEY",
@@ -304,6 +306,7 @@ class AiConfigCenterTests(unittest.TestCase):
         created = confirm_butler_bootstrap_session(
             self.db,
             household_id=household.id,
+            session_id=session.session_id,
             payload=ButlerBootstrapConfirm(draft=session.draft, created_by="setup-wizard"),
         )
         self.db.commit()
@@ -314,6 +317,15 @@ class AiConfigCenterTests(unittest.TestCase):
         assert created.soul is not None
         self.assertEqual("负责家庭问答、提醒和成员关怀", created.soul.role_summary)
         self.assertEqual(["家庭问答", "提醒复盘", "成员关怀"], created.soul.service_focus)
+
+        message_rows = agent_repository.list_bootstrap_messages(self.db, session_id=session.session_id)
+        request_rows = agent_repository.list_bootstrap_requests(self.db, session_id=session.session_id)
+
+        self.assertGreaterEqual(len(message_rows), 3)
+        self.assertEqual([index + 1 for index in range(len(message_rows))], [item.seq for item in message_rows])
+        self.assertEqual(5, len(request_rows))
+        self.assertTrue(all(item.status == "succeeded" for item in request_rows))
+        self.assertTrue(all(item.user_message_id for item in request_rows))
 
     def test_butler_bootstrap_requires_provider_first(self) -> None:
         household = create_household(
