@@ -1,5 +1,6 @@
 from collections import defaultdict
 from typing import Any
+from typing import cast
 
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
@@ -14,6 +15,7 @@ from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember,
 from app.modules.memory.schemas import (
     EventRecordCreate,
     EventRecordRead,
+    MemoryEventProcessingStatus,
     MemoryCardCorrectionPayload,
     MemoryCardManualCreate,
     MemoryCardMemberRead,
@@ -21,10 +23,13 @@ from app.modules.memory.schemas import (
     MemoryCardRevisionListResponse,
     MemoryCardRevisionRead,
     MemoryDebugOverviewRead,
+    MemoryStatus,
+    MemoryType,
+    MemoryVisibility,
 )
 from app.modules.room.models import Room
 
-VALID_MEMORY_TYPES = {"fact", "event", "preference", "relation", "growth"}
+VALID_MEMORY_TYPES = {"fact", "event", "preference", "relation", "growth", "observation"}
 VALID_MEMORY_STATUS = {"active", "pending_review", "invalidated", "deleted"}
 VALID_MEMORY_VISIBILITY = {"public", "family", "private", "sensitive"}
 SUPPORTED_EVENT_MEMORY_TYPES = {
@@ -122,7 +127,7 @@ def _to_event_record_read(row: EventRecord) -> EventRecordRead:
         room_id=row.room_id,
         payload=load_json(row.payload_json),
         dedupe_key=row.dedupe_key,
-        processing_status=row.processing_status,
+        processing_status=cast(MemoryEventProcessingStatus, row.processing_status),
         generate_memory_card=row.generate_memory_card,
         failure_reason=row.failure_reason,
         occurred_at=row.occurred_at,
@@ -147,17 +152,19 @@ def _build_card_reads(db: Session, rows: list[MemoryCard]) -> list[MemoryCardRea
         MemoryCardRead(
             id=row.id,
             household_id=row.household_id,
-            memory_type=row.memory_type,
+            memory_type=cast(MemoryType, row.memory_type),
             title=row.title,
             summary=row.summary,
             normalized_text=row.normalized_text,
             content=load_json(row.content_json),
-            status=row.status,
-            visibility=row.visibility,
+            status=cast(MemoryStatus, row.status),
+            visibility=cast(MemoryVisibility, row.visibility),
             importance=row.importance,
             confidence=row.confidence,
             subject_member_id=row.subject_member_id,
             source_event_id=row.source_event_id,
+            source_plugin_id=row.source_plugin_id,
+            source_raw_record_id=row.source_raw_record_id,
             dedupe_key=row.dedupe_key,
             effective_at=row.effective_at,
             last_observed_at=row.last_observed_at,
@@ -294,7 +301,8 @@ def _derive_event_candidate(event: EventRecord) -> dict[str, Any] | None:
             summary_parts.append(payload["note"])
         summary = "；".join(part.strip() for part in summary_parts if part.strip()) or f"来自事件 {event.event_type}"
 
-    related_members = payload.get("related_members") if isinstance(payload.get("related_members"), list) else []
+    raw_related_members = payload.get("related_members")
+    related_members = raw_related_members if isinstance(raw_related_members, list) else []
     normalized_related_members: list[dict[str, str]] = []
     for item in related_members:
         if not isinstance(item, dict):
@@ -367,6 +375,17 @@ def _upsert_memory_card(
         if source_event is None or source_event.household_id != household_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source event not found")
 
+    source_plugin_id = candidate.get("source_plugin_id")
+    if source_plugin_id is not None and (not isinstance(source_plugin_id, str) or not source_plugin_id.strip()):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source plugin id invalid")
+
+    source_raw_record_id = candidate.get("source_raw_record_id")
+    if isinstance(source_raw_record_id, str) and source_raw_record_id:
+        from app.modules.plugin.models import PluginRawRecord
+        source_raw_record = db.get(PluginRawRecord, source_raw_record_id)
+        if source_raw_record is None or source_raw_record.household_id != household_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source raw record not found")
+
     dedupe_key = candidate.get("dedupe_key")
     existing = None
     if isinstance(dedupe_key, str) and dedupe_key:
@@ -400,6 +419,8 @@ def _upsert_memory_card(
             confidence=candidate["confidence"],
             subject_member_id=subject_member_id,
             source_event_id=source_event_id,
+            source_plugin_id=source_plugin_id.strip() if isinstance(source_plugin_id, str) else None,
+            source_raw_record_id=source_raw_record_id,
             dedupe_key=dedupe_key,
             effective_at=candidate.get("effective_at"),
             last_observed_at=candidate.get("last_observed_at"),
@@ -448,6 +469,8 @@ def _upsert_memory_card(
     existing.confidence = candidate["confidence"]
     existing.subject_member_id = subject_member_id
     existing.source_event_id = source_event_id or existing.source_event_id
+    existing.source_plugin_id = source_plugin_id.strip() if isinstance(source_plugin_id, str) else existing.source_plugin_id
+    existing.source_raw_record_id = source_raw_record_id or existing.source_raw_record_id
     existing.dedupe_key = dedupe_key
     existing.effective_at = candidate.get("effective_at") or existing.effective_at
     existing.last_observed_at = candidate.get("last_observed_at") or existing.last_observed_at
@@ -589,6 +612,8 @@ def create_manual_memory_card(
         "confidence": payload.confidence,
         "subject_member_id": payload.subject_member_id,
         "source_event_id": payload.source_event_id,
+        "source_plugin_id": payload.source_plugin_id,
+        "source_raw_record_id": payload.source_raw_record_id,
         "dedupe_key": payload.dedupe_key,
         "effective_at": payload.effective_at,
         "last_observed_at": payload.last_observed_at,
@@ -726,3 +751,74 @@ def ingest_event_record_best_effort(db: Session, payload: EventRecordCreate) -> 
             return event.id, event.processing_status
     except Exception:
         return None, None
+
+
+def upsert_plugin_observation_memory(
+    db: Session,
+    *,
+    household_id: str,
+    subject_member_id: str | None,
+    source_plugin_id: str,
+    source_raw_record_id: str,
+    observation: dict[str, Any],
+) -> MemoryCardRead:
+    subject_type = observation.get("subject_type") if isinstance(observation.get("subject_type"), str) else None
+    subject_id = observation.get("subject_id") if isinstance(observation.get("subject_id"), str) else None
+    category = observation.get("category") if isinstance(observation.get("category"), str) else None
+    observed_at = observation.get("observed_at") if isinstance(observation.get("observed_at"), str) else utc_now_iso()
+    unit = observation.get("unit") if isinstance(observation.get("unit"), str) else None
+    value = observation.get("value")
+
+    if not category or value is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="observation 缺少 category 或 value")
+
+    summary_parts = [category]
+    if value is not None:
+        summary_parts.append(str(value))
+    if unit:
+        summary_parts.append(unit)
+    if subject_id:
+        summary_parts.append(subject_id)
+
+    title_subject = subject_id or subject_member_id or "未指定对象"
+    title = f"{title_subject} 的 {category} 观察"
+    summary = " / ".join(summary_parts)
+    dedupe_key = f"plugin-raw-observation:{source_raw_record_id}"
+
+    candidate = {
+        "household_id": household_id,
+        "memory_type": "observation",
+        "title": title,
+        "summary": summary,
+        "content": {
+            "type": "Observation",
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "category": category,
+            "value": value,
+            "unit": unit,
+            "observed_at": observed_at,
+            "source_plugin_id": source_plugin_id,
+            "source_record_ref": source_raw_record_id,
+        },
+        "status": "active",
+        "visibility": "family",
+        "importance": 3,
+        "confidence": 0.9,
+        "subject_member_id": subject_member_id,
+        "source_event_id": None,
+        "source_plugin_id": source_plugin_id,
+        "source_raw_record_id": source_raw_record_id,
+        "dedupe_key": dedupe_key,
+        "effective_at": observed_at,
+        "last_observed_at": observed_at,
+        "related_members": [],
+        "reason": "由插件原始记录转换为 Observation",
+    }
+    return _upsert_memory_card(
+        db,
+        candidate=candidate,
+        actor_type="plugin",
+        actor_id=source_plugin_id,
+        revision_action="update_observed",
+    )

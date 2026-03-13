@@ -77,6 +77,8 @@ class MemoryCard(Base):
         nullable=True,
         index=True,
     )
+    source_plugin_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_raw_record_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     dedupe_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     effective_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_observed_at: Mapped[str | None] = mapped_column(Text, nullable=True)

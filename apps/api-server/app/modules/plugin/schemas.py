@@ -159,6 +159,7 @@ class PluginExecutionRequest(BaseModel):
 
 
 class PluginExecutionResult(BaseModel):
+    run_id: str
     plugin_id: str
     plugin_type: PluginType
     success: bool
@@ -168,3 +169,53 @@ class PluginExecutionResult(BaseModel):
     output: Any | None = None
     error_code: str | None = None
     error_message: str | None = None
+
+
+class PluginRawRecordCreate(BaseModel):
+    household_id: str = Field(min_length=1)
+    plugin_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    trigger: str = Field(min_length=1, max_length=50)
+    record_type: str = Field(min_length=1, max_length=50)
+    source_ref: str | None = Field(default=None, max_length=255)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    captured_at: str | None = None
+
+
+class PluginRawRecordRead(BaseModel):
+    id: str
+    household_id: str
+    plugin_id: str
+    run_id: str
+    trigger: str
+    record_type: str
+    source_ref: str | None = None
+    payload: Any | None = None
+    captured_at: str
+    created_at: str
+
+
+PluginRunStatus = Literal["running", "success", "failed"]
+
+
+class PluginRunRead(BaseModel):
+    id: str
+    household_id: str
+    plugin_id: str
+    plugin_type: PluginType
+    trigger: str
+    status: PluginRunStatus
+    raw_record_count: int
+    memory_card_count: int
+    error_code: str | None = None
+    error_message: str | None = None
+    started_at: str
+    finished_at: str | None = None
+    created_at: str
+
+
+class PluginSyncPipelineResult(BaseModel):
+    run: PluginRunRead
+    execution: PluginExecutionResult
+    raw_records: list[PluginRawRecordRead] = Field(default_factory=list)
+    written_memory_cards: list[dict[str, Any]] = Field(default_factory=list)

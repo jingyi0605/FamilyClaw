@@ -3,7 +3,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 MemoryEventProcessingStatus = Literal["pending", "processed", "failed", "ignored"]
-MemoryType = Literal["fact", "event", "preference", "relation", "growth"]
+MemoryType = Literal["fact", "event", "preference", "relation", "growth", "observation"]
 MemoryStatus = Literal["active", "pending_review", "invalidated", "deleted"]
 MemoryVisibility = Literal["public", "family", "private", "sensitive"]
 MemoryRelationRole = Literal["subject", "participant", "mentioned", "owner"]
@@ -71,6 +71,8 @@ class MemoryCardManualCreate(BaseModel):
     confidence: float = Field(default=0.85, ge=0, le=1)
     subject_member_id: str | None = Field(default=None, min_length=1)
     source_event_id: str | None = Field(default=None, min_length=1)
+    source_plugin_id: str | None = Field(default=None, min_length=1, max_length=64)
+    source_raw_record_id: str | None = Field(default=None, min_length=1)
     dedupe_key: str | None = Field(default=None, min_length=1, max_length=255)
     effective_at: str | None = None
     last_observed_at: str | None = None
@@ -119,6 +121,8 @@ class MemoryCardRead(BaseModel):
     confidence: float
     subject_member_id: str | None
     source_event_id: str | None
+    source_plugin_id: str | None
+    source_raw_record_id: str | None
     dedupe_key: str | None
     effective_at: str | None
     last_observed_at: str | None

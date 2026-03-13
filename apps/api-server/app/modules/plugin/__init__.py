@@ -3,8 +3,12 @@ from app.modules.plugin.schemas import (
     PluginExecutionResult,
     PluginManifest,
     PluginManifestEntrypoints,
+    PluginRawRecordCreate,
+    PluginRawRecordRead,
+    PluginRunRead,
     PluginRegistryItem,
     PluginRegistrySnapshot,
+    PluginSyncPipelineResult,
 )
 from app.modules.plugin.service import (
     PluginExecutionError,
@@ -13,8 +17,12 @@ from app.modules.plugin.service import (
     discover_plugin_manifests,
     enable_plugin,
     execute_plugin,
+    ingest_plugin_raw_records_to_memory,
     load_plugin_manifest,
+    list_saved_plugin_raw_records,
     list_registered_plugins,
+    run_plugin_sync_pipeline,
+    save_plugin_raw_records,
 )
 
 __all__ = [
@@ -22,14 +30,22 @@ __all__ = [
     "PluginExecutionResult",
     "PluginManifest",
     "PluginManifestEntrypoints",
+    "PluginRawRecordCreate",
+    "PluginRawRecordRead",
+    "PluginRunRead",
     "PluginRegistryItem",
     "PluginRegistrySnapshot",
+    "PluginSyncPipelineResult",
     "PluginExecutionError",
     "PluginManifestValidationError",
     "disable_plugin",
     "discover_plugin_manifests",
     "enable_plugin",
     "execute_plugin",
+    "ingest_plugin_raw_records_to_memory",
     "load_plugin_manifest",
+    "list_saved_plugin_raw_records",
     "list_registered_plugins",
+    "run_plugin_sync_pipeline",
+    "save_plugin_raw_records",
 ]
