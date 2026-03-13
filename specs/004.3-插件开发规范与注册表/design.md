@@ -96,6 +96,70 @@
 | `description` | string | 否 | 插件用途说明 | 推荐填写 |
 | `vendor` | object | 否 | 插件维护者信息 | 推荐填写 |
 
+第一版先按现有后端实现收口，规则不要写虚的：
+
+- 必填字段最小集合是：`id`、`name`、`version`、`types`、`permissions`、`risk_level`、`triggers`、`entrypoints`
+- 当前运行时真实支持的类型只有 4 个：`connector`、`memory-ingestor`、`action`、`agent-skill`
+- `id` 必须和代码仓库、注册表里的 `plugin_id` 保持稳定一致，不能今天一个名字、明天一个名字
+- `permissions` 和 `triggers` 允许为空数组，但不能有空字符串，也不能有重复值
+- `entrypoints` 必须是“Python 模块路径 + 函数名”格式，比如 `app.plugins.builtin.health_basic.connector.sync`
+- `entrypoints` 的 key 对外允许写成连字符或下划线，运行时会统一归一成下划线；但文档里推荐统一写成下划线，减少歧义
+- 你声明了什么 `types`，`entrypoints` 就必须提供对应入口；少一个都不算合法插件
+
+建议把字段再拆开理解：
+
+| 字段 | 细化说明 | 为什么这样定 |
+| --- | --- | --- |
+| `id` | 全局稳定 id，建议直接用于目录名、仓库名和注册表索引名 | 避免一个插件在不同地方出现多个身份 |
+| `name` | 给人看的展示名 | 市场、后台、日志都要看得懂 |
+| `version` | 推荐 semver，例如 `0.1.0` | 后续排错、升级、审核都要用 |
+| `types` | 一个插件可以声明多个类型，但必须真有对应入口 | 现在仓库已经支持多能力插件 |
+| `permissions` | 只声明当前插件运行需要的最小权限 | 避免插件一上来就要一堆大权限 |
+| `risk_level` | 只允许 `low`、`medium`、`high` | 现有权限和人工确认逻辑已经按这三档工作 |
+| `triggers` | 第一版推荐 `manual`、`schedule`、`agent` 这类可控触发 | 先把触发面收窄，别引入不可控自动执行 |
+| `entrypoints` | 每个能力类型都要能定位到真实函数 | 运行时最终就是按这里 import 并调用 |
+| `description` | 推荐写一段人能看懂的话 | 方便审核和市场展示，不要求运行时依赖 |
+| `vendor` | 推荐写维护者名字、组织名、联系方式 | 方便追责、沟通和后续下架处理 |
+
+#### 3.2.1.1 插件目录结构约定
+
+当前仓库没有做动态脚手架，所以目录规范必须尽量贴近现有插件代码。
+
+第一版最小目录建议如下：
+
+```text
+<plugin_dir>/
+  manifest.json
+  __init__.py
+  connector.py            # 可选，声明 connector 时需要
+  ingestor.py             # 可选，声明 memory-ingestor 时需要
+  executor.py             # 可选，声明 action 时需要
+  skill.py                # 可选，声明 agent-skill 时需要
+  README.md               # 推荐，写插件用途、配置和验证方式
+  tests/                  # 推荐，放最小自测
+```
+
+这里有 3 个硬规则：
+
+1. 一插件一目录，不要多个插件共用一个 `manifest.json`
+2. `manifest.json` 必须放在插件目录根下，不能藏在子目录里
+3. 入口代码文件名可以不是上面这几个，但 `entrypoints` 必须能指向真实可 import 的模块函数
+
+#### 3.2.1.2 类型和入口对照
+
+| 插件类型 | 推荐模块文件 | 推荐函数名 | 现有用途 |
+| --- | --- | --- | --- |
+| `connector` | `connector.py` | `sync` | 从外部系统读原始数据 |
+| `memory-ingestor` | `ingestor.py` | `transform` | 把原始记录转成标准记忆 |
+| `action` | `executor.py` | `run` | 执行外部动作 |
+| `agent-skill` | `skill.py` | `run` | 给 Agent 暴露受控能力 |
+
+这些文件名和函数名是推荐，不是死规定；但如果你偏离这个习惯，必须保证：
+
+- `entrypoints` 仍然清楚
+- 审核的人不用翻半天才能知道入口在哪
+- 不会破坏现有运行时 import 方式
+
 #### 3.2.2 `registry-plugin.json`
 
 | 字段 | 类型 | 必填 | 说明 | 约束 |
