@@ -15,17 +15,19 @@ def transform(payload: dict | None = None) -> list[dict]:
         payload_data = record.get("payload", {})
         if not isinstance(payload_data, dict):
             payload_data = {}
+        subject_id = source_ref or payload_data.get("member_id") or payload_data.get("external_member_id")
+        observed_at = record.get("captured_at")
 
         if record_type == "steps":
             observations.append(
                 {
                     "type": "Observation",
                     "subject_type": "Person",
-                    "subject_id": source_ref or payload_data.get("member_id"),
+                    "subject_id": subject_id,
                     "category": "daily_steps",
                     "value": payload_data.get("value"),
                     "unit": payload_data.get("unit", "count"),
-                    "observed_at": record.get("captured_at"),
+                    "observed_at": observed_at,
                     "source_plugin_id": "health-basic-reader",
                     "source_record_ref": raw_id,
                 }
@@ -35,11 +37,25 @@ def transform(payload: dict | None = None) -> list[dict]:
                 {
                     "type": "Observation",
                     "subject_type": "Person",
-                    "subject_id": source_ref or payload_data.get("member_id"),
+                    "subject_id": subject_id,
                     "category": "sleep_duration",
                     "value": payload_data.get("value"),
                     "unit": payload_data.get("unit", "hour"),
-                    "observed_at": record.get("captured_at"),
+                    "observed_at": observed_at,
+                    "source_plugin_id": "health-basic-reader",
+                    "source_record_ref": raw_id,
+                }
+            )
+        elif record_type == "heart_rate":
+            observations.append(
+                {
+                    "type": "Observation",
+                    "subject_type": "Person",
+                    "subject_id": subject_id,
+                    "category": "heart_rate",
+                    "value": payload_data.get("value"),
+                    "unit": payload_data.get("unit", "bpm"),
+                    "observed_at": observed_at,
                     "source_plugin_id": "health-basic-reader",
                     "source_record_ref": raw_id,
                 }
