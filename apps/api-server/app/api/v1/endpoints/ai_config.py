@@ -64,6 +64,12 @@ from app.modules.ai_gateway.service import (
 )
 from app.modules.audit.service import write_audit_log
 from app.modules.plugin import AgentPluginInvokeRequest, AgentPluginInvokeResult, invoke_agent_plugin
+from app.modules.plugin import (
+    AgentActionPluginInvokeRequest,
+    AgentActionPluginInvokeResult,
+    confirm_agent_action_plugin,
+    invoke_agent_action_plugin,
+)
 
 
 router = APIRouter(prefix="/ai-config", tags=["ai-config"])
@@ -562,6 +568,63 @@ def run_agent_plugin_memory_checkpoint_endpoint(
     except AgentNotFoundError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.post("/{household_id}/agents/{agent_id}/action-plugin-invocations", response_model=AgentActionPluginInvokeResult)
+def invoke_agent_action_plugin_endpoint(
+    household_id: str,
+    agent_id: str,
+    payload: AgentActionPluginInvokeRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> AgentActionPluginInvokeResult:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = invoke_agent_action_plugin(
+            db,
+            household_id=household_id,
+            agent_id=agent_id,
+            request=payload,
+            actor=actor,
+        )
+        db.commit()
+        return result
+    except AgentNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.post("/{household_id}/agents/{agent_id}/action-plugin-confirmations/{confirmation_request_id}/confirm", response_model=AgentActionPluginInvokeResult)
+def confirm_agent_action_plugin_endpoint(
+    household_id: str,
+    agent_id: str,
+    confirmation_request_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> AgentActionPluginInvokeResult:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = confirm_agent_action_plugin(
+            db,
+            household_id=household_id,
+            agent_id=agent_id,
+            confirmation_request_id=confirmation_request_id,
+            actor=actor,
+        )
+        db.commit()
+        return result
+    except AgentNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc

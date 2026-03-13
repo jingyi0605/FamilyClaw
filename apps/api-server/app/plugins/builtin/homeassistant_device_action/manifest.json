@@ -1,0 +1,14 @@
+{
+  "id": "homeassistant-device-action",
+  "name": "HomeAssistant 设备动作插件",
+  "version": "0.1.0",
+  "types": ["action"],
+  "permissions": [
+    "device.control"
+  ],
+  "risk_level": "medium",
+  "triggers": ["manual"],
+  "entrypoints": {
+    "action": "app.plugins.builtin.homeassistant_device_action.executor.run"
+  }
+}

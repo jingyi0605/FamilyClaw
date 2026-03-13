@@ -244,3 +244,38 @@ class AgentPluginInvokeResult(BaseModel):
     output: Any | None = None
     error_code: str | None = None
     error_message: str | None = None
+
+
+class AgentActionPluginInvokeRequest(BaseModel):
+    plugin_id: str = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    trigger: str = Field(default="agent-action", min_length=1, max_length=50)
+
+
+class AgentActionPluginInvokeResult(BaseModel):
+    agent_id: str
+    agent_name: str
+    plugin_id: str
+    plugin_type: Literal["action"] = "action"
+    run_id: str
+    success: bool
+    trigger: str
+    risk_level: RiskLevel
+    authorization_status: Literal["allowed", "denied", "confirmation_required"]
+    confirmation_request_id: str | None = None
+    started_at: str
+    finished_at: str
+    output: Any | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class AgentActionConfirmationRead(BaseModel):
+    confirmation_request_id: str
+    household_id: str
+    plugin_id: str
+    risk_level: RiskLevel
+    status: Literal["pending", "confirmed", "consumed"]
+    trigger: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str

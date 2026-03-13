@@ -1,0 +1,14 @@
+{
+  "id": "homeassistant-door-lock-action",
+  "name": "HomeAssistant 门锁动作插件",
+  "version": "0.1.0",
+  "types": ["action"],
+  "permissions": [
+    "device.control"
+  ],
+  "risk_level": "high",
+  "triggers": ["manual"],
+  "entrypoints": {
+    "action": "app.plugins.builtin.homeassistant_door_lock_action.executor.run"
+  }
+}
