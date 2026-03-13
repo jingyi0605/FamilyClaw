@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
-from importlib import import_module
 from pathlib import Path
+from typing import cast
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -13,23 +14,38 @@ from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.audit.service import write_audit_log
 from app.modules.household.service import get_household_or_404
 from app.modules.memory.service import upsert_plugin_observation_memory
+from app.modules.plugin.executors import get_executor, load_entrypoint_callable, resolve_execution_backend
 from app.modules.plugin import repository
-from app.modules.plugin.models import PluginRawRecord, PluginRun
+from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun
+from app.modules.plugin.runner_errors import PLUGIN_EXECUTION_FAILED, PluginRunnerError
 from app.modules.plugin.schemas import PluginManifest
-from app.modules.plugin.schemas import PluginType
 from app.modules.plugin.schemas import PluginRegistryItem, PluginRegistrySnapshot, PluginRegistryStateEntry
 from app.modules.plugin.schemas import (
+    PluginExecutionBackend,
     PluginExecutionRequest,
     PluginExecutionResult,
+    PluginMountCreate,
+    PluginMountRead,
+    PluginMountUpdate,
     PluginRawRecordCreate,
     PluginRawRecordRead,
+    PluginRunnerConfig,
     PluginRunRead,
+    PluginSourceType,
     PluginSyncPipelineResult,
 )
 
 
 BUILTIN_PLUGIN_ROOT = BASE_DIR / "app" / "plugins" / "builtin"
 REGISTRY_STATE_PATH = BASE_DIR / "data" / "plugin_registry_state.json"
+
+
+@dataclass(slots=True)
+class PluginExecutionContext:
+    root_dir: str | Path | None
+    source_type: PluginSourceType
+    execution_backend: PluginExecutionBackend | None
+    runner_config: PluginRunnerConfig | None
 
 
 class PluginManifestValidationError(ValueError):
@@ -96,6 +112,186 @@ def list_registered_plugins(
     )
 
 
+def _build_runner_config_from_mount(mount: PluginMount) -> PluginRunnerConfig:
+    return PluginRunnerConfig(
+        plugin_root=mount.plugin_root,
+        python_path=mount.python_path,
+        working_dir=mount.working_dir,
+        timeout_seconds=mount.timeout_seconds,
+        stdout_limit_bytes=mount.stdout_limit_bytes,
+        stderr_limit_bytes=mount.stderr_limit_bytes,
+    )
+
+
+def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest) -> PluginRegistryItem:
+    return PluginRegistryItem.model_validate(
+        {
+            "id": manifest.id,
+            "name": manifest.name,
+            "version": manifest.version,
+            "types": manifest.types,
+            "permissions": manifest.permissions,
+            "risk_level": manifest.risk_level,
+            "triggers": manifest.triggers,
+            "enabled": mount.enabled,
+            "manifest_path": mount.manifest_path,
+            "entrypoints": manifest.entrypoints.model_dump(mode="json"),
+            "source_type": mount.source_type,
+            "execution_backend": mount.execution_backend,
+            "runner_config": _build_runner_config_from_mount(mount).model_dump(mode="json"),
+        }
+    )
+
+
+def _to_plugin_mount_read(row: PluginMount, *, manifest: PluginManifest | None = None) -> PluginMountRead:
+    current_manifest = manifest or load_plugin_manifest(row.manifest_path)
+    return PluginMountRead.model_validate(
+        {
+            "id": row.id,
+            "household_id": row.household_id,
+            "plugin_id": row.plugin_id,
+            "name": current_manifest.name,
+            "version": current_manifest.version,
+            "types": current_manifest.types,
+            "permissions": current_manifest.permissions,
+            "risk_level": current_manifest.risk_level,
+            "triggers": current_manifest.triggers,
+            "entrypoints": current_manifest.entrypoints.model_dump(mode="json"),
+            "source_type": row.source_type,
+            "execution_backend": row.execution_backend,
+            "manifest_path": row.manifest_path,
+            "plugin_root": row.plugin_root,
+            "python_path": row.python_path,
+            "working_dir": row.working_dir,
+            "timeout_seconds": row.timeout_seconds,
+            "stdout_limit_bytes": row.stdout_limit_bytes,
+            "stderr_limit_bytes": row.stderr_limit_bytes,
+            "enabled": row.enabled,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+    )
+
+
+def _resolve_manifest_path(plugin_root: str, manifest_path: str | None) -> Path:
+    if manifest_path is not None and manifest_path.strip():
+        path = Path(manifest_path.strip()).resolve()
+    else:
+        path = (Path(plugin_root).resolve() / "manifest.json").resolve()
+    return path
+
+
+def _normalize_optional_path(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return str(Path(normalized).resolve())
+
+
+def list_registered_plugins_for_household(
+    db: Session,
+    *,
+    household_id: str,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> PluginRegistrySnapshot:
+    builtin_snapshot = list_registered_plugins(root_dir=root_dir, state_file=state_file)
+    builtin_by_id = {item.id: item for item in builtin_snapshot.items}
+
+    mounted_items: list[PluginRegistryItem] = []
+    for mount in repository.list_plugin_mounts(db, household_id=household_id):
+        manifest = load_plugin_manifest(mount.manifest_path)
+        if manifest.id in builtin_by_id:
+            raise PluginManifestValidationError(f"第三方插件 id 与内置插件冲突: {manifest.id}")
+        mounted_items.append(_build_registry_item_from_mount(mount, manifest))
+
+    return PluginRegistrySnapshot(items=[*builtin_snapshot.items, *mounted_items])
+
+
+def list_plugin_mounts(db: Session, *, household_id: str) -> list[PluginMountRead]:
+    get_household_or_404(db, household_id)
+    return [_to_plugin_mount_read(row) for row in repository.list_plugin_mounts(db, household_id=household_id)]
+
+
+def register_plugin_mount(
+    db: Session,
+    *,
+    household_id: str,
+    payload: PluginMountCreate,
+) -> PluginMountRead:
+    get_household_or_404(db, household_id)
+    manifest_path = _resolve_manifest_path(payload.plugin_root, payload.manifest_path)
+    manifest = load_plugin_manifest(manifest_path)
+    if manifest.id in {item.id for item in list_registered_plugins().items}:
+        raise PluginManifestValidationError(f"插件 id 与内置插件冲突: {manifest.id}")
+    if repository.get_plugin_mount(db, household_id=household_id, plugin_id=manifest.id) is not None:
+        raise PluginManifestValidationError(f"插件已经挂载: {manifest.id}")
+
+    row = PluginMount(
+        id=new_uuid(),
+        household_id=household_id,
+        plugin_id=manifest.id,
+        source_type=payload.source_type,
+        execution_backend=payload.execution_backend,
+        manifest_path=str(manifest_path),
+        plugin_root=str(Path(payload.plugin_root).resolve()),
+        python_path=payload.python_path.strip(),
+        working_dir=_normalize_optional_path(payload.working_dir),
+        timeout_seconds=payload.timeout_seconds,
+        stdout_limit_bytes=payload.stdout_limit_bytes,
+        stderr_limit_bytes=payload.stderr_limit_bytes,
+        enabled=payload.enabled,
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
+    )
+    repository.add_plugin_mount(db, row)
+    db.flush()
+    return _to_plugin_mount_read(row, manifest=manifest)
+
+
+def update_plugin_mount(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    payload: PluginMountUpdate,
+) -> PluginMountRead:
+    get_household_or_404(db, household_id)
+    row = repository.get_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
+    if row is None:
+        raise PluginManifestValidationError(f"插件挂载不存在: {plugin_id}")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "source_type" in data and data["source_type"] is not None:
+        row.source_type = cast(PluginSourceType, data["source_type"])
+    if "python_path" in data and data["python_path"] is not None:
+        row.python_path = data["python_path"].strip()
+    if "working_dir" in data:
+        row.working_dir = _normalize_optional_path(data["working_dir"])
+    if "timeout_seconds" in data and data["timeout_seconds"] is not None:
+        row.timeout_seconds = data["timeout_seconds"]
+    if "stdout_limit_bytes" in data and data["stdout_limit_bytes"] is not None:
+        row.stdout_limit_bytes = data["stdout_limit_bytes"]
+    if "stderr_limit_bytes" in data and data["stderr_limit_bytes"] is not None:
+        row.stderr_limit_bytes = data["stderr_limit_bytes"]
+    if "enabled" in data and data["enabled"] is not None:
+        row.enabled = data["enabled"]
+    row.updated_at = utc_now_iso()
+    db.flush()
+    return _to_plugin_mount_read(row)
+
+
+def delete_plugin_mount(db: Session, *, household_id: str, plugin_id: str) -> None:
+    get_household_or_404(db, household_id)
+    row = repository.get_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
+    if row is None:
+        raise PluginManifestValidationError(f"插件挂载不存在: {plugin_id}")
+    repository.delete_plugin_mount(db, row)
+    db.flush()
+
+
 def _discover_manifest_entries(root_dir: str | Path) -> list[tuple[Path, PluginManifest]]:
     root = Path(root_dir)
     if not root.exists():
@@ -114,6 +310,69 @@ def _discover_manifest_entries(root_dir: str | Path) -> list[tuple[Path, PluginM
     return manifest_entries
 
 
+def resolve_plugin_execution_context(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    root_dir: str | Path | None = None,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
+) -> PluginExecutionContext:
+    if root_dir is not None or execution_backend is not None or runner_config is not None or source_type != "builtin":
+        return PluginExecutionContext(
+            root_dir=root_dir,
+            source_type=source_type,
+            execution_backend=execution_backend,
+            runner_config=runner_config,
+        )
+
+    mount = repository.get_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
+    if mount is None:
+        return PluginExecutionContext(
+            root_dir=root_dir,
+            source_type="builtin",
+            execution_backend=None,
+            runner_config=None,
+        )
+
+    return PluginExecutionContext(
+        root_dir=mount.plugin_root,
+        source_type=cast(PluginSourceType, mount.source_type),
+        execution_backend=cast(PluginExecutionBackend, mount.execution_backend),
+        runner_config=_build_runner_config_from_mount(mount),
+    )
+
+
+def execute_household_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    request: PluginExecutionRequest,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
+) -> PluginExecutionResult:
+    context = resolve_plugin_execution_context(
+        db,
+        household_id=household_id,
+        plugin_id=request.plugin_id,
+        root_dir=root_dir,
+        source_type=source_type,
+        execution_backend=execution_backend,
+        runner_config=runner_config,
+    )
+    return execute_plugin(
+        request,
+        root_dir=context.root_dir,
+        state_file=state_file,
+        source_type=context.source_type,
+        execution_backend=context.execution_backend,
+        runner_config=context.runner_config,
+    )
 def enable_plugin(
     plugin_id: str,
     *,
@@ -137,6 +396,9 @@ def execute_plugin(
     *,
     root_dir: str | Path | None = None,
     state_file: str | Path | None = None,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
 ) -> PluginExecutionResult:
     started_at = utc_now_iso()
     run_id = new_uuid()
@@ -145,32 +407,56 @@ def execute_plugin(
         plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
         if plugin is None:
             raise PluginExecutionError(f"插件不存在: {request.plugin_id}")
+        plugin = PluginRegistryItem.model_validate(
+            {
+                **plugin.model_dump(mode="json"),
+                "source_type": source_type,
+                "execution_backend": execution_backend,
+                "runner_config": runner_config.model_dump(mode="json") if runner_config is not None else None,
+            }
+        )
         if not plugin.enabled:
             raise PluginExecutionError(f"插件已禁用: {request.plugin_id}")
 
-        entrypoint_path = _get_entrypoint_path(plugin, request.plugin_type)
-        handler = _load_entrypoint_callable(entrypoint_path)
-        output = handler(request.payload)
+        execution_backend = resolve_execution_backend(plugin, request)
+        executor = get_executor(execution_backend)
+        output = executor.execute(plugin, request)
         return PluginExecutionResult(
             run_id=run_id,
             plugin_id=request.plugin_id,
             plugin_type=request.plugin_type,
+            execution_backend=execution_backend,
             success=True,
             trigger=request.trigger,
             started_at=started_at,
             finished_at=utc_now_iso(),
             output=output,
         )
+    except PluginRunnerError as exc:
+        execution_backend = request.execution_backend or "subprocess_runner"
+        return PluginExecutionResult(
+            run_id=run_id,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            execution_backend=execution_backend,
+            success=False,
+            trigger=request.trigger,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            error_code=exc.error_code,
+            error_message=str(exc),
+        )
     except (PluginManifestValidationError, PluginExecutionError, ModuleNotFoundError, AttributeError, TypeError, ValueError) as exc:
         return PluginExecutionResult(
             run_id=run_id,
             plugin_id=request.plugin_id,
             plugin_type=request.plugin_type,
+            execution_backend=request.execution_backend,
             success=False,
             trigger=request.trigger,
             started_at=started_at,
             finished_at=utc_now_iso(),
-            error_code="plugin_execution_failed",
+            error_code=PLUGIN_EXECUTION_FAILED,
             error_message=str(exc),
         )
     except Exception as exc:
@@ -178,11 +464,12 @@ def execute_plugin(
             run_id=run_id,
             plugin_id=request.plugin_id,
             plugin_type=request.plugin_type,
+            execution_backend=request.execution_backend,
             success=False,
             trigger=request.trigger,
             started_at=started_at,
             finished_at=utc_now_iso(),
-            error_code="plugin_execution_failed",
+            error_code=PLUGIN_EXECUTION_FAILED,
             error_message=str(exc),
         )
 
@@ -252,8 +539,20 @@ def ingest_plugin_raw_records_to_memory(
     run_id: str,
     root_dir: str | Path | None = None,
     state_file: str | Path | None = None,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
 ) -> list[dict]:
     get_household_or_404(db, household_id)
+    context = resolve_plugin_execution_context(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        root_dir=root_dir,
+        source_type=source_type,
+        execution_backend=execution_backend,
+        runner_config=runner_config,
+    )
     raw_records = list_saved_plugin_raw_records(
         db,
         household_id=household_id,
@@ -263,20 +562,39 @@ def ingest_plugin_raw_records_to_memory(
     if not raw_records:
         return []
 
-    registry = list_registered_plugins(root_dir=root_dir, state_file=state_file)
+    registry = list_registered_plugins(root_dir=context.root_dir, state_file=state_file)
     plugin = next((item for item in registry.items if item.id == plugin_id), None)
     if plugin is None:
         raise PluginExecutionError(f"插件不存在: {plugin_id}")
+    plugin = PluginRegistryItem.model_validate(
+        {
+            **plugin.model_dump(mode="json"),
+            "source_type": context.source_type,
+            "execution_backend": context.execution_backend,
+            "runner_config": context.runner_config.model_dump(mode="json") if context.runner_config is not None else None,
+        }
+    )
     if not plugin.enabled:
         raise PluginExecutionError(f"插件已禁用: {plugin_id}")
 
-    entrypoint_path = _get_entrypoint_path(plugin, "memory-ingestor")
-    handler = _load_entrypoint_callable(entrypoint_path)
-    observation_candidates = handler(
-        {
+    memory_request = PluginExecutionRequest(
+        plugin_id=plugin_id,
+        plugin_type="memory-ingestor",
+        payload={
             "records": [item.model_dump(mode="json") for item in raw_records],
-        }
+        },
+        trigger="memory-ingestion",
+        execution_backend=context.execution_backend,
     )
+    backend = resolve_execution_backend(plugin, memory_request)
+    executor = get_executor(backend)
+    try:
+        observation_candidates = executor.execute(plugin, memory_request)
+    except PluginRunnerError as exc:
+        raise PluginExecutionError(str(exc)) from exc
+    except (ModuleNotFoundError, AttributeError, TypeError, ValueError) as exc:
+        raise PluginExecutionError(str(exc)) from exc
+
     if not isinstance(observation_candidates, list):
         raise PluginExecutionError("memory-ingestor 必须返回列表")
 
@@ -308,10 +626,29 @@ def run_plugin_sync_pipeline(
     actor: ActorContext | None = None,
     root_dir: str | Path | None = None,
     state_file: str | Path | None = None,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
 ) -> PluginSyncPipelineResult:
     get_household_or_404(db, household_id)
+    context = resolve_plugin_execution_context(
+        db,
+        household_id=household_id,
+        plugin_id=request.plugin_id,
+        root_dir=root_dir,
+        source_type=source_type,
+        execution_backend=execution_backend,
+        runner_config=runner_config,
+    )
 
-    execution = execute_plugin(request, root_dir=root_dir, state_file=state_file)
+    execution = execute_plugin(
+        request,
+        root_dir=context.root_dir,
+        state_file=state_file,
+        source_type=context.source_type,
+        execution_backend=context.execution_backend,
+        runner_config=context.runner_config,
+    )
     run_row = PluginRun(
         id=execution.run_id,
         household_id=household_id,
@@ -346,8 +683,11 @@ def run_plugin_sync_pipeline(
             household_id=household_id,
             plugin_id=execution.plugin_id,
             run_id=execution.run_id,
-            root_dir=root_dir,
+            root_dir=context.root_dir,
             state_file=state_file,
+            source_type=context.source_type,
+            execution_backend=context.execution_backend,
+            runner_config=context.runner_config,
         )
         run_row.status = "success"
         run_row.raw_record_count = len(raw_records)
@@ -413,33 +753,6 @@ def set_plugin_enabled(
     return target.model_copy(update={"enabled": enabled})
 
 
-def _get_entrypoint_path(plugin: PluginRegistryItem, plugin_type: PluginType) -> str:
-    if plugin_type == "connector":
-        entrypoint_key = "connector"
-    elif plugin_type == "memory-ingestor":
-        entrypoint_key = "memory_ingestor"
-    elif plugin_type == "action":
-        entrypoint_key = "action"
-    else:
-        entrypoint_key = "agent_skill"
-    entrypoint_path = getattr(plugin.entrypoints, entrypoint_key)
-    if entrypoint_path is None:
-        raise PluginExecutionError(f"插件 {plugin.id} 没有声明 {plugin_type} 入口")
-    return entrypoint_path
-
-
-def _load_entrypoint_callable(entrypoint_path: str):
-    module_path, separator, function_name = entrypoint_path.rpartition(".")
-    if not separator or not module_path or not function_name:
-        raise PluginExecutionError(f"插件入口格式不合法: {entrypoint_path}")
-
-    module = import_module(module_path)
-    handler = getattr(module, function_name)
-    if not callable(handler):
-        raise PluginExecutionError(f"插件入口不可调用: {entrypoint_path}")
-    return handler
-
-
 def _to_plugin_raw_record_read(row: PluginRawRecord) -> PluginRawRecordRead:
     return PluginRawRecordRead(
         id=row.id,
@@ -456,20 +769,22 @@ def _to_plugin_raw_record_read(row: PluginRawRecord) -> PluginRawRecordRead:
 
 
 def _to_plugin_run_read(row: PluginRun) -> PluginRunRead:
-    return PluginRunRead(
-        id=row.id,
-        household_id=row.household_id,
-        plugin_id=row.plugin_id,
-        plugin_type=row.plugin_type,
-        trigger=row.trigger,
-        status=row.status,
-        raw_record_count=row.raw_record_count,
-        memory_card_count=row.memory_card_count,
-        error_code=row.error_code,
-        error_message=row.error_message,
-        started_at=row.started_at,
-        finished_at=row.finished_at,
-        created_at=row.created_at,
+    return PluginRunRead.model_validate(
+        {
+            "id": row.id,
+            "household_id": row.household_id,
+            "plugin_id": row.plugin_id,
+            "plugin_type": row.plugin_type,
+            "trigger": row.trigger,
+            "status": row.status,
+            "raw_record_count": row.raw_record_count,
+            "memory_card_count": row.memory_card_count,
+            "error_code": row.error_code,
+            "error_message": row.error_message,
+            "started_at": row.started_at,
+            "finished_at": row.finished_at,
+            "created_at": row.created_at,
+        }
     )
 
 

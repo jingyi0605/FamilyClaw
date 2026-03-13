@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,7 @@ from app.modules.member.service import create_member
 from app.modules.plugin.models import PluginRawRecord
 from app.modules.plugin.models import PluginRun
 from app.modules.plugin.schemas import PluginExecutionRequest
+from app.modules.plugin.schemas import PluginRunnerConfig
 from app.modules.plugin.service import run_plugin_sync_pipeline
 
 
@@ -304,6 +306,113 @@ class PluginRunTests(unittest.TestCase):
         audit_rows = list(self.db.scalars(audit_stmt).all())
         self.assertEqual(2, len(audit_rows))
         self.assertTrue(all(row.result == "success" for row in audit_rows))
+
+    def test_run_plugin_sync_pipeline_supports_third_party_runner_for_memory_ingestor(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Third Party Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        member = create_member(
+            self.db,
+            MemberCreate(household_id=household.id, name="妈妈", role="adult"),
+        )
+        self.db.flush()
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            plugin_root = self._create_third_party_sync_plugin(Path(tempdir), plugin_id="third-party-sync-plugin")
+
+            result = run_plugin_sync_pipeline(
+                self.db,
+                household_id=household.id,
+                request=PluginExecutionRequest(
+                    plugin_id="third-party-sync-plugin",
+                    plugin_type="connector",
+                    payload={"member_id": member.id},
+                ),
+                root_dir=plugin_root,
+                source_type="third_party",
+                runner_config=PluginRunnerConfig(
+                    plugin_root=str(plugin_root),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_root),
+                    timeout_seconds=10,
+                ),
+            )
+            self.db.commit()
+
+        self.assertEqual("success", result.run.status)
+        self.assertEqual("subprocess_runner", result.execution.execution_backend)
+        self.assertEqual(1, result.run.raw_record_count)
+        self.assertEqual(1, result.run.memory_card_count)
+        self.assertEqual(1, len(result.written_memory_cards))
+        self.assertEqual("daily_steps", result.written_memory_cards[0]["content"]["category"])
+
+    def _create_third_party_sync_plugin(self, root: Path, *, plugin_id: str) -> Path:
+        plugin_root = root / plugin_id
+        package_dir = plugin_root / "plugin"
+        package_dir.mkdir(parents=True)
+        (package_dir / "__init__.py").write_text("", encoding="utf-8")
+        (plugin_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "id": plugin_id,
+                    "name": "第三方同步插件",
+                    "version": "0.1.0",
+                    "types": ["connector", "memory-ingestor"],
+                    "permissions": ["health.read", "memory.write.observation"],
+                    "risk_level": "low",
+                    "triggers": ["manual"],
+                    "entrypoints": {
+                        "connector": "plugin.connector.sync",
+                        "memory_ingestor": "plugin.ingestor.transform",
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (package_dir / "connector.py").write_text(
+            "def sync(payload=None):\n"
+            "    data = payload or {}\n"
+            "    member_id = data.get('member_id', 'member-001')\n"
+            "    return {\n"
+            "        'source': 'third-party-sync-plugin',\n"
+            "        'records': [\n"
+            "            {\n"
+            "                'record_type': 'steps',\n"
+            "                'member_id': member_id,\n"
+            "                'value': 1234,\n"
+            "                'unit': 'count',\n"
+            "                'captured_at': '2026-03-13T07:30:00Z'\n"
+            "            }\n"
+            "        ]\n"
+            "    }\n",
+            encoding="utf-8",
+        )
+        (package_dir / "ingestor.py").write_text(
+            "def transform(payload=None):\n"
+            "    data = payload or {}\n"
+            "    records = data.get('records', [])\n"
+            "    if not records:\n"
+            "        return []\n"
+            "    record = records[0]\n"
+            "    source = record.get('payload', {})\n"
+            "    return [\n"
+            "        {\n"
+            "            'type': 'Observation',\n"
+            "            'subject_type': 'Person',\n"
+            "            'subject_id': source.get('member_id'),\n"
+            "            'category': 'daily_steps',\n"
+            "            'value': source.get('value'),\n"
+            "            'unit': source.get('unit'),\n"
+            "            'observed_at': record.get('captured_at'),\n"
+            "            'source_plugin_id': 'third-party-sync-plugin',\n"
+            "            'source_record_ref': record.get('id')\n"
+            "        }\n"
+            "    ]\n",
+            encoding="utf-8",
+        )
+        return plugin_root
 
 
 if __name__ == "__main__":

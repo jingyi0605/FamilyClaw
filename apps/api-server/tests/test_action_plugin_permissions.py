@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,7 +21,13 @@ from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
 from app.modules.permission.schemas import MemberPermissionReplaceRequest, MemberPermissionRule
 from app.modules.permission.service import replace_member_permissions
-from app.modules.plugin import AgentActionPluginInvokeRequest, confirm_agent_action_plugin, invoke_agent_action_plugin
+from app.modules.plugin import (
+    AgentActionPluginInvokeRequest,
+    PluginMountCreate,
+    confirm_agent_action_plugin,
+    invoke_agent_action_plugin,
+    register_plugin_mount,
+)
 
 
 class ActionPluginPermissionTests(unittest.TestCase):
@@ -238,6 +245,62 @@ class ActionPluginPermissionTests(unittest.TestCase):
         assert confirm_audit is not None
         self.assertEqual("success", confirm_audit.result)
 
+    def test_third_party_action_plugin_runs_with_runner_mount(self) -> None:
+        household, member, agent, actor = self._create_agent_context("Third Party Action Home", "妈妈", "外部执行器")
+        replace_member_permissions(
+            self.db,
+            member_id=member.id,
+            payload=MemberPermissionReplaceRequest(
+                rules=[
+                    MemberPermissionRule(
+                        resource_type="device",
+                        resource_scope="family",
+                        action="execute",
+                        effect="allow",
+                    )
+                ]
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            plugin_root = self._create_third_party_action_plugin(Path(tempdir), plugin_id="third-party-device-action")
+            register_plugin_mount(
+                self.db,
+                household_id=household.id,
+                payload=PluginMountCreate(
+                    source_type="third_party",
+                    plugin_root=str(plugin_root),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_root),
+                    timeout_seconds=10,
+                ),
+            )
+            self.db.flush()
+
+            result = invoke_agent_action_plugin(
+                self.db,
+                household_id=household.id,
+                agent_id=agent.id,
+                request=AgentActionPluginInvokeRequest(
+                    plugin_id="third-party-device-action",
+                    payload={
+                        "resource_type": "device",
+                        "resource_scope": "family",
+                        "target_ref": "living-room-light",
+                        "action_name": "turn_on",
+                    },
+                ),
+                actor=actor,
+            )
+            self.db.commit()
+
+        self.assertTrue(result.success)
+        self.assertEqual("allowed", result.authorization_status)
+        self.assertIsInstance(result.output, dict)
+        assert isinstance(result.output, dict)
+        self.assertEqual("third-party-device-action", result.output["source"])
+        self.assertTrue(result.output["executed"])
+
     def _create_agent_context(self, household_name: str, member_name: str, agent_name: str):
         household = create_household(
             self.db,
@@ -272,6 +335,40 @@ class ActionPluginPermissionTests(unittest.TestCase):
         )
         self.db.flush()
         return household, member, agent, actor
+
+    def _create_third_party_action_plugin(self, root: Path, *, plugin_id: str) -> Path:
+        plugin_root = root / plugin_id
+        package_dir = plugin_root / "plugin"
+        package_dir.mkdir(parents=True)
+        (package_dir / "__init__.py").write_text("", encoding="utf-8")
+        (plugin_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "id": plugin_id,
+                    "name": "第三方动作插件",
+                    "version": "0.1.0",
+                    "types": ["action"],
+                    "permissions": ["device.control"],
+                    "risk_level": "medium",
+                    "triggers": ["agent-action"],
+                    "entrypoints": {"action": "plugin.executor.run"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (package_dir / "executor.py").write_text(
+            "def run(payload=None):\n"
+            "    data = payload or {}\n"
+            "    return {\n"
+            "        'source': 'third-party-device-action',\n"
+            "        'executed': True,\n"
+            "        'action_name': data.get('action_name'),\n"
+            "        'received_payload': data\n"
+            "    }\n",
+            encoding="utf-8",
+        )
+        return plugin_root
 
 
 if __name__ == "__main__":

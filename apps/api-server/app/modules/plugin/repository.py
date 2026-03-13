@@ -1,7 +1,7 @@
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
-from app.modules.plugin.models import PluginRawRecord, PluginRun
+from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun
 
 
 def add_plugin_run(db: Session, row: PluginRun) -> PluginRun:
@@ -55,3 +55,29 @@ def list_plugin_raw_records(
         .order_by(PluginRawRecord.captured_at.desc(), PluginRawRecord.id.desc())
     )
     return list(db.scalars(stmt).all())
+
+
+def add_plugin_mount(db: Session, row: PluginMount) -> PluginMount:
+    db.add(row)
+    return row
+
+
+def get_plugin_mount(db: Session, *, household_id: str, plugin_id: str) -> PluginMount | None:
+    stmt: Select[tuple[PluginMount]] = select(PluginMount).where(
+        PluginMount.household_id == household_id,
+        PluginMount.plugin_id == plugin_id,
+    )
+    return db.scalar(stmt)
+
+
+def list_plugin_mounts(db: Session, *, household_id: str) -> list[PluginMount]:
+    stmt: Select[tuple[PluginMount]] = (
+        select(PluginMount)
+        .where(PluginMount.household_id == household_id)
+        .order_by(PluginMount.created_at.desc(), PluginMount.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def delete_plugin_mount(db: Session, row: PluginMount) -> None:
+    db.delete(row)

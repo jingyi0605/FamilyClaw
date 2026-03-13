@@ -67,8 +67,17 @@ from app.modules.plugin import AgentPluginInvokeRequest, AgentPluginInvokeResult
 from app.modules.plugin import (
     AgentActionPluginInvokeRequest,
     AgentActionPluginInvokeResult,
+    PluginMountCreate,
+    PluginMountRead,
+    PluginMountUpdate,
+    PluginRegistrySnapshot,
     confirm_agent_action_plugin,
+    delete_plugin_mount,
     invoke_agent_action_plugin,
+    list_plugin_mounts,
+    list_registered_plugins_for_household,
+    register_plugin_mount,
+    update_plugin_mount,
 )
 
 
@@ -500,6 +509,116 @@ def upsert_ai_config_agent_runtime_policy_endpoint(
         db.rollback()
         raise translate_integrity_error(exc) from exc
     return result
+
+
+@router.get("/{household_id}/plugins", response_model=PluginRegistrySnapshot)
+def list_household_plugins_endpoint(
+    household_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> PluginRegistrySnapshot:
+    ensure_actor_can_access_household(actor, household_id)
+    return list_registered_plugins_for_household(db, household_id=household_id)
+
+
+@router.get("/{household_id}/plugin-mounts", response_model=list[PluginMountRead])
+def list_household_plugin_mounts_endpoint(
+    household_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> list[PluginMountRead]:
+    ensure_actor_can_access_household(actor, household_id)
+    return list_plugin_mounts(db, household_id=household_id)
+
+
+@router.post("/{household_id}/plugin-mounts", response_model=PluginMountRead, status_code=status.HTTP_201_CREATED)
+def register_household_plugin_mount_endpoint(
+    household_id: str,
+    payload: PluginMountCreate,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> PluginMountRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = register_plugin_mount(db, household_id=household_id, payload=payload)
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="plugin.mount.register",
+            target_type="plugin_mount",
+            target_id=result.id,
+            result="success",
+            details=payload.model_dump(mode="json"),
+        )
+        db.commit()
+        return result
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.put("/{household_id}/plugin-mounts/{plugin_id}", response_model=PluginMountRead)
+def update_household_plugin_mount_endpoint(
+    household_id: str,
+    plugin_id: str,
+    payload: PluginMountUpdate,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> PluginMountRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = update_plugin_mount(db, household_id=household_id, plugin_id=plugin_id, payload=payload)
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="plugin.mount.update",
+            target_type="plugin_mount",
+            target_id=result.id,
+            result="success",
+            details=payload.model_dump(mode="json", exclude_unset=True),
+        )
+        db.commit()
+        return result
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.delete("/{household_id}/plugin-mounts/{plugin_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_household_plugin_mount_endpoint(
+    household_id: str,
+    plugin_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> None:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        delete_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="plugin.mount.delete",
+            target_type="plugin_mount",
+            target_id=plugin_id,
+            result="success",
+            details={"plugin_id": plugin_id},
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
 
 
 @router.post("/{household_id}/agents/{agent_id}/plugin-invocations", response_model=AgentPluginInvokeResult)

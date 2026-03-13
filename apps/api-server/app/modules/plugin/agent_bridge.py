@@ -23,7 +23,7 @@ from app.modules.plugin.schemas import (
     PluginExecutionResult,
     PluginRegistryItem,
 )
-from app.modules.plugin.service import execute_plugin, list_registered_plugins
+from app.modules.plugin.service import execute_household_plugin, list_registered_plugins_for_household
 
 
 def invoke_agent_plugin(
@@ -40,7 +40,9 @@ def invoke_agent_plugin(
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
 
     execution = _execute_agent_plugin_request(
-        request,
+        db,
+        request=request,
+        household_id=household_id,
         root_dir=root_dir,
         state_file=state_file,
     )
@@ -83,8 +85,10 @@ def invoke_agent_plugin(
 
 
 def _execute_agent_plugin_request(
+    db: Session,
     request: AgentPluginInvokeRequest,
     *,
+    household_id: str,
     root_dir: str | Path | None = None,
     state_file: str | Path | None = None,
 ) -> PluginExecutionResult:
@@ -92,7 +96,12 @@ def _execute_agent_plugin_request(
     run_id = new_uuid()
 
     try:
-        registry = list_registered_plugins(root_dir=root_dir, state_file=state_file)
+        registry = list_registered_plugins_for_household(
+            db,
+            household_id=household_id,
+            root_dir=root_dir,
+            state_file=state_file,
+        )
         plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
         if plugin is None:
             raise ValueError(f"插件不存在: {request.plugin_id}")
@@ -103,8 +112,10 @@ def _execute_agent_plugin_request(
         if request.plugin_type not in {"connector", "agent-skill"}:
             raise ValueError("Agent 统一入口当前只允许 connector 或 agent-skill")
 
-        return execute_plugin(
-            PluginExecutionRequest(
+        return execute_household_plugin(
+            db,
+            household_id=household_id,
+            request=PluginExecutionRequest(
                 plugin_id=request.plugin_id,
                 plugin_type=request.plugin_type,
                 payload=request.payload,
@@ -140,7 +151,12 @@ def invoke_agent_action_plugin(
     get_household_or_404(db, household_id)
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
 
-    registry = list_registered_plugins(root_dir=root_dir, state_file=state_file)
+    registry = list_registered_plugins_for_household(
+        db,
+        household_id=household_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
     plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
     if plugin is not None and plugin.risk_level == "high":
         confirmation = request_agent_action_confirmation(
@@ -255,8 +271,10 @@ def _execute_agent_action_request(
         ):
             raise ValueError("当前成员没有动作执行权限")
 
-        return execute_plugin(
-            PluginExecutionRequest(
+        return execute_household_plugin(
+            db,
+            household_id=household_id,
+            request=PluginExecutionRequest(
                 plugin_id=request.plugin_id,
                 plugin_type="action",
                 payload=request.payload,
@@ -331,7 +349,12 @@ def confirm_agent_action_plugin(
     get_household_or_404(db, household_id)
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
     confirmation = _load_pending_action_confirmation(db, household_id=household_id, confirmation_request_id=confirmation_request_id)
-    registry = list_registered_plugins(root_dir=root_dir, state_file=state_file)
+    registry = list_registered_plugins_for_household(
+        db,
+        household_id=household_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
     plugin = next((item for item in registry.items if item.id == confirmation.plugin_id), None)
 
     request = AgentActionPluginInvokeRequest(

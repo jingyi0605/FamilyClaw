@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 PluginType = Literal["connector", "memory-ingestor", "action", "agent-skill"]
 RiskLevel = Literal["low", "medium", "high"]
+PluginSourceType = Literal["builtin", "official", "third_party"]
+PluginExecutionBackend = Literal["in_process", "subprocess_runner"]
 
 ENTRYPOINT_KEY_BY_TYPE: dict[PluginType, str] = {
     "connector": "connector",
@@ -134,6 +136,15 @@ class PluginRegistryStateEntry(BaseModel):
     updated_at: str | None = None
 
 
+class PluginRunnerConfig(BaseModel):
+    plugin_root: str | None = None
+    python_path: str | None = None
+    working_dir: str | None = None
+    timeout_seconds: int = Field(default=30, ge=1, le=300)
+    stdout_limit_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    stderr_limit_bytes: int = Field(default=65536, ge=1024, le=1048576)
+
+
 class PluginRegistryItem(BaseModel):
     id: str
     name: str
@@ -145,10 +156,65 @@ class PluginRegistryItem(BaseModel):
     enabled: bool
     manifest_path: str
     entrypoints: PluginManifestEntrypoints
+    source_type: PluginSourceType = "builtin"
+    execution_backend: PluginExecutionBackend | None = None
+    runner_config: PluginRunnerConfig | None = None
 
 
 class PluginRegistrySnapshot(BaseModel):
     items: list[PluginRegistryItem] = Field(default_factory=list)
+
+
+class PluginMountBase(BaseModel):
+    source_type: Literal["official", "third_party"] = "third_party"
+    execution_backend: Literal["subprocess_runner"] = "subprocess_runner"
+    plugin_root: str = Field(min_length=1)
+    manifest_path: str | None = None
+    python_path: str = Field(min_length=1)
+    working_dir: str | None = None
+    timeout_seconds: int = Field(default=30, ge=1, le=300)
+    stdout_limit_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    stderr_limit_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    enabled: bool = True
+
+
+class PluginMountCreate(PluginMountBase):
+    pass
+
+
+class PluginMountUpdate(BaseModel):
+    source_type: Literal["official", "third_party"] | None = None
+    python_path: str | None = None
+    working_dir: str | None = None
+    timeout_seconds: int | None = Field(default=None, ge=1, le=300)
+    stdout_limit_bytes: int | None = Field(default=None, ge=1024, le=1048576)
+    stderr_limit_bytes: int | None = Field(default=None, ge=1024, le=1048576)
+    enabled: bool | None = None
+
+
+class PluginMountRead(BaseModel):
+    id: str
+    household_id: str
+    plugin_id: str
+    name: str
+    version: str
+    types: list[PluginType]
+    permissions: list[str]
+    risk_level: RiskLevel
+    triggers: list[str]
+    entrypoints: PluginManifestEntrypoints
+    source_type: Literal["official", "third_party"]
+    execution_backend: Literal["subprocess_runner"] = "subprocess_runner"
+    manifest_path: str
+    plugin_root: str
+    python_path: str
+    working_dir: str | None = None
+    timeout_seconds: int
+    stdout_limit_bytes: int
+    stderr_limit_bytes: int
+    enabled: bool
+    created_at: str
+    updated_at: str
 
 
 class PluginExecutionRequest(BaseModel):
@@ -156,12 +222,14 @@ class PluginExecutionRequest(BaseModel):
     plugin_type: PluginType
     payload: dict[str, Any] = Field(default_factory=dict)
     trigger: str = Field(default="manual", min_length=1, max_length=50)
+    execution_backend: PluginExecutionBackend | None = None
 
 
 class PluginExecutionResult(BaseModel):
     run_id: str
     plugin_id: str
     plugin_type: PluginType
+    execution_backend: PluginExecutionBackend | None = None
     success: bool
     trigger: str
     started_at: str

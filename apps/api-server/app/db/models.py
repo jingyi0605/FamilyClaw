@@ -11,7 +11,13 @@ from app.modules.agent.models import (
 from app.modules.ai_gateway.models import AiCapabilityRoute, AiModelCallLog, AiProviderProfile
 from app.modules.audit.models import AuditLog
 from app.modules.context.models import ContextConfig
-from app.modules.conversation.models import ConversationMemoryCandidate, ConversationMessage, ConversationSession
+from app.modules.conversation.models import (
+    ConversationActionRecord,
+    ConversationDebugLog,
+    ConversationMemoryCandidate,
+    ConversationMessage,
+    ConversationSession,
+)
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.family_qa.models import QaQueryLog
 from app.modules.ha_integration.models import HouseholdHaConfig
@@ -19,7 +25,7 @@ from app.modules.household.models import Household
 from app.modules.member.models import Member, MemberPreference
 from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember, MemoryCardRevision
 from app.modules.permission.models import MemberPermission
-from app.modules.plugin.models import PluginRawRecord, PluginRun
+from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun
 from app.modules.presence.models import MemberPresenceState, PresenceEvent
 from app.modules.reminder.models import ReminderAckEvent, ReminderDeliveryAttempt, ReminderRun, ReminderTask
 from app.modules.relationship.models import MemberRelationship
@@ -45,12 +51,15 @@ __all__ = [
     "ConversationSession",
     "ConversationMessage",
     "ConversationMemoryCandidate",
+    "ConversationActionRecord",
+    "ConversationDebugLog",
     "Device",
     "DeviceBinding",
     "Household",
     "Member",
     "MemberPermission",
     "PluginRawRecord",
+    "PluginMount",
     "PluginRun",
     "MemberPreference",
     "MemoryCard",

@@ -1,7 +1,10 @@
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.modules.plugin.service import (
     PluginManifestValidationError,
@@ -13,6 +16,7 @@ from app.modules.plugin.service import (
     load_plugin_manifest,
 )
 from app.modules.plugin.schemas import PluginExecutionRequest
+from app.modules.plugin.schemas import PluginRunnerConfig
 
 
 class PluginManifestTests(unittest.TestCase):
@@ -108,6 +112,292 @@ class PluginManifestTests(unittest.TestCase):
         assert isinstance(result.output, dict)
         self.assertEqual("health-basic-reader", result.output["source"])
         self.assertEqual("mom", result.output["member_id"])
+
+    def test_execute_plugin_marks_builtin_backend_as_in_process(self) -> None:
+        result = execute_plugin(
+            PluginExecutionRequest(
+                plugin_id="health-basic-reader",
+                plugin_type="connector",
+                payload={"member_id": "mom"},
+            ),
+            root_dir=self.builtin_root,
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual("in_process", result.execution_backend)
+
+    def test_execute_plugin_dispatches_to_subprocess_runner_for_third_party_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            plugin_root = root / "demo_plugin"
+            package_dir = plugin_root / "plugin"
+            package_dir.mkdir(parents=True)
+
+            (plugin_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "demo-third-party-plugin",
+                        "name": "第三方演示插件",
+                        "version": "0.1.0",
+                        "types": ["connector"],
+                        "permissions": ["health.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {
+                            "connector": "plugin.connector.sync"
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (package_dir / "__init__.py").write_text("", encoding="utf-8")
+            (package_dir / "connector.py").write_text(
+                "def sync(payload=None):\n"
+                "    data = payload or {}\n"
+                "    return {\n"
+                "        'source': 'demo-third-party-plugin',\n"
+                "        'mode': 'connector',\n"
+                "        'echo': data,\n"
+                "        'records': []\n"
+                "    }\n",
+                encoding="utf-8",
+            )
+
+            result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="demo-third-party-plugin",
+                    plugin_type="connector",
+                    payload={"member_id": "member-001"},
+                ),
+                root_dir=plugin_root,
+                source_type="third_party",
+                runner_config=PluginRunnerConfig(
+                    plugin_root=str(plugin_root),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_root),
+                    timeout_seconds=10,
+                ),
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual("subprocess_runner", result.execution_backend)
+        self.assertIsInstance(result.output, dict)
+        assert isinstance(result.output, dict)
+        self.assertEqual("demo-third-party-plugin", result.output["source"])
+        self.assertEqual("member-001", result.output["echo"]["member_id"])
+
+    def test_execute_plugin_returns_timeout_error_for_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            plugin_root = self._create_third_party_connector_plugin(Path(tempdir), plugin_id="runner-timeout-plugin")
+
+            with patch("app.modules.plugin.executors.subprocess.run") as mock_run:
+                mock_run.side_effect = subprocess.TimeoutExpired(cmd=[sys.executable], timeout=1)
+
+                result = execute_plugin(
+                    PluginExecutionRequest(
+                        plugin_id="runner-timeout-plugin",
+                        plugin_type="connector",
+                        payload={},
+                    ),
+                    root_dir=plugin_root,
+                    source_type="third_party",
+                    runner_config=PluginRunnerConfig(
+                        plugin_root=str(plugin_root),
+                        python_path=sys.executable,
+                        working_dir=str(plugin_root),
+                        timeout_seconds=1,
+                    ),
+                )
+
+        self.assertFalse(result.success)
+        self.assertEqual("subprocess_runner", result.execution_backend)
+        self.assertEqual("plugin_runner_timeout", result.error_code)
+
+    def test_execute_plugin_returns_invalid_output_error_for_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            plugin_root = self._create_third_party_connector_plugin(Path(tempdir), plugin_id="runner-invalid-json-plugin")
+
+            with patch("app.modules.plugin.executors.subprocess.run") as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess(
+                    args=[sys.executable, "-m", "app.modules.plugin.runner_protocol"],
+                    returncode=0,
+                    stdout="not-json",
+                    stderr="",
+                )
+
+                result = execute_plugin(
+                    PluginExecutionRequest(
+                        plugin_id="runner-invalid-json-plugin",
+                        plugin_type="connector",
+                        payload={},
+                    ),
+                    root_dir=plugin_root,
+                    source_type="third_party",
+                    runner_config=PluginRunnerConfig(
+                        plugin_root=str(plugin_root),
+                        python_path=sys.executable,
+                        working_dir=str(plugin_root),
+                        timeout_seconds=1,
+                    ),
+                )
+
+        self.assertFalse(result.success)
+        self.assertEqual("plugin_runner_invalid_output", result.error_code)
+
+    def test_execute_plugin_returns_dependency_missing_error_for_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            plugin_root = self._create_third_party_connector_plugin(Path(tempdir), plugin_id="runner-missing-dependency-plugin")
+
+            with patch("app.modules.plugin.executors.subprocess.run") as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess(
+                    args=[sys.executable, "-m", "app.modules.plugin.runner_protocol"],
+                    returncode=1,
+                    stdout="",
+                    stderr="ModuleNotFoundError: No module named 'missing_dependency'",
+                )
+
+                result = execute_plugin(
+                    PluginExecutionRequest(
+                        plugin_id="runner-missing-dependency-plugin",
+                        plugin_type="connector",
+                        payload={},
+                    ),
+                    root_dir=plugin_root,
+                    source_type="third_party",
+                    runner_config=PluginRunnerConfig(
+                        plugin_root=str(plugin_root),
+                        python_path=sys.executable,
+                        working_dir=str(plugin_root),
+                        timeout_seconds=1,
+                    ),
+                )
+
+        self.assertFalse(result.success)
+        self.assertEqual("plugin_runner_dependency_missing", result.error_code)
+
+    def test_ingest_plugin_raw_records_to_memory_uses_subprocess_runner_for_third_party_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            plugin_root = self._create_third_party_sync_plugin(Path(tempdir), plugin_id="third-party-sync-plugin")
+
+            connector_result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="third-party-sync-plugin",
+                    plugin_type="connector",
+                    payload={"member_id": "member-001"},
+                ),
+                root_dir=plugin_root,
+                source_type="third_party",
+                runner_config=PluginRunnerConfig(
+                    plugin_root=str(plugin_root),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_root),
+                    timeout_seconds=10,
+                ),
+            )
+
+            self.assertTrue(connector_result.success)
+
+    def _create_third_party_connector_plugin(self, root: Path, *, plugin_id: str) -> Path:
+        return self._create_third_party_plugin(
+            root,
+            plugin_id=plugin_id,
+            connector_body=(
+                "def sync(payload=None):\n"
+                "    data = payload or {}\n"
+                "    return {\n"
+                "        'source': '" + plugin_id + "',\n"
+                "        'mode': 'connector',\n"
+                "        'echo': data,\n"
+                "        'records': []\n"
+                "    }\n"
+            ),
+        )
+
+    def _create_third_party_sync_plugin(self, root: Path, *, plugin_id: str) -> Path:
+        return self._create_third_party_plugin(
+            root,
+            plugin_id=plugin_id,
+            plugin_types=["connector", "memory-ingestor"],
+            entrypoints={
+                "connector": "plugin.connector.sync",
+                "memory_ingestor": "plugin.ingestor.transform",
+            },
+            connector_body=(
+                "def sync(payload=None):\n"
+                "    data = payload or {}\n"
+                "    member_id = data.get('member_id', 'member-001')\n"
+                "    return {\n"
+                "        'source': '" + plugin_id + "',\n"
+                "        'records': [\n"
+                "            {\n"
+                "                'record_type': 'steps',\n"
+                "                'member_id': member_id,\n"
+                "                'value': 42,\n"
+                "                'unit': 'count',\n"
+                "                'captured_at': '2026-03-13T07:30:00Z'\n"
+                "            }\n"
+                "        ]\n"
+                "    }\n"
+            ),
+            ingestor_body=(
+                "def transform(payload=None):\n"
+                "    data = payload or {}\n"
+                "    records = data.get('records', [])\n"
+                "    if not records:\n"
+                "        return []\n"
+                "    record = records[0]\n"
+                "    source = record.get('payload', {})\n"
+                "    return [\n"
+                "        {\n"
+                "            'type': 'Observation',\n"
+                "            'subject_type': 'Person',\n"
+                "            'subject_id': source.get('member_id'),\n"
+                "            'category': 'daily_steps',\n"
+                "            'value': source.get('value'),\n"
+                "            'unit': source.get('unit'),\n"
+                "            'observed_at': record.get('captured_at'),\n"
+                "            'source_plugin_id': '" + plugin_id + "',\n"
+                "            'source_record_ref': record.get('id')\n"
+                "        }\n"
+                "    ]\n"
+            ),
+        )
+
+    def _create_third_party_plugin(
+        self,
+        root: Path,
+        *,
+        plugin_id: str,
+        plugin_types: list[str] | None = None,
+        entrypoints: dict[str, str] | None = None,
+        connector_body: str | None = None,
+        ingestor_body: str | None = None,
+    ) -> Path:
+        plugin_root = root / plugin_id
+        package_dir = plugin_root / "plugin"
+        package_dir.mkdir(parents=True)
+
+        manifest = {
+            "id": plugin_id,
+            "name": f"{plugin_id}-name",
+            "version": "0.1.0",
+            "types": plugin_types or ["connector"],
+            "permissions": ["health.read"],
+            "risk_level": "low",
+            "triggers": ["manual"],
+            "entrypoints": entrypoints or {"connector": "plugin.connector.sync"},
+        }
+        (plugin_root / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (package_dir / "__init__.py").write_text("", encoding="utf-8")
+        if connector_body is not None:
+            (package_dir / "connector.py").write_text(connector_body, encoding="utf-8")
+        if ingestor_body is not None:
+            (package_dir / "ingestor.py").write_text(ingestor_body, encoding="utf-8")
+        return plugin_root
 
     def test_execute_plugin_returns_failure_when_plugin_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
