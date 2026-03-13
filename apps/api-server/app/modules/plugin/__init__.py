@@ -1,4 +1,6 @@
 from app.modules.plugin.schemas import (
+    AgentPluginInvokeRequest,
+    AgentPluginInvokeResult,
     PluginExecutionRequest,
     PluginExecutionResult,
     PluginManifest,
@@ -10,6 +12,7 @@ from app.modules.plugin.schemas import (
     PluginRegistrySnapshot,
     PluginSyncPipelineResult,
 )
+from app.modules.plugin.agent_bridge import invoke_agent_plugin
 from app.modules.plugin.service import (
     PluginExecutionError,
     PluginManifestValidationError,
@@ -26,6 +29,8 @@ from app.modules.plugin.service import (
 )
 
 __all__ = [
+    "AgentPluginInvokeRequest",
+    "AgentPluginInvokeResult",
     "PluginExecutionRequest",
     "PluginExecutionResult",
     "PluginManifest",
@@ -38,6 +43,7 @@ __all__ = [
     "PluginSyncPipelineResult",
     "PluginExecutionError",
     "PluginManifestValidationError",
+    "invoke_agent_plugin",
     "disable_plugin",
     "discover_plugin_manifests",
     "enable_plugin",

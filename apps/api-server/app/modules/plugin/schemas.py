@@ -219,3 +219,28 @@ class PluginSyncPipelineResult(BaseModel):
     execution: PluginExecutionResult
     raw_records: list[PluginRawRecordRead] = Field(default_factory=list)
     written_memory_cards: list[dict[str, Any]] = Field(default_factory=list)
+
+
+AgentCallablePluginType = Literal["connector", "agent-skill"]
+
+
+class AgentPluginInvokeRequest(BaseModel):
+    plugin_id: str = Field(min_length=1)
+    plugin_type: AgentCallablePluginType
+    payload: dict[str, Any] = Field(default_factory=dict)
+    trigger: str = Field(default="agent", min_length=1, max_length=50)
+
+
+class AgentPluginInvokeResult(BaseModel):
+    agent_id: str
+    agent_name: str
+    plugin_id: str
+    plugin_type: AgentCallablePluginType
+    run_id: str
+    success: bool
+    trigger: str
+    started_at: str
+    finished_at: str
+    output: Any | None = None
+    error_code: str | None = None
+    error_message: str | None = None

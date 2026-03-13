@@ -16,6 +16,9 @@ from app.modules.agent.schemas import (
     AgentCreate,
     AgentDetailRead,
     AgentListResponse,
+    AgentMemoryInsightRead,
+    AgentPluginMemoryCheckpointRead,
+    AgentPluginMemoryCheckpointRequest,
     ButlerBootstrapConfirm,
     ButlerBootstrapMessageCreate,
     ButlerBootstrapSessionRead,
@@ -29,9 +32,11 @@ from app.modules.agent.schemas import (
 )
 from app.modules.agent.service import (
     AgentNotFoundError,
+    build_agent_memory_insight,
     create_agent,
     get_agent_detail,
     list_ai_config_agents,
+    run_agent_plugin_memory_checkpoint,
     update_agent,
     upsert_agent_member_cognitions,
     upsert_agent_runtime_policy,
@@ -58,6 +63,7 @@ from app.modules.ai_gateway.service import (
     upsert_capability_route,
 )
 from app.modules.audit.service import write_audit_log
+from app.modules.plugin import AgentPluginInvokeRequest, AgentPluginInvokeResult, invoke_agent_plugin
 
 
 router = APIRouter(prefix="/ai-config", tags=["ai-config"])
@@ -488,3 +494,74 @@ def upsert_ai_config_agent_runtime_policy_endpoint(
         db.rollback()
         raise translate_integrity_error(exc) from exc
     return result
+
+
+@router.post("/{household_id}/agents/{agent_id}/plugin-invocations", response_model=AgentPluginInvokeResult)
+def invoke_agent_plugin_endpoint(
+    household_id: str,
+    agent_id: str,
+    payload: AgentPluginInvokeRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> AgentPluginInvokeResult:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = invoke_agent_plugin(
+            db,
+            household_id=household_id,
+            agent_id=agent_id,
+            request=payload,
+            actor=actor,
+        )
+        db.commit()
+        return result
+    except AgentNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.get("/{household_id}/agents/{agent_id}/memory-insight", response_model=AgentMemoryInsightRead)
+def get_agent_memory_insight_endpoint(
+    household_id: str,
+    agent_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> AgentMemoryInsightRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        return build_agent_memory_insight(
+            db,
+            household_id=household_id,
+            agent_id=agent_id,
+        )
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/{household_id}/agents/{agent_id}/plugin-memory-checkpoint", response_model=AgentPluginMemoryCheckpointRead)
+def run_agent_plugin_memory_checkpoint_endpoint(
+    household_id: str,
+    agent_id: str,
+    payload: AgentPluginMemoryCheckpointRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> AgentPluginMemoryCheckpointRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = run_agent_plugin_memory_checkpoint(
+            db,
+            household_id=household_id,
+            agent_id=agent_id,
+            payload=payload,
+        )
+        db.commit()
+        return result
+    except AgentNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc

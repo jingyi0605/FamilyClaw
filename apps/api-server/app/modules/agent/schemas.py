@@ -176,3 +176,41 @@ class AgentRuntimePolicyUpsert(BaseModel):
     default_entry: bool = False
     routing_tags: list[str] = Field(default_factory=list, max_length=20)
     memory_scope: dict[str, Any] | None = None
+
+
+class AgentMemoryInsightFact(BaseModel):
+    memory_id: str
+    source_plugin_id: str
+    category: str
+    summary: str
+    observed_at: str | None = None
+
+
+class AgentMemoryInsightRead(BaseModel):
+    agent_id: str
+    agent_name: str
+    household_id: str
+    summary: str
+    suggestions: list[str] = Field(default_factory=list)
+    used_plugins: list[str] = Field(default_factory=list)
+    facts: list[AgentMemoryInsightFact] = Field(default_factory=list)
+
+
+class AgentPluginMemoryCheckpointRequest(BaseModel):
+    plugin_id: str = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    trigger: str = Field(default="agent-checkpoint", min_length=1, max_length=50)
+
+
+class AgentPluginMemoryCheckpointRead(BaseModel):
+    agent_id: str
+    agent_name: str
+    household_id: str
+    plugin_id: str
+    trigger: str
+    pipeline_run_id: str
+    pipeline_success: bool
+    raw_record_count: int = Field(ge=0)
+    memory_card_count: int = Field(ge=0)
+    degraded: bool = False
+    insight: AgentMemoryInsightRead
