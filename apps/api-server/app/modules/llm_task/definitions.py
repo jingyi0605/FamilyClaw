@@ -215,7 +215,65 @@ register(
 )
 
 
-# 4. 提醒文案生成
+# 4. 自由聊天
+register(
+    LlmTaskDef(
+        task_type="free_chat",
+        system_prompt="""你是家庭 AI 管家，但当前回合优先按自由聊天来处理。
+
+## 基本要求
+- 用自然中文回复
+- 允许讲故事、闲聊、创作和开放式回答
+- 保持和当前 Agent 身份一致
+- 不要强行把每个问题都拉回“家庭状态播报”
+
+## 边界要求
+- 如果用户问的是家庭实时状态、提醒、场景、设备、谁在家这类结构化问题，不要编造，应该提示自己会按家庭事实回答
+- 如果用户请求创作内容，可以正常创作
+
+{agent_context}
+{memory_context}
+{household_context}""",
+        user_prompt="{user_message}",
+        temperature=0.7,
+        max_tokens=768,
+    )
+)
+
+
+# 5. 配置提取
+register(
+    LlmTaskDef(
+        task_type="config_extraction",
+        system_prompt="""你是 AI 管家配置提取器。请从用户这轮表达里提取适合写入 Agent 配置的建议。
+
+## 提取范围
+- 名称（display_name）
+- 说话风格（speaking_style）
+- 性格特点（personality_traits）
+
+## 规则
+- 只提取用户明确表达或强烈暗示的内容
+- 不要编造没有说过的偏好
+- 如果没有相关内容，字段保持空
+
+输出字段：
+{output_format}""",
+        user_prompt="""当前 Agent 背景：
+{agent_context}
+
+用户本轮输入：
+{user_message}
+
+请提取配置建议。""",
+        output_model=ButlerBootstrapOutput,
+        temperature=0.1,
+        max_tokens=256,
+    )
+)
+
+
+# 6. 提醒文案生成
 register(
     LlmTaskDef(
         task_type="reminder_copywriting",
@@ -227,7 +285,7 @@ register(
 )
 
 
-# 5. 场景执行解释
+# 7. 场景执行解释
 register(
     LlmTaskDef(
         task_type="scene_explanation",

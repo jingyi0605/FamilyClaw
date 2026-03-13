@@ -133,21 +133,26 @@
   - 对应需求：需求 2、需求 3、需求 7
   - 对应设计：`design.md` §2、§4、§10
 
-- [ ] 2.2 复用现有 `family_qa` 规则草稿和审计能力
-  - 状态：未开始
-  - 这一步到底做什么：把 `family_qa` 里已经有价值的结构化事实、建议问题和审计记录接到新聊天服务里。
-  - 做完以后能看到什么结果：新聊天链路不会把原来可用的 `facts` 和 `suggestions` 全丢掉。
+- [x] 2.2 复用现有 `family_qa` 规则草稿和审计能力
+  - 状态：已完成（2026-03-13）
+  - 这一步到底做什么：把 `family_qa` 里已经有价值的结构化事实、建议问题和审计记录保留下来，但不再让它承包所有聊天意图。
+  - 做完以后能看到什么结果：结构化家庭问答继续复用 `family_qa`，自由聊天改走新的 intent router 和 orchestrator。
   - 这一步依赖什么：2.1
   - 开始前先看：
     - `design.md` §4.4
     - `apps/api-server/app/modules/family_qa/service.py`
   - 主要改哪些文件：
     - `apps/api-server/app/modules/conversation/service.py`
+    - `apps/api-server/app/modules/conversation/orchestrator.py`
     - `apps/api-server/app/modules/family_qa/service.py`
+    - `apps/api-server/app/modules/llm_task/definitions.py`
   - 这一步明确不做什么：不保留旧的前端直接调用 `family_qa` 方式。
   - 怎么验证是不是真的做完了：
-    1. 聊天消息里仍能带 `facts`、`suggestions`
-    2. `qa_query_logs` 继续可用于排错和审计
+    1. 结构化家庭问题继续带 `facts`、`suggestions`
+    2. 自由聊天问题不再强行走 `family_qa`
+    3. `qa_query_logs` 继续可用于排错和审计
+    4. `python -m unittest tests/test_conversation_foundation.py`
+    5. `python -m unittest tests/test_realtime_ws.py`
   - 对应需求：需求 3、需求 7、需求 8
   - 对应设计：`design.md` §4.4、§9.2
 

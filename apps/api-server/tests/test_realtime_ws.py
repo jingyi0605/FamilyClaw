@@ -29,6 +29,7 @@ from app.modules.agent import repository as agent_repository
 from app.modules.agent.models import FamilyAgentBootstrapMessage, FamilyAgentBootstrapSession
 from app.modules.conversation.service import create_conversation_session
 from app.modules.conversation.schemas import ConversationSessionCreate
+from app.modules.conversation import repository as conversation_repository
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.llm_task.invoke import LlmResult, LlmStreamEvent
@@ -60,6 +61,11 @@ class _FakeWebSocket:
 
     async def close(self, code: int = 1000) -> None:
         self.close_code = code
+
+
+class _BrokenWebSocket(_FakeWebSocket):
+    async def send_json(self, payload: dict) -> None:
+        raise RuntimeError("broken websocket")
 
 
 class RealtimeWsTests(unittest.TestCase):
@@ -357,29 +363,34 @@ class RealtimeWsTests(unittest.TestCase):
         )
 
         from app.modules.conversation import service as conversation_service_module
-        from app.modules.family_qa.schemas import FamilyQaQueryResponse
+        from app.modules.conversation.orchestrator import ConversationIntent, ConversationOrchestratorResult
 
         class _FakeMemoryResult:
             def __init__(self):
                 self.data = None
 
-        with patch.object(
-            conversation_service_module,
-            "query_family_qa",
-            return_value=FamilyQaQueryResponse(
-                answer_type="general",
-                answer="你好，我是笨笨。",
-                confidence=0.91,
-                facts=[],
+        def _fake_stream_orchestrated_turn(_db, **kwargs):
+            _ = kwargs
+            yield ("chunk", "你好，")
+            yield ("chunk", "我是笨笨。")
+            yield ("done", ConversationOrchestratorResult(
+                intent=ConversationIntent.FREE_CHAT,
+                text="你好，我是笨笨。",
                 degraded=False,
+                facts=[],
                 suggestions=["现在家里什么状态？"],
-                effective_agent_id=None,
-                effective_agent_type="butler",
-                effective_agent_name="笨笨",
+                memory_candidate_payloads=[],
+                config_suggestion=None,
                 ai_trace_id="trace-conversation",
                 ai_provider_code="mock-provider",
-                ai_degraded=False,
-            ),
+                effective_agent_id=None,
+                effective_agent_name="笨笨",
+            ))
+
+        with patch.object(
+            conversation_service_module,
+            "stream_orchestrated_turn",
+            side_effect=_fake_stream_orchestrated_turn,
         ), patch.object(
             conversation_service_module,
             "invoke_llm",
@@ -389,13 +400,116 @@ class RealtimeWsTests(unittest.TestCase):
 
         event_types = [item["type"] for item in websocket.sent_messages]
         self.assertEqual(
-            ["session.ready", "session.snapshot", "user.message.accepted", "agent.chunk", "agent.done", "session.snapshot"],
+            ["session.ready", "session.snapshot", "user.message.accepted", "agent.chunk", "agent.chunk", "agent.done", "session.snapshot"],
             event_types,
         )
         final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
         self.assertEqual(2, len(final_snapshot["messages"]))
         self.assertEqual("assistant", final_snapshot["messages"][1]["role"])
         self.assertEqual("你好，我是笨笨。", final_snapshot["messages"][1]["content"])
+
+    def test_conversation_websocket_still_persists_reply_when_stale_socket_broadcast_fails(self) -> None:
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[
+                {
+                    "type": "user.message",
+                    "session_id": self.conversation_session_id,
+                    "request_id": "conversation-request-2",
+                    "payload": {"text": "你好"},
+                }
+            ],
+        )
+        broken_socket = _BrokenWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+        )
+        realtime_connection_manager.register(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            websocket=cast(Any, broken_socket),
+        )
+
+        from app.modules.conversation import service as conversation_service_module
+        from app.modules.conversation.orchestrator import ConversationIntent, ConversationOrchestratorResult
+
+        class _FakeMemoryResult:
+            def __init__(self):
+                self.data = None
+
+        def _fake_stream_orchestrated_turn(_db, **kwargs):
+            _ = kwargs
+            yield ("chunk", "你好，")
+            yield ("chunk", "我是笨笨。")
+            yield ("done", ConversationOrchestratorResult(
+                intent=ConversationIntent.FREE_CHAT,
+                text="你好，我是笨笨。",
+                degraded=False,
+                facts=[],
+                suggestions=[],
+                memory_candidate_payloads=[],
+                config_suggestion=None,
+                ai_trace_id="trace-conversation-stale",
+                ai_provider_code="mock-provider",
+                effective_agent_id=None,
+                effective_agent_name="笨笨",
+            ))
+
+        with patch.object(
+            conversation_service_module,
+            "stream_orchestrated_turn",
+            side_effect=_fake_stream_orchestrated_turn,
+        ), patch.object(
+            conversation_service_module,
+            "invoke_llm",
+            return_value=_FakeMemoryResult(),
+        ):
+            asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
+
+        final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
+        self.assertEqual("你好，我是笨笨。", final_snapshot["messages"][1]["content"])
+        stored_session = conversation_repository.get_session(self.db, self.conversation_session_id)
+        self.assertIsNotNone(stored_session)
+        assert stored_session is not None
+        self.assertIsNone(stored_session.current_request_id)
+
+    def test_conversation_websocket_preserves_partial_text_when_stream_fails_midway(self) -> None:
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[
+                {
+                    "type": "user.message",
+                    "session_id": self.conversation_session_id,
+                    "request_id": "conversation-request-partial",
+                    "payload": {"text": "讲500字的科幻故事"},
+                }
+            ],
+        )
+
+        from app.modules.conversation import service as conversation_service_module
+        from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
+
+        def _fake_stream_orchestrated_turn(_db, **kwargs):
+            _ = kwargs
+            yield ("chunk", "很久很久以前，")
+            yield ("chunk", "火星边缘漂着一座旧空间站。")
+            raise ProviderRuntimeError("timeout", "provider request timeout")
+
+        with patch.object(
+            conversation_service_module,
+            "stream_orchestrated_turn",
+            side_effect=_fake_stream_orchestrated_turn,
+        ):
+            asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
+
+        final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
+        self.assertEqual("failed", final_snapshot["messages"][1]["status"])
+        self.assertIn("很久很久以前", final_snapshot["messages"][1]["content"])
 
 
 if __name__ == "__main__":

@@ -1392,6 +1392,7 @@ input, select, textarea {
   margin: calc(-1 * var(--spacing-xl)) calc(-1 * var(--spacing-xxl));
   height: calc(100vh);
   overflow: hidden;
+  min-height: 0;
 }
 
 .assistant-sidebar {
@@ -1399,6 +1400,7 @@ input, select, textarea {
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);
+  min-height: 0;
 }
 
 .assistant-sidebar__header {
@@ -1494,11 +1496,15 @@ input, select, textarea {
   display: flex;
   flex-direction: column;
   background: var(--bg-app);
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .assistant-main__messages {
   flex: 1;
   overflow-y: auto;
+  min-height: 0;
   padding: var(--spacing-xl);
   display: flex;
   flex-direction: column;
@@ -1652,6 +1658,10 @@ input, select, textarea {
   padding: 0.875rem 1.25rem;
   border-top: 1px solid var(--border-light);
   background: var(--bg-surface);
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  flex-shrink: 0;
 }
 
 .chat-composer {
@@ -1763,6 +1773,7 @@ input, select, textarea {
   background: var(--bg-surface);
   padding: var(--spacing-lg) var(--spacing-md);
   overflow-y: auto;
+  min-height: 0;
 }
 
 .context-section {

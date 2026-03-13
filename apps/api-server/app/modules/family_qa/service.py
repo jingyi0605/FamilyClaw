@@ -1,7 +1,13 @@
+from dataclasses import dataclass
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
+from app.modules.ai_gateway import repository as ai_gateway_repository
+from app.modules.ai_gateway.gateway_service import build_invocation_plan, invoke_capability, prepare_payload_for_invocation
+from app.modules.ai_gateway.provider_runtime import stream_provider_invoke
+from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
 from app.modules.agent.service import build_agent_runtime_context, resolve_effective_agent
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.agent.service import resolve_effective_agent
@@ -20,10 +26,23 @@ from app.modules.family_qa.schemas import (
 )
 from app.modules.household.models import Household
 from app.modules.member.models import Member
-from app.modules.ai_gateway.gateway_service import invoke_capability
 from app.modules.ai_gateway.schemas import AiGatewayInvokeRequest
 from app.modules.memory.schemas import EventRecordCreate
 from app.modules.memory.service import ingest_event_record_best_effort
+
+
+@dataclass
+class PreparedFamilyQaTurn:
+    payload: FamilyQaQueryRequest
+    effective_agent: object
+    fact_view: QaFactViewRead
+    answer_type: str
+    answer_text: str
+    confidence: float
+    facts: list[QaFactReference]
+    suggestions: list[str]
+    agent_runtime_context: dict[str, object]
+    conversation_history: list[dict[str, str]]
 
 
 def create_query_log(db: Session, payload: QaQueryLogCreate) -> QaQueryLogRead:
@@ -66,6 +85,144 @@ def list_query_logs(
 
 
 def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorContext) -> FamilyQaQueryResponse:
+    prepared = _prepare_family_qa_turn(db, payload, actor)
+    ai_trace_id: str | None = None
+    ai_provider_code: str | None = None
+    ai_degraded = False
+    degraded = False
+    answer_text = prepared.answer_text
+
+    try:
+        ai_response = invoke_capability(
+            db,
+            AiGatewayInvokeRequest(
+                capability="qa_generation",
+                household_id=payload.household_id,
+                requester_member_id=payload.requester_member_id,
+                payload=_build_qa_generation_payload(prepared),
+            ),
+        )
+        answer_text = str(ai_response.normalized_output.get("text") or answer_text)
+        ai_trace_id = ai_response.trace_id
+        ai_provider_code = ai_response.provider_code
+        ai_degraded = ai_response.degraded
+        degraded = ai_response.degraded
+    except HTTPException:
+        degraded = True
+
+    result = _build_family_qa_response(
+        prepared,
+        answer_text=answer_text,
+        ai_trace_id=ai_trace_id,
+        ai_provider_code=ai_provider_code,
+        ai_degraded=ai_degraded,
+        degraded=degraded,
+    )
+    _persist_family_qa_result(db, prepared=prepared, result=result)
+    return result
+
+
+def stream_family_qa(
+    db: Session,
+    payload: FamilyQaQueryRequest,
+    actor: ActorContext,
+):
+    prepared = _prepare_family_qa_turn(db, payload, actor)
+    provider_code: str | None = None
+    trace_id: str | None = None
+    degraded = False
+    chunks: list[str] = []
+
+    plan = build_invocation_plan(
+        db,
+        capability="qa_generation",
+        household_id=payload.household_id,
+        requester_member_id=payload.requester_member_id,
+    )
+    prepared_payload = prepare_payload_for_invocation(plan, _build_qa_generation_payload(prepared))
+
+    provider_profile = None
+    if plan.primary_provider is not None:
+        provider_profile = ai_gateway_repository.get_provider_profile(db, plan.primary_provider.provider_profile_id)
+
+    if provider_profile is None or not provider_profile.enabled or prepared_payload.blocked_reason:
+        degraded = True
+        response = invoke_capability(
+            db,
+            AiGatewayInvokeRequest(
+                capability="qa_generation",
+                household_id=payload.household_id,
+                requester_member_id=payload.requester_member_id,
+                payload=_build_qa_generation_payload(prepared),
+            ),
+        )
+        text = str(response.normalized_output.get("text") or prepared.answer_text)
+        if text:
+            yield ("chunk", text)
+        result = _build_family_qa_response(
+            prepared,
+            answer_text=text,
+            ai_trace_id=response.trace_id,
+            ai_provider_code=response.provider_code,
+            ai_degraded=response.degraded,
+            degraded=response.degraded or degraded,
+        )
+        _persist_family_qa_result(db, prepared=prepared, result=result)
+        yield ("done", result)
+        return
+
+    provider_code = provider_profile.provider_code
+    trace_id = plan.trace_id
+    try:
+        for chunk in stream_provider_invoke(
+            provider_profile=provider_profile,
+            payload=prepared_payload.payload,
+            timeout_ms=plan.timeout_ms,
+        ):
+            text = str(chunk or "")
+            if not text:
+                continue
+            chunks.append(text)
+            yield ("chunk", text)
+
+        answer_text = "".join(chunks).strip() or prepared.answer_text
+        result = _build_family_qa_response(
+            prepared,
+            answer_text=answer_text,
+            ai_trace_id=trace_id,
+            ai_provider_code=provider_code,
+            ai_degraded=False,
+            degraded=degraded,
+        )
+        _persist_family_qa_result(db, prepared=prepared, result=result)
+        yield ("done", result)
+        return
+    except ProviderRuntimeError:
+        response = invoke_capability(
+            db,
+            AiGatewayInvokeRequest(
+                capability="qa_generation",
+                household_id=payload.household_id,
+                requester_member_id=payload.requester_member_id,
+                payload=_build_qa_generation_payload(prepared),
+            ),
+        )
+        text = str(response.normalized_output.get("text") or prepared.answer_text)
+        if text:
+            yield ("chunk", text)
+        result = _build_family_qa_response(
+            prepared,
+            answer_text=text,
+            ai_trace_id=response.trace_id,
+            ai_provider_code=response.provider_code,
+            ai_degraded=response.degraded,
+            degraded=response.degraded or degraded,
+        )
+        _persist_family_qa_result(db, prepared=prepared, result=result)
+        yield ("done", result)
+
+
+def _prepare_family_qa_turn(db: Session, payload: FamilyQaQueryRequest, actor: ActorContext) -> PreparedFamilyQaTurn:
     _ensure_household_exists(db, payload.household_id)
     _validate_requester_member(db, payload.household_id, payload.requester_member_id)
     effective_agent = resolve_effective_agent(
@@ -98,100 +255,19 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
     ai_degraded = False
     degraded = False
     conversation_history = _normalize_conversation_history(payload.context.get("conversation_history"))
-
-    try:
-        ai_response = invoke_capability(
-            db,
-            AiGatewayInvokeRequest(
-                capability="qa_generation",
-                household_id=payload.household_id,
-                requester_member_id=payload.requester_member_id,
-                payload={
-                    "question": payload.question,
-                    "answer_draft": answer_text,
-                    "answer_type": answer_type,
-                    "fact_count": len(facts),
-                    "channel": payload.channel,
-                    "conversation_history": conversation_history,
-                    "agent_runtime_context": agent_runtime_context,
-                    "agent_memory_context": {
-                        "status": fact_view.memory_summary.status,
-                        "summary": fact_view.memory_summary.summary,
-                        "items": [
-                            {
-                                "label": item.label,
-                                "summary": str(item.extra.get("summary") or ""),
-                                "memory_type": str(item.extra.get("memory_type") or ""),
-                            }
-                            for item in fact_view.memory_summary.items[:5]
-                        ],
-                    },
-                },
-            ),
-        )
-        answer_text = str(ai_response.normalized_output.get("text") or answer_text)
-        ai_trace_id = ai_response.trace_id
-        ai_provider_code = ai_response.provider_code
-        ai_degraded = ai_response.degraded
-        degraded = ai_response.degraded
-    except HTTPException:
-        degraded = True
-
-    result = FamilyQaQueryResponse(
+    _ = ai_trace_id, ai_provider_code, ai_degraded, degraded
+    return PreparedFamilyQaTurn(
+        payload=payload,
+        effective_agent=effective_agent,
+        fact_view=fact_view,
         answer_type=answer_type,
-        answer=answer_text,
+        answer_text=answer_text,
         confidence=confidence,
         facts=facts,
-        degraded=degraded,
         suggestions=suggestions,
-        effective_agent_id=effective_agent.id,
-        effective_agent_type=effective_agent.agent_type,
-        effective_agent_name=effective_agent.display_name,
-        ai_trace_id=ai_trace_id,
-        ai_provider_code=ai_provider_code,
-        ai_degraded=ai_degraded,
+        agent_runtime_context=agent_runtime_context,
+        conversation_history=conversation_history,
     )
-    query_log = create_query_log(
-        db,
-        QaQueryLogCreate(
-            household_id=payload.household_id,
-            requester_member_id=payload.requester_member_id,
-            question=payload.question,
-            answer_type=result.answer_type,
-            answer_summary=result.answer[:2000],
-            confidence=result.confidence,
-            degraded=result.degraded,
-            facts=result.facts,
-        ),
-    )
-    ingest_event_record_best_effort(
-        db,
-        EventRecordCreate(
-            household_id=payload.household_id,
-            event_type="family_event_occurred",
-            source_type="family_qa",
-            source_ref=query_log.id,
-            subject_member_id=payload.requester_member_id,
-            room_id=None,
-            payload={
-                "event_category": "agent_qa_interaction",
-                "agent_id": effective_agent.id,
-                "agent_type": effective_agent.agent_type,
-                "agent_name": effective_agent.display_name,
-                "question": payload.question,
-                "answer_type": result.answer_type,
-                "answer_summary": result.answer[:500],
-                "ai_degraded": result.ai_degraded,
-                "memory_summary": fact_view.memory_summary.summary,
-                "memory_status": fact_view.memory_summary.status,
-                "memory_item_count": len(fact_view.memory_summary.items),
-            },
-            dedupe_key=f"family_qa:{query_log.id}",
-            generate_memory_card=False,
-            occurred_at=query_log.created_at,
-        ),
-    )
-    return result
 
 
 def list_family_qa_suggestions(
@@ -481,3 +557,101 @@ def _normalize_conversation_history(raw_value: object) -> list[dict[str, str]]:
             continue
         messages.append({"role": role, "content": content})
     return messages
+
+
+def _build_qa_generation_payload(prepared: PreparedFamilyQaTurn) -> dict[str, object]:
+    return {
+        "question": prepared.payload.question,
+        "answer_draft": prepared.answer_text,
+        "answer_type": prepared.answer_type,
+        "fact_count": len(prepared.facts),
+        "channel": prepared.payload.channel,
+        "conversation_history": prepared.conversation_history,
+        "agent_runtime_context": prepared.agent_runtime_context,
+        "agent_memory_context": {
+            "status": prepared.fact_view.memory_summary.status,
+            "summary": prepared.fact_view.memory_summary.summary,
+            "items": [
+                {
+                    "label": item.label,
+                    "summary": str(item.extra.get("summary") or ""),
+                    "memory_type": str(item.extra.get("memory_type") or ""),
+                }
+                for item in prepared.fact_view.memory_summary.items[:5]
+            ],
+        },
+    }
+
+
+def _build_family_qa_response(
+    prepared: PreparedFamilyQaTurn,
+    *,
+    answer_text: str,
+    ai_trace_id: str | None,
+    ai_provider_code: str | None,
+    ai_degraded: bool,
+    degraded: bool,
+) -> FamilyQaQueryResponse:
+    effective_agent = prepared.effective_agent
+    return FamilyQaQueryResponse(
+        answer_type=prepared.answer_type,
+        answer=answer_text,
+        confidence=prepared.confidence,
+        facts=prepared.facts,
+        degraded=degraded,
+        suggestions=prepared.suggestions,
+        effective_agent_id=effective_agent.id,
+        effective_agent_type=effective_agent.agent_type,
+        effective_agent_name=effective_agent.display_name,
+        ai_trace_id=ai_trace_id,
+        ai_provider_code=ai_provider_code,
+        ai_degraded=ai_degraded,
+    )
+
+
+def _persist_family_qa_result(
+    db: Session,
+    *,
+    prepared: PreparedFamilyQaTurn,
+    result: FamilyQaQueryResponse,
+) -> None:
+    query_log = create_query_log(
+        db,
+        QaQueryLogCreate(
+            household_id=prepared.payload.household_id,
+            requester_member_id=prepared.payload.requester_member_id,
+            question=prepared.payload.question,
+            answer_type=result.answer_type,
+            answer_summary=result.answer[:2000],
+            confidence=result.confidence,
+            degraded=result.degraded,
+            facts=result.facts,
+        ),
+    )
+    ingest_event_record_best_effort(
+        db,
+        EventRecordCreate(
+            household_id=prepared.payload.household_id,
+            event_type="family_event_occurred",
+            source_type="family_qa",
+            source_ref=query_log.id,
+            subject_member_id=prepared.payload.requester_member_id,
+            room_id=None,
+            payload={
+                "event_category": "agent_qa_interaction",
+                "agent_id": prepared.effective_agent.id,
+                "agent_type": prepared.effective_agent.agent_type,
+                "agent_name": prepared.effective_agent.display_name,
+                "question": prepared.payload.question,
+                "answer_type": result.answer_type,
+                "answer_summary": result.answer[:500],
+                "ai_degraded": result.ai_degraded,
+                "memory_summary": prepared.fact_view.memory_summary.summary,
+                "memory_status": prepared.fact_view.memory_summary.status,
+                "memory_item_count": len(prepared.fact_view.memory_summary.items),
+            },
+            dedupe_key=f"family_qa:{query_log.id}",
+            generate_memory_card=False,
+            occurred_at=query_log.created_at,
+        ),
+    )

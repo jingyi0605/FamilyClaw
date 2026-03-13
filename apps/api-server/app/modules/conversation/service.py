@@ -12,6 +12,12 @@ from app.modules.conversation.models import (
     ConversationMessage,
     ConversationSession,
 )
+from app.modules.conversation.orchestrator import (
+    ConversationIntent,
+    ConversationOrchestratorResult,
+    run_orchestrated_turn,
+    stream_orchestrated_turn,
+)
 from app.modules.conversation.schemas import (
     ConversationMemoryCandidateActionRead,
     ConversationMemoryCandidateRead,
@@ -23,8 +29,6 @@ from app.modules.conversation.schemas import (
     ConversationTurnCreate,
     ConversationTurnRead,
 )
-from app.modules.family_qa.schemas import FamilyQaQueryRequest, FamilyQaQueryResponse
-from app.modules.family_qa.service import query_family_qa
 from app.modules.household.models import Household
 from app.modules.llm_task import invoke_llm
 from app.modules.llm_task.output_models import MemoryExtractionOutput
@@ -139,7 +143,7 @@ def create_conversation_turn(
     error_message: str | None = None
 
     try:
-        result = _run_family_qa_turn(
+        result = _run_orchestrated_turn(
             db,
             session=session,
             question=payload.message.strip(),
@@ -152,12 +156,20 @@ def create_conversation_turn(
             assistant_message=assistant_message,
             result=result,
         )
-        _generate_memory_candidates_for_turn(
-            db,
-            session=session,
-            user_message=user_message,
-            assistant_message=assistant_message,
-        )
+        if result.memory_candidate_payloads:
+            _persist_memory_candidate_payloads(
+                db,
+                session=session,
+                assistant_message=assistant_message,
+                candidate_payloads=result.memory_candidate_payloads,
+            )
+        elif result.intent != ConversationIntent.MEMORY_EXTRACTION:
+            _generate_memory_candidates_for_turn(
+                db,
+                session=session,
+                user_message=user_message,
+                assistant_message=assistant_message,
+            )
     except Exception as exc:
         outcome = "failed"
         error_message = _render_turn_error(exc)
@@ -310,12 +322,13 @@ def _create_pending_turn(
     session.active_agent_id = effective_agent.id
     session.last_message_at = now
     session.updated_at = now
+    next_seq = repository.get_next_message_seq(db, session_id=session.id)
 
     user_message = ConversationMessage(
         id=new_uuid(),
         session_id=session.id,
         request_id=request_id,
-        seq=repository.get_next_message_seq(db, session_id=session.id),
+        seq=next_seq,
         role="user",
         message_type="text",
         content=message,
@@ -336,7 +349,7 @@ def _create_pending_turn(
         id=new_uuid(),
         session_id=session.id,
         request_id=request_id,
-        seq=repository.get_next_message_seq(db, session_id=session.id),
+        seq=next_seq + 1,
         role="assistant",
         message_type="text",
         content="",
@@ -382,32 +395,24 @@ def _resolve_turn_agent(
         ) from exc
 
 
-def _run_family_qa_turn(
+def _run_orchestrated_turn(
     db: Session,
     *,
     session: ConversationSession,
     question: str,
     request_id: str,
     actor: ActorContext,
-) -> FamilyQaQueryResponse:
-    _ = request_id
-    return query_family_qa(
+) -> ConversationOrchestratorResult:
+    return run_orchestrated_turn(
         db,
-        FamilyQaQueryRequest(
-            household_id=session.household_id,
-            requester_member_id=session.requester_member_id,
-            agent_id=session.active_agent_id,
-            question=question,
-            channel="conversation_turn",
-            context={
-                "conversation_history": _build_recent_conversation_history(
-                    db,
-                    session_id=session.id,
-                    current_request_id=request_id,
-                ),
-            },
+        session=session,
+        message=question,
+        actor=actor,
+        conversation_history=_build_recent_conversation_history(
+            db,
+            session_id=session.id,
+            current_request_id=request_id,
         ),
-        actor,
     )
 
 
@@ -416,18 +421,18 @@ def _complete_assistant_message(
     *,
     session: ConversationSession,
     assistant_message: ConversationMessage,
-    result: FamilyQaQueryResponse,
+    result: ConversationOrchestratorResult,
 ) -> None:
     now = utc_now_iso()
-    assistant_message.content = result.answer
+    assistant_message.content = result.text
     assistant_message.status = "completed"
     assistant_message.message_type = "text"
     assistant_message.effective_agent_id = result.effective_agent_id
     assistant_message.ai_provider_code = result.ai_provider_code
     assistant_message.ai_trace_id = result.ai_trace_id
-    assistant_message.degraded = result.degraded or result.ai_degraded
+    assistant_message.degraded = result.degraded
     assistant_message.error_code = None
-    assistant_message.facts_json = dump_json([item.model_dump(mode="json") for item in result.facts]) or "[]"
+    assistant_message.facts_json = dump_json(result.facts) or "[]"
     assistant_message.suggestions_json = dump_json(result.suggestions) or "[]"
     assistant_message.updated_at = now
     session.active_agent_id = result.effective_agent_id or session.active_agent_id
@@ -459,7 +464,22 @@ def _generate_memory_candidates_for_turn(
     if not isinstance(result.data, MemoryExtractionOutput):
         return
 
-    for item in result.data.memories[:5]:
+    _persist_memory_candidate_payloads(
+        db,
+        session=session,
+        assistant_message=assistant_message,
+        candidate_payloads=[item for item in result.data.memories[:5] if isinstance(item, dict)],
+    )
+
+
+def _persist_memory_candidate_payloads(
+    db: Session,
+    *,
+    session: ConversationSession,
+    assistant_message: ConversationMessage,
+    candidate_payloads: list[dict],
+) -> None:
+    for item in candidate_payloads:
         if not isinstance(item, dict):
             continue
         summary = str(item.get("summary") or item.get("content") or "").strip()
@@ -583,12 +603,6 @@ def _build_recent_conversation_history(
     return history[-limit:]
 
 
-def _split_text_chunks(text: str, chunk_size: int = 24) -> list[str]:
-    if not text:
-        return [""]
-    return [text[index:index + chunk_size] for index in range(0, len(text), chunk_size)]
-
-
 def _render_turn_error(exc: Exception) -> str:
     if isinstance(exc, HTTPException):
         detail = exc.detail
@@ -642,24 +656,35 @@ async def run_conversation_realtime_turn(
     )
 
     try:
-        result = _run_family_qa_turn(
+        result: ConversationOrchestratorResult | None = None
+        emitted_chunks: list[str] = []
+        for event_type, event_payload in stream_orchestrated_turn(
             db,
             session=session,
-            question=user_message.strip(),
-            request_id=request_id,
+            message=user_message.strip(),
             actor=actor,
-        )
-        full_text = result.answer
-        for chunk in _split_text_chunks(full_text):
-            await _broadcast_conversation_event(
+            conversation_history=_build_recent_conversation_history(
                 db,
-                connection_manager=connection_manager,
-                household_id=session.household_id,
-                session=session,
-                event_type="agent.chunk",
-                request_id=request_id,
-                payload={"text": chunk},
-            )
+                session_id=session.id,
+                current_request_id=request_id,
+            ),
+        ):
+            if event_type == "chunk":
+                emitted_chunks.append(str(event_payload))
+                await _broadcast_conversation_event(
+                    db,
+                    connection_manager=connection_manager,
+                    household_id=session.household_id,
+                    session=session,
+                    event_type="agent.chunk",
+                    request_id=request_id,
+                    payload={"text": str(event_payload)},
+                )
+                continue
+            result = event_payload
+
+        if result is None:
+            raise RuntimeError("family_qa stream did not produce final result")
 
         _complete_assistant_message(
             db,
@@ -667,12 +692,20 @@ async def run_conversation_realtime_turn(
             assistant_message=assistant_message_row,
             result=result,
         )
-        _generate_memory_candidates_for_turn(
-            db,
-            session=session,
-            user_message=user_message_row,
-            assistant_message=assistant_message_row,
-        )
+        if result.memory_candidate_payloads:
+            _persist_memory_candidate_payloads(
+                db,
+                session=session,
+                assistant_message=assistant_message_row,
+                candidate_payloads=result.memory_candidate_payloads,
+            )
+        elif result.intent != ConversationIntent.MEMORY_EXTRACTION:
+            _generate_memory_candidates_for_turn(
+                db,
+                session=session,
+                user_message=user_message_row,
+                assistant_message=assistant_message_row,
+            )
         session.current_request_id = None
         session.updated_at = utc_now_iso()
         db.flush()
@@ -695,13 +728,24 @@ async def run_conversation_realtime_turn(
             payload={"snapshot": snapshot.model_dump(mode="json")},
         )
     except Exception as exc:
-        _fail_assistant_message(
-            db,
-            session=session,
-            assistant_message=assistant_message_row,
-            error_message=_render_turn_error(exc),
-            error_code=_resolve_turn_error_code(exc),
-        )
+        partial_text = "".join(emitted_chunks).strip() if 'emitted_chunks' in locals() else ""
+        if partial_text:
+            assistant_message_row.content = partial_text
+            assistant_message_row.status = "failed"
+            assistant_message_row.message_type = "error"
+            assistant_message_row.error_code = _resolve_turn_error_code(exc)
+            assistant_message_row.updated_at = utc_now_iso()
+            session.last_message_at = assistant_message_row.updated_at
+            session.updated_at = assistant_message_row.updated_at
+            db.flush()
+        else:
+            _fail_assistant_message(
+                db,
+                session=session,
+                assistant_message=assistant_message_row,
+                error_message=_render_turn_error(exc),
+                error_code=_resolve_turn_error_code(exc),
+            )
         session.current_request_id = None
         session.updated_at = utc_now_iso()
         db.flush()

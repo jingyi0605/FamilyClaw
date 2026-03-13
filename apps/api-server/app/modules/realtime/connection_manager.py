@@ -29,7 +29,10 @@ class RealtimeConnectionManager:
 
     async def broadcast(self, *, household_id: str, session_id: str, event: BootstrapRealtimeEvent) -> None:
         for websocket in list(self._iter_connections(household_id=household_id, session_id=session_id)):
-            await self.send_event(websocket, event)
+            try:
+                await self.send_event(websocket, event)
+            except Exception:
+                self.unregister(household_id=household_id, session_id=session_id, websocket=websocket)
 
     def connection_count(self, *, household_id: str, session_id: str) -> int:
         return len(self._connections.get((household_id, session_id), set()))

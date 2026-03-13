@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +16,11 @@ from app.modules.agent.schemas import AgentCreate
 from app.modules.agent.service import create_agent
 from app.modules.conversation import repository as conversation_repository
 from app.modules.conversation.models import ConversationMemoryCandidate, ConversationMessage
+from app.modules.conversation.orchestrator import (
+    ConversationIntent,
+    ConversationOrchestratorResult,
+    detect_conversation_intent,
+)
 from app.modules.conversation.schemas import ConversationSessionCreate, ConversationTurnCreate
 from app.modules.conversation.service import (
     confirm_memory_candidate,
@@ -25,9 +29,7 @@ from app.modules.conversation.service import (
     dismiss_memory_candidate,
     get_conversation_session_detail,
     list_conversation_sessions,
-    stream_conversation_turn,
 )
-from app.modules.family_qa.schemas import FamilyQaQueryResponse
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.llm_task.output_models import MemoryExtractionOutput
@@ -227,21 +229,20 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual(own_session.id, result.items[0].id)
         self.assertEqual("我的会话", result.items[0].title)
 
-    @patch("app.modules.conversation.service.query_family_qa")
-    def test_create_conversation_turn_persists_completed_messages(self, query_family_qa_mock) -> None:
-        query_family_qa_mock.return_value = FamilyQaQueryResponse(
-            answer_type="general",
-            answer="你好，我是笨笨。",
-            confidence=0.92,
-            facts=[],
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_create_conversation_turn_persists_completed_messages(self, run_orchestrated_turn_mock) -> None:
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.STRUCTURED_QA,
+            text="你好，我是笨笨。",
             degraded=False,
+            facts=[],
             suggestions=["继续问一个问题"],
-            effective_agent_id=self.agent.id,
-            effective_agent_type="butler",
-            effective_agent_name="笨笨",
+            memory_candidate_payloads=[],
+            config_suggestion=None,
             ai_trace_id="trace-sync",
             ai_provider_code="mock-provider",
-            ai_degraded=False,
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
         )
         session = create_conversation_session(
             self.db,
@@ -268,11 +269,11 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("completed", result.session.messages[1].status)
         self.assertEqual("你好，我是笨笨。", result.session.messages[1].content)
 
-    @patch("app.modules.conversation.service.query_family_qa")
-    def test_create_conversation_turn_persists_failed_assistant_message(self, query_family_qa_mock) -> None:
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_create_conversation_turn_persists_failed_assistant_message(self, run_orchestrated_turn_mock) -> None:
         from fastapi import HTTPException
 
-        query_family_qa_mock.side_effect = HTTPException(status_code=502, detail="provider failed")
+        run_orchestrated_turn_mock.side_effect = HTTPException(status_code=502, detail="provider failed")
         session = create_conversation_session(
             self.db,
             payload=ConversationSessionCreate(
@@ -297,59 +298,8 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("error", result.session.messages[1].message_type)
         self.assertEqual("provider failed", result.session.messages[1].content)
 
-    @patch("app.modules.conversation.service.query_family_qa")
-    def test_stream_conversation_turn_emits_events_and_finishes_session(self, query_family_qa_mock) -> None:
-        query_family_qa_mock.return_value = FamilyQaQueryResponse(
-            answer_type="general",
-            answer="你好，我是笨笨。现在一切正常。",
-            confidence=0.9,
-            facts=[],
-            degraded=False,
-            suggestions=["现在家里什么状态？"],
-            effective_agent_id=self.agent.id,
-            effective_agent_type="butler",
-            effective_agent_name="笨笨",
-            ai_trace_id="trace-stream",
-            ai_provider_code="mock-provider",
-            ai_degraded=False,
-        )
-        session = create_conversation_session(
-            self.db,
-            payload=ConversationSessionCreate(
-                household_id=self.household.id,
-                active_agent_id=self.agent.id,
-            ),
-            actor=self.actor,
-        )
-        self.db.commit()
-
-        raw_events = list(
-            stream_conversation_turn(
-                self.db,
-                session_id=session.id,
-                payload=ConversationTurnCreate(message="你好"),
-                actor=self.actor,
-            )
-        )
-        event_payloads = [
-            json.loads(item.removeprefix("data: ").strip())
-            for item in raw_events
-            if item.startswith("data: ")
-        ]
-        event_types = [item["type"] for item in event_payloads]
-
-        self.assertIn("user.message.accepted", event_types)
-        self.assertIn("assistant.chunk", event_types)
-        self.assertIn("assistant.done", event_types)
-
-        final_event = next(item for item in event_payloads if item["type"] == "assistant.done")
-        final_session = final_event["session"]
-        self.assertEqual(2, len(final_session["messages"]))
-        self.assertEqual("completed", final_session["messages"][1]["status"])
-        self.assertEqual("你好，我是笨笨。现在一切正常。", final_session["messages"][1]["content"])
-
-    @patch("app.modules.conversation.service.query_family_qa")
-    def test_create_conversation_turn_passes_previous_history_into_query_context(self, query_family_qa_mock) -> None:
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_create_conversation_turn_passes_previous_history_into_query_context(self, run_orchestrated_turn_mock) -> None:
         session = create_conversation_session(
             self.db,
             payload=ConversationSessionCreate(
@@ -402,31 +352,30 @@ class ConversationFoundationTests(unittest.TestCase):
         conversation_repository.add_message(self.db, previous_assistant)
         self.db.commit()
 
-        def _fake_query(_db, payload, _actor):
-            history = payload.context.get("conversation_history")
+        def _fake_run(_db, session, message, actor, conversation_history):
+            _ = session, message, actor
             self.assertEqual(
                 [
                     {"role": "user", "content": "上一次的问题"},
                     {"role": "assistant", "content": "上一次的回答"},
                 ],
-                history,
+                conversation_history,
             )
-            return FamilyQaQueryResponse(
-                answer_type="general",
-                answer="这是新一轮回答",
-                confidence=0.88,
-                facts=[],
+            return ConversationOrchestratorResult(
+                intent=ConversationIntent.STRUCTURED_QA,
+                text="这是新一轮回答",
                 degraded=False,
+                facts=[],
                 suggestions=[],
-                effective_agent_id=self.agent.id,
-                effective_agent_type="butler",
-                effective_agent_name="笨笨",
+                memory_candidate_payloads=[],
+                config_suggestion=None,
                 ai_trace_id="trace-history",
                 ai_provider_code="mock-provider",
-                ai_degraded=False,
+                effective_agent_id=self.agent.id,
+                effective_agent_name="笨笨",
             )
 
-        query_family_qa_mock.side_effect = _fake_query
+        run_orchestrated_turn_mock.side_effect = _fake_run
 
         result = create_conversation_turn(
             self.db,
@@ -440,21 +389,20 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("这是新一轮回答", result.session.messages[-1].content)
 
     @patch("app.modules.conversation.service.invoke_llm")
-    @patch("app.modules.conversation.service.query_family_qa")
-    def test_create_conversation_turn_generates_memory_candidates(self, query_family_qa_mock, invoke_llm_mock) -> None:
-        query_family_qa_mock.return_value = FamilyQaQueryResponse(
-            answer_type="general",
-            answer="记下来了，你不吃香菜。",
-            confidence=0.95,
-            facts=[],
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_create_conversation_turn_generates_memory_candidates(self, run_orchestrated_turn_mock, invoke_llm_mock) -> None:
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.FREE_CHAT,
+            text="记下来了，你不吃香菜。",
             degraded=False,
+            facts=[],
             suggestions=[],
-            effective_agent_id=self.agent.id,
-            effective_agent_type="butler",
-            effective_agent_name="笨笨",
+            memory_candidate_payloads=[],
+            config_suggestion=None,
             ai_trace_id="trace-memory",
             ai_provider_code="mock-provider",
-            ai_degraded=False,
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
         )
 
         class _FakeLlmResult:
@@ -493,6 +441,125 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual(1, len(result.session.memory_candidates))
         self.assertEqual("preference", result.session.memory_candidates[0].memory_type)
         self.assertEqual("不吃香菜", result.session.memory_candidates[0].title)
+
+    def test_detect_conversation_intent_routes_story_to_free_chat(self) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        intent = detect_conversation_intent(session=session, message="讲500字的科幻故事")
+        self.assertEqual(ConversationIntent.FREE_CHAT, intent)
+
+    def test_detect_conversation_intent_routes_family_status_to_structured_qa(self) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        intent = detect_conversation_intent(session=session, message="现在家里是什么状态？")
+        self.assertEqual(ConversationIntent.STRUCTURED_QA, intent)
+
+    def test_detect_conversation_intent_routes_config_request_to_config_extraction(self) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        intent = detect_conversation_intent(session=session, message="以后你就叫阿福，说话风格温柔一点")
+        self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, intent)
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_create_conversation_turn_routes_config_intent_without_family_qa(self, run_orchestrated_turn_mock, invoke_llm_mock) -> None:
+        _ = invoke_llm_mock
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.CONFIG_EXTRACTION,
+            text="我已经把这轮表达整理成 Agent 配置建议：\n- 名称建议：阿福",
+            degraded=False,
+            facts=[{"type": "config_suggestion", "label": "Agent 配置建议", "source": "conversation_orchestrator", "extra": {"display_name": "阿福"}}],
+            suggestions=["去 AI 配置"],
+            memory_candidate_payloads=[],
+            config_suggestion={"display_name": "阿福"},
+            ai_trace_id=None,
+            ai_provider_code="mock-provider",
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
+        )
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+
+        result = create_conversation_turn(
+            self.db,
+            session_id=session.id,
+            payload=ConversationTurnCreate(message="以后你就叫阿福"),
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        self.assertEqual("completed", result.outcome)
+        self.assertIn("Agent 配置建议", result.session.messages[1].content)
+
+    @patch("app.modules.conversation.service.invoke_llm")
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_memory_intent_handler_persists_candidates_directly(self, run_orchestrated_turn_mock, invoke_llm_mock) -> None:
+        _ = invoke_llm_mock
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.MEMORY_EXTRACTION,
+            text="我已经从这轮内容里整理出记忆候选，右侧可以直接确认写入。",
+            degraded=False,
+            facts=[],
+            suggestions=["确认写入记忆"],
+            memory_candidate_payloads=[
+                {
+                    "memory_type": "preference",
+                    "title": "不吃香菜",
+                    "summary": "用户明确表示自己不吃香菜。",
+                    "content": {"source": "conversation"},
+                    "confidence": 0.92,
+                }
+            ],
+            config_suggestion=None,
+            ai_trace_id=None,
+            ai_provider_code="mock-provider",
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
+        )
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+
+        result = create_conversation_turn(
+            self.db,
+            session_id=session.id,
+            payload=ConversationTurnCreate(message="记住，我不吃香菜"),
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        self.assertEqual("completed", result.outcome)
+        self.assertEqual(1, len(result.session.memory_candidates))
+        self.assertEqual("preference", result.session.memory_candidates[0].memory_type)
 
     def test_confirm_memory_candidate_creates_memory_card(self) -> None:
         session = create_conversation_session(

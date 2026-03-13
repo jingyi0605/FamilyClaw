@@ -60,12 +60,25 @@ export function ConversationPageV2() {
   const [status, setStatus] = useState('');
   const [candidateActionId, setCandidateActionId] = useState('');
   const realtimeClientRef = useRef<ConversationRealtimeClient | null>(null);
+  const pendingSyncTimerRef = useRef<number | null>(null);
+  const sendingRef = useRef(false);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
 
   const conversationAgents = useMemo(() => agents.filter(isConversationAgent), [agents]);
   const defaultAgent = useMemo(() => pickDefaultConversationAgent(agents), [agents]);
   const selectedAgent = useMemo(() => agents.find(item => item.id === selectedAgentId) ?? defaultAgent, [agents, defaultAgent, selectedAgentId]);
   const recentFacts = useMemo(() => (activeSessionDetail?.messages ?? []).filter(item => item.role === 'assistant').flatMap(item => item.facts).slice(0, 3), [activeSessionDetail]);
   const pendingCandidates = useMemo(() => (activeSessionDetail?.memory_candidates ?? []).filter(item => item.status === 'pending_review'), [activeSessionDetail]);
+
+  useEffect(() => {
+    sendingRef.current = sending;
+  }, [sending]);
+
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [activeSessionDetail?.messages]);
 
   useEffect(() => {
     if (!currentHouseholdId) return;
@@ -105,6 +118,27 @@ export function ConversationPageV2() {
     return () => { cancelled = true; };
   }, [activeSessionId]);
 
+  async function syncActiveSessionDetail(sessionId?: string) {
+    const targetSessionId = sessionId ?? activeSessionId;
+    if (!targetSessionId) return;
+    try {
+      const detail = await api.getConversationSession(targetSessionId);
+      setActiveSessionDetail(detail);
+      setSessions(current => upsertSession(current, detail));
+      const latestMessage = detail.messages[detail.messages.length - 1];
+      setSuggestions(latestMessage?.suggestions ?? []);
+    } catch {
+      // 这里不覆盖更有用的实时错误
+    }
+  }
+
+  function resetPendingSyncTimer() {
+    if (pendingSyncTimerRef.current !== null) {
+      window.clearTimeout(pendingSyncTimerRef.current);
+      pendingSyncTimerRef.current = null;
+    }
+  }
+
   useEffect(() => {
     if (!currentHouseholdId || !activeSessionId) {
       realtimeClientRef.current?.close();
@@ -119,12 +153,22 @@ export function ConversationPageV2() {
       sessionId: activeSessionId,
       onOpen: () => {
         setRealtimeReady(true);
+        resetPendingSyncTimer();
       },
       onClose: () => {
         setRealtimeReady(false);
+        if (sendingRef.current) {
+          void syncActiveSessionDetail(activeSessionId);
+          setSending(false);
+          setError('实时连接已断开，已尝试同步最新会话。');
+        }
       },
       onError: () => {
         setRealtimeReady(false);
+        if (sendingRef.current) {
+          void syncActiveSessionDetail(activeSessionId);
+          setSending(false);
+        }
         setError('实时连接异常，请稍后重试。');
       },
       onEvent: event => {
@@ -134,6 +178,9 @@ export function ConversationPageV2() {
           setSessions(current => upsertSession(current, nextSession));
           const latestMessage = nextSession.messages[nextSession.messages.length - 1];
           setSuggestions(latestMessage?.suggestions ?? []);
+          if (nextSession.messages.some(message => message.status === 'completed' || message.status === 'failed')) {
+            resetPendingSyncTimer();
+          }
           return;
         }
         if (event.type === 'agent.chunk') {
@@ -160,10 +207,12 @@ export function ConversationPageV2() {
           return;
         }
         if (event.type === 'agent.done') {
+          resetPendingSyncTimer();
           setSending(false);
           return;
         }
         if (event.type === 'agent.error') {
+          resetPendingSyncTimer();
           const payload = event.payload as { detail: string };
           setError(payload.detail);
           setSending(false);
@@ -172,6 +221,7 @@ export function ConversationPageV2() {
     });
 
     return () => {
+      resetPendingSyncTimer();
       realtimeClientRef.current?.close();
       realtimeClientRef.current = null;
       setRealtimeReady(false);
@@ -244,8 +294,14 @@ export function ConversationPageV2() {
         messages: buildPendingMessages(current, requestId, question, `user:${requestId}`, `assistant:${requestId}`, selectedAgent?.id ?? current.active_agent_id ?? null),
       } : current);
       realtimeClientRef.current.sendUserMessage(requestId, question);
+      resetPendingSyncTimer();
+      pendingSyncTimerRef.current = window.setTimeout(() => {
+        void syncActiveSessionDetail(session.id);
+        setSending(false);
+      }, 20000);
       await refreshSessions(session.id);
     } catch (submitError) {
+      resetPendingSyncTimer();
       setError(submitError instanceof Error ? submitError.message : '提问失败');
       setSending(false);
     } finally {
@@ -287,7 +343,7 @@ export function ConversationPageV2() {
         <div className="conversation-agent-banner"><div className="conversation-agent-banner__main"><div className="conversation-agent-banner__avatar">{selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : <Bot size={18} />}</div><div className="conversation-agent-banner__text"><div className="conversation-agent-banner__title-row"><h2>{selectedAgent?.display_name ?? 'AI 助手'}</h2>{selectedAgent && <span className="ai-pill ai-pill--outline">{getAgentTypeLabel(selectedAgent.agent_type)}</span>}</div><p>{selectedAgent?.summary ?? 'AI 管家，协助家庭日常事务'}</p></div></div><div className="conversation-agent-switcher">{conversationAgents.map(agent => <button key={agent.id} type="button" className={`conversation-agent-switcher__item ${selectedAgentId === agent.id ? 'conversation-agent-switcher__item--active' : ''}`} onClick={() => void handleAgentSwitch(agent.id)}><span>{getAgentTypeEmoji(agent.agent_type)}</span><span>{agent.display_name}</span></button>)}</div></div>
         {activeSessionId ? (
           <>
-            <div className="assistant-main__messages">{(activeSessionDetail?.messages ?? []).length > 0 ? activeSessionDetail!.messages.map(message => <div key={message.id} className={`message message--${message.role}`}><div className="message__avatar">{message.role === 'assistant' ? <span>{selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : '🤖'}</span> : <span>你</span>}</div><div className="message__content-wrapper"><div className="message__bubble"><p className="message__content">{message.content || (message.status === 'pending' ? '正在准备回复...' : '')}</p>{message.degraded && <span className="message__memory-tag">⚠️ 当前回答已降级</span>}{message.status === 'streaming' && <span className="message__memory-tag">⏳ 正在生成</span>}{message.status === 'failed' && <span className="message__memory-tag">❌ 本轮失败</span>}</div>{message.role === 'assistant' && message.status !== 'pending' && <div className="message__actions"><button className="msg-action-btn" onClick={() => void submitQuestion(`继续追问：${message.content.slice(0, 40)}`)}>{t('assistant.askFollow')}</button><button className="msg-action-btn" onClick={() => navigate('/family')}>去家庭页</button><button className="msg-action-btn" onClick={() => navigate('/settings/ai')}>去 AI 配置</button><button className="msg-action-btn" onClick={() => navigate('/memories')}>去记忆页</button>{message.suggestions.slice(0, 2).map(suggestion => <button key={suggestion} className="msg-action-btn" onClick={() => void submitQuestion(suggestion)}>{suggestion}</button>)}</div>}</div></div>) : <EmptyState icon="💬" title={t('assistant.welcome')} description={t('assistant.welcomeHint')} />}</div>
+            <div ref={messagesContainerRef} className="assistant-main__messages">{(activeSessionDetail?.messages ?? []).length > 0 ? activeSessionDetail!.messages.map(message => <div key={message.id} className={`message message--${message.role}`}><div className="message__avatar">{message.role === 'assistant' ? <span>{selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : '🤖'}</span> : <span>你</span>}</div><div className="message__content-wrapper"><div className="message__bubble"><p className="message__content">{message.content || (message.status === 'pending' ? '正在准备回复...' : '')}</p>{message.degraded && <span className="message__memory-tag">⚠️ 当前回答已降级</span>}{message.status === 'streaming' && <span className="message__memory-tag">⏳ 正在生成</span>}{message.status === 'failed' && <span className="message__memory-tag">❌ 本轮失败</span>}</div>{message.role === 'assistant' && message.status !== 'pending' && <div className="message__actions"><button className="msg-action-btn" onClick={() => void submitQuestion(`继续追问：${message.content.slice(0, 40)}`)}>{t('assistant.askFollow')}</button><button className="msg-action-btn" onClick={() => navigate('/family')}>去家庭页</button><button className="msg-action-btn" onClick={() => navigate('/settings/ai')}>去 AI 配置</button><button className="msg-action-btn" onClick={() => navigate('/memories')}>去记忆页</button>{message.suggestions.slice(0, 2).map(suggestion => <button key={suggestion} className="msg-action-btn" onClick={() => void submitQuestion(suggestion)}>{suggestion}</button>)}</div>}</div></div>) : <EmptyState icon="💬" title={t('assistant.welcome')} description={t('assistant.welcomeHint')} />}</div>
             <div className="assistant-main__input"><form className="chat-composer" onSubmit={event => { event.preventDefault(); void submitQuestion(inputValue); }}><textarea value={inputValue} onChange={event => setInputValue(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !sending) { event.preventDefault(); void submitQuestion(inputValue); } }} placeholder={t('assistant.inputPlaceholder')} className="chat-composer__input form-input" rows={2} /><div className="chat-composer__footer"><span className="chat-composer__hint">Enter 发送，Shift + Enter 换行</span><button type="submit" className="btn btn--primary" disabled={sending || !inputValue.trim() || !realtimeReady}>{sending ? '发送中...' : t('assistant.send')}</button></div></form></div>
             {(error || status) && <div className="text-text-secondary" style={{ marginTop: '0.75rem' }}>{error || status}</div>}
           </>
