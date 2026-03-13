@@ -11,14 +11,25 @@
 
 This directory stores the English plugin developer documentation.
 
+These docs are now organized around the target third-party model: same-container subprocess runners.
+
+Keep one boundary in mind:
+
+- the repository already implements built-in same-process plugins
+- the recommended target path for third-party plugins is `main service + same-container subprocess runner + plugin-owned venv`
+- until the runner is implemented, the docs will clearly separate what already works today from the intended third-party direction
+
 ## Current documents
 
 - `01-plugin-development-overview.md`
-- `02-plugin-integration-guide.md`
+- `02-plugin-dev-environment-and-local-debug.md`
 - `03-manifest-spec.md`
 - `04-plugin-directory-structure.md`
-- `05-build-a-runnable-plugin-walkthrough.md`
-- `06-development-check-review.md`
+- `05-plugin-integration-guide.md`
+- `06-build-a-runnable-plugin-walkthrough.md`
+- `07-plugin-testing-and-in-project-validation.md`
+- `08-plugin-registry-pr-submission.md`
+- `09-development-check-review.md`
 
 ## Maintenance rules
 

@@ -4,7 +4,7 @@
 
 - Purpose: define `manifest.json` fields, hard constraints, recommended usage, and current implementation boundaries so developers do not need to guess.
 - Current version: v1.1
-- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-integration-guide.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `apps/api-server/app/modules/plugin/schemas.py`
+- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `apps/api-server/app/modules/plugin/schemas.py`
 - Change log:
   - `2026-03-13`: created the first manifest specification.
   - `2026-03-13`: renamed by reading order and added document metadata.

@@ -1,10 +1,10 @@
-# 05 Build A Runnable Plugin Walkthrough
+# 06 Build A Runnable Plugin Walkthrough
 
 ## Document Metadata
 
 - Purpose: give developers one complete path from `manifest` to API invocation so they can assemble a runnable plugin under the current architecture.
 - Current version: v1.0
-- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-integration-guide.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`
+- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `docs/开发者文档/插件开发/en/05-plugin-integration-guide.md`
 - Change log:
   - `2026-03-13`: created the first walkthrough, covering the full path from `manifest` and code files to API invocation.
 
@@ -12,7 +12,7 @@ This is not a rules document. This is a practical path.
 
 The goal is simple:
 
-- build one plugin from scratch that the current repository can recognize, run, and use to sync data into memory
+- build one plugin from scratch that a future runner can execute and the main project can still recognize
 
 ## 1. Start With The Simplest Useful Goal
 
@@ -30,19 +30,22 @@ The plugin id will be:
 
 ## 2. Step One: Put It In The Right Directory
 
-The current version does not support remote plugin installation, so the code must live in a backend-loadable path first.
+For third-party plugins, do not start by putting code into the main project source tree.
 
-Following the current repository style, create:
+Create your own plugin repository layout first:
 
 ```text
-apps/api-server/app/plugins/builtin/health_demo_sync/
-  __init__.py
+health-demo-sync/
   manifest.json
-  connector.py
-  ingestor.py
+  requirements.txt
+  README.md
+  plugin/
+    __init__.py
+    connector.py
+    ingestor.py
 ```
 
-Use underscores for the directory name and hyphens for `manifest.id`. That matches the current built-in plugin style.
+The repository directory name can be flexible, but keep `manifest.id` in hyphen style.
 
 ## 3. Step Two: Write `manifest.json`
 
@@ -61,8 +64,8 @@ Start with the minimum runnable version:
   "risk_level": "low",
   "triggers": ["manual", "agent-checkpoint"],
   "entrypoints": {
-    "connector": "app.plugins.builtin.health_demo_sync.connector.sync",
-    "memory_ingestor": "app.plugins.builtin.health_demo_sync.ingestor.transform"
+    "connector": "plugin.connector.sync",
+    "memory_ingestor": "plugin.ingestor.transform"
   },
   "description": "Reads demo health data and writes it as Observation memory.",
   "vendor": {
@@ -75,7 +78,7 @@ Start with the minimum runnable version:
 The most common mistakes here are:
 
 - using underscores in `id`
-- letting `entrypoints` disagree with the real directory path
+- letting `entrypoints` disagree with the real files under `plugin/`
 - declaring `memory-ingestor` without a `memory_ingestor` entrypoint
 
 ## 4. Step Three: Write `connector.py`

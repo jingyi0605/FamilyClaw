@@ -1,10 +1,10 @@
-# 02 Plugin Integration Guide
+# 05 Plugin Integration Guide
 
 ## Document Metadata
 
 - Purpose: explain how a plugin actually integrates with FamilyClaw, including invocation, input/output, sync flow, and current API entries.
 - Current version: v1.2
-- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `apps/api-server/app/modules/plugin/service.py`, `apps/api-server/app/modules/plugin/agent_bridge.py`
+- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `apps/api-server/app/modules/plugin/service.py`, `apps/api-server/app/modules/plugin/agent_bridge.py`
 - Change log:
   - `2026-03-13`: added the integration guide to cover invocation flow, APIs, inputs/outputs, and sync paths.
   - `2026-03-13`: renamed by reading order and added document metadata.
@@ -22,17 +22,20 @@ Directory layout and `manifest` fields are only the shell. What developers reall
 
 ## 1. Say The Plain Truth First
 
-The current plugin model is not an open platform built on remote repositories, online install, and callback execution.
+Two states must be separated here:
 
-The current implementation works like this:
+- already implemented: built-in same-process plugins
+- target third-party mode: same-container subprocess runners
 
-- plugin code lives as Python modules in a loadable project path
-- the system resolves entrypoints from `manifest.json`
-- the system calls plugin functions through unified entry logic
-- the plugin returns standard Python `dict` / `list` data
-- the system handles raw record persistence, normalized memory writes, permissions, and audit
+So from the third-party point of view, this guide now describes the runner direction.
 
-In plain words: right now plugins are controlled in-project extension modules, not arbitrary remote scripts.
+The main service and a third-party plugin should split responsibilities like this:
+
+- the main service handles registry loading, manifest validation, permissions, audit, memory writes, and Agent bridges
+- the runner process handles Python environment setup, entrypoint loading, and plugin execution
+- the plugin itself handles payload processing and JSON-serializable output only
+
+In plain words: third-party plugins should move out of the main process and into runners.
 
 ## 2. The 3 Main Integration Paths Supported Today
 
@@ -106,7 +109,7 @@ Example:
 }
 ```
 
-The system does two things:
+In the current built-in mode, the system does two things:
 
 1. split the string into module path and function name
 2. load the module with `import_module()` and invoke the target function
@@ -115,6 +118,8 @@ Relevant code:
 
 - entrypoint loading: `apps/api-server/app/modules/plugin/service.py:431`
 - plugin-type to entrypoint-key mapping: `apps/api-server/app/modules/plugin/service.py:416`
+
+In the runner mode, the runner must do the same two things, except the import happens inside the child process.
 
 So the real responsibility of the plugin author is:
 

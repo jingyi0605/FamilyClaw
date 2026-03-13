@@ -1,10 +1,10 @@
-# 06 Development Check Review
+# 09 Development Check Review
 
 ## Document Metadata
 
 - Purpose: record whether the current developer docs really cover the minimum plugin development path instead of only looking complete on paper.
 - Current version: v1.1
-- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-integration-guide.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`
+- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/05-plugin-integration-guide.md`, `docs/开发者文档/插件开发/en/07-plugin-testing-and-in-project-validation.md`
 - Change log:
   - `2026-03-13`: created the first development check review.
   - `2026-03-13`: added integration coverage checks.
@@ -22,9 +22,10 @@ Document review scope:
 - `specs/004.3-插件开发规范与注册表/README.md`
 - `specs/004.3-插件开发规范与注册表/design.md`
 - `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`
+- `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`
 - `docs/开发者文档/插件开发/en/03-manifest-spec.md`
 - `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`
-- `docs/开发者文档/插件开发/en/02-plugin-integration-guide.md`
+- `docs/开发者文档/插件开发/en/05-plugin-integration-guide.md`
 
 Code review scope:
 

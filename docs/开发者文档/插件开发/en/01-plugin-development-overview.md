@@ -4,7 +4,7 @@
 
 - Purpose: give first-time FamilyClaw plugin developers a clean starting point so they can understand the boundary, supported plugin types, and minimum development flow.
 - Current version: v1.1
-- Related documents: `docs/开发者文档/插件开发/en/02-plugin-integration-guide.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `specs/004.3-插件开发规范与注册表/design.md`
+- Related documents: `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `specs/004.3-插件开发规范与注册表/design.md`
 - Change log:
   - `2026-03-13`: created the first development guide.
   - `2026-03-13`: renamed by reading order and added document metadata.
@@ -19,9 +19,16 @@ If this is your first time working on this project, read this first, then move o
 
 ## 1. Scope First
 
-`004.2` already built the runtime foundation, but version one is not an open platform.
+`004.2` already built the runtime foundation, but two layers must be separated:
 
-What is supported now is simple: develop plugins following repository rules, then expose plugin metadata through the registry.
+- already implemented: built-in same-process plugins
+- recommended future third-party mode: same-container subprocess runners
+
+So the accurate statement is no longer “all plugins run the same way.” It is:
+
+- built-in plugins keep using the current same-process runtime
+- third-party plugins should now be documented as `independent plugin repo + own dependencies + runner protocol`
+- the registry handles discovery and review; the main service should stop directly importing third-party plugin code by default
 
 These items are explicitly out of scope now:
 
@@ -76,16 +83,25 @@ In one sentence: version one is about clear declaration, runnable entrypoints, a
 
 ## 4. Minimum Plugin Shape
 
-Based on the current repository, a minimal plugin directory should contain at least:
+For third-party plugins, the recommended minimum shape is:
 
 ```text
 your_plugin/
   manifest.json
-  __init__.py
-  connector.py or ingestor.py or executor.py or skill.py
+  requirements.txt
+  README.md
+  plugin/
+    __init__.py
+    connector.py or ingestor.py or executor.py or skill.py
+  tests/
 ```
 
-Not every file is mandatory, but every declared type must map to a real code file through an entrypoint.
+Two files become especially important for third-party plugins:
+
+- `requirements.txt`: plugin-owned Python dependencies for the runner environment
+- `README.md`: required for review, debugging, and integration handoff
+
+Every declared type must still map to a real code file through an entrypoint.
 
 Examples:
 
@@ -107,13 +123,23 @@ The repository already has built-in examples you can use as references:
 
 If you still feel unsure after reading the docs, align your layout and `manifest.json` with these examples instead of inventing a new style.
 
-## 5.1 Read The Integration Doc Before Writing Real Code
+## 5.1 Read The Environment And Debug Guide Before Writing Real Code
 
-If your real question is “how does a plugin actually connect to the project,” read this next:
+If you are about to start building, read this first:
 
-- `docs/开发者文档/插件开发/en/02-plugin-integration-guide.md`
+- `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`
 
-That document explains:
+That document explains the practical parts first:
+
+- how to prepare the local environment
+- where the plugin code should live first
+- how to do minimum debugging without starting the whole stack
+
+Then move on to the integration guide:
+
+- `docs/开发者文档/插件开发/en/05-plugin-integration-guide.md`
+
+The integration guide explains:
 
 - how the system invokes plugins
 - what input a plugin receives

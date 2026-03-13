@@ -4,7 +4,7 @@
 
 - Purpose: define how a plugin directory should be organized, where each entrypoint file should live, and what the minimum maintainable layout looks like.
 - Current version: v1.1
-- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-integration-guide.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`
+- Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`
 - Change log:
   - `2026-03-13`: created the first plugin directory structure specification.
   - `2026-03-13`: renamed by reading order and added document metadata.
@@ -18,12 +18,14 @@ Do not make version one complicated. Keep the structure close to what the curren
 ```text
 your_plugin/
   manifest.json
-  __init__.py
-  connector.py
-  ingestor.py
-  executor.py
-  skill.py
+  requirements.txt
   README.md
+  plugin/
+    __init__.py
+    connector.py
+    ingestor.py
+    executor.py
+    skill.py
   tests/
     test_manifest.md
 ```
@@ -31,9 +33,11 @@ your_plugin/
 This does not mean every file must exist. It means:
 
 - `manifest.json`: required
-- `__init__.py`: strongly recommended, so the Python package path stays clear
-- `connector.py` / `ingestor.py` / `executor.py` / `skill.py`: include only what matches declared plugin types
+- `requirements.txt`: strongly recommended for third-party plugin dependencies
 - `README.md`: strongly recommended for reviewers and future maintainers
+- `plugin/`: recommended as the real code directory instead of filling the repository root with code files
+- `plugin/__init__.py`: strongly recommended, so the Python package path stays clear
+- `plugin/connector.py` / `plugin/ingestor.py` / `plugin/executor.py` / `plugin/skill.py`: include only what matches declared plugin types
 - `tests/`: strongly recommended, even if it starts with a simple self-check note
 
 ## 2. One Plugin Per Directory
@@ -71,25 +75,31 @@ They do not need to be exactly identical because Python modules usually use unde
 - does not store runtime code
 - does not include a bunch of fields that only future versions may use
 
-### `connector.py`
+### `requirements.txt`
+
+- stores plugin-owned Python dependencies
+- should not assume automatic platform installation
+- should use explicit version ranges
+
+### `plugin/connector.py`
 
 - stores the read-data entrypoint
 - recommended function name: `sync`
 - common return shape: a dict containing `records`
 
-### `ingestor.py`
+### `plugin/ingestor.py`
 
 - stores the raw-record to normalized-memory entrypoint
 - recommended function name: `transform`
 - common return shape: a list of memory candidates
 
-### `executor.py`
+### `plugin/executor.py`
 
 - stores the action execution entrypoint
 - recommended function name: `run`
 - handles the action itself, not permission bypassing
 
-### `skill.py`
+### `plugin/skill.py`
 
 - stores the Agent skill entrypoint
 - recommended function name: `run`
