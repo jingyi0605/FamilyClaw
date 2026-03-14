@@ -16,32 +16,34 @@ from app.db.utils import dump_json, new_uuid, utc_now_iso
 from app.modules.agent.schemas import AgentCreate, AgentRuntimePolicyUpsert
 from app.modules.agent.service import create_agent, upsert_agent_runtime_policy
 from app.modules.conversation import repository as conversation_repository
-from app.modules.conversation.models import ConversationMemoryCandidate, ConversationMessage
+from app.modules.conversation.models import ConversationMessage, ConversationProposalBatch, ConversationProposalItem
+from app.modules.device.models import Device
 from app.modules.conversation.orchestrator import (
     ConversationIntent,
     ConversationIntentLabel,
+    ConversationLane,
+    ConversationLaneSelection,
     ConversationOrchestratorResult,
     _build_free_chat_variables,
     detect_conversation_intent,
     run_orchestrated_turn,
 )
+from app.modules.conversation.proposal_analyzers import ProposalDraft
+from app.modules.conversation.proposal_pipeline import ProposalPipelineResult
 from app.modules.conversation.schemas import ConversationSessionCreate, ConversationTurnCreate
 from app.modules.conversation.service import (
-    confirm_conversation_action,
-    confirm_memory_candidate,
     create_conversation_session,
     create_conversation_turn,
-    dismiss_memory_candidate,
+    confirm_conversation_proposal,
+    dismiss_conversation_proposal,
     get_conversation_session_detail,
     list_conversation_debug_logs,
     list_conversation_sessions,
-    undo_conversation_action,
 )
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.llm_task.output_models import (
     ConversationIntentDetectionOutput,
-    MemoryExtractionOutput,
     ReminderExtractionOutput,
 )
 from app.modules.llm_task.parser import parse_to_model
@@ -171,21 +173,35 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         conversation_repository.add_message(self.db, assistant_message)
 
-        candidate = ConversationMemoryCandidate(
+        batch = ConversationProposalBatch(
             id=new_uuid(),
             session_id=session.id,
-            source_message_id=assistant_message.id,
-            requester_member_id=self.member.id,
-            status="pending_review",
-            memory_type="fact",
-            title="用户向管家打招呼",
-            summary="用户与管家完成了首次问候。",
-            content_json=dump_json({"source": "conversation", "message_id": assistant_message.id}),
-            confidence=0.82,
+            request_id="request-hello",
+            source_message_ids_json=dump_json([assistant_message.id]) or "[]",
+            source_roles_json=dump_json(["assistant"]) or "[]",
+            lane_json='{"lane":"free_chat"}',
+            status="pending_confirmation",
             created_at=utc_now_iso(),
             updated_at=utc_now_iso(),
         )
-        conversation_repository.add_memory_candidate(self.db, candidate)
+        conversation_repository.add_proposal_batch(self.db, batch)
+        item = ConversationProposalItem(
+            id=new_uuid(),
+            batch_id=batch.id,
+            proposal_kind="memory_write",
+            policy_category="ask",
+            status="pending_confirmation",
+            title="用户向管家打招呼",
+            summary="用户与管家完成了首次问候。",
+            evidence_message_ids_json=dump_json([assistant_message.id]) or "[]",
+            evidence_roles_json=dump_json(["assistant"]) or "[]",
+            dedupe_key="memory:greeting",
+            confidence=0.82,
+            payload_json=dump_json({"source": "conversation", "message_id": assistant_message.id}) or "{}",
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        conversation_repository.add_proposal_item(self.db, item)
         self.db.commit()
 
         detail = get_conversation_session_detail(self.db, session_id=session.id, actor=self.actor)
@@ -193,8 +209,8 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual(2, len(detail.messages))
         self.assertEqual(["user", "assistant"], [item.role for item in detail.messages])
         self.assertEqual("你好，我在。", detail.messages[1].content)
-        self.assertEqual(1, len(detail.memory_candidates))
-        self.assertEqual("pending_review", detail.memory_candidates[0].status)
+        self.assertEqual(1, len(detail.proposal_batches))
+        self.assertEqual("memory_write", detail.proposal_batches[0].items[0].proposal_kind)
         self.assertEqual("笨笨", detail.active_agent_name)
 
     def test_list_conversation_debug_logs_reflects_env_switch(self) -> None:
@@ -490,9 +506,9 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("completed", result.outcome)
         self.assertEqual("这是新一轮回答", result.session.messages[-1].content)
 
-    @patch("app.modules.conversation.service.invoke_llm")
+    @patch("app.modules.conversation.service._run_proposal_pipeline_for_turn")
     @patch("app.modules.conversation.service._run_orchestrated_turn")
-    def test_create_conversation_turn_generates_memory_candidates(self, run_orchestrated_turn_mock, invoke_llm_mock) -> None:
+    def test_create_conversation_turn_writes_new_proposal_batches(self, run_orchestrated_turn_mock, proposal_pipeline_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
             text="记下来了，你不吃香菜。",
@@ -507,21 +523,59 @@ class ConversationFoundationTests(unittest.TestCase):
             effective_agent_id=self.agent.id,
             effective_agent_name="笨笨",
         )
+        def _persist_proposal_result(*args, **kwargs):
+            user_message = kwargs["user_message"]
+            batch = ConversationProposalBatch(
+                id=new_uuid(),
+                session_id=user_message.session_id,
+                request_id=user_message.request_id,
+                source_message_ids_json=dump_json([user_message.id]) or "[]",
+                source_roles_json=dump_json(["user"]) or "[]",
+                lane_json='{"lane":"free_chat"}',
+                status="pending_confirmation",
+                created_at=utc_now_iso(),
+                updated_at=utc_now_iso(),
+            )
+            conversation_repository.add_proposal_batch(self.db, batch)
+            item = ConversationProposalItem(
+                id=new_uuid(),
+                batch_id=batch.id,
+                proposal_kind="memory_write",
+                policy_category="ask",
+                status="pending_confirmation",
+                title="不吃香菜",
+                summary="用户明确表示自己不吃香菜。",
+                evidence_message_ids_json=dump_json([user_message.id]) or "[]",
+                evidence_roles_json=dump_json(["user"]) or "[]",
+                dedupe_key="memory:test:diet",
+                confidence=0.93,
+                payload_json=dump_json({"memory_type": "preference", "summary": "用户明确表示自己不吃香菜。"}) or "{}",
+                created_at=utc_now_iso(),
+                updated_at=utc_now_iso(),
+            )
+            conversation_repository.add_proposal_item(self.db, item)
+            self.db.flush()
+            return ProposalPipelineResult(
+                batch_id=batch.id,
+                item_ids=[item.id],
+                drafts=[
+                    ProposalDraft(
+                        proposal_kind="memory_write",
+                        policy_category="ask",
+                        title="不吃香菜",
+                        summary="用户明确表示自己不吃香菜。",
+                        evidence_message_ids=[user_message.id],
+                        evidence_roles=["user"],
+                        dedupe_key="memory:test:diet",
+                        confidence=0.93,
+                        payload={"memory_type": "preference", "summary": "用户明确表示自己不吃香菜。"},
+                    )
+                ],
+                failures=[],
+                extraction_output=None,
+            )
 
-        class _FakeLlmResult:
-            def __init__(self):
-                self.data = MemoryExtractionOutput(
-                    memories=[
-                        {
-                            "type": "preference",
-                            "title": "不吃香菜",
-                            "summary": "用户明确表示自己不吃香菜。",
-                            "confidence": 0.93,
-                        }
-                    ]
-                )
-
-        invoke_llm_mock.return_value = _FakeLlmResult()
+        proposal_pipeline_mock.side_effect = _persist_proposal_result
 
         session = create_conversation_session(
             self.db,
@@ -541,12 +595,10 @@ class ConversationFoundationTests(unittest.TestCase):
         self.db.commit()
 
         self.assertEqual("completed", result.outcome)
-        self.assertEqual(1, len(result.session.memory_candidates))
-        self.assertEqual("preference", result.session.memory_candidates[0].memory_type)
-        self.assertEqual("不吃香菜", result.session.memory_candidates[0].title)
-        self.assertEqual(1, len(result.session.action_records))
-        self.assertEqual("memory.write", result.session.action_records[0].action_name)
-        self.assertEqual("pending_confirmation", result.session.action_records[0].status)
+        self.assertEqual(1, len(result.session.proposal_batches))
+        self.assertEqual(1, len(result.session.proposal_batches[0].items))
+        self.assertEqual("memory_write", result.session.proposal_batches[0].items[0].proposal_kind)
+        self.assertEqual("pending_confirmation", result.session.proposal_batches[0].items[0].status)
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_detect_conversation_intent_routes_story_to_free_chat(self, invoke_llm_mock) -> None:
@@ -788,40 +840,45 @@ class ConversationFoundationTests(unittest.TestCase):
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_run_orchestrated_turn_routes_reminder_intent_to_extraction(self, invoke_llm_mock) -> None:
-        session = create_conversation_session(
-            self.db,
-            payload=ConversationSessionCreate(
-                household_id=self.household.id,
-                active_agent_id=self.agent.id,
-            ),
-            actor=self.actor,
-        )
-        invoke_llm_mock.side_effect = [
-            _FakeLlmResult(
-                data=ConversationIntentDetectionOutput(
-                    primary_intent="reminder_create",
-                    secondary_intents=[],
-                    confidence=0.95,
-                    reason="用户明确要求创建提醒。",
-                    candidate_actions=[],
-                )
-            ),
-            _FakeLlmResult(
-                data=ReminderExtractionOutput(
-                    should_create=True,
-                    title="带钥匙",
-                    description="出门前检查钥匙",
-                    trigger_at="2026-03-14T08:00:00+08:00",
-                )
-            ),
-        ]
-        result = run_orchestrated_turn(
-            self.db,
-            session=session,
-            message="明天早上八点提醒我带钥匙",
-            actor=self.actor,
-            conversation_history=[],
-        )
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = False
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            invoke_llm_mock.side_effect = [
+                _FakeLlmResult(
+                    data=ConversationIntentDetectionOutput(
+                        primary_intent="reminder_create",
+                        secondary_intents=[],
+                        confidence=0.95,
+                        reason="用户明确要求创建提醒。",
+                        candidate_actions=[],
+                    )
+                ),
+                _FakeLlmResult(
+                    data=ReminderExtractionOutput(
+                        should_create=True,
+                        title="带钥匙",
+                        description="出门前检查钥匙",
+                        trigger_at="2026-03-14T08:00:00+08:00",
+                    )
+                ),
+            ]
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="明天早上八点提醒我带钥匙",
+                actor=self.actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
         self.assertEqual(ConversationIntent.REMINDER_EXTRACTION, result.intent)
         self.assertEqual(ConversationIntentLabel.REMINDER_CREATE, result.intent_detection.primary_intent)
         self.assertEqual(1, len(result.action_payloads))
@@ -829,43 +886,48 @@ class ConversationFoundationTests(unittest.TestCase):
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_run_orchestrated_turn_uses_natural_reply_for_config_change(self, invoke_llm_mock) -> None:
-        session = create_conversation_session(
-            self.db,
-            payload=ConversationSessionCreate(
-                household_id=self.household.id,
-                active_agent_id=self.agent.id,
-            ),
-            actor=self.actor,
-        )
-        invoke_llm_mock.side_effect = [
-            _FakeLlmResult(
-                data=ConversationIntentDetectionOutput(
-                    primary_intent="config_change",
-                    secondary_intents=[],
-                    confidence=0.95,
-                    reason="用户明确想给助手改名。",
-                    candidate_actions=[],
-                )
-            ),
-            _FakeLlmResult(
-                data=type(
-                    "_ConfigDraft",
-                    (),
-                    {
-                        "display_name": "阿福",
-                        "speaking_style": None,
-                        "personality_traits": [],
-                    },
-                )()
-            ),
-        ]
-        result = run_orchestrated_turn(
-            self.db,
-            session=session,
-            message="以后你就叫阿福",
-            actor=self.actor,
-            conversation_history=[],
-        )
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = False
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            invoke_llm_mock.side_effect = [
+                _FakeLlmResult(
+                    data=ConversationIntentDetectionOutput(
+                        primary_intent="config_change",
+                        secondary_intents=[],
+                        confidence=0.95,
+                        reason="用户明确想给助手改名。",
+                        candidate_actions=[],
+                    )
+                ),
+                _FakeLlmResult(
+                    data=type(
+                        "_ConfigDraft",
+                        (),
+                        {
+                            "display_name": "阿福",
+                            "speaking_style": None,
+                            "personality_traits": [],
+                        },
+                    )()
+                ),
+            ]
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="以后你就叫阿福",
+                actor=self.actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
         self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
         self.assertEqual("好，那我以后就叫阿福。你还想顺手调整一下我说话的风格，或者补几个性格标签吗？", result.text)
         self.assertEqual("阿福", result.config_suggestion["display_name"])
@@ -873,47 +935,52 @@ class ConversationFoundationTests(unittest.TestCase):
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_run_orchestrated_turn_passes_recent_history_to_config_extraction(self, invoke_llm_mock) -> None:
-        session = create_conversation_session(
-            self.db,
-            payload=ConversationSessionCreate(
-                household_id=self.household.id,
-                active_agent_id=self.agent.id,
-            ),
-            actor=self.actor,
-        )
-        invoke_llm_mock.side_effect = [
-            _FakeLlmResult(
-                data=ConversationIntentDetectionOutput(
-                    primary_intent="config_change",
-                    secondary_intents=[],
-                    confidence=0.95,
-                    reason="用户在继续补充助手名字。",
-                    candidate_actions=[],
-                )
-            ),
-            _FakeLlmResult(
-                data=type(
-                    "_ConfigDraft",
-                    (),
-                    {
-                        "display_name": "暖暖",
-                        "speaking_style": None,
-                        "personality_traits": [],
-                    },
-                )()
-            ),
-        ]
-        history = [
-            {"role": "user", "content": "给你改个名字好不好"},
-            {"role": "assistant", "content": "当然可以，你想给我起什么新名字？"},
-        ]
-        result = run_orchestrated_turn(
-            self.db,
-            session=session,
-            message="叫暖暖吧",
-            actor=self.actor,
-            conversation_history=history,
-        )
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = False
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            invoke_llm_mock.side_effect = [
+                _FakeLlmResult(
+                    data=ConversationIntentDetectionOutput(
+                        primary_intent="config_change",
+                        secondary_intents=[],
+                        confidence=0.95,
+                        reason="用户在继续补充助手名字。",
+                        candidate_actions=[],
+                    )
+                ),
+                _FakeLlmResult(
+                    data=type(
+                        "_ConfigDraft",
+                        (),
+                        {
+                            "display_name": "暖暖",
+                            "speaking_style": None,
+                            "personality_traits": [],
+                        },
+                    )()
+                ),
+            ]
+            history = [
+                {"role": "user", "content": "给你改个名字好不好"},
+                {"role": "assistant", "content": "当然可以，你想给我起什么新名字？"},
+            ]
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="叫暖暖吧",
+                actor=self.actor,
+                conversation_history=history,
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
         self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
         self.assertEqual("暖暖", result.config_suggestion["display_name"])
         self.assertEqual("好，那我以后就叫暖暖。你还想顺手调整一下我说话的风格，或者补几个性格标签吗？", result.text)
@@ -921,46 +988,51 @@ class ConversationFoundationTests(unittest.TestCase):
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_run_orchestrated_turn_does_not_extract_current_name_as_new_config(self, invoke_llm_mock) -> None:
-        session = create_conversation_session(
-            self.db,
-            payload=ConversationSessionCreate(
-                household_id=self.household.id,
-                active_agent_id=self.agent.id,
-            ),
-            actor=self.actor,
-        )
-        invoke_llm_mock.side_effect = [
-            _FakeLlmResult(
-                data=ConversationIntentDetectionOutput(
-                    primary_intent="config_change",
-                    secondary_intents=[],
-                    confidence=0.92,
-                    reason="用户想讨论改名。",
-                    candidate_actions=[],
-                )
-            ),
-            _FakeLlmResult(
-                data=type(
-                    "_ConfigDraft",
-                    (),
-                    {
-                        "display_name": self.agent.display_name,
-                        "speaking_style": "幽默风趣",
-                        "personality_traits": ["细心", "乐于助人"],
-                    },
-                )()
-            ),
-            _FakeLlmResult(text="当然可以，你想给我起什么新名字？也可以顺手告诉我想换成什么说话风格。"),
-        ]
-        result = run_orchestrated_turn(
-            self.db,
-            session=session,
-            message="我给你改个名怎么样",
-            actor=self.actor,
-            conversation_history=[
-                {"role": "assistant", "content": f"哈哈，我是{self.agent.display_name}，你的家庭AI管家哦！"}
-            ],
-        )
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = False
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            invoke_llm_mock.side_effect = [
+                _FakeLlmResult(
+                    data=ConversationIntentDetectionOutput(
+                        primary_intent="config_change",
+                        secondary_intents=[],
+                        confidence=0.92,
+                        reason="用户想讨论改名。",
+                        candidate_actions=[],
+                    )
+                ),
+                _FakeLlmResult(
+                    data=type(
+                        "_ConfigDraft",
+                        (),
+                        {
+                            "display_name": self.agent.display_name,
+                            "speaking_style": "幽默风趣",
+                            "personality_traits": ["细心", "乐于助人"],
+                        },
+                    )()
+                ),
+                _FakeLlmResult(text="当然可以，你想给我起什么新名字？也可以顺手告诉我想换成什么说话风格。"),
+            ]
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="我给你改个名怎么样",
+                actor=self.actor,
+                conversation_history=[
+                    {"role": "assistant", "content": f"哈哈，我是{self.agent.display_name}，你的家庭AI管家哦！"}
+                ],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
         self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
         self.assertEqual("当然可以，你想给我起什么新名字？也可以顺手告诉我想换成什么说话风格。", result.text)
         self.assertIsNone(result.config_suggestion)
@@ -1086,6 +1158,357 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual(ConversationIntent.STRUCTURED_QA, result.intent)
         self.assertEqual("realtime_query", result.lane_selection.lane.value)
 
+    @patch("app.modules.conversation.orchestrator.query_family_qa")
+    @patch("app.modules.conversation.orchestrator.select_conversation_lane")
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_with_lane_takeover_routes_free_chat_intent_to_realtime_query(
+        self,
+        invoke_llm_mock,
+        select_lane_mock,
+        query_family_qa_mock,
+    ) -> None:
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = True
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            invoke_llm_mock.return_value = _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="free_chat",
+                    secondary_intents=[],
+                    confidence=0.62,
+                    reason="旧意图识别先按 free_chat 兜底。",
+                    candidate_actions=[],
+                )
+            )
+            select_lane_mock.return_value = ConversationLaneSelection(
+                lane=ConversationLane.REALTIME_QUERY,
+                confidence=0.89,
+                reason="语义路由命中状态查询车道。",
+                target_kind="state_query",
+                requires_clarification=False,
+                source="semantic_router",
+            )
+            query_family_qa_mock.return_value = SimpleNamespace(
+                answer="现在家里有人。",
+                degraded=False,
+                ai_degraded=False,
+                facts=[],
+                suggestions=[],
+                ai_trace_id=None,
+                ai_provider_code="qa-mock",
+                effective_agent_id=self.agent.id,
+                effective_agent_name=self.agent.display_name,
+            )
+
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="现在家里有人吗",
+                actor=self.actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
+
+        self.assertEqual(ConversationIntent.STRUCTURED_QA, result.intent)
+        self.assertEqual("realtime_query", result.lane_selection.lane.value)
+        self.assertEqual("现在家里有人。", result.text)
+        query_family_qa_mock.assert_called_once()
+
+    @patch("app.modules.conversation.orchestrator.query_family_qa")
+    @patch("app.modules.conversation.orchestrator.select_conversation_lane")
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_with_lane_takeover_keeps_realtime_query_out_of_free_chat_path(
+        self,
+        invoke_llm_mock,
+        select_lane_mock,
+        query_family_qa_mock,
+    ) -> None:
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = True
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            invoke_llm_mock.return_value = _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="free_chat",
+                    secondary_intents=[],
+                    confidence=0.51,
+                    reason="旧意图识别无法稳定判断。",
+                    candidate_actions=[],
+                )
+            )
+            select_lane_mock.return_value = ConversationLaneSelection(
+                lane=ConversationLane.REALTIME_QUERY,
+                confidence=0.84,
+                reason="语义路由命中实时取数。",
+                target_kind="state_query",
+                requires_clarification=False,
+                source="semantic_router",
+            )
+            query_family_qa_mock.return_value = SimpleNamespace(
+                answer="客厅温度是 24 度。",
+                degraded=False,
+                ai_degraded=False,
+                facts=[],
+                suggestions=[],
+                ai_trace_id=None,
+                ai_provider_code="qa-mock",
+                effective_agent_id=self.agent.id,
+                effective_agent_name=self.agent.display_name,
+            )
+
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="客厅温度多少",
+                actor=self.actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
+
+        self.assertEqual(ConversationIntent.STRUCTURED_QA, result.intent)
+        self.assertEqual("客厅温度是 24 度。", result.text)
+        self.assertIsNone(result.config_suggestion)
+        self.assertEqual([], result.memory_candidate_payloads)
+
+    @patch("app.modules.conversation.orchestrator.execute_device_action")
+    @patch("app.modules.conversation.orchestrator.select_conversation_lane")
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_fast_action_executes_device_control(
+        self,
+        invoke_llm_mock,
+        select_lane_mock,
+        execute_device_action_mock,
+    ) -> None:
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = True
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            device = Device(
+                id=new_uuid(),
+                household_id=self.household.id,
+                room_id=None,
+                name="客厅灯",
+                device_type="light",
+                vendor="ha",
+                status="active",
+                controllable=1,
+                created_at=utc_now_iso(),
+                updated_at=utc_now_iso(),
+            )
+            self.db.add(device)
+            self.db.commit()
+            invoke_llm_mock.return_value = _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="free_chat",
+                    secondary_intents=[],
+                    confidence=0.7,
+                    reason="先按普通聊天兜底。",
+                    candidate_actions=[],
+                )
+            )
+            select_lane_mock.return_value = ConversationLaneSelection(
+                lane=ConversationLane.FAST_ACTION,
+                confidence=0.9,
+                reason="命中设备控制车道。",
+                target_kind="device_action",
+                requires_clarification=False,
+                source="test",
+            )
+            execute_device_action_mock.return_value = (
+                SimpleNamespace(
+                    device=SimpleNamespace(name="客厅灯"),
+                    action="turn_off",
+                    model_dump=lambda mode="json": {
+                        "device": {"name": "客厅灯"},
+                        "action": "turn_off",
+                        "result": "success",
+                    },
+                ),
+                SimpleNamespace(details={}),
+            )
+
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="把客厅灯关掉",
+                actor=self.actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
+
+        self.assertEqual(ConversationIntent.FAST_ACTION, result.intent)
+        self.assertEqual("fast_action", result.lane_selection.lane.value)
+        self.assertEqual("已为你关闭客厅灯。", result.text)
+        self.assertEqual("fast_action_receipt", result.facts[0]["type"])
+        execute_device_action_mock.assert_called_once()
+
+    @patch("app.modules.conversation.orchestrator.select_conversation_lane")
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_fast_action_asks_for_clarification_when_target_ambiguous(
+        self,
+        invoke_llm_mock,
+        select_lane_mock,
+    ) -> None:
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = True
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            for device_name in ("客厅灯", "卧室灯"):
+                self.db.add(
+                    Device(
+                        id=new_uuid(),
+                        household_id=self.household.id,
+                        room_id=None,
+                        name=device_name,
+                        device_type="light",
+                        vendor="ha",
+                        status="active",
+                        controllable=1,
+                        created_at=utc_now_iso(),
+                        updated_at=utc_now_iso(),
+                    )
+                )
+            self.db.commit()
+            invoke_llm_mock.return_value = _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="free_chat",
+                    secondary_intents=[],
+                    confidence=0.7,
+                    reason="先按普通聊天兜底。",
+                    candidate_actions=[],
+                )
+            )
+            select_lane_mock.return_value = ConversationLaneSelection(
+                lane=ConversationLane.FAST_ACTION,
+                confidence=0.9,
+                reason="命中设备控制车道。",
+                target_kind="device_action",
+                requires_clarification=False,
+                source="test",
+            )
+
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="把灯关掉",
+                actor=self.actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
+
+        self.assertEqual(ConversationIntent.FAST_ACTION, result.intent)
+        self.assertIn("多个可能的设备", result.text)
+        self.assertCountEqual(["卧室灯", "客厅灯"], result.suggestions)
+
+    @patch("app.modules.conversation.orchestrator.select_conversation_lane")
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_fast_action_rejects_non_admin_actor(
+        self,
+        invoke_llm_mock,
+        select_lane_mock,
+    ) -> None:
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = True
+        try:
+            viewer_actor = ActorContext(
+                role="member",
+                actor_type="member",
+                actor_id=self.member.id,
+                account_id="account-1",
+                account_type="household",
+                account_status="active",
+                username="viewer",
+                household_id=self.household.id,
+                member_id=self.member.id,
+                member_role="member",
+                is_authenticated=True,
+            )
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            self.db.add(
+                Device(
+                    id=new_uuid(),
+                    household_id=self.household.id,
+                    room_id=None,
+                    name="客厅灯",
+                    device_type="light",
+                    vendor="ha",
+                    status="active",
+                    controllable=1,
+                    created_at=utc_now_iso(),
+                    updated_at=utc_now_iso(),
+                )
+            )
+            self.db.commit()
+            invoke_llm_mock.return_value = _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="free_chat",
+                    secondary_intents=[],
+                    confidence=0.7,
+                    reason="先按普通聊天兜底。",
+                    candidate_actions=[],
+                )
+            )
+            select_lane_mock.return_value = ConversationLaneSelection(
+                lane=ConversationLane.FAST_ACTION,
+                confidence=0.9,
+                reason="命中设备控制车道。",
+                target_kind="device_action",
+                requires_clarification=False,
+                source="test",
+            )
+
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="把客厅灯关掉",
+                actor=viewer_actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
+
+        self.assertEqual(ConversationIntent.FAST_ACTION, result.intent)
+        self.assertIn("没有设备快控权限", result.text)
+
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     @patch("app.modules.conversation.service._run_orchestrated_turn")
     def test_create_conversation_turn_routes_config_intent_without_family_qa(self, run_orchestrated_turn_mock, invoke_llm_mock) -> None:
@@ -1168,13 +1591,12 @@ class ConversationFoundationTests(unittest.TestCase):
         self.db.commit()
 
         self.assertEqual("completed", result.outcome)
-        self.assertEqual(1, len(result.session.memory_candidates))
-        self.assertEqual("preference", result.session.memory_candidates[0].memory_type)
-        self.assertEqual(1, len(result.session.action_records))
-        self.assertEqual("memory.write", result.session.action_records[0].action_name)
+        self.assertEqual(1, len(result.session.proposal_batches))
+        self.assertEqual(1, len(result.session.proposal_batches[0].items))
+        self.assertEqual("memory_write", result.session.proposal_batches[0].items[0].proposal_kind)
 
     @patch("app.modules.conversation.service._run_orchestrated_turn")
-    def test_notify_config_action_executes_and_can_undo(self, run_orchestrated_turn_mock) -> None:
+    def test_confirm_config_proposal_applies_agent_update(self, run_orchestrated_turn_mock) -> None:
         upsert_agent_runtime_policy(
             self.db,
             household_id=self.household.id,
@@ -1215,18 +1637,17 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         self.db.commit()
 
-        self.assertEqual(1, len(turn.session.action_records))
-        action = turn.session.action_records[0]
-        self.assertEqual("config.apply", action.action_name)
-        self.assertEqual("completed", action.status)
+        self.assertEqual(1, len(turn.session.proposal_batches))
+        item = turn.session.proposal_batches[0].items[0]
+        self.assertEqual("config_apply", item.proposal_kind)
+        self.assertEqual("pending_confirmation", item.status)
+        execution = confirm_conversation_proposal(self.db, proposal_item_id=item.id, actor=self.actor)
+        self.db.commit()
+        self.assertEqual("completed", execution.item.status)
         self.assertEqual("阿福", get_conversation_session_detail(self.db, session_id=session.id, actor=self.actor).active_agent_name)
 
-        undo_result = undo_conversation_action(self.db, action_id=action.id, actor=self.actor)
-        self.db.commit()
-        self.assertEqual("undone", undo_result.action.status)
-
     @patch("app.modules.conversation.service._run_orchestrated_turn")
-    def test_confirm_pending_memory_action_creates_memory(self, run_orchestrated_turn_mock) -> None:
+    def test_confirm_pending_memory_proposal_creates_memory(self, run_orchestrated_turn_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.MEMORY_EXTRACTION,
             text="我已经整理出了记忆候选。",
@@ -1262,17 +1683,16 @@ class ConversationFoundationTests(unittest.TestCase):
             actor=self.actor,
         )
         self.db.commit()
-        action = turn.session.action_records[0]
-
-        execution = confirm_conversation_action(self.db, action_id=action.id, actor=self.actor)
+        item = turn.session.proposal_batches[0].items[0]
+        execution = confirm_conversation_proposal(self.db, proposal_item_id=item.id, actor=self.actor)
         self.db.commit()
 
-        self.assertEqual("completed", execution.action.status)
-        self.assertEqual("memory.write", execution.action.action_name)
-        memory_card_id = execution.action.result_payload.get("memory_card_id")
+        self.assertEqual("completed", execution.item.status)
+        self.assertEqual("memory_write", execution.item.proposal_kind)
+        memory_card_id = execution.affected_target_id
         self.assertTrue(isinstance(memory_card_id, str) and memory_card_id)
 
-    def test_confirm_memory_candidate_creates_memory_card(self) -> None:
+    def test_confirm_conversation_proposal_creates_memory_card(self) -> None:
         session = create_conversation_session(
             self.db,
             payload=ConversationSessionCreate(
@@ -1303,39 +1723,53 @@ class ConversationFoundationTests(unittest.TestCase):
             updated_at=utc_now_iso(),
         )
         conversation_repository.add_message(self.db, assistant_message)
-        candidate = ConversationMemoryCandidate(
+        batch = ConversationProposalBatch(
             id=new_uuid(),
             session_id=session.id,
-            source_message_id=assistant_message.id,
-            requester_member_id=self.member.id,
-            status="pending_review",
-            memory_type="preference",
-            title="不吃香菜",
-            summary="用户明确表示自己不吃香菜。",
-            content_json=dump_json({"source": "conversation", "tag": "diet"}),
-            confidence=0.91,
+            request_id="request-memory",
+            source_message_ids_json=dump_json([assistant_message.id]) or "[]",
+            source_roles_json=dump_json(["assistant"]) or "[]",
+            lane_json='{"lane":"free_chat"}',
+            status="pending_confirmation",
             created_at=utc_now_iso(),
             updated_at=utc_now_iso(),
         )
-        conversation_repository.add_memory_candidate(self.db, candidate)
+        conversation_repository.add_proposal_batch(self.db, batch)
+        item = ConversationProposalItem(
+            id=new_uuid(),
+            batch_id=batch.id,
+            proposal_kind="memory_write",
+            policy_category="ask",
+            status="pending_confirmation",
+            title="不吃香菜",
+            summary="用户明确表示自己不吃香菜。",
+            evidence_message_ids_json=dump_json([assistant_message.id]) or "[]",
+            evidence_roles_json=dump_json(["assistant"]) or "[]",
+            dedupe_key="memory:manual:diet",
+            confidence=0.91,
+            payload_json=dump_json({"memory_type": "preference", "source": "conversation", "tag": "diet"}) or "{}",
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        conversation_repository.add_proposal_item(self.db, item)
         self.db.commit()
 
-        result = confirm_memory_candidate(
+        result = confirm_conversation_proposal(
             self.db,
-            candidate_id=candidate.id,
+            proposal_item_id=item.id,
             actor=self.actor,
         )
         self.db.commit()
 
-        self.assertEqual("confirmed", result.candidate.status)
-        self.assertIsNotNone(result.memory_card_id)
-        created_memory = memory_repository.get_memory_card(self.db, result.memory_card_id)
+        self.assertEqual("completed", result.item.status)
+        self.assertIsNotNone(result.affected_target_id)
+        created_memory = memory_repository.get_memory_card(self.db, result.affected_target_id)
         self.assertIsNotNone(created_memory)
         assert created_memory is not None
         self.assertEqual("preference", created_memory.memory_type)
         self.assertEqual("不吃香菜", created_memory.title)
 
-    def test_dismiss_memory_candidate_marks_candidate_dismissed(self) -> None:
+    def test_dismiss_conversation_proposal_marks_item_dismissed(self) -> None:
         session = create_conversation_session(
             self.db,
             payload=ConversationSessionCreate(
@@ -1346,32 +1780,46 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         self.db.flush()
 
-        candidate = ConversationMemoryCandidate(
+        batch = ConversationProposalBatch(
             id=new_uuid(),
             session_id=session.id,
-            source_message_id=None,
-            requester_member_id=self.member.id,
-            status="pending_review",
-            memory_type="fact",
-            title="待忽略候选",
-            summary="这条候选应该被忽略。",
-            content_json=dump_json({"source": "conversation"}),
-            confidence=0.51,
+            request_id="request-dismiss",
+            source_message_ids_json="[]",
+            source_roles_json="[]",
+            lane_json='{"lane":"free_chat"}',
+            status="pending_confirmation",
             created_at=utc_now_iso(),
             updated_at=utc_now_iso(),
         )
-        conversation_repository.add_memory_candidate(self.db, candidate)
+        conversation_repository.add_proposal_batch(self.db, batch)
+        item = ConversationProposalItem(
+            id=new_uuid(),
+            batch_id=batch.id,
+            proposal_kind="memory_write",
+            policy_category="ask",
+            status="pending_confirmation",
+            title="待忽略候选",
+            summary="这条候选应该被忽略。",
+            evidence_message_ids_json="[]",
+            evidence_roles_json="[]",
+            dedupe_key="memory:dismiss:test",
+            confidence=0.51,
+            payload_json=dump_json({"memory_type": "fact", "source": "conversation"}) or "{}",
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        conversation_repository.add_proposal_item(self.db, item)
         self.db.commit()
 
-        result = dismiss_memory_candidate(
+        result = dismiss_conversation_proposal(
             self.db,
-            candidate_id=candidate.id,
+            proposal_item_id=item.id,
             actor=self.actor,
         )
         self.db.commit()
 
-        self.assertEqual("dismissed", result.candidate.status)
-        self.assertIsNone(result.memory_card_id)
+        self.assertEqual("dismissed", result.item.status)
+        self.assertIsNone(result.affected_target_id)
 
 
 if __name__ == "__main__":

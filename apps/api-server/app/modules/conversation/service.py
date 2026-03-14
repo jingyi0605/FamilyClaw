@@ -17,6 +17,8 @@ from app.modules.conversation.models import (
     ConversationDebugLog,
     ConversationMemoryCandidate,
     ConversationMessage,
+    ConversationProposalBatch,
+    ConversationProposalItem,
     ConversationSession,
 )
 from app.modules.conversation.orchestrator import (
@@ -30,7 +32,9 @@ from app.modules.conversation.proposal_pipeline import (
     ProposalPipeline,
     ProposalPipelineResult,
     build_turn_proposal_context,
+    persist_proposal_batch,
 )
+from app.modules.conversation.proposal_analyzers import ProposalDraft
 from app.modules.conversation.schemas import (
     ConversationActionExecutionRead,
     ConversationDebugLogListRead,
@@ -39,6 +43,9 @@ from app.modules.conversation.schemas import (
     ConversationMemoryCandidateActionRead,
     ConversationMemoryCandidateRead,
     ConversationMessageRead,
+    ConversationProposalBatchRead,
+    ConversationProposalExecutionRead,
+    ConversationProposalItemRead,
     ConversationSessionCreate,
     ConversationSessionDetailRead,
     ConversationSessionListResponse,
@@ -134,6 +141,116 @@ def get_conversation_session_detail(
         raise ConversationNotFoundError(session_id)
     _ensure_actor_can_read_session(row, actor)
     return _to_session_detail_read(db, row)
+
+
+def confirm_conversation_proposal(
+    db: Session,
+    *,
+    proposal_item_id: str,
+    actor: ActorContext,
+) -> ConversationProposalExecutionRead:
+    item = repository.get_proposal_item(db, proposal_item_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation proposal item not found")
+    batch = repository.get_proposal_batch(db, item.batch_id)
+    if batch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation proposal batch not found")
+    session = _get_visible_session(db, session_id=batch.session_id, actor=actor)
+    if item.status != "pending_confirmation":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="conversation proposal item is not waiting for confirmation")
+
+    payload = load_json(item.payload_json) or {}
+    affected_target_id: str | None = None
+    if item.proposal_kind == "memory_write":
+        memory_card = create_manual_memory_card(
+            db,
+            payload=MemoryCardManualCreate(
+                household_id=session.household_id,
+                memory_type=str(payload.get("memory_type") or payload.get("type") or "fact"),
+                title=item.title,
+                summary=item.summary or item.title,
+                content=payload if isinstance(payload, dict) else {},
+                status="active",
+                visibility="family",
+                importance=3,
+                confidence=item.confidence,
+                subject_member_id=session.requester_member_id,
+                source_event_id=None,
+                dedupe_key=item.dedupe_key or f"proposal:{item.id}",
+                effective_at=None,
+                last_observed_at=None,
+                related_members=[],
+                reason="confirmed from conversation proposal",
+            ),
+            actor=actor,
+        )
+        affected_target_id = memory_card.id
+    elif item.proposal_kind == "config_apply":
+        affected_target_id = _apply_config_proposal_item(db, session=session, payload=payload)
+    elif item.proposal_kind == "reminder_create":
+        affected_target_id = _apply_reminder_proposal_item(db, session=session, payload=payload)
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported conversation proposal kind")
+
+    item.status = "completed"
+    item.updated_at = utc_now_iso()
+    _refresh_proposal_batch_status(db, batch_id=batch.id)
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=batch.request_id,
+        stage="proposal.item.confirmed",
+        source="proposal",
+        message="提案项已确认并执行。",
+        payload={
+            "proposal_item_id": item.id,
+            "proposal_kind": item.proposal_kind,
+            "affected_target_id": affected_target_id,
+        },
+    )
+    db.flush()
+    return ConversationProposalExecutionRead(
+        item=_to_proposal_item_read(item),
+        affected_target_id=affected_target_id,
+    )
+
+
+def dismiss_conversation_proposal(
+    db: Session,
+    *,
+    proposal_item_id: str,
+    actor: ActorContext,
+) -> ConversationProposalExecutionRead:
+    item = repository.get_proposal_item(db, proposal_item_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation proposal item not found")
+    batch = repository.get_proposal_batch(db, item.batch_id)
+    if batch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation proposal batch not found")
+    _get_visible_session(db, session_id=batch.session_id, actor=actor)
+    if item.status != "pending_confirmation":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="conversation proposal item is not waiting for confirmation")
+    item.status = "dismissed"
+    item.updated_at = utc_now_iso()
+    _refresh_proposal_batch_status(db, batch_id=batch.id)
+    session = _get_visible_session(db, session_id=batch.session_id, actor=actor)
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=batch.request_id,
+        stage="proposal.item.dismissed",
+        source="proposal",
+        message="提案项已忽略。",
+        payload={
+            "proposal_item_id": item.id,
+            "proposal_kind": item.proposal_kind,
+        },
+    )
+    db.flush()
+    return ConversationProposalExecutionRead(
+        item=_to_proposal_item_read(item),
+        affected_target_id=None,
+    )
 
 
 def get_conversation_session_snapshot(
@@ -232,7 +349,6 @@ def create_conversation_turn(
                 "degraded": result.degraded,
             },
         )
-        policy_result = result
         proposal_pipeline_result = _run_proposal_pipeline_for_turn(
             db,
             session=session,
@@ -241,64 +357,27 @@ def create_conversation_turn(
             assistant_message=assistant_message,
             result=result,
         )
-        if proposal_pipeline_result is not None and settings.conversation_proposal_write_enabled:
-            policy_result = _build_legacy_policy_result_from_proposals(
-                base_result=result,
-                proposal_result=proposal_pipeline_result,
-            )
-        if _result_has_actionable_proposals(policy_result):
-            _apply_action_policy_for_turn(
+        if proposal_pipeline_result is None and _result_has_actionable_proposals(result):
+            proposal_pipeline_result = _persist_legacy_result_as_proposal_batch(
                 db,
                 session=session,
                 request_id=request_id,
                 user_message=user_message,
                 assistant_message=assistant_message,
-                result=policy_result,
-                actor=actor,
+                result=result,
             )
         _append_debug_log(
             db,
             session=session,
             request_id=request_id,
-            stage="action.policy.applied",
-            source="policy",
-            message="动作策略层处理完成。",
-            payload={"action_records": _serialize_action_records_for_debug(db, session_id=session.id, request_id=request_id)},
+            stage="proposal.model.applied",
+            source="proposal",
+            message="本轮已直接切到新提案模型，不再写旧候选和旧动作记录。",
+            payload={
+                "proposal_batch_id": None if proposal_pipeline_result is None else proposal_pipeline_result.batch_id,
+                "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
+            },
         )
-        if (
-            (not settings.conversation_proposal_write_enabled or proposal_pipeline_result is None)
-            and not result.memory_candidate_payloads
-            and result.intent in {
-            ConversationIntent.FREE_CHAT,
-            ConversationIntent.STRUCTURED_QA,
-            }
-        ):
-            _append_debug_log(
-                db,
-                session=session,
-                request_id=request_id,
-                stage="memory.autogen.started",
-                source="service",
-                message="开始执行保守记忆补提取。",
-                payload={"reason": "当前主路由没有直接给出记忆候选。"},
-            )
-            _generate_memory_candidates_for_turn(
-                db,
-                session=session,
-                request_id=request_id,
-                user_message=user_message,
-                assistant_message=assistant_message,
-                actor=actor,
-            )
-            _append_debug_log(
-                db,
-                session=session,
-                request_id=request_id,
-                stage="memory.autogen.completed",
-                source="service",
-                message="保守记忆补提取完成。",
-                payload={"generated_candidates": _count_request_memory_candidates(db, session_id=session.id, request_id=request_id)},
-            )
         _append_debug_log(
             db,
             session=session,
@@ -413,7 +492,6 @@ async def acreate_conversation_turn(
                 "degraded": result.degraded,
             },
         )
-        policy_result = result
         proposal_pipeline_result = _run_proposal_pipeline_for_turn(
             db,
             session=session,
@@ -422,61 +500,27 @@ async def acreate_conversation_turn(
             assistant_message=assistant_message,
             result=result,
         )
-        if proposal_pipeline_result is not None and settings.conversation_proposal_write_enabled:
-            policy_result = _build_legacy_policy_result_from_proposals(
-                base_result=result,
-                proposal_result=proposal_pipeline_result,
-            )
-        if _result_has_actionable_proposals(policy_result):
-            _apply_action_policy_for_turn(
+        if proposal_pipeline_result is None and _result_has_actionable_proposals(result):
+            proposal_pipeline_result = _persist_legacy_result_as_proposal_batch(
                 db,
                 session=session,
                 request_id=request_id,
                 user_message=user_message,
                 assistant_message=assistant_message,
-                result=policy_result,
-                actor=actor,
+                result=result,
             )
         _append_debug_log(
             db,
             session=session,
             request_id=request_id,
-            stage="action.policy.applied",
-            source="policy",
-            message="动作策略层处理完成。",
-            payload={"action_records": _serialize_action_records_for_debug(db, session_id=session.id, request_id=request_id)},
+            stage="proposal.model.applied",
+            source="proposal",
+            message="本轮已直接切到新提案模型，不再写旧候选和旧动作记录。",
+            payload={
+                "proposal_batch_id": None if proposal_pipeline_result is None else proposal_pipeline_result.batch_id,
+                "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
+            },
         )
-        if (
-            (not settings.conversation_proposal_write_enabled or proposal_pipeline_result is None)
-            and not result.memory_candidate_payloads
-            and result.intent in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA}
-        ):
-            _append_debug_log(
-                db,
-                session=session,
-                request_id=request_id,
-                stage="memory.autogen.started",
-                source="service",
-                message="开始执行保守记忆补提取。",
-                payload={"reason": "当前主路由没有直接给出记忆候选。"},
-            )
-            await _agenerate_memory_candidates_for_turn(
-                db,
-                session=session,
-                request_id=request_id,
-                user_message=user_message,
-                assistant_message=assistant_message,
-                actor=actor,
-            )
-            _append_debug_log(
-                db,
-                session=session,
-                request_id=request_id,
-                stage="memory.autogen.completed",
-                source="service",
-                message="保守记忆补提取完成。",
-                payload={"generated_candidates": _count_request_memory_candidates(db, session_id=session.id, request_id=request_id)},
-            )
         _append_debug_log(
             db,
             session=session,
@@ -1635,6 +1679,180 @@ def _result_has_actionable_proposals(result: ConversationOrchestratorResult) -> 
     return bool(result.memory_candidate_payloads or result.config_suggestion or result.action_payloads)
 
 
+def _persist_legacy_result_as_proposal_batch(
+    db: Session,
+    *,
+    session: ConversationSession,
+    request_id: str,
+    user_message: ConversationMessage,
+    assistant_message: ConversationMessage,
+    result: ConversationOrchestratorResult,
+) -> ProposalPipelineResult | None:
+    drafts: list[ProposalDraft] = []
+    for item in result.memory_candidate_payloads:
+        if not isinstance(item, dict):
+            continue
+        summary = str(item.get("summary") or item.get("content") or "").strip()
+        title = str(item.get("title") or "").strip() or summary[:18]
+        if not summary or not title:
+            continue
+        payload = dict(item)
+        payload.setdefault("memory_type", payload.get("type") or "fact")
+        drafts.append(
+            ProposalDraft(
+                proposal_kind="memory_write",
+                policy_category="ask",
+                title=title[:200],
+                summary=summary,
+                evidence_message_ids=[user_message.id],
+                evidence_roles=["user"],
+                dedupe_key=f"memory:{request_id}:{title[:30]}",
+                confidence=float(item.get("confidence") or 0.75),
+                payload=payload,
+            )
+        )
+    if isinstance(result.config_suggestion, dict) and any(result.config_suggestion.values()):
+        drafts.append(
+            ProposalDraft(
+                proposal_kind="config_apply",
+                policy_category="ask",
+                title="应用 Agent 配置建议",
+                summary=_build_config_action_summary(result.config_suggestion),
+                evidence_message_ids=[user_message.id],
+                evidence_roles=["user"],
+                dedupe_key=f"config:{request_id}",
+                confidence=0.9,
+                payload=dict(result.config_suggestion),
+            )
+        )
+    for item in result.action_payloads:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("action_type")) != "reminder_create":
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        payload = dict(item)
+        drafts.append(
+            ProposalDraft(
+                proposal_kind="reminder_create",
+                policy_category="ask",
+                title=title[:200],
+                summary=_build_reminder_action_summary(payload),
+                evidence_message_ids=[user_message.id],
+                evidence_roles=["user"],
+                dedupe_key=f"reminder:{request_id}:{title[:30]}",
+                confidence=float(item.get("confidence") or 0.9),
+                payload=payload,
+            )
+        )
+    if not drafts:
+        return None
+    turn_context = build_turn_proposal_context(
+        session=session,
+        request_id=request_id,
+        user_message=user_message,
+        assistant_message=assistant_message,
+        conversation_history_excerpt=[],
+        lane_result=result.lane_selection.to_payload() if result.lane_selection is not None else {},
+        main_reply_summary=result.text[:300],
+    )
+    batch_id, item_ids = persist_proposal_batch(
+        db,
+        session=session,
+        request_id=request_id,
+        turn_context=turn_context,
+        drafts=drafts,
+    )
+    return ProposalPipelineResult(
+        batch_id=batch_id,
+        item_ids=item_ids,
+        drafts=drafts,
+        failures=[],
+        extraction_output=None,
+    )
+
+
+def _apply_config_proposal_item(
+    db: Session,
+    *,
+    session: ConversationSession,
+    payload: dict,
+) -> str:
+    if not session.active_agent_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="active agent missing")
+    agent = agent_repository.get_agent_by_household_and_id(db, household_id=session.household_id, agent_id=session.active_agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
+    next_display_name = str(payload.get("display_name") or "").strip()
+    if next_display_name and next_display_name != agent.display_name:
+        update_agent(
+            db,
+            household_id=session.household_id,
+            agent_id=agent.id,
+            payload=AgentUpdate(display_name=next_display_name),
+        )
+    current_soul = agent_repository.get_active_soul_profile(db, agent_id=agent.id)
+    has_soul_change = bool(payload.get("speaking_style")) or bool(payload.get("personality_traits"))
+    if has_soul_change:
+        speaking_style = str(payload.get("speaking_style") or "").strip() or (current_soul.speaking_style if current_soul is not None else None)
+        personality_traits_raw = payload.get("personality_traits")
+        personality_traits = [str(item).strip() for item in personality_traits_raw] if isinstance(personality_traits_raw, list) else []
+        if not personality_traits and current_soul is not None:
+            personality_traits = [str(item) for item in (load_json(current_soul.personality_traits_json) or [])]
+        service_focus = [str(item) for item in (load_json(current_soul.service_focus_json) or [])] if current_soul is not None else []
+        upsert_agent_soul(
+            db,
+            household_id=session.household_id,
+            agent_id=agent.id,
+            payload=AgentSoulProfileUpsert(
+                self_identity=current_soul.self_identity if current_soul is not None else f"我是{next_display_name or agent.display_name}",
+                role_summary=current_soul.role_summary if current_soul is not None else "负责家庭事务",
+                intro_message=current_soul.intro_message if current_soul is not None else None,
+                speaking_style=speaking_style,
+                personality_traits=personality_traits,
+                service_focus=service_focus,
+                service_boundaries=load_json(current_soul.service_boundaries_json) if current_soul is not None else None,
+                created_by="conversation-proposal",
+            ),
+        )
+    return agent.id
+
+
+def _apply_reminder_proposal_item(
+    db: Session,
+    *,
+    session: ConversationSession,
+    payload: dict,
+) -> str:
+    trigger_at = str(payload.get("trigger_at") or "").strip()
+    title = str(payload.get("title") or "").strip()
+    if not trigger_at or not title:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="reminder payload incomplete")
+    task = create_reminder_task(
+        db,
+        ReminderTaskCreate(
+            household_id=session.household_id,
+            owner_member_id=session.requester_member_id,
+            title=title,
+            description=str(payload.get("description") or "").strip() or None,
+            reminder_type="family",
+            target_member_ids=[session.requester_member_id] if session.requester_member_id else [],
+            preferred_room_ids=[],
+            schedule_kind="once",
+            schedule_rule={"trigger_at": trigger_at},
+            priority="normal",
+            delivery_channels=["in_app"],
+            ack_required=False,
+            escalation_policy={},
+            enabled=True,
+            updated_by="conversation-proposal",
+        ),
+    )
+    return task.id
+
+
 def _count_request_memory_candidates(
     db: Session,
     *,
@@ -1653,6 +1871,27 @@ def _count_request_memory_candidates(
         for candidate in repository.list_memory_candidates(db, session_id=session_id)
         if candidate.source_message_id in source_message_ids
     )
+
+
+def _refresh_proposal_batch_status(db: Session, *, batch_id: str) -> None:
+    batch = repository.get_proposal_batch(db, batch_id)
+    if batch is None:
+        return
+    items = list(repository.list_proposal_items(db, batch_id=batch_id))
+    statuses = {item.status for item in items}
+    if not items:
+        batch.status = "ignored"
+    elif statuses <= {"completed"}:
+        batch.status = "completed"
+    elif statuses <= {"dismissed", "ignored"}:
+        batch.status = "ignored"
+    elif "pending_confirmation" in statuses:
+        batch.status = "pending_confirmation"
+    elif "failed" in statuses and len(statuses) == 1:
+        batch.status = "failed"
+    else:
+        batch.status = "partially_applied"
+    batch.updated_at = utc_now_iso()
 
 
 def _fail_assistant_message(
@@ -1885,54 +2124,26 @@ async def run_conversation_realtime_turn(
                 "degraded": result.degraded,
             },
         )
-        _apply_action_policy_for_turn(
+        proposal_pipeline_result = _run_proposal_pipeline_for_turn(
             db,
             session=session,
             request_id=request_id,
             user_message=user_message_row,
             assistant_message=assistant_message_row,
             result=result,
-            actor=actor,
         )
         _append_debug_log(
             db,
             session=session,
             request_id=request_id,
-            stage="action.policy.applied",
-            source="policy",
-            message="实时动作策略层处理完成。",
-            payload={"action_records": _serialize_action_records_for_debug(db, session_id=session.id, request_id=request_id)},
+            stage="proposal.model.applied",
+            source="proposal",
+            message="本轮实时链路已直接切到新提案模型，不再写旧候选和旧动作记录。",
+            payload={
+                "proposal_batch_id": None if proposal_pipeline_result is None else proposal_pipeline_result.batch_id,
+                "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
+            },
         )
-        if not result.memory_candidate_payloads and result.intent in {
-            ConversationIntent.FREE_CHAT,
-            ConversationIntent.STRUCTURED_QA,
-        }:
-            _append_debug_log(
-                db,
-                session=session,
-                request_id=request_id,
-                stage="memory.autogen.started",
-                source="service",
-                message="开始执行实时保守记忆补提取。",
-                payload={"reason": "当前主路由没有直接给出记忆候选。"},
-            )
-            await _agenerate_memory_candidates_for_turn(
-                db,
-                session=session,
-                request_id=request_id,
-                user_message=user_message_row,
-                assistant_message=assistant_message_row,
-                actor=actor,
-            )
-            _append_debug_log(
-                db,
-                session=session,
-                request_id=request_id,
-                stage="memory.autogen.completed",
-                source="service",
-                message="实时保守记忆补提取完成。",
-                payload={"generated_candidates": _count_request_memory_candidates(db, session_id=session.id, request_id=request_id)},
-            )
         session.current_request_id = None
         session.updated_at = utc_now_iso()
         db.flush()
@@ -2056,13 +2267,11 @@ def _to_session_read(db: Session, row: ConversationSession) -> ConversationSessi
 def _to_session_detail_read(db: Session, row: ConversationSession) -> ConversationSessionDetailRead:
     session_read = _to_session_read(db, row)
     messages = [_to_message_read(item) for item in repository.list_messages(db, session_id=row.id)]
-    candidates = [_to_candidate_read(item) for item in repository.list_memory_candidates(db, session_id=row.id)]
-    action_records = [_to_action_read(item) for item in repository.list_action_records(db, session_id=row.id)]
+    proposal_batches = [_to_proposal_batch_read(db, item) for item in repository.list_proposal_batches(db, session_id=row.id)]
     return ConversationSessionDetailRead(
         **session_read.model_dump(mode="json"),
         messages=messages,
-        memory_candidates=candidates,
-        action_records=action_records,
+        proposal_batches=proposal_batches,
     )
 
 
@@ -2133,6 +2342,47 @@ def _to_action_read(row: ConversationActionRecord) -> ConversationActionRecordRe
         executed_at=row.executed_at,
         undone_at=row.undone_at,
         updated_at=row.updated_at,
+    )
+
+
+def _to_proposal_item_read(row: ConversationProposalItem) -> ConversationProposalItemRead:
+    evidence_message_ids = load_json(row.evidence_message_ids_json) or []
+    evidence_roles = load_json(row.evidence_roles_json) or []
+    payload = load_json(row.payload_json) or {}
+    return ConversationProposalItemRead(
+        id=row.id,
+        batch_id=row.batch_id,
+        proposal_kind=row.proposal_kind,
+        policy_category=cast(str, row.policy_category),
+        status=cast(str, row.status),
+        title=row.title,
+        summary=row.summary,
+        evidence_message_ids=[str(item) for item in evidence_message_ids] if isinstance(evidence_message_ids, list) else [],
+        evidence_roles=[str(item) for item in evidence_roles] if isinstance(evidence_roles, list) else [],
+        dedupe_key=row.dedupe_key,
+        confidence=row.confidence,
+        payload=payload if isinstance(payload, dict) else {},
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _to_proposal_batch_read(db: Session, row: ConversationProposalBatch) -> ConversationProposalBatchRead:
+    source_message_ids = load_json(row.source_message_ids_json) or []
+    source_roles = load_json(row.source_roles_json) or []
+    lane = load_json(row.lane_json) or {}
+    items = [_to_proposal_item_read(item) for item in repository.list_proposal_items(db, batch_id=row.id)]
+    return ConversationProposalBatchRead(
+        id=row.id,
+        session_id=row.session_id,
+        request_id=row.request_id,
+        source_message_ids=[str(item) for item in source_message_ids] if isinstance(source_message_ids, list) else [],
+        source_roles=[str(item) for item in source_roles] if isinstance(source_roles, list) else [],
+        lane=lane if isinstance(lane, dict) else {},
+        status=row.status,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        items=items,
     )
 
 

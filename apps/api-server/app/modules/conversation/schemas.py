@@ -12,6 +12,15 @@ ConversationCandidateStatus = Literal["pending_review", "confirmed", "dismissed"
 ConversationActionCategory = Literal["memory", "config", "action"]
 ConversationActionPolicyMode = Literal["ask", "notify", "auto"]
 ConversationActionStatus = Literal["pending_confirmation", "completed", "failed", "dismissed", "undone", "undo_failed"]
+ConversationProposalPolicyCategory = Literal["ask", "auto", "ignore"]
+ConversationProposalStatus = Literal[
+    "pending_policy",
+    "pending_confirmation",
+    "completed",
+    "dismissed",
+    "ignored",
+    "failed",
+]
 ConversationDebugLogLevel = Literal["info", "warning", "error"]
 
 
@@ -87,6 +96,36 @@ class ConversationActionRecordRead(BaseModel):
     updated_at: str
 
 
+class ConversationProposalItemRead(BaseModel):
+    id: str
+    batch_id: str
+    proposal_kind: str
+    policy_category: ConversationProposalPolicyCategory
+    status: ConversationProposalStatus
+    title: str
+    summary: str | None = None
+    evidence_message_ids: list[str] = Field(default_factory=list)
+    evidence_roles: list[str] = Field(default_factory=list)
+    dedupe_key: str | None = None
+    confidence: float = Field(ge=0, le=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+
+class ConversationProposalBatchRead(BaseModel):
+    id: str
+    session_id: str
+    request_id: str | None = None
+    source_message_ids: list[str] = Field(default_factory=list)
+    source_roles: list[str] = Field(default_factory=list)
+    lane: dict[str, Any] = Field(default_factory=dict)
+    status: ConversationProposalStatus | str
+    created_at: str
+    updated_at: str
+    items: list[ConversationProposalItemRead] = Field(default_factory=list)
+
+
 class ConversationSessionRead(BaseModel):
     id: str
     household_id: str
@@ -106,8 +145,7 @@ class ConversationSessionRead(BaseModel):
 
 class ConversationSessionDetailRead(ConversationSessionRead):
     messages: list[ConversationMessageRead] = Field(default_factory=list)
-    memory_candidates: list[ConversationMemoryCandidateRead] = Field(default_factory=list)
-    action_records: list[ConversationActionRecordRead] = Field(default_factory=list)
+    proposal_batches: list[ConversationProposalBatchRead] = Field(default_factory=list)
 
 
 class ConversationSessionListResponse(BaseModel):
@@ -133,6 +171,11 @@ class ConversationMemoryCandidateActionRead(BaseModel):
 
 class ConversationActionExecutionRead(BaseModel):
     action: ConversationActionRecordRead
+
+
+class ConversationProposalExecutionRead(BaseModel):
+    item: ConversationProposalItemRead
+    affected_target_id: str | None = None
 
 
 class ConversationDebugLogRead(BaseModel):

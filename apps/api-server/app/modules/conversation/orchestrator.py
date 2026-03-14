@@ -11,6 +11,10 @@ from app.core.config import settings
 from app.db.utils import utc_now_iso
 from app.modules.agent.service import build_agent_runtime_context
 from app.core.logging import dump_conversation_debug_event, get_conversation_debug_logger
+from app.modules.device.models import Device
+from app.modules.device.service import list_devices
+from app.modules.device_action.schemas import DeviceActionExecuteRequest
+from app.modules.device_action.service import aexecute_device_action, execute_device_action
 from app.modules.conversation.semantic_router import SemanticRouter
 from app.modules.context.service import get_context_overview
 from app.modules.conversation.models import ConversationSession
@@ -41,6 +45,7 @@ class ConversationIntentLabel(StrEnum):
 
 
 class ConversationIntent(StrEnum):
+    FAST_ACTION = "fast_action"
     STRUCTURED_QA = "structured_qa"
     FREE_CHAT = "free_chat"
     CONFIG_EXTRACTION = "config_extraction"
@@ -72,6 +77,13 @@ class ConversationLaneSelection:
             "requires_clarification": self.requires_clarification,
             "source": self.source,
         }
+
+
+@dataclass(frozen=True)
+class FastActionPlan:
+    device: Device
+    action: str
+    confirm_high_risk: bool
 
 
 @dataclass
@@ -265,7 +277,9 @@ def run_orchestrated_turn(
         request_context=request_context,
     )
     _log_route_selection(request_context=request_context, detection=detection)
-    if lane_selection.lane == ConversationLane.REALTIME_QUERY:
+    if settings.conversation_lane_shadow_enabled and not settings.conversation_lane_takeover_enabled:
+        _log_lane_shadow_result(request_context=request_context, detection=detection, lane_selection=lane_selection)
+    if lane_selection.lane == ConversationLane.REALTIME_QUERY and settings.conversation_lane_takeover_enabled:
         result = _run_structured_qa(
             db,
             session=session,
@@ -277,6 +291,16 @@ def run_orchestrated_turn(
         return _attach_lane_selection(
             _from_family_qa_result(ConversationIntent.STRUCTURED_QA, result, detection=detection),
             lane_selection=lane_selection,
+        )
+    if lane_selection.lane == ConversationLane.FAST_ACTION and settings.conversation_lane_takeover_enabled:
+        return _run_fast_action_lane(
+            db,
+            session=session,
+            message=message,
+            actor=actor,
+            detection=detection,
+            lane_selection=lane_selection,
+            request_context=request_context,
         )
     return _run_non_realtime_lane(
         db,
@@ -313,7 +337,9 @@ async def stream_orchestrated_turn(
         request_context=request_context,
     )
     _log_route_selection(request_context=request_context, detection=detection)
-    if lane_selection.lane == ConversationLane.REALTIME_QUERY:
+    if settings.conversation_lane_shadow_enabled and not settings.conversation_lane_takeover_enabled:
+        _log_lane_shadow_result(request_context=request_context, detection=detection, lane_selection=lane_selection)
+    if lane_selection.lane == ConversationLane.REALTIME_QUERY and settings.conversation_lane_takeover_enabled:
         async for event_type, event_payload in stream_family_qa(
             db,
             FamilyQaQueryRequest(
@@ -337,6 +363,17 @@ async def stream_orchestrated_turn(
                 )
             else:
                 yield event_type, event_payload
+        return
+    if lane_selection.lane == ConversationLane.FAST_ACTION and settings.conversation_lane_takeover_enabled:
+        yield "done", await _arun_fast_action_lane(
+            db,
+            session=session,
+            message=message,
+            actor=actor,
+            detection=detection,
+            lane_selection=lane_selection,
+            request_context=request_context,
+        )
         return
     async for event_type, event_payload in _stream_non_realtime_lane(
         db,
@@ -392,6 +429,17 @@ def select_conversation_lane(
             target_kind="none",
             requires_clarification=False,
             source="session_mode",
+        )
+        detection.lane_selection = selection
+        return selection
+    if _looks_like_fast_action_request(message):
+        selection = ConversationLaneSelection(
+            lane=ConversationLane.FAST_ACTION,
+            confidence=0.78,
+            reason="命中设备快控硬信号，优先进入 fast_action 车道。",
+            target_kind="device_action",
+            requires_clarification=False,
+            source="hard_signal",
         )
         detection.lane_selection = selection
         return selection
@@ -495,6 +543,158 @@ def _run_non_realtime_lane(
     )
 
 
+def _run_fast_action_lane(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    actor: ActorContext,
+    detection: ConversationIntentDetection,
+    lane_selection: ConversationLaneSelection,
+    request_context: dict | None = None,
+) -> ConversationOrchestratorResult:
+    plan, clarification = _resolve_fast_action_plan(
+        db,
+        session=session,
+        message=message,
+        actor=actor,
+    )
+    if clarification is not None:
+        return _attach_lane_selection(clarification, lane_selection=lane_selection)
+    assert plan is not None
+    try:
+        response, _ = execute_device_action(
+            db,
+            payload=DeviceActionExecuteRequest(
+                household_id=session.household_id,
+                device_id=plan.device.id,
+                action=cast(str, plan.action),
+                params={},
+                reason="conversation.fast_action",
+                confirm_high_risk=plan.confirm_high_risk,
+            ),
+        )
+    except Exception as exc:
+        return _attach_lane_selection(
+            ConversationOrchestratorResult(
+                intent=ConversationIntent.FAST_ACTION,
+                text=f"我知道你想立刻控制设备，但这次执行失败了：{exc}",
+                degraded=False,
+                facts=[],
+                suggestions=["换个更明确的说法", "稍后再试一次"],
+                memory_candidate_payloads=[],
+                config_suggestion=None,
+                action_payloads=[],
+                ai_trace_id=None,
+                ai_provider_code=None,
+                effective_agent_id=session.active_agent_id,
+                effective_agent_name=None,
+                intent_detection=detection,
+            ),
+            lane_selection=lane_selection,
+        )
+    receipt = {
+        "type": "fast_action_receipt",
+        "label": "设备动作执行结果",
+        "source": "conversation_fast_action",
+        "extra": response.model_dump(mode="json"),
+    }
+    return _attach_lane_selection(
+        ConversationOrchestratorResult(
+            intent=ConversationIntent.FAST_ACTION,
+            text=_build_fast_action_success_reply(device_name=response.device.name, action=response.action),
+            degraded=False,
+            facts=[receipt],
+            suggestions=[],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+            intent_detection=detection,
+        ),
+        lane_selection=lane_selection,
+    )
+
+
+async def _arun_fast_action_lane(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    actor: ActorContext,
+    detection: ConversationIntentDetection,
+    lane_selection: ConversationLaneSelection,
+    request_context: dict | None = None,
+) -> ConversationOrchestratorResult:
+    plan, clarification = _resolve_fast_action_plan(
+        db,
+        session=session,
+        message=message,
+        actor=actor,
+    )
+    if clarification is not None:
+        return _attach_lane_selection(clarification, lane_selection=lane_selection)
+    assert plan is not None
+    try:
+        response, _ = await aexecute_device_action(
+            db,
+            payload=DeviceActionExecuteRequest(
+                household_id=session.household_id,
+                device_id=plan.device.id,
+                action=cast(str, plan.action),
+                params={},
+                reason="conversation.fast_action",
+                confirm_high_risk=plan.confirm_high_risk,
+            ),
+        )
+    except Exception as exc:
+        return _attach_lane_selection(
+            ConversationOrchestratorResult(
+                intent=ConversationIntent.FAST_ACTION,
+                text=f"我知道你想立刻控制设备，但这次执行失败了：{exc}",
+                degraded=False,
+                facts=[],
+                suggestions=["换个更明确的说法", "稍后再试一次"],
+                memory_candidate_payloads=[],
+                config_suggestion=None,
+                action_payloads=[],
+                ai_trace_id=None,
+                ai_provider_code=None,
+                effective_agent_id=session.active_agent_id,
+                effective_agent_name=None,
+                intent_detection=detection,
+            ),
+            lane_selection=lane_selection,
+        )
+    receipt = {
+        "type": "fast_action_receipt",
+        "label": "设备动作执行结果",
+        "source": "conversation_fast_action",
+        "extra": response.model_dump(mode="json"),
+    }
+    return _attach_lane_selection(
+        ConversationOrchestratorResult(
+            intent=ConversationIntent.FAST_ACTION,
+            text=_build_fast_action_success_reply(device_name=response.device.name, action=response.action),
+            degraded=False,
+            facts=[receipt],
+            suggestions=[],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+            intent_detection=detection,
+        ),
+        lane_selection=lane_selection,
+    )
+
+
 async def _stream_non_realtime_lane(
     db: Session,
     *,
@@ -592,6 +792,15 @@ def _build_default_lane_selection(intent: ConversationIntent) -> ConversationLan
 
 
 def _build_lane_selection_from_intent(intent: ConversationIntent) -> ConversationLaneSelection:
+    if intent == ConversationIntent.FAST_ACTION:
+        return ConversationLaneSelection(
+            lane=ConversationLane.FAST_ACTION,
+            confidence=1.0,
+            reason="当前编排默认把 fast_action 结果归到快执行车道。",
+            target_kind="device_action",
+            requires_clarification=False,
+            source="intent_mapping",
+        )
     if intent == ConversationIntent.STRUCTURED_QA:
         return ConversationLaneSelection(
             lane=ConversationLane.REALTIME_QUERY,
@@ -609,6 +818,220 @@ def _build_lane_selection_from_intent(intent: ConversationIntent) -> Conversatio
         requires_clarification=False,
         source="intent_mapping",
     )
+
+
+def _resolve_fast_action_plan(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    actor: ActorContext,
+) -> tuple[FastActionPlan | None, ConversationOrchestratorResult | None]:
+    if actor.account_type != "system" and actor.member_role != "admin":
+        return None, ConversationOrchestratorResult(
+            intent=ConversationIntent.FAST_ACTION,
+            text="当前账号没有设备快控权限。请让管理员执行，或者改成普通聊天确认后再操作。",
+            degraded=False,
+            facts=[],
+            suggestions=["请管理员执行", "改成普通聊天确认后操作"],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+        )
+
+    devices, _ = list_devices(
+        db,
+        household_id=session.household_id,
+        page=1,
+        page_size=500,
+    )
+    controllable_devices = [item for item in devices if bool(item.controllable) and item.status == "active"]
+    action = _infer_fast_action(message=message, devices=controllable_devices)
+    if action is None:
+        return None, ConversationOrchestratorResult(
+            intent=ConversationIntent.FAST_ACTION,
+            text="我知道你像是在控制设备，但动作还不够明确。请直接说“打开/关闭/停止/锁上/解锁 + 设备名”。",
+            degraded=False,
+            facts=[],
+            suggestions=["把客厅灯关掉", "打开卧室空调", "锁上门锁"],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+        )
+
+    matched_devices = _match_fast_action_devices(message=message, devices=controllable_devices, action=action)
+    if not matched_devices:
+        return None, ConversationOrchestratorResult(
+            intent=ConversationIntent.FAST_ACTION,
+            text="我还没定位到你要控制的设备。请把设备名说得更明确一点，比如“把客厅灯关掉”。",
+            degraded=False,
+            facts=[],
+            suggestions=[item.name for item in controllable_devices[:3]],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+        )
+    if len(matched_devices) > 1:
+        return None, ConversationOrchestratorResult(
+            intent=ConversationIntent.FAST_ACTION,
+            text="我找到了多个可能的设备，还不敢直接执行。请你明确指定其中一个。",
+            degraded=False,
+            facts=[],
+            suggestions=[item.name for item in matched_devices[:3]],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+        )
+
+    device = matched_devices[0]
+    if action == "unlock" and not _is_high_risk_confirmation_present(message):
+        return None, ConversationOrchestratorResult(
+            intent=ConversationIntent.FAST_ACTION,
+            text=f"解锁 {device.name} 属于高风险动作。请明确说“确认解锁{device.name}”后我再执行。",
+            degraded=False,
+            facts=[],
+            suggestions=[f"确认解锁{device.name}", f"先查询{device.name}状态"],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+        )
+    return FastActionPlan(
+        device=device,
+        action=action,
+        confirm_high_risk=action == "unlock" and _is_high_risk_confirmation_present(message),
+    ), None
+
+
+def _infer_fast_action(message: str, devices: list[Device]) -> str | None:
+    normalized = _normalize_fast_action_text(message)
+    device_types = {item.device_type for item in devices}
+    keyword_groups: list[tuple[str, tuple[str, ...], set[str] | None]] = [
+        ("unlock", ("确认解锁", "解锁"), {"lock"}),
+        ("lock", ("锁上", "上锁", "锁门"), {"lock"}),
+        ("stop", ("停止", "停下"), {"curtain"}),
+        ("open", ("拉开", "打开"), {"curtain"}),
+        ("close", ("拉上", "合上", "关闭"), {"curtain"}),
+        ("turn_on", ("打开", "开启", "开一下", "开"), {"light", "ac", "speaker"}),
+        ("turn_off", ("关掉", "关闭", "关上", "关"), {"light", "ac", "speaker"}),
+    ]
+    for action, keywords, supported_types in keyword_groups:
+        if supported_types is not None and not (device_types & supported_types):
+            continue
+        if any(keyword in normalized for keyword in keywords):
+            return action
+    return None
+
+
+def _match_fast_action_devices(message: str, devices: list[Device], action: str) -> list[Device]:
+    normalized = _normalize_fast_action_text(message)
+    scored_devices: list[tuple[int, Device]] = []
+    for device in devices:
+        if action not in _supported_actions_for_device_type(device.device_type):
+            continue
+        score = _score_device_match(normalized, device)
+        if score <= 0:
+            continue
+        scored_devices.append((score, device))
+    if not scored_devices:
+        return []
+    scored_devices.sort(key=lambda item: (-item[0], item[1].name))
+    top_score = scored_devices[0][0]
+    if top_score < 2:
+        return []
+    return [device for score, device in scored_devices if score == top_score]
+
+
+def _score_device_match(message: str, device: Device) -> int:
+    normalized_name = _normalize_fast_action_text(device.name)
+    if not normalized_name:
+        return 0
+    if normalized_name in message:
+        return 10
+    score = 0
+    if _device_type_alias(device.device_type) in message:
+        score += 2
+    for char in set(normalized_name):
+        if char in message and char not in {"开", "关", "打", "停", "锁"}:
+            score += 1
+    if normalized_name.endswith(_device_type_alias(device.device_type)):
+        short_alias = normalized_name.replace("主", "")
+        if short_alias and short_alias in message:
+            score += 3
+    return score
+
+
+def _supported_actions_for_device_type(device_type: str) -> set[str]:
+    mapping = {
+        "light": {"turn_on", "turn_off"},
+        "ac": {"turn_on", "turn_off"},
+        "curtain": {"open", "close", "stop"},
+        "speaker": {"turn_on", "turn_off"},
+        "lock": {"lock", "unlock"},
+    }
+    return mapping.get(device_type, set())
+
+
+def _device_type_alias(device_type: str) -> str:
+    aliases = {
+        "light": "灯",
+        "ac": "空调",
+        "curtain": "窗帘",
+        "speaker": "音箱",
+        "lock": "门锁",
+    }
+    return aliases.get(device_type, "")
+
+
+def _normalize_fast_action_text(text: str) -> str:
+    normalized = text.strip().lower()
+    for token in (" ", "，", "。", "？", "！", ",", ".", "?", "!", "请", "帮我", "给我", "一下", "立刻", "马上", "把", "将"):
+        normalized = normalized.replace(token, "")
+    return normalized
+
+
+def _is_high_risk_confirmation_present(message: str) -> bool:
+    normalized = _normalize_fast_action_text(message)
+    return "确认" in normalized or "确定" in normalized
+
+
+def _build_fast_action_success_reply(*, device_name: str, action: str) -> str:
+    action_text = {
+        "turn_on": "打开",
+        "turn_off": "关闭",
+        "open": "打开",
+        "close": "关闭",
+        "stop": "停止",
+        "lock": "锁上",
+        "unlock": "解锁",
+    }.get(action, "执行")
+    return f"已为你{action_text}{device_name}。"
+
+
+def _looks_like_fast_action_request(message: str) -> bool:
+    normalized = _normalize_fast_action_text(message)
+    action_keywords = ("打开", "开启", "关掉", "关闭", "关上", "停止", "锁上", "解锁", "拉开", "拉上")
+    device_keywords = ("灯", "空调", "窗帘", "门锁", "音箱", "设备")
+    return any(keyword in normalized for keyword in action_keywords) and any(keyword in normalized for keyword in device_keywords)
 
 
 async def _stream_non_qa_chat(
@@ -1522,6 +1945,7 @@ def _build_fallback_intent_detection(reason: str) -> ConversationIntentDetection
 
 def _build_default_intent_detection(route_intent: ConversationIntent) -> ConversationIntentDetection:
     primary_intent = {
+        ConversationIntent.FAST_ACTION: ConversationIntentLabel.FREE_CHAT,
         ConversationIntent.FREE_CHAT: ConversationIntentLabel.FREE_CHAT,
         ConversationIntent.STRUCTURED_QA: ConversationIntentLabel.STRUCTURED_QA,
         ConversationIntent.CONFIG_EXTRACTION: ConversationIntentLabel.CONFIG_CHANGE,
@@ -1578,6 +2002,27 @@ def _log_route_selection(
             "confidence": detection.confidence,
             "guardrail_rule": detection.guardrail_rule,
             "lane_selection": detection.lane_selection.to_payload() if detection.lane_selection is not None else None,
+        },
+    )
+
+
+def _log_lane_shadow_result(
+    *,
+    request_context: dict | None,
+    detection: ConversationIntentDetection,
+    lane_selection: ConversationLaneSelection,
+) -> None:
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="lane.shadow.evaluated",
+        message="车道选择器已影子运行，但当前未接管主路由。",
+        payload={
+            "legacy_route_intent": detection.route_intent.value,
+            "shadow_lane": lane_selection.lane.value,
+            "shadow_confidence": lane_selection.confidence,
+            "shadow_reason": lane_selection.reason,
+            "shadow_target_kind": lane_selection.target_kind,
+            "requires_clarification": lane_selection.requires_clarification,
         },
     )
 

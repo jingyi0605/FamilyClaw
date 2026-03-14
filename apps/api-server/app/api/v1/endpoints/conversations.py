@@ -6,10 +6,10 @@ from app.api.dependencies import ActorContext, ensure_actor_can_access_household
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
+from app.modules.conversation import repository as conversation_repository
 from app.modules.conversation.schemas import (
-    ConversationActionExecutionRead,
     ConversationDebugLogListRead,
-    ConversationMemoryCandidateActionRead,
+    ConversationProposalExecutionRead,
     ConversationSessionCreate,
     ConversationSessionDetailRead,
     ConversationSessionListResponse,
@@ -19,16 +19,13 @@ from app.modules.conversation.schemas import (
 from app.modules.conversation.service import (
     ConversationNotFoundError,
     acreate_conversation_turn,
-    confirm_conversation_action,
-    confirm_memory_candidate,
     create_conversation_session,
     create_conversation_turn,
-    dismiss_conversation_action,
-    dismiss_memory_candidate,
+    confirm_conversation_proposal,
+    dismiss_conversation_proposal,
     get_conversation_session_detail,
     list_conversation_debug_logs,
     list_conversation_sessions,
-    undo_conversation_action,
 )
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -155,23 +152,26 @@ async def create_conversation_turn_endpoint(
         raise translate_integrity_error(exc) from exc
 
 
-@router.post("/memory-candidates/{candidate_id}/confirm", response_model=ConversationMemoryCandidateActionRead)
-def confirm_memory_candidate_endpoint(
-    candidate_id: str,
+@router.post("/proposal-items/{proposal_item_id}/confirm", response_model=ConversationProposalExecutionRead)
+def confirm_conversation_proposal_endpoint(
+    proposal_item_id: str,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_bound_member_actor),
-) -> ConversationMemoryCandidateActionRead:
-    result = confirm_memory_candidate(db, candidate_id=candidate_id, actor=actor)
-    session_detail = get_conversation_session_detail(db, session_id=result.candidate.session_id, actor=actor)
+) -> ConversationProposalExecutionRead:
+    result = confirm_conversation_proposal(db, proposal_item_id=proposal_item_id, actor=actor)
+    batch = conversation_repository.get_proposal_batch(db, result.item.batch_id)
+    if batch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation proposal batch not found")
+    session_detail = get_conversation_session_detail(db, session_id=batch.session_id, actor=actor)
     write_audit_log(
         db,
         household_id=session_detail.household_id,
         actor=actor,
-        action="conversation.memory_candidate.confirm",
-        target_type="conversation_memory_candidate",
-        target_id=result.candidate.id,
+        action="conversation.proposal_item.confirm",
+        target_type="conversation_proposal_item",
+        target_id=result.item.id,
         result="success",
-        details={"memory_card_id": result.memory_card_id},
+        details={"proposal_kind": result.item.proposal_kind, "affected_target_id": result.affected_target_id},
     )
     try:
         db.commit()
@@ -181,101 +181,26 @@ def confirm_memory_candidate_endpoint(
         raise translate_integrity_error(exc) from exc
 
 
-@router.post("/memory-candidates/{candidate_id}/dismiss", response_model=ConversationMemoryCandidateActionRead)
-def dismiss_memory_candidate_endpoint(
-    candidate_id: str,
+@router.post("/proposal-items/{proposal_item_id}/dismiss", response_model=ConversationProposalExecutionRead)
+def dismiss_conversation_proposal_endpoint(
+    proposal_item_id: str,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_bound_member_actor),
-) -> ConversationMemoryCandidateActionRead:
-    result = dismiss_memory_candidate(db, candidate_id=candidate_id, actor=actor)
-    session_detail = get_conversation_session_detail(db, session_id=result.candidate.session_id, actor=actor)
+) -> ConversationProposalExecutionRead:
+    result = dismiss_conversation_proposal(db, proposal_item_id=proposal_item_id, actor=actor)
+    batch = conversation_repository.get_proposal_batch(db, result.item.batch_id)
+    if batch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation proposal batch not found")
+    session_detail = get_conversation_session_detail(db, session_id=batch.session_id, actor=actor)
     write_audit_log(
         db,
         household_id=session_detail.household_id,
         actor=actor,
-        action="conversation.memory_candidate.dismiss",
-        target_type="conversation_memory_candidate",
-        target_id=result.candidate.id,
+        action="conversation.proposal_item.dismiss",
+        target_type="conversation_proposal_item",
+        target_id=result.item.id,
         result="success",
-        details=None,
-    )
-    try:
-        db.commit()
-        return result
-    except IntegrityError as exc:
-        db.rollback()
-        raise translate_integrity_error(exc) from exc
-
-
-@router.post("/actions/{action_id}/confirm", response_model=ConversationActionExecutionRead)
-def confirm_conversation_action_endpoint(
-    action_id: str,
-    db: Session = Depends(get_db),
-    actor: ActorContext = Depends(require_bound_member_actor),
-) -> ConversationActionExecutionRead:
-    result = confirm_conversation_action(db, action_id=action_id, actor=actor)
-    session_detail = get_conversation_session_detail(db, session_id=result.action.session_id, actor=actor)
-    write_audit_log(
-        db,
-        household_id=session_detail.household_id,
-        actor=actor,
-        action="conversation.action.confirm",
-        target_type="conversation_action",
-        target_id=result.action.id,
-        result=result.action.status,
-        details={"action_name": result.action.action_name},
-    )
-    try:
-        db.commit()
-        return result
-    except IntegrityError as exc:
-        db.rollback()
-        raise translate_integrity_error(exc) from exc
-
-
-@router.post("/actions/{action_id}/dismiss", response_model=ConversationActionExecutionRead)
-def dismiss_conversation_action_endpoint(
-    action_id: str,
-    db: Session = Depends(get_db),
-    actor: ActorContext = Depends(require_bound_member_actor),
-) -> ConversationActionExecutionRead:
-    result = dismiss_conversation_action(db, action_id=action_id, actor=actor)
-    session_detail = get_conversation_session_detail(db, session_id=result.action.session_id, actor=actor)
-    write_audit_log(
-        db,
-        household_id=session_detail.household_id,
-        actor=actor,
-        action="conversation.action.dismiss",
-        target_type="conversation_action",
-        target_id=result.action.id,
-        result=result.action.status,
-        details={"action_name": result.action.action_name},
-    )
-    try:
-        db.commit()
-        return result
-    except IntegrityError as exc:
-        db.rollback()
-        raise translate_integrity_error(exc) from exc
-
-
-@router.post("/actions/{action_id}/undo", response_model=ConversationActionExecutionRead)
-def undo_conversation_action_endpoint(
-    action_id: str,
-    db: Session = Depends(get_db),
-    actor: ActorContext = Depends(require_bound_member_actor),
-) -> ConversationActionExecutionRead:
-    result = undo_conversation_action(db, action_id=action_id, actor=actor)
-    session_detail = get_conversation_session_detail(db, session_id=result.action.session_id, actor=actor)
-    write_audit_log(
-        db,
-        household_id=session_detail.household_id,
-        actor=actor,
-        action="conversation.action.undo",
-        target_type="conversation_action",
-        target_id=result.action.id,
-        result=result.action.status,
-        details={"action_name": result.action.action_name},
+        details={"proposal_kind": result.item.proposal_kind},
     )
     try:
         db.commit()

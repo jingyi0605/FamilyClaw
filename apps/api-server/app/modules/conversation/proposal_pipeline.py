@@ -219,6 +219,7 @@ def persist_proposal_batch(
     drafts: list[ProposalDraft],
 ) -> tuple[str, list[str]]:
     now = utc_now_iso()
+    batch_status = _resolve_batch_status(drafts)
     batch = ConversationProposalBatch(
         id=new_uuid(),
         session_id=session.id,
@@ -226,7 +227,7 @@ def persist_proposal_batch(
         source_message_ids_json=dump_json([item.message_id for item in turn_context.turn_messages]) or "[]",
         source_roles_json=dump_json([item.role for item in turn_context.turn_messages]) or "[]",
         lane_json=dump_json(turn_context.lane_result) or "{}",
-        status="pending_policy",
+        status=batch_status,
         created_at=now,
         updated_at=now,
     )
@@ -238,7 +239,7 @@ def persist_proposal_batch(
             batch_id=batch.id,
             proposal_kind=draft.proposal_kind,
             policy_category=draft.policy_category,
-            status="pending_policy",
+            status=_resolve_item_status(draft.policy_category),
             title=draft.title,
             summary=draft.summary,
             evidence_message_ids_json=dump_json(draft.evidence_message_ids) or "[]",
@@ -260,3 +261,22 @@ def _render_turn_messages(turn_messages: list[TurnProposalEvidence]) -> str:
     for item in turn_messages:
         lines.append(f"[{item.kind}] {item.role}({item.message_id}): {item.content}")
     return "\n".join(lines)
+
+
+def _resolve_item_status(policy_category: str) -> str:
+    if policy_category == "ignore":
+        return "ignored"
+    if policy_category == "auto":
+        return "completed"
+    return "pending_confirmation"
+
+
+def _resolve_batch_status(drafts: list[ProposalDraft]) -> str:
+    statuses = {_resolve_item_status(draft.policy_category) for draft in drafts}
+    if statuses <= {"completed"}:
+        return "completed"
+    if statuses <= {"ignored"}:
+        return "ignored"
+    if "pending_confirmation" in statuses:
+        return "pending_confirmation"
+    return "pending_policy"
