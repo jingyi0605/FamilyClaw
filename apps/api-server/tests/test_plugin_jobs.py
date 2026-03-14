@@ -3,21 +3,27 @@ from pathlib import Path
 import tempfile
 import json
 import sys
+import asyncio
 
 from alembic import command
 from alembic.config import Config
+import httpx
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session, sessionmaker
 
 import app.db.models  # noqa: F401
 import app.db.session as db_session_module
 from app.core.config import settings
+from app.main import app
+from app.modules.account.schemas import BootstrapAccountCompleteRequest
+from app.modules.account.service import authenticate_account, complete_bootstrap_account, create_account_session, ensure_pending_household_bootstrap_accounts
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
-from app.modules.plugin.models import PluginJob
+from app.modules.realtime.connection_manager import realtime_connection_manager
 from app.modules.plugin import repository
+from app.modules.plugin.job_notifier import publish_plugin_job_updates
 from app.modules.plugin.job_worker import (
     claim_next_plugin_job,
     enqueue_plugin_execution_job,
@@ -40,13 +46,23 @@ from app.modules.plugin.schemas import PluginExecutionRequest, PluginJobCreate, 
 from app.modules.plugin.service import register_plugin_mount
 
 
+class _FakeWebSocket:
+    def __init__(self) -> None:
+        self.sent_messages: list[dict] = []
+
+    async def send_json(self, payload: dict) -> None:
+        self.sent_messages.append(payload)
+
+
 class PluginJobTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
+        self._previous_worker_enabled = settings.plugin_job_worker_enabled
 
         db_path = Path(self._tempdir.name) / "test.db"
         settings.database_url = f"sqlite:///{db_path}"
+        settings.plugin_job_worker_enabled = False
 
         alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
         alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
@@ -58,14 +74,28 @@ class PluginJobTests(unittest.TestCase):
         db_session_module.SessionLocal = self.SessionLocal
         self.db: Session = self.SessionLocal()
         self.builtin_root = Path(__file__).resolve().parents[1] / "app" / "plugins" / "builtin"
+        ensure_pending_household_bootstrap_accounts(self.db)
         self.household = create_household(
             self.db,
             HouseholdCreate(name="Plugin Job Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
         )
         self.member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="妈妈", role="adult"),
+            MemberCreate(household_id=self.household.id, name="妈妈", role="admin"),
         )
+        self.db.commit()
+        bootstrap = authenticate_account(self.db, "user", "user")
+        account = complete_bootstrap_account(
+            self.db,
+            actor=bootstrap,
+            payload=BootstrapAccountCompleteRequest(
+                household_id=self.household.id,
+                member_id=self.member.id,
+                username="plugin_owner",
+                password="owner123",
+            ),
+        )
+        _, self.session_token = create_account_session(self.db, account.id)
         self.db.flush()
 
     def tearDown(self) -> None:
@@ -73,6 +103,7 @@ class PluginJobTests(unittest.TestCase):
         self.engine.dispose()
         db_session_module.SessionLocal = self._previous_session_local
         settings.database_url = self._previous_database_url
+        settings.plugin_job_worker_enabled = self._previous_worker_enabled
         self._tempdir.cleanup()
 
     def test_plugin_job_tables_exist_and_idempotency_reuses_existing_job(self) -> None:
@@ -118,7 +149,7 @@ class PluginJobTests(unittest.TestCase):
         self.assertEqual("queued", first.status)
         self.assertEqual(first.id, notification.job_id)
         self.assertEqual(1, len(repository.list_plugin_jobs(self.db, household_id=self.household.id)))
-        self.assertEqual(1, len(repository.list_plugin_job_notifications(self.db, job_id=first.id)))
+        self.assertEqual(2, len(repository.list_plugin_job_notifications(self.db, job_id=first.id)))
 
     def test_plugin_job_state_machine_handles_retry_then_success(self) -> None:
         job = create_plugin_job(
@@ -230,8 +261,6 @@ class PluginJobTests(unittest.TestCase):
         claimed_job = first_claim
         assert claimed_job is not None
 
-        import asyncio
-
         asyncio.run(execute_plugin_job(job.id, worker_id="worker-a"))
 
         job_row = repository.get_plugin_job(self.db, job.id)
@@ -255,8 +284,6 @@ class PluginJobTests(unittest.TestCase):
             max_attempts=2,
         )
         self.db.commit()
-
-        import asyncio
 
         asyncio.run(run_plugin_job_worker_cycle(worker_id="worker-r1"))
         self.db.expire_all()
@@ -296,12 +323,12 @@ class PluginJobTests(unittest.TestCase):
         job_row.updated_at = "2000-01-01T00:00:00Z"
         self.db.commit()
 
-        recovered_count = recover_plugin_jobs(self.db)
+        recovered_jobs = recover_plugin_jobs(self.db)
         self.db.commit()
 
         recovered_job = repository.get_plugin_job(self.db, job.id)
         assert recovered_job is not None
-        self.assertEqual(1, recovered_count)
+        self.assertEqual(1, len(recovered_jobs))
         self.assertEqual("retry_waiting", recovered_job.status)
         self.assertIsNotNone(recovered_job.retry_after_at)
 
@@ -333,8 +360,6 @@ class PluginJobTests(unittest.TestCase):
                 max_attempts=1,
             )
             self.db.commit()
-
-            import asyncio
 
             asyncio.run(run_plugin_job_worker_cycle(worker_id="worker-timeout"))
             self.db.expire_all()
@@ -382,6 +407,124 @@ class PluginJobTests(unittest.TestCase):
             encoding="utf-8",
         )
         return plugin_root
+
+    def test_plugin_job_api_detail_list_and_response(self) -> None:
+        waiting_job = create_plugin_job(
+            self.db,
+            payload=PluginJobCreate(
+                household_id=self.household.id,
+                plugin_id="homeassistant-device-action",
+                plugin_type="action",
+                trigger="agent-action",
+                request_payload={"target_ref": "door-lock"},
+                max_attempts=2,
+            ),
+        )
+        attempt = start_plugin_job_attempt(self.db, job_id=waiting_job.id, worker_id="worker-api")
+        mark_plugin_job_attempt_failed(
+            self.db,
+            attempt_id=attempt.id,
+            error_code="job_response_required",
+            error_message="需要人工确认",
+            response_required=True,
+            response_deadline_at="2026-03-16T00:00:00Z",
+        )
+        failed_job = create_plugin_job(
+            self.db,
+            payload=PluginJobCreate(
+                household_id=self.household.id,
+                plugin_id="health-basic-reader",
+                plugin_type="connector",
+                trigger="manual",
+                request_payload={"scope": "api"},
+                max_attempts=1,
+            ),
+        )
+        failed_attempt = start_plugin_job_attempt(self.db, job_id=failed_job.id, worker_id="worker-api")
+        mark_plugin_job_attempt_failed(
+            self.db,
+            attempt_id=failed_attempt.id,
+            error_code="job_execution_failed",
+            error_message="接口测试失败",
+        )
+        self.db.commit()
+
+        transport = httpx.ASGITransport(app=app)
+
+        async def run_case() -> None:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                client.cookies.set(settings.auth_session_cookie_name, self.session_token)
+
+                detail_response = await client.get(
+                    f"/api/v1/plugin-jobs/{waiting_job.id}",
+                    params={"household_id": self.household.id},
+                )
+                self.assertEqual(200, detail_response.status_code)
+                detail_payload = detail_response.json()
+                self.assertEqual("waiting_response", detail_payload["job"]["status"])
+                self.assertEqual(["retry", "confirm", "cancel", "provide_input"], detail_payload["allowed_actions"])
+                self.assertTrue(len(detail_payload["recent_notifications"]) >= 1)
+
+                list_response = await client.get(
+                    "/api/v1/plugin-jobs",
+                    params={"household_id": self.household.id, "status": "failed", "page": 1, "page_size": 10},
+                )
+                self.assertEqual(200, list_response.status_code)
+                list_payload = list_response.json()
+                self.assertEqual(1, list_payload["total"])
+                self.assertEqual(failed_job.id, list_payload["items"][0]["job"]["id"])
+
+                invalid_response = await client.post(
+                    f"/api/v1/plugin-jobs/{failed_job.id}/responses",
+                    params={"household_id": self.household.id},
+                    json={"action": "confirm", "actor_type": "member", "actor_id": self.member.id},
+                )
+                self.assertEqual(409, invalid_response.status_code)
+
+                confirm_response = await client.post(
+                    f"/api/v1/plugin-jobs/{waiting_job.id}/responses",
+                    params={"household_id": self.household.id},
+                    json={"action": "confirm", "actor_type": "member", "actor_id": self.member.id, "payload": {"confirmed": True}},
+                )
+                self.assertEqual(200, confirm_response.status_code)
+                confirm_payload = confirm_response.json()
+                self.assertEqual("queued", confirm_payload["job"]["status"])
+
+        asyncio.run(run_case())
+
+    def test_plugin_job_update_event_reaches_household_websocket(self) -> None:
+        job = create_plugin_job(
+            self.db,
+            payload=PluginJobCreate(
+                household_id=self.household.id,
+                plugin_id="health-basic-reader",
+                plugin_type="connector",
+                trigger="manual",
+                request_payload={"scope": "ws"},
+                max_attempts=1,
+            ),
+        )
+        self.db.commit()
+
+        websocket = _FakeWebSocket()
+        realtime_connection_manager.register(
+            household_id=self.household.id,
+            session_id="conversation-session-1",
+            websocket=websocket,  # type: ignore[arg-type]
+        )
+        try:
+            asyncio.run(publish_plugin_job_updates(self.db, household_id=self.household.id, job_id=job.id))
+        finally:
+            realtime_connection_manager.unregister(
+                household_id=self.household.id,
+                session_id="conversation-session-1",
+                websocket=websocket,  # type: ignore[arg-type]
+            )
+
+        notifications = repository.list_plugin_job_notifications(self.db, job_id=job.id)
+        self.assertEqual("plugin.job.updated", websocket.sent_messages[-1]["type"])
+        self.assertEqual(job.id, websocket.sent_messages[-1]["payload"]["job"]["id"])
+        self.assertTrue(any(item.channel == "websocket" and item.delivered_at is not None for item in notifications))
 
 
 if __name__ == "__main__":

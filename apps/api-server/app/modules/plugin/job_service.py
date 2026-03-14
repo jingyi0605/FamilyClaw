@@ -9,10 +9,14 @@ from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from . import repository
 from .models import PluginJob, PluginJobAttempt, PluginJobNotification, PluginJobResponse
 from .schemas import (
+    PluginJobDetailRead,
     PluginJobAttemptRead,
     PluginJobCreate,
+    PluginJobListItemRead,
+    PluginJobListRead,
     PluginJobNotificationChannel,
     PluginJobNotificationRead,
+    PluginJobNotificationSummaryRead,
     PluginJobNotificationType,
     PluginJobRead,
     PluginJobResponseAction,
@@ -80,7 +84,66 @@ def create_plugin_job(db: Session, *, payload: PluginJobCreate) -> PluginJobRead
     )
     repository.add_plugin_job(db, row)
     db.flush()
+    _record_job_state_notifications(db, job=row, previous_status=None)
     return _to_plugin_job_read(row)
+
+
+def get_plugin_job_detail(db: Session, *, household_id: str, job_id: str) -> PluginJobDetailRead:
+    row = get_plugin_job_or_raise(db, job_id=job_id)
+    if row.household_id != household_id:
+        raise PluginJobNotFoundError(f"插件任务不存在: {job_id}")
+    latest_attempt = repository.get_latest_plugin_job_attempt(db, job_id=row.id)
+    notifications = repository.get_latest_plugin_job_notifications(db, job_id=row.id, limit=5)
+    return PluginJobDetailRead(
+        job=_to_plugin_job_read(row),
+        latest_attempt=_to_plugin_job_attempt_read(latest_attempt) if latest_attempt is not None else None,
+        allowed_actions=_allowed_actions_for_job(row),
+        recent_notifications=[_to_plugin_job_notification_summary_read(item) for item in notifications],
+    )
+
+
+def list_plugin_jobs_page(
+    db: Session,
+    *,
+    household_id: str,
+    status: str | None = None,
+    plugin_id: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> PluginJobListRead:
+    offset = max(page - 1, 0) * page_size
+    rows = repository.list_plugin_jobs_page(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        status=status,
+        created_from=created_from,
+        created_to=created_to,
+        offset=offset,
+        limit=page_size,
+    )
+    total = repository.count_plugin_jobs(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        status=status,
+        created_from=created_from,
+        created_to=created_to,
+    )
+    return PluginJobListRead(
+        items=[
+            PluginJobListItemRead(
+                job=_to_plugin_job_read(row),
+                allowed_actions=_allowed_actions_for_job(row),
+            )
+            for row in rows
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 def get_plugin_job_or_raise(db: Session, *, job_id: str) -> PluginJob:
@@ -146,12 +209,14 @@ def mark_plugin_job_attempt_succeeded(
     attempt.error_message = None
     attempt.output_summary_json = dump_json(output_summary)
 
+    previous_status = job.status
     _transition_job(job, "succeeded", now=now)
     job.last_error_code = None
     job.last_error_message = None
     job.response_deadline_at = None
     job.finished_at = now
     db.flush()
+    _record_job_state_notifications(db, job=job, previous_status=previous_status)
     return _to_plugin_job_read(job)
 
 
@@ -179,6 +244,7 @@ def mark_plugin_job_attempt_failed(
 
     job.last_error_code = error_code
     job.last_error_message = error_message
+    previous_status = job.status
 
     if response_required:
         _transition_job(job, "waiting_response", now=now)
@@ -197,6 +263,7 @@ def mark_plugin_job_attempt_failed(
         job.finished_at = now
 
     db.flush()
+    _record_job_state_notifications(db, job=job, previous_status=previous_status)
     return _to_plugin_job_read(job)
 
 
@@ -221,6 +288,7 @@ def mark_plugin_job_attempt_timed_out(
     job = get_plugin_job_or_raise(db, job_id=attempt.job_id)
     job.last_error_code = "job_timeout"
     job.last_error_message = error_message
+    previous_status = job.status
 
     if response_required:
         _transition_job(job, "waiting_response", now=now)
@@ -238,27 +306,32 @@ def mark_plugin_job_attempt_timed_out(
         job.response_deadline_at = None
         job.finished_at = now
     db.flush()
+    _record_job_state_notifications(db, job=job, previous_status=previous_status)
     return _to_plugin_job_read(job)
 
 
 def requeue_plugin_job(db: Session, *, job_id: str) -> PluginJobRead:
     job = get_plugin_job_or_raise(db, job_id=job_id)
+    previous_status = job.status
     _transition_job(job, "queued")
     job.finished_at = None
     job.retry_after_at = None
     job.response_deadline_at = None
     db.flush()
+    _record_job_state_notifications(db, job=job, previous_status=previous_status)
     return _to_plugin_job_read(job)
 
 
 def cancel_plugin_job(db: Session, *, job_id: str) -> PluginJobRead:
     job = get_plugin_job_or_raise(db, job_id=job_id)
     now = utc_now_iso()
+    previous_status = job.status
     _transition_job(job, "cancelled", now=now)
     job.finished_at = now
     job.retry_after_at = None
     job.response_deadline_at = None
     db.flush()
+    _record_job_state_notifications(db, job=job, previous_status=previous_status)
     return _to_plugin_job_read(job)
 
 
@@ -286,11 +359,13 @@ def record_plugin_job_response(
     repository.add_plugin_job_response(db, response)
 
     if payload.action == "cancel":
+        previous_status = job.status
         _transition_job(job, "cancelled", now=now)
         job.finished_at = now
         job.retry_after_at = None
         job.response_deadline_at = None
     else:
+        previous_status = job.status
         _transition_job(job, "queued", now=now)
         job.finished_at = None
         job.retry_after_at = None
@@ -300,6 +375,7 @@ def record_plugin_job_response(
             job.last_error_message = None
 
     db.flush()
+    _record_job_state_notifications(db, job=job, previous_status=previous_status)
     return _to_plugin_job_response_read(response), _to_plugin_job_read(job)
 
 
@@ -352,6 +428,72 @@ def _transition_job(job: PluginJob, next_status: PluginJobStatus, *, now: str | 
         raise PluginJobStateError(f"非法任务状态流转: {job.status} -> {next_status}")
     job.status = next_status
     job.updated_at = now or utc_now_iso()
+
+
+def _record_job_state_notifications(db: Session, *, job: PluginJob, previous_status: str | None) -> None:
+    if previous_status == job.status:
+        return
+    payload = {
+        "job_id": job.id,
+        "household_id": job.household_id,
+        "plugin_id": job.plugin_id,
+        "status": job.status,
+        "previous_status": previous_status,
+        "last_error_code": job.last_error_code,
+        "last_error_message": job.last_error_message,
+        "allowed_actions": _allowed_actions_for_job(job),
+    }
+    repository.add_plugin_job_notification(
+        db,
+        PluginJobNotification(
+            id=new_uuid(),
+            job_id=job.id,
+            notification_type="state_changed",
+            channel="websocket",
+            payload_json=dump_json(payload) or "{}",
+            delivered_at=None,
+            created_at=utc_now_iso(),
+        ),
+    )
+    if job.status == "waiting_response":
+        repository.add_plugin_job_notification(
+            db,
+            PluginJobNotification(
+                id=new_uuid(),
+                job_id=job.id,
+                notification_type="waiting_response",
+                channel="in_app",
+                payload_json=dump_json(payload) or "{}",
+                delivered_at=None,
+                created_at=utc_now_iso(),
+            ),
+        )
+    elif job.status == "failed":
+        repository.add_plugin_job_notification(
+            db,
+            PluginJobNotification(
+                id=new_uuid(),
+                job_id=job.id,
+                notification_type="failed",
+                channel="in_app",
+                payload_json=dump_json(payload) or "{}",
+                delivered_at=None,
+                created_at=utc_now_iso(),
+            ),
+        )
+    elif previous_status == "running" and job.status == "retry_waiting":
+        repository.add_plugin_job_notification(
+            db,
+            PluginJobNotification(
+                id=new_uuid(),
+                job_id=job.id,
+                notification_type="recovered",
+                channel="in_app",
+                payload_json=dump_json(payload) or "{}",
+                delivered_at=None,
+                created_at=utc_now_iso(),
+            ),
+        )
 
 
 def _to_plugin_job_read(row: PluginJob) -> PluginJobRead:
@@ -407,6 +549,19 @@ def _to_plugin_job_notification_read(row: PluginJobNotification) -> PluginJobNot
             "payload": load_json(row.payload_json),
             "delivered_at": row.delivered_at,
             "created_at": row.created_at,
+        }
+    )
+
+
+def _to_plugin_job_notification_summary_read(row: PluginJobNotification) -> PluginJobNotificationSummaryRead:
+    return PluginJobNotificationSummaryRead.model_validate(
+        {
+            "id": row.id,
+            "notification_type": row.notification_type,
+            "channel": row.channel,
+            "delivered_at": row.delivered_at,
+            "created_at": row.created_at,
+            "payload": load_json(row.payload_json),
         }
     )
 

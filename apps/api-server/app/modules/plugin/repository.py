@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from sqlalchemy import Select, select, update
 from sqlalchemy.orm import Session
 
@@ -113,6 +115,59 @@ def list_plugin_jobs(
     return list(db.scalars(stmt).all())
 
 
+def count_plugin_jobs(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str | None = None,
+    status: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
+) -> int:
+    filters = [PluginJob.household_id == household_id]
+    if plugin_id is not None:
+        filters.append(PluginJob.plugin_id == plugin_id)
+    if status is not None:
+        filters.append(PluginJob.status == status)
+    if created_from is not None:
+        filters.append(PluginJob.created_at >= created_from)
+    if created_to is not None:
+        filters.append(PluginJob.created_at <= created_to)
+    stmt = select(PluginJob.id).where(*filters)
+    return len(list(db.execute(stmt).all()))
+
+
+def list_plugin_jobs_page(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str | None = None,
+    status: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
+    offset: int = 0,
+    limit: int = 20,
+) -> list[PluginJob]:
+    filters = [PluginJob.household_id == household_id]
+    if plugin_id is not None:
+        filters.append(PluginJob.plugin_id == plugin_id)
+    if status is not None:
+        filters.append(PluginJob.status == status)
+    if created_from is not None:
+        filters.append(PluginJob.created_at >= created_from)
+    if created_to is not None:
+        filters.append(PluginJob.created_at <= created_to)
+
+    stmt: Select[tuple[PluginJob]] = (
+        select(PluginJob)
+        .where(*filters)
+        .order_by(PluginJob.created_at.desc(), PluginJob.id.desc())
+        .offset(max(offset, 0))
+        .limit(max(limit, 1))
+    )
+    return list(db.scalars(stmt).all())
+
+
 def list_runnable_plugin_jobs(db: Session, *, now: str) -> list[PluginJob]:
     stmt: Select[tuple[PluginJob]] = (
         select(PluginJob)
@@ -148,7 +203,7 @@ def claim_plugin_job_for_running(
         .values(status="running", updated_at=updated_at, retry_after_at=None, finished_at=None)
     )
     result = db.execute(stmt)
-    return result.rowcount == 1
+    return (cast(Any, result).rowcount or 0) == 1
 
 
 def list_stale_running_plugin_jobs(db: Session, *, heartbeat_before: str) -> list[PluginJob]:
@@ -202,6 +257,26 @@ def list_plugin_job_notifications(db: Session, *, job_id: str) -> list[PluginJob
         .order_by(PluginJobNotification.created_at.desc(), PluginJobNotification.id.desc())
     )
     return list(db.scalars(stmt).all())
+
+
+def get_latest_plugin_job_notifications(db: Session, *, job_id: str, limit: int = 5) -> list[PluginJobNotification]:
+    stmt: Select[tuple[PluginJobNotification]] = (
+        select(PluginJobNotification)
+        .where(PluginJobNotification.job_id == job_id)
+        .order_by(PluginJobNotification.created_at.desc(), PluginJobNotification.id.desc())
+        .limit(max(limit, 1))
+    )
+    return list(db.scalars(stmt).all())
+
+
+def mark_plugin_job_notification_delivered(db: Session, *, notification_id: str, delivered_at: str) -> bool:
+    stmt = (
+        update(PluginJobNotification)
+        .where(PluginJobNotification.id == notification_id)
+        .values(delivered_at=delivered_at)
+    )
+    result = db.execute(stmt)
+    return (cast(Any, result).rowcount or 0) == 1
 
 
 def add_plugin_job_response(db: Session, row: PluginJobResponse) -> PluginJobResponse:

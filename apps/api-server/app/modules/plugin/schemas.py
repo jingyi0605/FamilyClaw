@@ -307,6 +307,34 @@ class PluginJobRead(BaseModel):
     created_at: str
 
 
+class PluginJobNotificationSummaryRead(BaseModel):
+    id: str
+    notification_type: PluginJobNotificationType
+    channel: PluginJobNotificationChannel
+    delivered_at: str | None = None
+    created_at: str
+    payload: Any
+
+
+class PluginJobDetailRead(BaseModel):
+    job: PluginJobRead
+    latest_attempt: PluginJobAttemptRead | None = None
+    allowed_actions: list[PluginJobResponseAction] = Field(default_factory=list)
+    recent_notifications: list[PluginJobNotificationSummaryRead] = Field(default_factory=list)
+
+
+class PluginJobListItemRead(BaseModel):
+    job: PluginJobRead
+    allowed_actions: list[PluginJobResponseAction] = Field(default_factory=list)
+
+
+class PluginJobListRead(BaseModel):
+    items: list[PluginJobListItemRead]
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1)
+
+
 class PluginExecutionRequest(BaseModel):
     plugin_id: str = Field(min_length=1)
     plugin_type: PluginType

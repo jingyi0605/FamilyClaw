@@ -11,6 +11,7 @@ from app.db.utils import load_json, new_uuid, utc_now_iso
 import app.db.session as db_session_module
 
 from . import repository
+from .job_notifier import publish_plugin_job_updates
 from .job_service import (
     PluginJobNotFoundError,
     create_plugin_job,
@@ -91,19 +92,28 @@ def enqueue_plugin_execution_job(
 
 async def run_plugin_job_worker_cycle(*, worker_id: str) -> bool:
     with db_session_module.SessionLocal() as db:
-        recovered = recover_plugin_jobs(db)
+        recovered_job_ids = recover_plugin_jobs(db)
         claimed = claim_next_plugin_job(db, worker_id=worker_id)
         db.commit()
 
-    if claimed is None:
-        return recovered > 0
+    for recovered_job_id, household_id in recovered_job_ids:
+        with db_session_module.SessionLocal() as db:
+            await publish_plugin_job_updates(db, household_id=household_id, job_id=recovered_job_id)
 
+    if claimed is None:
+        return len(recovered_job_ids) > 0
+
+    with db_session_module.SessionLocal() as db:
+        await publish_plugin_job_updates(db, household_id=claimed.household_id, job_id=claimed.id)
     await execute_plugin_job(claimed.id, worker_id=worker_id)
     return True
 
 
 async def execute_plugin_job(job_id: str, *, worker_id: str) -> None:
     await asyncio.to_thread(_execute_plugin_job_sync, job_id, worker_id)
+    with db_session_module.SessionLocal() as db:
+        job = get_plugin_job_or_raise(db, job_id=job_id)
+        await publish_plugin_job_updates(db, household_id=job.household_id, job_id=job_id)
 
 
 def claim_next_plugin_job(db: Session, *, worker_id: str) -> PluginJobRead | None:
@@ -135,15 +145,15 @@ def claim_next_plugin_job(db: Session, *, worker_id: str) -> PluginJobRead | Non
     return None
 
 
-def recover_plugin_jobs(db: Session) -> int:
-    recovered_count = 0
+def recover_plugin_jobs(db: Session) -> list[tuple[str, str]]:
+    recovered_job_ids: list[tuple[str, str]] = []
     now = utc_now_iso()
 
     retry_jobs = repository.list_runnable_plugin_jobs(db, now=now)
     for job in retry_jobs:
         if job.status == "retry_waiting" and job.retry_after_at is not None and job.retry_after_at <= now:
             requeue_plugin_job(db, job_id=job.id)
-            recovered_count += 1
+            recovered_job_ids.append((job.id, job.household_id))
 
     stale_before = _subtract_seconds(now, settings.plugin_job_running_stale_after_seconds)
     for job in repository.list_stale_running_plugin_jobs(db, heartbeat_before=stale_before):
@@ -158,11 +168,11 @@ def recover_plugin_jobs(db: Session) -> int:
             retryable=job.current_attempt < job.max_attempts,
             retry_after_at=_add_seconds(now, settings.plugin_job_default_retry_delay_seconds),
         )
-        recovered_count += 1
+        recovered_job_ids.append((job.id, job.household_id))
 
-    if recovered_count:
+    if recovered_job_ids:
         db.flush()
-    return recovered_count
+    return recovered_job_ids
 
 
 def _execute_plugin_job_sync(job_id: str, worker_id: str) -> None:

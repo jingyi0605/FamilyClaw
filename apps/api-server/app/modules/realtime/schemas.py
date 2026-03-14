@@ -16,6 +16,7 @@ BootstrapRealtimeEventType = Literal[
     "agent.error",
     "ping",
     "pong",
+    "plugin.job.updated",
 ]
 BootstrapRealtimeClientEventType = Literal["user.message", "ping"]
 
@@ -103,6 +104,13 @@ class PongPayload(_StrictModel):
     nonce: str | None = None
 
 
+class PluginJobUpdatedPayload(_StrictModel):
+    job: dict[str, Any]
+    allowed_actions: list[str] = Field(default_factory=list)
+    latest_attempt: dict[str, Any] | None = None
+    recent_notifications: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class UserMessagePayload(_StrictModel):
     text: str = Field(min_length=1)
 
@@ -151,6 +159,7 @@ BootstrapRealtimePayload = (
     | AgentErrorPayload
     | PingPayload
     | PongPayload
+    | PluginJobUpdatedPayload
 )
 
 _PAYLOAD_ADAPTERS: dict[str, TypeAdapter[Any]] = {
@@ -163,6 +172,7 @@ _PAYLOAD_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "agent.error": TypeAdapter(AgentErrorPayload),
     "ping": TypeAdapter(PingPayload),
     "pong": TypeAdapter(PongPayload),
+    "plugin.job.updated": TypeAdapter(PluginJobUpdatedPayload),
 }
 
 
@@ -215,4 +225,20 @@ def build_bootstrap_realtime_event(
         seq=seq,
         payload=cast(Any, payload or {}),
         ts=ts or utc_now_iso(),
+    )
+
+
+def build_plugin_job_updated_event(
+    *,
+    session_id: str,
+    seq: int,
+    payload: dict[str, Any],
+    ts: str | None = None,
+) -> BootstrapRealtimeEvent:
+    return build_bootstrap_realtime_event(
+        event_type="plugin.job.updated",
+        session_id=session_id,
+        seq=seq,
+        payload=payload,
+        ts=ts,
     )
