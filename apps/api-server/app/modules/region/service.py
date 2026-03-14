@@ -9,11 +9,13 @@ from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.household.models import Household
+from app.modules.region.plugin_runtime import sync_household_plugin_region_providers
 from app.modules.region.models import HouseholdRegionBinding, RegionNode
 from app.modules.region.providers import (
     BUILTIN_CN_MAINLAND_COUNTRY,
     BUILTIN_CN_MAINLAND_PROVIDER,
     RegionProvider,
+    RegionProviderExecutionError,
     region_provider_registry,
 )
 from app.modules.region.schemas import (
@@ -117,15 +119,24 @@ def list_region_catalog(
     *,
     provider_code: str,
     country_code: str,
+    household_id: str | None = None,
     parent_region_code: str | None = None,
     admin_level: str | None = None,
 ) -> list[RegionNodeRead]:
-    provider = _require_provider(provider_code=provider_code, country_code=country_code)
-    return provider.list_children(
+    provider = _require_provider(
         db,
-        parent_region_code=parent_region_code,
-        admin_level=admin_level,
+        provider_code=provider_code,
+        country_code=country_code,
+        household_id=household_id,
     )
+    try:
+        return provider.list_children(
+            db,
+            parent_region_code=parent_region_code,
+            admin_level=admin_level,
+        )
+    except RegionProviderExecutionError as exc:
+        raise _raise_provider_runtime_error(provider_code=provider_code, exc=exc) from exc
 
 
 def search_region_catalog(
@@ -134,6 +145,7 @@ def search_region_catalog(
     provider_code: str,
     country_code: str,
     keyword: str,
+    household_id: str | None = None,
     admin_level: str | None = None,
     parent_region_code: str | None = None,
 ) -> list[RegionNodeRead]:
@@ -144,13 +156,21 @@ def search_region_catalog(
             error_code="region_keyword_required",
             field="keyword",
         )
-    provider = _require_provider(provider_code=provider_code, country_code=country_code)
-    return provider.search(
+    provider = _require_provider(
         db,
-        keyword=normalized_keyword,
-        admin_level=admin_level,
-        parent_region_code=parent_region_code,
+        provider_code=provider_code,
+        country_code=country_code,
+        household_id=household_id,
     )
+    try:
+        return provider.search(
+            db,
+            keyword=normalized_keyword,
+            admin_level=admin_level,
+            parent_region_code=parent_region_code,
+        )
+    except RegionProviderExecutionError as exc:
+        raise _raise_provider_runtime_error(provider_code=provider_code, exc=exc) from exc
 
 
 def get_household_region_binding(db: Session, household_id: str) -> HouseholdRegionBinding | None:
@@ -169,13 +189,16 @@ def upsert_household_region(
     source: str,
 ) -> HouseholdRegionBinding:
     provider = _require_provider(
+        db,
         provider_code=selection.provider_code,
         country_code=selection.country_code,
+        household_id=household.id,
     )
     region_node = _get_region_node_or_raise(
         db,
         provider_code=provider.provider_code,
         country_code=provider.country_code,
+        household_id=household.id,
         region_code=selection.region_code,
     )
     if region_node.admin_level != DISTRICT_LEVEL:
@@ -234,7 +257,7 @@ def get_household_region_context(db: Session, household_id: str) -> HouseholdReg
         return HouseholdRegionRead(status="unconfigured")
 
     snapshot = load_json(binding.snapshot) or {}
-    provider = region_provider_registry.get(binding.provider_code)
+    provider = _find_provider_for_household(db, provider_code=binding.provider_code, household_id=household_id)
     status_value = "configured" if provider is not None else "provider_unavailable"
     return HouseholdRegionRead(
         status=status_value,
@@ -262,8 +285,14 @@ def resolve_household_region_context(db: Session, household_id: str) -> Househol
     return HouseholdRegionErrorRead(**context.model_dump())
 
 
-def _require_provider(*, provider_code: str, country_code: str) -> RegionProvider:
-    provider = region_provider_registry.get(provider_code)
+def _require_provider(
+    db: Session,
+    *,
+    provider_code: str,
+    country_code: str,
+    household_id: str | None = None,
+) -> RegionProvider:
+    provider = _find_provider_for_household(db, provider_code=provider_code, household_id=household_id)
     if provider is None:
         raise RegionServiceError(
             detail=f"不支持的地区提供方: {provider_code}",
@@ -286,10 +315,19 @@ def _get_region_node_or_raise(
     *,
     provider_code: str,
     country_code: str,
+    household_id: str | None = None,
     region_code: str,
-) -> RegionNode:
-    provider = _require_provider(provider_code=provider_code, country_code=country_code)
-    row = provider.resolve(db, region_code=region_code)
+) -> RegionNodeRead:
+    provider = _require_provider(
+        db,
+        provider_code=provider_code,
+        country_code=country_code,
+        household_id=household_id,
+    )
+    try:
+        row = provider.resolve(db, region_code=region_code)
+    except RegionProviderExecutionError as exc:
+        raise _raise_provider_runtime_error(provider_code=provider_code, exc=exc) from exc
     if row is None:
         raise RegionServiceError(
             detail=f"地区编码不存在: {region_code}",
@@ -300,16 +338,37 @@ def _get_region_node_or_raise(
     return row
 
 
-def _build_snapshot(*, provider: RegionProvider, node: RegionNode) -> dict[str, object]:
-    path_codes = load_json(node.path_codes) or []
-    path_names = load_json(node.path_names) or []
+def _build_snapshot(*, provider: RegionProvider, node: RegionNodeRead) -> dict[str, object]:
+    path_codes = node.path_codes
+    path_names = node.path_names
     if len(path_codes) < 3 or len(path_names) < 3:
         raise RegionServiceError(
             detail=f"地区路径不完整: {node.region_code}",
             error_code="region_parent_mismatch",
             field="region_selection.region_code",
         )
-    return provider.build_snapshot(node)
+    try:
+        return provider.build_snapshot(node)
+    except RegionProviderExecutionError as exc:
+        raise _raise_provider_runtime_error(provider_code=provider.provider_code, exc=exc) from exc
+
+
+def _find_provider_for_household(db: Session, *, provider_code: str, household_id: str | None) -> RegionProvider | None:
+    if household_id is not None:
+        sync_household_plugin_region_providers(db, household_id)
+        provider = region_provider_registry.get(provider_code, household_id=household_id)
+        if provider is not None:
+            return provider
+    return region_provider_registry.get(provider_code)
+
+
+def _raise_provider_runtime_error(*, provider_code: str, exc: Exception) -> RegionServiceError:
+    return RegionServiceError(
+        detail=f"地区 provider 执行失败: {provider_code}",
+        error_code="region_provider_execution_failed",
+        field="provider_code",
+        status_code=status.HTTP_502_BAD_GATEWAY,
+    )
 
 
 def _to_region_ref(value: object | None) -> RegionNodeRefRead | None:

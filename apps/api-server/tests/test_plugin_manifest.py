@@ -92,6 +92,72 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual("plugin.future-region-provider", manifest.capabilities.region_provider.provider_code)
         self.assertEqual(["JP", "US"], manifest.capabilities.region_provider.country_codes)
 
+    def test_manifest_accepts_runtime_region_provider_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "jp-region-provider",
+                        "name": "日本地区提供方",
+                        "version": "0.1.0",
+                        "types": ["region-provider"],
+                        "permissions": ["region.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"region_provider": "plugin.region_provider.handle"},
+                        "capabilities": {
+                            "region_provider": {
+                                "provider_code": "plugin.jp-sample",
+                                "country_codes": ["JP"],
+                                "entrypoint": "plugin.region_provider.handle",
+                                "reserved": False,
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        self.assertEqual(["region-provider"], manifest.types)
+        self.assertEqual("plugin.region_provider.handle", manifest.entrypoints.region_provider)
+
+    def test_reject_runtime_region_provider_without_required_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-jp-region-provider",
+                        "name": "坏地区提供方",
+                        "version": "0.1.0",
+                        "types": ["region-provider"],
+                        "permissions": ["region.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"region_provider": "plugin.region_provider.handle"},
+                        "capabilities": {
+                            "region_provider": {
+                                "provider_code": "plugin.jp-sample",
+                                "country_codes": [],
+                                "entrypoint": "plugin.region_provider.handle",
+                                "reserved": False,
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("至少要声明一个 country_code", str(context.exception))
+
     def test_discover_builtin_manifests(self) -> None:
         manifests = discover_plugin_manifests(self.builtin_root)
 
@@ -105,7 +171,6 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertEqual(2, len(snapshot.items))
         self.assertTrue(all(item.enabled for item in snapshot.items))
-
     def test_disable_and_enable_plugin_persists_state(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             state_file = Path(tempdir) / "plugin_registry_state.json"

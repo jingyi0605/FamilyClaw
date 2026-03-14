@@ -211,7 +211,16 @@
     - `apps/api-server/app/modules/plugin/`
     - `specs/004.3-插件开发规范与注册表/`（如需补充联动说明）
     - `specs/001.3-家庭地区模型与插件接口/docs/`
-  - 这一步先不做什么：先不真的导入海外目录，也不开放第三方地区 provider 直接运行。
+  - 这一步先不做什么：先不真的导入完整海外目录数据，但第三方地区 provider 的运行装配已经打通。
+
+- [x] 3.3 打通第三方地区 provider 的挂载、注册和 runner 隔离
+  - 状态：DONE（2026-03-14）
+  - 这一步做什么：让声明了 `region-provider` 的第三方插件可以按家庭挂载，进入家庭级 provider 注册表，并通过 runner 子进程执行 `list_children / search / resolve / build_snapshot`。
+  - 做完能看到什么：同一个家庭里可以查询第三方 provider 目录、绑定该 provider 的正式地区，禁用或删除挂载后 provider 会立即失效。
+  - 依赖什么：3.1 的地区上下文 service、3.2 的 provider registry、插件 runner 挂载机制。
+  - 主要改哪些文件：`apps/api-server/app/modules/region/providers.py`、`apps/api-server/app/modules/region/plugin_runtime.py`、`apps/api-server/app/modules/plugin/service.py`、`apps/api-server/app/modules/plugin/schemas.py`。
+  - 这一步明确不做什么：先不做远程插件市场，不做自动下载，不做多租户全局 provider 市场。
+  - 怎么验证：挂载一个 `region-provider` 插件后，用该家庭 id 查询目录、搜索节点、绑定家庭地区，再测试禁用和重新启用是否生效。
   - 怎么算完成：
     1. 地区提供方最小接口和注册方式已经明确
     2. 中国大陆提供方作为第一版内置实现可以跑通

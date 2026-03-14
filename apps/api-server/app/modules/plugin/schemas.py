@@ -4,7 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-PluginType = Literal["connector", "memory-ingestor", "action", "agent-skill"]
+PluginType = Literal["connector", "memory-ingestor", "action", "agent-skill", "region-provider"]
+PluginManifestType = Literal["connector", "memory-ingestor", "action", "agent-skill", "region-provider"]
 RiskLevel = Literal["low", "medium", "high"]
 PluginSourceType = Literal["builtin", "official", "third_party"]
 PluginExecutionBackend = Literal["in_process", "subprocess_runner"]
@@ -28,6 +29,7 @@ ENTRYPOINT_KEY_BY_TYPE: dict[PluginType, str] = {
     "memory-ingestor": "memory_ingestor",
     "action": "action",
     "agent-skill": "agent_skill",
+    "region-provider": "region_provider",
 }
 
 
@@ -51,8 +53,9 @@ class PluginManifestEntrypoints(BaseModel):
     memory_ingestor: str | None = None
     action: str | None = None
     agent_skill: str | None = None
+    region_provider: str | None = None
 
-    @field_validator("connector", "memory_ingestor", "action", "agent_skill")
+    @field_validator("connector", "memory_ingestor", "action", "agent_skill", "region_provider")
     @classmethod
     def validate_entrypoint(cls, value: str | None) -> str | None:
         if value is None:
@@ -100,7 +103,7 @@ class PluginManifest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=100)
     version: str = Field(min_length=1, max_length=32)
-    types: list[PluginType] = Field(min_length=1)
+    types: list[PluginManifestType] = Field(min_length=1)
     permissions: list[str] = Field(default_factory=list)
     risk_level: RiskLevel = "low"
     triggers: list[str] = Field(default_factory=list)
@@ -128,7 +131,7 @@ class PluginManifest(BaseModel):
 
     @field_validator("types")
     @classmethod
-    def validate_types(cls, value: list[PluginType]) -> list[PluginType]:
+    def validate_types(cls, value: list[PluginManifestType]) -> list[PluginManifestType]:
         seen: set[str] = set()
 
         for item in value:
@@ -174,7 +177,31 @@ class PluginManifest(BaseModel):
         if missing_keys:
             missing_text = ", ".join(missing_keys)
             raise ValueError(f"entrypoints 缺少类型对应入口: {missing_text}")
+        self._validate_region_provider_capability()
         return self
+
+    def _validate_region_provider_capability(self) -> None:
+        spec = self.capabilities.region_provider
+        if spec is None:
+            if "region-provider" in self.types:
+                raise ValueError("region-provider 插件必须声明 capabilities.region_provider")
+            return
+
+        if spec.reserved:
+            if "region-provider" in self.types:
+                raise ValueError("region-provider 插件不能把 capabilities.region_provider 标成 reserved")
+            return
+
+        if "region-provider" not in self.types:
+            raise ValueError("启用地区 provider 运行时必须把 region-provider 写进 types")
+        if spec.provider_code is None:
+            raise ValueError("地区 provider 运行时必须声明 provider_code")
+        if spec.entrypoint is None:
+            raise ValueError("地区 provider 运行时必须声明 entrypoint")
+        if not spec.country_codes:
+            raise ValueError("地区 provider 运行时至少要声明一个 country_code")
+        if self.entrypoints.region_provider != spec.entrypoint:
+            raise ValueError("entrypoints.region_provider 必须和 capabilities.region_provider.entrypoint 一致")
 
 
 class PluginRegistryStateEntry(BaseModel):
@@ -195,7 +222,7 @@ class PluginRegistryItem(BaseModel):
     id: str
     name: str
     version: str
-    types: list[PluginType]
+    types: list[PluginManifestType]
     permissions: list[str]
     risk_level: RiskLevel
     triggers: list[str]
@@ -245,7 +272,7 @@ class PluginMountRead(BaseModel):
     plugin_id: str
     name: str
     version: str
-    types: list[PluginType]
+    types: list[PluginManifestType]
     permissions: list[str]
     risk_level: RiskLevel
     triggers: list[str]

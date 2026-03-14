@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, cast
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -17,6 +19,9 @@ BUILTIN_CN_MAINLAND_COUNTRY = "CN"
 class RegionProvider(ABC):
     provider_code: str
     country_code: str
+    source_type: str = "builtin"
+    plugin_id: str | None = None
+    plugin_name: str | None = None
 
     @abstractmethod
     def list_children(
@@ -40,24 +45,62 @@ class RegionProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def resolve(self, db: Session, *, region_code: str) -> RegionNode | None:
+    def resolve(self, db: Session, *, region_code: str) -> RegionNodeRead | None:
         raise NotImplementedError
 
     @abstractmethod
-    def build_snapshot(self, node: RegionNode) -> dict[str, object]:
+    def build_snapshot(self, node: RegionNodeRead) -> dict[str, object]:
         raise NotImplementedError
+
+
+@dataclass(slots=True)
+class RegionProviderRegistryEntry:
+    provider: RegionProvider
+    household_id: str | None = None
+
+
+class RegionProviderExecutionError(RuntimeError):
+    pass
 
 
 class RegionProviderRegistry:
     def __init__(self) -> None:
-        self._providers: dict[str, RegionProvider] = {}
+        self._providers: dict[tuple[str | None, str], RegionProviderRegistryEntry] = {}
 
-    def register(self, provider: RegionProvider) -> RegionProvider:
-        self._providers[provider.provider_code] = provider
+    def register(self, provider: RegionProvider, *, household_id: str | None = None) -> RegionProvider:
+        self._providers[(household_id, provider.provider_code)] = RegionProviderRegistryEntry(
+            provider=provider,
+            household_id=household_id,
+        )
         return provider
 
-    def get(self, provider_code: str) -> RegionProvider | None:
-        return self._providers.get(provider_code)
+    def get(self, provider_code: str, *, household_id: str | None = None) -> RegionProvider | None:
+        scoped = self._providers.get((household_id, provider_code))
+        if scoped is not None:
+            return scoped.provider
+        global_provider = self._providers.get((None, provider_code))
+        if global_provider is not None:
+            return global_provider.provider
+        return None
+
+    def unregister(self, provider_code: str, *, household_id: str | None = None) -> None:
+        self._providers.pop((household_id, provider_code), None)
+
+    def clear_scope(self, household_id: str) -> None:
+        stale_keys = [key for key in self._providers if key[0] == household_id]
+        for key in stale_keys:
+            self._providers.pop(key, None)
+
+    def list(self, *, household_id: str | None = None) -> list[RegionProvider]:
+        global_items = [entry.provider for key, entry in self._providers.items() if key[0] is None]
+        if household_id is None:
+            return sorted(global_items, key=lambda item: item.provider_code)
+
+        scoped_map = {item.provider_code: item for item in global_items}
+        for key, entry in self._providers.items():
+            if key[0] == household_id:
+                scoped_map[entry.provider.provider_code] = entry.provider
+        return sorted(scoped_map.values(), key=lambda item: item.provider_code)
 
 
 class CnMainlandRegionProvider(RegionProvider):
@@ -111,8 +154,8 @@ class CnMainlandRegionProvider(RegionProvider):
         rows = db.scalars(statement.order_by(RegionNode.region_code.asc()).limit(50)).all()
         return [_to_region_node_read(row) for row in rows]
 
-    def resolve(self, db: Session, *, region_code: str) -> RegionNode | None:
-        return db.scalar(
+    def resolve(self, db: Session, *, region_code: str) -> RegionNodeRead | None:
+        row = db.scalar(
             select(RegionNode).where(
                 RegionNode.provider_code == self.provider_code,
                 RegionNode.country_code == self.country_code,
@@ -120,10 +163,13 @@ class CnMainlandRegionProvider(RegionProvider):
                 RegionNode.enabled.is_(True),
             )
         )
+        if row is None:
+            return None
+        return _to_region_node_read(row)
 
-    def build_snapshot(self, node: RegionNode) -> dict[str, object]:
-        path_codes = load_json(node.path_codes) or []
-        path_names = load_json(node.path_names) or []
+    def build_snapshot(self, node: RegionNodeRead) -> dict[str, object]:
+        path_codes = node.path_codes
+        path_names = node.path_names
         return {
             "provider_code": node.provider_code,
             "country_code": node.country_code,
@@ -143,7 +189,7 @@ def _to_region_node_read(row: RegionNode) -> RegionNodeRead:
         country_code=row.country_code,
         region_code=row.region_code,
         parent_region_code=row.parent_region_code,
-        admin_level=row.admin_level,
+        admin_level=cast(Any, row.admin_level),
         name=row.name,
         full_name=row.full_name,
         path_codes=load_json(row.path_codes) or [],

@@ -17,6 +17,7 @@ from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.audit.service import write_audit_log
 from app.modules.household.service import get_household_or_404
 from app.modules.memory.service import upsert_plugin_observation_memory
+from app.modules.region.plugin_runtime import get_runtime_region_provider_spec, sync_household_plugin_region_providers
 from app.modules.region.service import resolve_household_region_context
 from app.modules.plugin.executors import get_executor, load_entrypoint_callable, resolve_execution_backend
 from app.modules.plugin import repository
@@ -47,8 +48,6 @@ BUILTIN_PLUGIN_ROOT = BASE_DIR / "app" / "plugins" / "builtin"
 REGISTRY_STATE_PATH = BASE_DIR / "data" / "plugin_registry_state.json"
 PLUGIN_EXECUTOR_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="plugin-worker")
 PLUGIN_SYSTEM_CONTEXT_KEY = "_system_context"
-
-
 @dataclass(slots=True)
 class PluginExecutionContext:
     root_dir: str | Path | None
@@ -202,6 +201,30 @@ def _normalize_optional_path(value: str | None) -> str | None:
     return str(Path(normalized).resolve())
 
 
+def _validate_region_provider_mount_conflicts(
+    db: Session,
+    *,
+    household_id: str,
+    manifest: PluginManifest,
+    skip_plugin_id: str | None,
+) -> None:
+    spec = get_runtime_region_provider_spec(manifest)
+    if spec is None or spec.provider_code is None:
+        return
+
+    for mount in repository.list_plugin_mounts(db, household_id=household_id):
+        if skip_plugin_id is not None and mount.plugin_id == skip_plugin_id:
+            continue
+        mounted_manifest = load_plugin_manifest(mount.manifest_path)
+        mounted_spec = get_runtime_region_provider_spec(mounted_manifest)
+        if mounted_spec is None or mounted_spec.provider_code is None:
+            continue
+        if mounted_spec.provider_code == spec.provider_code:
+            raise PluginManifestValidationError(
+                f"家庭 {household_id} 已经挂载地区 provider: {spec.provider_code}"
+            )
+
+
 def list_registered_plugins_for_household(
     db: Session,
     *,
@@ -240,6 +263,7 @@ def register_plugin_mount(
         raise PluginManifestValidationError(f"插件 id 与内置插件冲突: {manifest.id}")
     if repository.get_plugin_mount(db, household_id=household_id, plugin_id=manifest.id) is not None:
         raise PluginManifestValidationError(f"插件已经挂载: {manifest.id}")
+    _validate_region_provider_mount_conflicts(db, household_id=household_id, manifest=manifest, skip_plugin_id=None)
 
     row = PluginMount(
         id=new_uuid(),
@@ -260,6 +284,7 @@ def register_plugin_mount(
     )
     repository.add_plugin_mount(db, row)
     db.flush()
+    sync_household_plugin_region_providers(db, household_id)
     return _to_plugin_mount_read(row, manifest=manifest)
 
 
@@ -292,6 +317,9 @@ def update_plugin_mount(
         row.enabled = data["enabled"]
     row.updated_at = utc_now_iso()
     db.flush()
+    manifest = load_plugin_manifest(row.manifest_path)
+    _validate_region_provider_mount_conflicts(db, household_id=household_id, manifest=manifest, skip_plugin_id=plugin_id)
+    sync_household_plugin_region_providers(db, household_id)
     return _to_plugin_mount_read(row)
 
 
@@ -302,6 +330,7 @@ def delete_plugin_mount(db: Session, *, household_id: str, plugin_id: str) -> No
         raise PluginManifestValidationError(f"插件挂载不存在: {plugin_id}")
     repository.delete_plugin_mount(db, row)
     db.flush()
+    sync_household_plugin_region_providers(db, household_id)
 
 
 def _discover_manifest_entries(root_dir: str | Path) -> list[tuple[Path, PluginManifest]]:

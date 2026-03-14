@@ -15,6 +15,7 @@ router = APIRouter(prefix="/regions", tags=["regions"])
 def list_region_catalog_endpoint(
     provider_code: Annotated[str, Query(min_length=1)],
     country_code: Annotated[str, Query(min_length=1)],
+    household_id: Annotated[str | None, Query()] = None,
     parent_region_code: Annotated[str | None, Query()] = None,
     admin_level: Annotated[str | None, Query()] = None,
     db: Session = Depends(get_db),
@@ -25,6 +26,7 @@ def list_region_catalog_endpoint(
             db,
             provider_code=provider_code,
             country_code=country_code,
+            household_id=household_id,
             parent_region_code=parent_region_code,
             admin_level=admin_level,
         )
@@ -37,6 +39,7 @@ def search_region_catalog_endpoint(
     provider_code: Annotated[str, Query(min_length=1)],
     country_code: Annotated[str, Query(min_length=1)],
     keyword: Annotated[str, Query()],
+    household_id: Annotated[str | None, Query()] = None,
     admin_level: Annotated[str | None, Query()] = None,
     parent_region_code: Annotated[str | None, Query()] = None,
     db: Session = Depends(get_db),
@@ -48,6 +51,7 @@ def search_region_catalog_endpoint(
             provider_code=provider_code,
             country_code=country_code,
             keyword=keyword,
+            household_id=household_id,
             admin_level=admin_level,
             parent_region_code=parent_region_code,
         )

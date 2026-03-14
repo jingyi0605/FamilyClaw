@@ -9,7 +9,7 @@
   - `2026-03-13`：创建首版 manifest 字段规范。
   - `2026-03-13`：调整为按阅读顺序编号，并补充文档元数据。
   - `2026-03-14`：新增 `locale-pack` 类型和 `locales` 字段说明。
-  - `2026-03-14`：补充地区上下文读取声明和地区 provider 预留字段。
+  - `2026-03-14`：补充地区上下文读取声明和地区 provider 运行字段。
 
 这份文档就是把 `manifest.json` 说透，不让开发者靠猜。
 
@@ -221,6 +221,16 @@
 }
 ```
 
+再把冲突规则说清楚，别靠猜：
+
+- 如果同一个家庭里有多个语言包都声明同一个 `locale id`
+- 系统不会把它们全部同时暴露给前端
+- 只会选一个生效，优先级是：`builtin > official > third_party`
+- 如果来源级别一样，就按 `plugin_id` 稳定排序，字典序更小的那个生效
+- 被压下去的插件不会报废，但会出现在接口的 `overridden_plugin_ids` 里
+
+说白了，第三方插件不要指望去覆盖内置 `zh-TW`。你真要换文案，要么改内置包，要么换一个新的 locale id。
+
 ### `description`
 
 - 选填，但强烈建议填写
@@ -245,11 +255,12 @@
 
 - 选填
 - 类型：`object`
-- 用途：声明插件要读取哪些受控上下文，以及预留哪些扩展能力字段
+- 用途：声明插件要读取哪些受控上下文，以及是否要把自己当成地区 provider 挂进系统
 
-当前这轮正式可用的只有一项：
+当前正式可用的有两项：
 
 - `context_reads.household_region_context: true`
+- `region_provider.*`
 
 写了这项以后，系统会在插件执行时把家庭地区上下文放进 `payload._system_context.region.household_context`。
 
@@ -269,20 +280,45 @@
 }
 ```
 
-另外还有一组这轮先预留、不直接开放运行的字段：
+如果你要把插件当成第三方地区 provider 真正挂进系统，还要再写一组字段：
 
 - `capabilities.region_provider.provider_code`
 - `capabilities.region_provider.country_codes`
 - `capabilities.region_provider.entrypoint`
 - `capabilities.region_provider.reserved`
 
-这组字段的意思很直接：
+这组字段现在不是摆设，运行时会真的用到：
 
-- 让开发者先按统一格式声明“我未来想提供哪个地区 provider”
-- 让 schema、文档和注册表先有稳定位置
-- 但这轮主服务不会直接加载第三方地区 provider 去接管地区目录
+- `provider_code`：这个 provider 的正式编码
+- `country_codes`：这个 provider 支持哪些国家代码
+- `entrypoint`：主服务调用 provider 的入口函数
+- `reserved`：`false` 表示这不是预留声明，而是真的要运行
 
-别自欺欺人：现在能正式用的是“读取家庭地区上下文”，不是“第三方地区 provider 已经开放运行”。
+最小可运行示例：
+
+```json
+{
+  "types": ["region-provider"],
+  "entrypoints": {
+    "region_provider": "plugin.region_provider.handle"
+  },
+  "capabilities": {
+    "region_provider": {
+      "provider_code": "plugin.jp-sample",
+      "country_codes": ["JP"],
+      "entrypoint": "plugin.region_provider.handle",
+      "reserved": false
+    }
+  }
+}
+```
+
+这套写法现在已经能跑，但有几条硬规则：
+
+- `types` 里必须包含 `region-provider`
+- `entrypoints.region_provider` 必须和 `capabilities.region_provider.entrypoint` 一致
+- `country_codes` 至少要有一个值
+- 第三方 provider 仍然走 runner 子进程，不直接进主进程
 
 ## 3. 类型和入口最小对照
 
@@ -306,6 +342,7 @@
 6. `action` 插件还要额外过权限检查；高风险动作还要人工确认。
 7. `locale-pack` 至少要声明一个 `locales` 项，而且 `resource` 必须是插件目录内的相对路径。
 7. 如果插件要读家庭地区上下文，必须显式声明 `capabilities.context_reads.household_region_context=true`。
+8. 如果插件要作为地区 provider 运行，必须显式声明 `types=["region-provider"]` 和完整的 `capabilities.region_provider`。
 
 ## 5. 第一版先不要写进 manifest 的东西
 
@@ -316,7 +353,7 @@
 - 沙箱策略配置
 - 全量签名验证字段
 - 市场前端展示布局元数据
-- 把第三方地区 provider 说成“现在已经能直接运行”的宣传字段
+- 把 `reserved=true` 的地区 provider 宣传成“已经接管系统地区目录”的误导字段
 
 一句话：先把运行声明写清楚，不要把还没实现的开放平台概念硬塞进去。
 
@@ -330,5 +367,7 @@
 6. 如果是 `action`，是否已经明确风险和权限边界？
 7. 如果是 `locale-pack`，是否已经提供 `locales/*.json` 这类真实资源文件，并写清回退语言？
 8. 有没有偷偷依赖远程安装、远程执行、沙箱、签名平台？
+
+如果你声明的 locale id 跟现有内置语言重复，也要先想清楚：你大概率不会生效。
 
 这些都过了，再去准备注册表材料。

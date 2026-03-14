@@ -101,8 +101,8 @@
 这里再强调一次边界：
 
 - 第一版先把 `RegionProvider` 作为后端内部扩展点收好
-- 对外开放第三方地区提供方之前，必须先把 `specs/004.3-插件开发规范与注册表/` 里的 manifest 和注册规则补齐
-- 这轮只把 manifest / schema / registry 的位置留好，不直接开放第三方地区 provider 运行
+- 第三方地区提供方插件现在通过 runner 子进程接入，不直接 import 进主进程
+- 主服务按家庭维度同步 provider 注册表，挂载、禁用、删除后都会重建该家庭的 provider 视图
 
 ## 3. 组件和接口
 
@@ -205,7 +205,7 @@
 - 路径或标识：`/regions/catalog`
 - 输入：`provider_code`、`country_code`、`parent_region_code`、`admin_level`
 - 输出：地区节点摘要列表
-- 校验：第一版仅允许 `provider_code=builtin.cn-mainland` 且 `country_code=CN`
+- 校验：内置中国 provider 直接可用；第三方 provider 需要带 `household_id` 才能按家庭维度解析
 - 权限：已登录用户可调用；不要求管理员，但匿名请求直接拒绝
 - 错误：提供方不存在、国家不支持、父节点不存在
 
@@ -305,7 +305,7 @@
 - 路径或标识：`RegionProvider`
 - 输入：目录查询条件、地区编码、关键字
 - 输出：标准 `RegionNode` 列表或解析结果
-- 校验：每个提供方必须声明 `provider_code`、支持国家、支持的层级和查询能力
+- 校验：第三方 provider 插件必须声明 `types=["region-provider"]`、`entrypoints.region_provider` 和 `capabilities.region_provider.*`
 - 错误：提供方未注册、目录不可用、返回结构非法
 
 建议最小方法：
