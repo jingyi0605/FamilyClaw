@@ -118,8 +118,8 @@
   - 对应需求：`requirements.md` 需求 3、需求 6
   - 对应设计：`design.md` 第 4.5 章、第 4.6 章
 
-- [ ] 1.3 落轻语义路由的 descriptor 和 Embedding provider
-  - 状态：TODO
+- [x] 1.3 落轻语义路由的 descriptor 和 Embedding provider
+  - 状态：DONE
   - 这一步到底做什么：把第二层轻语义路由正式定成 Embedding descriptor 检索，并落内置 provider 和外部 provider 接口。
   - 做完以后能看到什么：系统不用关键词主路由，也不用先上分类训练，就能稳定做 lane 和 proposal gate 判断。
   - 先依赖什么：1.2

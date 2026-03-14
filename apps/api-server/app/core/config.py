@@ -33,6 +33,26 @@ class AiRuntimeConfig(BaseModel):
     provider_configs: dict[str, AiProviderRuntimeConfig] = Field(default_factory=dict)
 
 
+class EmbeddingProviderRuntimeConfig(BaseModel):
+    provider_code: str | None = None
+    model_name: str | None = None
+    endpoint: str | None = None
+    api_key: str | None = None
+    timeout_ms: int | None = Field(default=None, ge=100, le=120000)
+    vector_dimension: int | None = Field(default=None, ge=1, le=32768)
+    enabled: bool = True
+    fallback_to_builtin: bool = True
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class EmbeddingRuntimeConfig(BaseModel):
+    default_provider_code: str = "builtin_bge_small_zh_v15"
+    builtin_model_name: str = "BAAI/bge-small-zh-v1.5"
+    builtin_cache_dir: str = "apps/api-server/data/models/embeddings"
+    default_timeout_ms: int = Field(default=3000, ge=100, le=120000)
+    provider_configs: dict[str, EmbeddingProviderRuntimeConfig] = Field(default_factory=dict)
+
+
 class Settings(BaseSettings):
     app_name: str = "FamilyClaw API Server"
     app_version: str = "0.1.0"
@@ -51,6 +71,12 @@ class Settings(BaseSettings):
     auth_session_ttl_hours: int = 24 * 7
     auth_legacy_header_enabled: bool = True
     conversation_debug_log_enabled: bool = False
+    plugin_job_worker_enabled: bool = True
+    plugin_job_worker_poll_interval_seconds: float = 1.0
+    plugin_job_default_max_attempts: int = 2
+    plugin_job_default_retry_delay_seconds: int = 5
+    plugin_job_default_timeout_seconds: int = 60
+    plugin_job_running_stale_after_seconds: int = 120
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_household_username: str = "user"
@@ -65,6 +91,13 @@ class Settings(BaseSettings):
     ai_local_preferred: bool = False
     ai_secret_ref_prefix: str = "env://"
     ai_provider_configs: dict[str, AiProviderRuntimeConfig] = Field(default_factory=dict)
+    conversation_embedding_provider_enabled: bool = False
+    conversation_embedding_fallback_to_builtin_enabled: bool = True
+    embedding_default_provider_code: str = "builtin_bge_small_zh_v15"
+    embedding_builtin_model_name: str = "BAAI/bge-small-zh-v1.5"
+    embedding_builtin_cache_dir: str = "apps/api-server/data/models/embeddings"
+    embedding_default_timeout_ms: int = 3000
+    embedding_provider_configs: dict[str, EmbeddingProviderRuntimeConfig] = Field(default_factory=dict)
     cors_allowed_origins: list[str] = Field(
         default_factory=lambda: [
             "http://localhost:5174",
@@ -96,6 +129,16 @@ class Settings(BaseSettings):
             local_preferred=self.ai_local_preferred,
             secret_ref_prefix=self.ai_secret_ref_prefix,
             provider_configs=self.ai_provider_configs,
+        )
+
+    @property
+    def embedding_runtime(self) -> EmbeddingRuntimeConfig:
+        return EmbeddingRuntimeConfig(
+            default_provider_code=self.embedding_default_provider_code,
+            builtin_model_name=self.embedding_builtin_model_name,
+            builtin_cache_dir=self.embedding_builtin_cache_dir,
+            default_timeout_ms=self.embedding_default_timeout_ms,
+            provider_configs=self.embedding_provider_configs,
         )
 
 
