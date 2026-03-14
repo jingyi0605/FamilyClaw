@@ -8,6 +8,8 @@ from app.modules.conversation.models import (
     ConversationDebugLog,
     ConversationMemoryCandidate,
     ConversationMessage,
+    ConversationProposalBatch,
+    ConversationProposalItem,
     ConversationSession,
 )
 
@@ -161,4 +163,71 @@ def list_debug_logs(
     )
     if request_id is not None:
         stmt = stmt.where(ConversationDebugLog.request_id == request_id)
+    return list(db.scalars(stmt).all())
+
+
+def add_proposal_batch(db: Session, row: ConversationProposalBatch) -> ConversationProposalBatch:
+    db.add(row)
+    return row
+
+
+def get_proposal_batch(db: Session, batch_id: str) -> ConversationProposalBatch | None:
+    return db.get(ConversationProposalBatch, batch_id)
+
+
+def get_proposal_batch_by_request(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str,
+) -> ConversationProposalBatch | None:
+    stmt: Select[tuple[ConversationProposalBatch]] = (
+        select(ConversationProposalBatch)
+        .where(
+            ConversationProposalBatch.session_id == session_id,
+            ConversationProposalBatch.request_id == request_id,
+        )
+        .order_by(ConversationProposalBatch.created_at.desc(), ConversationProposalBatch.id.desc())
+    )
+    return db.scalars(stmt).first()
+
+
+def list_proposal_batches(
+    db: Session,
+    *,
+    session_id: str,
+    status: str | None = None,
+) -> Sequence[ConversationProposalBatch]:
+    stmt: Select[tuple[ConversationProposalBatch]] = (
+        select(ConversationProposalBatch)
+        .where(ConversationProposalBatch.session_id == session_id)
+        .order_by(ConversationProposalBatch.created_at.asc(), ConversationProposalBatch.id.asc())
+    )
+    if status is not None:
+        stmt = stmt.where(ConversationProposalBatch.status == status)
+    return list(db.scalars(stmt).all())
+
+
+def add_proposal_item(db: Session, row: ConversationProposalItem) -> ConversationProposalItem:
+    db.add(row)
+    return row
+
+
+def get_proposal_item(db: Session, proposal_item_id: str) -> ConversationProposalItem | None:
+    return db.get(ConversationProposalItem, proposal_item_id)
+
+
+def list_proposal_items(
+    db: Session,
+    *,
+    batch_id: str,
+    status: str | None = None,
+) -> Sequence[ConversationProposalItem]:
+    stmt: Select[tuple[ConversationProposalItem]] = (
+        select(ConversationProposalItem)
+        .where(ConversationProposalItem.batch_id == batch_id)
+        .order_by(ConversationProposalItem.created_at.asc(), ConversationProposalItem.id.asc())
+    )
+    if status is not None:
+        stmt = stmt.where(ConversationProposalItem.status == status)
     return list(db.scalars(stmt).all())

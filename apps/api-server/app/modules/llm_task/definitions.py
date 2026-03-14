@@ -9,6 +9,7 @@ from app.modules.llm_task.output_models import (
     ButlerBootstrapOutput,
     ConversationIntentDetectionOutput,
     MemoryExtractionOutput,
+    ProposalBatchExtractionOutput,
     ReminderExtractionOutput,
 )
 
@@ -230,6 +231,46 @@ register(
         output_model=ConversationIntentDetectionOutput,
         temperature=0.1,
         max_tokens=256,
+    )
+)
+
+
+register(
+    LlmTaskDef(
+        task_type="proposal_batch_extraction",
+        system_prompt="""你是统一提案提取器。你的任务不是替用户做决定，而是把这一轮对话里可能形成提案的内容整理出来。
+
+## 提取范围
+- memory_items：用户明确表达的长期偏好、习惯、关系、事实
+- config_items：用户明确要求修改 AI 管家的名字、说话风格、性格标签等设定
+- reminder_items：用户明确表达的未来待办和时间线索
+
+## 证据规则
+- 优先只根据 `user_message`、`system_event`、`trusted_external_event` 提取事实
+- `assistant_message` 只能帮助理解上下文，不能单独作为记忆或配置提案的唯一依据
+- 如果没有足够稳定的证据，就返回空列表
+
+## 输出规则
+- 只输出一个 JSON 对象
+- 每个提案项都要带 `evidence_message_ids`
+- `payload` 里只放和该提案直接相关的结构化内容
+- 不要编造用户没说过的事实
+
+输出字段：
+{output_format}""",
+        user_prompt="""本轮证据：
+{turn_messages}
+
+可信事件：
+{trusted_events}
+
+主回复摘要：
+{main_reply_summary}
+
+请统一提取提案。""",
+        output_model=ProposalBatchExtractionOutput,
+        temperature=0.1,
+        max_tokens=512,
     )
 )
 

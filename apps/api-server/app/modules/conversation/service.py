@@ -26,6 +26,11 @@ from app.modules.conversation.orchestrator import (
     run_orchestrated_turn,
     stream_orchestrated_turn,
 )
+from app.modules.conversation.proposal_pipeline import (
+    ProposalPipeline,
+    ProposalPipelineResult,
+    build_turn_proposal_context,
+)
 from app.modules.conversation.schemas import (
     ConversationActionExecutionRead,
     ConversationDebugLogListRead,
@@ -227,15 +232,30 @@ def create_conversation_turn(
                 "degraded": result.degraded,
             },
         )
-        _apply_action_policy_for_turn(
+        policy_result = result
+        proposal_pipeline_result = _run_proposal_pipeline_for_turn(
             db,
             session=session,
             request_id=request_id,
             user_message=user_message,
             assistant_message=assistant_message,
             result=result,
-            actor=actor,
         )
+        if proposal_pipeline_result is not None and settings.conversation_proposal_write_enabled:
+            policy_result = _build_legacy_policy_result_from_proposals(
+                base_result=result,
+                proposal_result=proposal_pipeline_result,
+            )
+        if _result_has_actionable_proposals(policy_result):
+            _apply_action_policy_for_turn(
+                db,
+                session=session,
+                request_id=request_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                result=policy_result,
+                actor=actor,
+            )
         _append_debug_log(
             db,
             session=session,
@@ -245,10 +265,14 @@ def create_conversation_turn(
             message="动作策略层处理完成。",
             payload={"action_records": _serialize_action_records_for_debug(db, session_id=session.id, request_id=request_id)},
         )
-        if not result.memory_candidate_payloads and result.intent in {
+        if (
+            (not settings.conversation_proposal_write_enabled or proposal_pipeline_result is None)
+            and not result.memory_candidate_payloads
+            and result.intent in {
             ConversationIntent.FREE_CHAT,
             ConversationIntent.STRUCTURED_QA,
-        }:
+            }
+        ):
             _append_debug_log(
                 db,
                 session=session,
@@ -389,15 +413,30 @@ async def acreate_conversation_turn(
                 "degraded": result.degraded,
             },
         )
-        _apply_action_policy_for_turn(
+        policy_result = result
+        proposal_pipeline_result = _run_proposal_pipeline_for_turn(
             db,
             session=session,
             request_id=request_id,
             user_message=user_message,
             assistant_message=assistant_message,
             result=result,
-            actor=actor,
         )
+        if proposal_pipeline_result is not None and settings.conversation_proposal_write_enabled:
+            policy_result = _build_legacy_policy_result_from_proposals(
+                base_result=result,
+                proposal_result=proposal_pipeline_result,
+            )
+        if _result_has_actionable_proposals(policy_result):
+            _apply_action_policy_for_turn(
+                db,
+                session=session,
+                request_id=request_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                result=policy_result,
+                actor=actor,
+            )
         _append_debug_log(
             db,
             session=session,
@@ -407,7 +446,11 @@ async def acreate_conversation_turn(
             message="动作策略层处理完成。",
             payload={"action_records": _serialize_action_records_for_debug(db, session_id=session.id, request_id=request_id)},
         )
-        if not result.memory_candidate_payloads and result.intent in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA}:
+        if (
+            (not settings.conversation_proposal_write_enabled or proposal_pipeline_result is None)
+            and not result.memory_candidate_payloads
+            and result.intent in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA}
+        ):
             _append_debug_log(
                 db,
                 session=session,
@@ -1587,6 +1630,99 @@ def _serialize_action_records_for_debug(
         }
         for row in repository.list_action_records_by_request(db, session_id=session_id, request_id=request_id)
     ]
+
+
+def _run_proposal_pipeline_for_turn(
+    db: Session,
+    *,
+    session: ConversationSession,
+    request_id: str,
+    user_message: ConversationMessage,
+    assistant_message: ConversationMessage,
+    result: ConversationOrchestratorResult,
+) -> ProposalPipelineResult | None:
+    if result.intent not in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA}:
+        return None
+    if not (settings.conversation_proposal_shadow_enabled or settings.conversation_proposal_write_enabled):
+        return None
+
+    turn_context = build_turn_proposal_context(
+        session=session,
+        request_id=request_id,
+        user_message=user_message,
+        assistant_message=assistant_message,
+        conversation_history_excerpt=_build_recent_conversation_history(
+            db,
+            session_id=session.id,
+            current_request_id=request_id,
+        ),
+        lane_result=result.lane_selection.to_payload() if result.lane_selection is not None else {},
+        main_reply_summary=result.text[:300],
+    )
+    try:
+        pipeline_result = ProposalPipeline().run(
+            db,
+            session=session,
+            request_id=request_id,
+            turn_context=turn_context,
+            persist=settings.conversation_proposal_write_enabled,
+        )
+    except Exception as exc:
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="proposal.pipeline.failed",
+            source="proposal",
+            level="error",
+            message="统一提案分析失败，但主回复保持不受影响。",
+            payload={"error_message": str(exc)},
+        )
+        return None
+
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="proposal.pipeline.completed",
+        source="proposal",
+        message="统一提案分析完成。",
+        payload={
+            "batch_id": pipeline_result.batch_id,
+            "draft_count": len(pipeline_result.drafts),
+            "failure_count": len(pipeline_result.failures),
+            "proposal_kinds": [item.proposal_kind for item in pipeline_result.drafts],
+            "write_enabled": settings.conversation_proposal_write_enabled,
+        },
+    )
+    return pipeline_result
+
+
+def _build_legacy_policy_result_from_proposals(
+    *,
+    base_result: ConversationOrchestratorResult,
+    proposal_result: ProposalPipelineResult,
+) -> ConversationOrchestratorResult:
+    return ConversationOrchestratorResult(
+        intent=base_result.intent,
+        text=base_result.text,
+        degraded=base_result.degraded,
+        facts=base_result.facts,
+        suggestions=base_result.suggestions,
+        memory_candidate_payloads=proposal_result.memory_candidate_payloads,
+        config_suggestion=proposal_result.config_suggestion,
+        action_payloads=proposal_result.action_payloads,
+        ai_trace_id=base_result.ai_trace_id,
+        ai_provider_code=base_result.ai_provider_code,
+        effective_agent_id=base_result.effective_agent_id,
+        effective_agent_name=base_result.effective_agent_name,
+        intent_detection=base_result.intent_detection,
+        lane_selection=base_result.lane_selection,
+    )
+
+
+def _result_has_actionable_proposals(result: ConversationOrchestratorResult) -> bool:
+    return bool(result.memory_candidate_payloads or result.config_suggestion or result.action_payloads)
 
 
 def _count_request_memory_candidates(

@@ -16,6 +16,8 @@ from app.modules.conversation.models import (
     ConversationDebugLog,
     ConversationMemoryCandidate,
     ConversationMessage,
+    ConversationProposalBatch,
+    ConversationProposalItem,
     ConversationSession,
 )
 from app.modules.device.models import Device, DeviceBinding
@@ -60,6 +62,8 @@ __all__ = [
     "ConversationSession",
     "ConversationMessage",
     "ConversationMemoryCandidate",
+    "ConversationProposalBatch",
+    "ConversationProposalItem",
     "ConversationActionRecord",
     "ConversationDebugLog",
     "Device",

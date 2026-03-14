@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     auth_session_ttl_hours: int = 24 * 7
     auth_legacy_header_enabled: bool = True
     conversation_debug_log_enabled: bool = False
+    conversation_proposal_shadow_enabled: bool = False
+    conversation_proposal_write_enabled: bool = False
     plugin_job_worker_enabled: bool = True
     plugin_job_worker_poll_interval_seconds: float = 1.0
     plugin_job_default_max_attempts: int = 2

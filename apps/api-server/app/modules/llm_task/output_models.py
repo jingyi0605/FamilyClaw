@@ -32,6 +32,24 @@ class ReminderExtractionOutput(BaseModel):
     trigger_at: str | None = Field(default=None, description="提醒触发时间，ISO8601 字符串")
 
 
+class ProposalExtractionItemOutput(BaseModel):
+    """统一提案提取项"""
+
+    title: str | None = Field(default=None, description="提案标题")
+    summary: str | None = Field(default=None, description="提案摘要")
+    confidence: float = Field(default=0.0, ge=0, le=1, description="提案置信度")
+    evidence_message_ids: list[str] = Field(default_factory=list, description="提案引用的来源消息 ID")
+    payload: dict[str, Any] = Field(default_factory=dict, description="提案原始载荷")
+
+
+class ProposalBatchExtractionOutput(BaseModel):
+    """统一提案提取输出"""
+
+    memory_items: list[ProposalExtractionItemOutput] = Field(default_factory=list, description="记忆提案列表")
+    config_items: list[ProposalExtractionItemOutput] = Field(default_factory=list, description="配置提案列表")
+    reminder_items: list[ProposalExtractionItemOutput] = Field(default_factory=list, description="提醒提案列表")
+
+
 ConversationIntentType = Literal["free_chat", "structured_qa", "config_change", "memory_write", "reminder_create"]
 ConversationActionType = Literal["config_change", "memory_write", "reminder_create"]
 

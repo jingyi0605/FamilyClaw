@@ -171,3 +171,54 @@ class ConversationDebugLog(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+
+
+class ConversationProposalBatch(Base):
+    __tablename__ = "conversation_proposal_batches"
+    __table_args__ = (
+        Index("idx_conversation_proposal_batches_session_created_at", "session_id", "created_at"),
+        Index("idx_conversation_proposal_batches_request_id", "request_id"),
+        Index("idx_conversation_proposal_batches_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_message_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    source_roles_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    lane_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending_policy")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+
+
+class ConversationProposalItem(Base):
+    __tablename__ = "conversation_proposal_items"
+    __table_args__ = (
+        Index("idx_conversation_proposal_items_batch_created_at", "batch_id", "created_at"),
+        Index("idx_conversation_proposal_items_kind_status", "proposal_kind", "status"),
+        Index("idx_conversation_proposal_items_dedupe_key", "dedupe_key"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    batch_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("conversation_proposal_batches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    proposal_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    policy_category: Mapped[str] = mapped_column(String(20), nullable=False, default="ask")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending_policy")
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_message_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    evidence_roles_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    dedupe_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    confidence: Mapped[float] = mapped_column(nullable=False, default=0)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
