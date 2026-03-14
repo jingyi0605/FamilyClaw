@@ -241,6 +241,7 @@ class PluginJobCreate(BaseModel):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
     initial_status: Literal["queued", "waiting_response"] = "queued"
     max_attempts: int = Field(default=1, ge=1, le=20)
+    retry_after_at: str | None = None
     response_deadline_at: str | None = None
 
 
@@ -298,6 +299,7 @@ class PluginJobRead(BaseModel):
     max_attempts: int
     last_error_code: str | None = None
     last_error_message: str | None = None
+    retry_after_at: str | None = None
     response_deadline_at: str | None = None
     started_at: str | None = None
     finished_at: str | None = None

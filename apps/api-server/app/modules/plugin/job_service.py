@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy.orm import Session
 
@@ -71,6 +71,7 @@ def create_plugin_job(db: Session, *, payload: PluginJobCreate) -> PluginJobRead
         idempotency_key=payload.idempotency_key,
         current_attempt=0,
         max_attempts=payload.max_attempts,
+        retry_after_at=payload.retry_after_at,
         response_deadline_at=payload.response_deadline_at,
         started_at=None,
         finished_at=None,
@@ -110,6 +111,7 @@ def start_plugin_job_attempt(db: Session, *, job_id: str, worker_id: str | None 
     if job.started_at is None:
         job.started_at = now
     job.finished_at = None
+    job.retry_after_at = None
 
     attempt = PluginJobAttempt(
         id=new_uuid(),
@@ -160,6 +162,7 @@ def mark_plugin_job_attempt_failed(
     error_code: str,
     error_message: str,
     retryable: bool = False,
+    retry_after_at: str | None = None,
     response_required: bool = False,
     response_deadline_at: str | None = None,
     output_summary: dict[str, Any] | None = None,
@@ -179,14 +182,17 @@ def mark_plugin_job_attempt_failed(
 
     if response_required:
         _transition_job(job, "waiting_response", now=now)
+        job.retry_after_at = None
         job.response_deadline_at = response_deadline_at
         job.finished_at = None
     elif retryable and job.current_attempt < job.max_attempts:
         _transition_job(job, "retry_waiting", now=now)
+        job.retry_after_at = retry_after_at or now
         job.response_deadline_at = None
         job.finished_at = None
     else:
         _transition_job(job, "failed", now=now)
+        job.retry_after_at = None
         job.response_deadline_at = None
         job.finished_at = now
 
@@ -200,14 +206,16 @@ def mark_plugin_job_attempt_timed_out(
     attempt_id: str,
     error_message: str,
     retryable: bool = False,
+    retry_after_at: str | None = None,
     response_required: bool = False,
     response_deadline_at: str | None = None,
 ) -> PluginJobRead:
     attempt = _get_running_attempt_or_raise(db, attempt_id=attempt_id)
+    now = utc_now_iso()
     attempt.status = "timed_out"
     attempt.error_code = "job_timeout"
     attempt.error_message = error_message
-    attempt.finished_at = utc_now_iso()
+    attempt.finished_at = now
     db.flush()
 
     job = get_plugin_job_or_raise(db, job_id=attempt.job_id)
@@ -215,17 +223,20 @@ def mark_plugin_job_attempt_timed_out(
     job.last_error_message = error_message
 
     if response_required:
-        _transition_job(job, "waiting_response")
+        _transition_job(job, "waiting_response", now=now)
+        job.retry_after_at = None
         job.response_deadline_at = response_deadline_at
         job.finished_at = None
     elif retryable and job.current_attempt < job.max_attempts:
-        _transition_job(job, "retry_waiting")
+        _transition_job(job, "retry_waiting", now=now)
+        job.retry_after_at = retry_after_at or now
         job.response_deadline_at = None
         job.finished_at = None
     else:
-        _transition_job(job, "failed")
+        _transition_job(job, "failed", now=now)
+        job.retry_after_at = None
         job.response_deadline_at = None
-        job.finished_at = utc_now_iso()
+        job.finished_at = now
     db.flush()
     return _to_plugin_job_read(job)
 
@@ -234,6 +245,7 @@ def requeue_plugin_job(db: Session, *, job_id: str) -> PluginJobRead:
     job = get_plugin_job_or_raise(db, job_id=job_id)
     _transition_job(job, "queued")
     job.finished_at = None
+    job.retry_after_at = None
     job.response_deadline_at = None
     db.flush()
     return _to_plugin_job_read(job)
@@ -244,6 +256,7 @@ def cancel_plugin_job(db: Session, *, job_id: str) -> PluginJobRead:
     now = utc_now_iso()
     _transition_job(job, "cancelled", now=now)
     job.finished_at = now
+    job.retry_after_at = None
     job.response_deadline_at = None
     db.flush()
     return _to_plugin_job_read(job)
@@ -275,10 +288,12 @@ def record_plugin_job_response(
     if payload.action == "cancel":
         _transition_job(job, "cancelled", now=now)
         job.finished_at = now
+        job.retry_after_at = None
         job.response_deadline_at = None
     else:
         _transition_job(job, "queued", now=now)
         job.finished_at = None
+        job.retry_after_at = None
         job.response_deadline_at = None
         if payload.action in {"retry", "confirm", "provide_input"}:
             job.last_error_code = None
@@ -323,9 +338,11 @@ def _get_running_attempt_or_raise(db: Session, *, attempt_id: str) -> PluginJobA
 
 def _allowed_actions_for_job(job: PluginJob) -> list[PluginJobResponseAction]:
     if job.status == "waiting_response":
-        return [action for action in ["retry", "confirm", "cancel", "provide_input"] if action in WAITING_RESPONSE_ACTIONS]
+        actions: list[PluginJobResponseAction] = ["retry", "confirm", "cancel", "provide_input"]
+        return actions
     if job.status == "failed" and job.current_attempt < job.max_attempts:
-        return [action for action in ["retry", "cancel"] if action in FAILED_RESPONSE_ACTIONS]
+        actions = cast(list[PluginJobResponseAction], ["retry", "cancel"])
+        return actions
     return []
 
 
@@ -338,62 +355,71 @@ def _transition_job(job: PluginJob, next_status: PluginJobStatus, *, now: str | 
 
 
 def _to_plugin_job_read(row: PluginJob) -> PluginJobRead:
-    return PluginJobRead(
-        id=row.id,
-        household_id=row.household_id,
-        plugin_id=row.plugin_id,
-        plugin_type=row.plugin_type,
-        trigger=row.trigger,
-        status=row.status,
-        request_payload=load_json(row.request_payload_json),
-        payload_summary=load_json(row.payload_summary_json),
-        idempotency_key=row.idempotency_key,
-        current_attempt=row.current_attempt,
-        max_attempts=row.max_attempts,
-        last_error_code=row.last_error_code,
-        last_error_message=row.last_error_message,
-        response_deadline_at=row.response_deadline_at,
-        started_at=row.started_at,
-        finished_at=row.finished_at,
-        updated_at=row.updated_at,
-        created_at=row.created_at,
+    return PluginJobRead.model_validate(
+        {
+            "id": row.id,
+            "household_id": row.household_id,
+            "plugin_id": row.plugin_id,
+            "plugin_type": row.plugin_type,
+            "trigger": row.trigger,
+            "status": row.status,
+            "request_payload": load_json(row.request_payload_json),
+            "payload_summary": load_json(row.payload_summary_json),
+            "idempotency_key": row.idempotency_key,
+            "current_attempt": row.current_attempt,
+            "max_attempts": row.max_attempts,
+            "last_error_code": row.last_error_code,
+            "last_error_message": row.last_error_message,
+            "retry_after_at": row.retry_after_at,
+            "response_deadline_at": row.response_deadline_at,
+            "started_at": row.started_at,
+            "finished_at": row.finished_at,
+            "updated_at": row.updated_at,
+            "created_at": row.created_at,
+        }
     )
 
 
 def _to_plugin_job_attempt_read(row: PluginJobAttempt) -> PluginJobAttemptRead:
-    return PluginJobAttemptRead(
-        id=row.id,
-        job_id=row.job_id,
-        attempt_no=row.attempt_no,
-        status=row.status,
-        worker_id=row.worker_id,
-        started_at=row.started_at,
-        finished_at=row.finished_at,
-        error_code=row.error_code,
-        error_message=row.error_message,
-        output_summary=load_json(row.output_summary_json),
+    return PluginJobAttemptRead.model_validate(
+        {
+            "id": row.id,
+            "job_id": row.job_id,
+            "attempt_no": row.attempt_no,
+            "status": row.status,
+            "worker_id": row.worker_id,
+            "started_at": row.started_at,
+            "finished_at": row.finished_at,
+            "error_code": row.error_code,
+            "error_message": row.error_message,
+            "output_summary": load_json(row.output_summary_json),
+        }
     )
 
 
 def _to_plugin_job_notification_read(row: PluginJobNotification) -> PluginJobNotificationRead:
-    return PluginJobNotificationRead(
-        id=row.id,
-        job_id=row.job_id,
-        notification_type=row.notification_type,
-        channel=row.channel,
-        payload=load_json(row.payload_json),
-        delivered_at=row.delivered_at,
-        created_at=row.created_at,
+    return PluginJobNotificationRead.model_validate(
+        {
+            "id": row.id,
+            "job_id": row.job_id,
+            "notification_type": row.notification_type,
+            "channel": row.channel,
+            "payload": load_json(row.payload_json),
+            "delivered_at": row.delivered_at,
+            "created_at": row.created_at,
+        }
     )
 
 
 def _to_plugin_job_response_read(row: PluginJobResponse) -> PluginJobResponseRead:
-    return PluginJobResponseRead(
-        id=row.id,
-        job_id=row.job_id,
-        action=row.action,
-        actor_type=row.actor_type,
-        actor_id=row.actor_id,
-        payload=load_json(row.payload_json),
-        created_at=row.created_at,
+    return PluginJobResponseRead.model_validate(
+        {
+            "id": row.id,
+            "job_id": row.job_id,
+            "action": row.action,
+            "actor_type": row.actor_type,
+            "actor_id": row.actor_id,
+            "payload": load_json(row.payload_json),
+            "created_at": row.created_at,
+        }
     )

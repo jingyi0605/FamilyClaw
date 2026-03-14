@@ -9,12 +9,14 @@ from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.session import SessionLocal
 from app.modules.account.service import ensure_bootstrap_admin_account, ensure_pending_household_bootstrap_accounts
+from app.modules.plugin.job_worker import PluginJobWorker
 
 setup_logging(
     settings.log_level,
     conversation_debug_enabled=settings.conversation_debug_log_enabled,
 )
 logger = logging.getLogger(__name__)
+plugin_job_worker = PluginJobWorker()
 
 
 @asynccontextmanager
@@ -26,7 +28,11 @@ async def lifespan(_: FastAPI):
         ensure_pending_household_bootstrap_accounts(db)
     finally:
         db.close()
+    if settings.plugin_job_worker_enabled:
+        await plugin_job_worker.start()
     yield
+    if settings.plugin_job_worker_enabled:
+        await plugin_job_worker.stop()
     logger.info("Stopping %s", settings.app_name)
 
 

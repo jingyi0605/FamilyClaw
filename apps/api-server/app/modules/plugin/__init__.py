@@ -39,6 +39,14 @@ from app.modules.plugin.job_service import (
     requeue_plugin_job,
     start_plugin_job_attempt,
 )
+from app.modules.plugin.job_worker import (
+    PluginJobWorker,
+    claim_next_plugin_job,
+    enqueue_plugin_execution_job,
+    execute_plugin_job,
+    recover_plugin_jobs,
+    run_plugin_job_worker_cycle,
+)
 from app.modules.plugin.agent_bridge import confirm_agent_action_plugin, invoke_agent_action_plugin, invoke_agent_plugin
 from app.modules.plugin.service import (
     PluginExecutionError,
@@ -96,6 +104,7 @@ __all__ = [
     "invoke_agent_plugin",
     "disable_plugin",
     "delete_plugin_mount",
+    "PluginJobWorker",
     "cancel_plugin_job",
     "create_plugin_job",
     "create_plugin_job_notification",
@@ -106,11 +115,14 @@ __all__ = [
     "ingest_plugin_raw_records_to_memory",
     "load_plugin_manifest",
     "list_allowed_plugin_job_actions",
+    "claim_next_plugin_job",
     "list_plugin_mounts",
     "list_saved_plugin_raw_records",
     "list_registered_plugins",
+    "enqueue_plugin_execution_job",
     "list_registered_plugins_for_household",
     "mark_plugin_job_attempt_failed",
+    "execute_plugin_job",
     "mark_plugin_job_attempt_succeeded",
     "mark_plugin_job_attempt_timed_out",
     "register_plugin_mount",
@@ -121,3 +133,5 @@ __all__ = [
     "start_plugin_job_attempt",
     "update_plugin_mount",
 ]
+    "recover_plugin_jobs",
+    "run_plugin_job_worker_cycle",

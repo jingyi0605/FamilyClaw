@@ -1,4 +1,4 @@
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, update
 from sqlalchemy.orm import Session
 
 from app.modules.plugin.models import (
@@ -109,6 +109,56 @@ def list_plugin_jobs(
         select(PluginJob)
         .where(*filters)
         .order_by(PluginJob.created_at.desc(), PluginJob.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def list_runnable_plugin_jobs(db: Session, *, now: str) -> list[PluginJob]:
+    stmt: Select[tuple[PluginJob]] = (
+        select(PluginJob)
+        .where(
+            PluginJob.status == "queued",
+        )
+        .order_by(PluginJob.created_at.asc(), PluginJob.id.asc())
+    )
+    queued = list(db.scalars(stmt).all())
+
+    retry_stmt: Select[tuple[PluginJob]] = (
+        select(PluginJob)
+        .where(
+            PluginJob.status == "retry_waiting",
+            PluginJob.retry_after_at.is_not(None),
+            PluginJob.retry_after_at <= now,
+        )
+        .order_by(PluginJob.retry_after_at.asc(), PluginJob.created_at.asc(), PluginJob.id.asc())
+    )
+    return [*queued, *list(db.scalars(retry_stmt).all())]
+
+
+def claim_plugin_job_for_running(
+    db: Session,
+    *,
+    job_id: str,
+    expected_status: str,
+    updated_at: str,
+) -> bool:
+    stmt = (
+        update(PluginJob)
+        .where(PluginJob.id == job_id, PluginJob.status == expected_status)
+        .values(status="running", updated_at=updated_at, retry_after_at=None, finished_at=None)
+    )
+    result = db.execute(stmt)
+    return result.rowcount == 1
+
+
+def list_stale_running_plugin_jobs(db: Session, *, heartbeat_before: str) -> list[PluginJob]:
+    stmt: Select[tuple[PluginJob]] = (
+        select(PluginJob)
+        .where(
+            PluginJob.status == "running",
+            PluginJob.updated_at <= heartbeat_before,
+        )
+        .order_by(PluginJob.updated_at.asc(), PluginJob.id.asc())
     )
     return list(db.scalars(stmt).all())
 

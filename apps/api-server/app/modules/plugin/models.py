@@ -100,6 +100,7 @@ class PluginJob(Base):
     max_attempts: Mapped[int] = mapped_column(nullable=False, default=1)
     last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_after_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     response_deadline_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     finished_at: Mapped[str | None] = mapped_column(Text, nullable=True)
