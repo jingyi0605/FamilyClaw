@@ -403,50 +403,116 @@
   - 对应需求：`requirements.md` 需求 7
   - 对应设计：`design.md` 1.4、2.3、8.1、8.2
 
-## 阶段 4：补管理端与接入文档，把交付收口
+## 阶段 4：补 `user-web` 接入入口与文档，把交付收口
 
-- [ ] 4.1 管理端新增“通讯平台接入”页
+- [ ] 4.1 `user-web` 设置页新增“通讯平台接入”页面
   - 状态：TODO
-  - 这一步到底做什么：给管理员一个正式页面配置平台账号、查看状态、看最近错误
-  - 做完你能看到什么：平台接入不再只能靠手动调接口
+  - 这一步到底做什么：在 `user-web` 设置界面里给管理员一个正式页面，沿用当前主题样式，把“通讯平台接入”挂到“设备与集成”下方，用来配置平台账号、查看状态、看最近错误
+  - 做完你能看到什么：平台接入不再只能靠手动调接口，入口也不再挂在即将移除的 `admin-web`
   - 先依赖什么：3.4
   - 开始前先看：
     - `requirements.md` 需求 2、6
     - `design.md` 2.2、3.3.1、5.3
-    - `apps/admin-web/src/pages/AiConfigPage.tsx`
+    - `apps/user-web/src/pages/SettingsPage.tsx`
+    - `apps/user-web/src/components/SettingsNav.tsx`
   - 主要改哪里：
-    - `apps/admin-web/src/pages/ChannelAccessPage.tsx`
-    - `apps/admin-web/src/App.tsx`
-    - `apps/admin-web/src/lib/api.ts`
-    - `apps/admin-web/src/types.ts`
+    - `apps/user-web/src/pages/SettingsChannelAccessPage.tsx`
+    - `apps/user-web/src/components/SettingsNav.tsx`
+    - `apps/user-web/src/App.tsx`
+    - `apps/user-web/src/lib/api.ts`
+    - `apps/user-web/src/lib/types.ts`
+    - `apps/user-web/src/i18n/zh-CN.ts`
+    - `apps/user-web/src/i18n/en-US.ts`
   - 这一先不做什么：先不做市场页和第三方安装流
+  - 页面结构：
+    1. 新增独立设置子路由 `/settings/channel-access`，不要继续塞进 `/settings/integrations`
+    2. 设置导航新增“通讯平台接入”项，位置固定在“设备与集成”下方
+    3. 页面正文分 4 块：顶部说明卡、平台账号列表区、新增/编辑账号弹窗、账号详情区
+    4. 平台账号卡片至少展示平台、账号名、连接方式、状态、最近探测结果、最近错误、最近入站时间、最近出站时间
+    5. 卡片动作至少保留 `编辑`、`立即探测`、`启用/停用`
+  - 路由名：
+    - 页面路由：`/settings/channel-access`
+    - 页面组件：`SettingsChannelAccess`
+    - 列表加载接口：`GET /api/v1/ai-config/{household_id}/channel-accounts`
+    - 创建接口：`POST /api/v1/ai-config/{household_id}/channel-accounts`
+    - 更新接口：`PUT /api/v1/ai-config/{household_id}/channel-accounts/{account_id}`
+    - 探测接口：`POST /api/v1/ai-config/{household_id}/channel-accounts/{account_id}/probe`
+    - 详情接口：`GET /api/v1/ai-config/{household_id}/channel-accounts/{account_id}/status`
+    - 失败投递接口：`GET /api/v1/ai-config/{household_id}/channel-deliveries?channel_account_id={account_id}&status=failed`
+    - 失败入站接口：`GET /api/v1/ai-config/{household_id}/channel-inbound-events?channel_account_id={account_id}&status=failed`
+  - 接口字段清单：
+    - 列表 / 卡片主数据：`ChannelAccountRead`
+      - `id`、`plugin_id`、`platform_code`、`account_code`、`display_name`
+      - `connection_mode`、`config`、`status`
+      - `last_probe_status`、`last_error_code`、`last_error_message`
+      - `last_inbound_at`、`last_outbound_at`、`created_at`、`updated_at`
+    - 创建提交体：`ChannelAccountCreate`
+      - `plugin_id`、`account_code`、`display_name`、`connection_mode`、`config`、`status`
+    - 编辑提交体：`ChannelAccountUpdate`
+      - 前端只主动写 `display_name`、`connection_mode`、`config`、`status`
+      - `last_probe_status`、`last_error_*`、`last_*_at` 只读，不让前端瞎改
+    - 账号详情区：`ChannelAccountStatusRead`
+      - `account`
+      - `recent_failure_summary.recent_failure_count`
+      - `recent_failure_summary.last_error_code`
+      - `recent_failure_summary.last_error_message`
+      - `recent_failure_summary.last_failed_at`
+      - `latest_delivery`
+      - `latest_inbound_event`
+      - `latest_failed_inbound_event`
+      - `recent_delivery_count`
+      - `recent_inbound_count`
+    - 失败记录区：
+      - 出站失败列表使用 `ChannelDeliveryRead[]`
+      - 入站失败列表使用 `ChannelInboundEventRead[]`
   - 怎么算完成：
     1. 可创建、修改、探测、启停平台账号
     2. 可查看最近失败和状态摘要
-    3. 页面路由能挂到当前管理端导航里，不是孤儿页
+    3. 页面入口出现在 `user-web` 设置导航里，位置在“设备与集成”下方，不是孤儿页
+    4. 路由、页面结构、字段映射都已按 Spec 定死，不靠实现时临场发挥
   - 怎么验证：
     - 前端联调
-    - 手工回归
+    - `user-web` 手工回归
   - 对应需求：`requirements.md` 需求 2、6
   - 对应设计：`design.md` 2.2、3.3.1、5.3
 
-- [ ] 4.2 成员页补多平台绑定管理面板
+- [ ] 4.2 在“通讯平台接入”页的对应平台账号下补成员绑定编辑区
   - 状态：TODO
-  - 这一步到底做什么：把成员与平台账号绑定能力挂到管理员真正会用的成员视图里
-  - 做完你能看到什么：管理员能按成员直接维护 Telegram、Discord、飞书、钉钉、企业微信绑定
+  - 这一步到底做什么：在每个平台账号的详情区直接维护“家庭成员 <-> 外部通讯平台 ID”绑定，让系统能按来源消息准确识别是谁在说话
+  - 做完你能看到什么：管理员能在 Telegram、Discord、飞书、钉钉、企业微信等账号配置里，直接把外部 ID 绑给对应家庭成员
   - 先依赖什么：4.1
   - 开始前先看：
     - `requirements.md` 需求 3、6
     - `design.md` 2.3.2、3.3.2
-    - `apps/admin-web/src/pages/MembersPage.tsx`
+    - `apps/user-web/src/pages/SettingsChannelAccessPage.tsx`
   - 主要改哪里：
-    - `apps/admin-web/src/pages/MembersPage.tsx`
-    - `apps/admin-web/src/components/member/MemberChannelBindingsPanel.tsx`
-    - `apps/admin-web/src/lib/api.ts`
+    - `apps/user-web/src/pages/SettingsChannelAccessPage.tsx`
+    - `apps/user-web/src/components/ChannelAccountBindingsPanel.tsx`
+    - `apps/user-web/src/lib/api.ts`
+    - `apps/user-web/src/lib/types.ts`
+    - `apps/user-web/src/i18n/zh-CN.ts`
+    - `apps/user-web/src/i18n/en-US.ts`
   - 这一先不做什么：先不做批量导入绑定
+  - 子块拆分：
+    1. 绑定列表区
+       - 在当前平台账号详情里展示已有绑定列表
+       - 每行显示成员名、`external_user_id`、`external_chat_id`、备注、绑定状态、更新时间
+       - 每行提供 `编辑`、`停用/恢复` 操作
+    2. 新增/编辑绑定弹窗
+       - 统一复用一个弹窗处理新增和编辑
+       - 表单字段固定为 `member_id`、`external_user_id`、`external_chat_id`、`display_hint`、`binding_status`
+       - 新增默认 `binding_status=active`
+    3. 成员选择数据源
+       - 从当前家庭成员接口读取候选成员，不手写死数据
+       - 第一版只允许选择当前家庭内有效成员
+       - 成员下拉要能显示用户可识别的信息，至少有姓名
+    4. 绑定冲突提示
+       - 冲突时要把后端返回的外部 ID 重复占用提示直接落到表单
+       - 未绑定、加载失败、保存失败、账号未完成配置等状态都要在详情区给出可见反馈
   - 怎么算完成：
-    1. 成员页可以看和改绑定
+    1. 在某个平台账号详情里可以看、新增、修改、停用绑定
     2. 冲突和未绑定状态有清楚提示
+    3. 绑定的核心字段直接围绕 `member_id + external_user_id (+ external_chat_id)`，不再绕成员页反查
   - 怎么验证：
     - 前端联调
     - 绑定冲突回归
@@ -487,7 +553,7 @@
   - 主要改哪里：当前 Spec 全部文件
   - 这一先不做什么：不再追加新平台和新范围
   - 怎么算完成：
-    1. 协议、数据模型、平台批次、管理端入口都可追踪
+    1. 协议、数据模型、平台批次、用户端接入入口都可追踪
     2. 每个阶段都能独立交付
     3. 延期项和风险明确写清楚
   - 怎么验证：
