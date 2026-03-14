@@ -1,3 +1,4 @@
+import logging
 from typing import cast
 
 from fastapi import HTTPException, status
@@ -64,6 +65,8 @@ from app.modules.reminder.service import create_task as create_reminder_task
 from app.modules.reminder.service import delete_task as delete_reminder_task
 from app.modules.realtime.connection_manager import RealtimeConnectionManager
 from app.modules.realtime.schemas import build_bootstrap_realtime_event
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationNotFoundError(LookupError):
@@ -2175,6 +2178,15 @@ async def run_conversation_realtime_turn(
             payload={"snapshot": snapshot.model_dump(mode="json")},
         )
     except Exception as exc:
+        logger.exception(
+            "实时会话处理失败 session_id=%s request_id=%s household_id=%s requester_member_id=%s error_code=%s partial_chunks=%s",
+            session.id,
+            request_id,
+            session.household_id,
+            session.requester_member_id or "-",
+            _resolve_turn_error_code(exc),
+            len(emitted_chunks),
+        )
         partial_text = "".join(emitted_chunks).strip()
         if partial_text:
             assistant_message_row.content = partial_text

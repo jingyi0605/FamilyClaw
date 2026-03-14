@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -29,6 +30,8 @@ from app.modules.member.models import Member
 from app.modules.ai_gateway.schemas import AiGatewayInvokeRequest
 from app.modules.memory.schemas import EventRecordCreate
 from app.modules.memory.service import ingest_event_record_best_effort
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -235,7 +238,16 @@ async def stream_family_qa(
         _persist_family_qa_result(db, prepared=prepared, result=result)
         yield ("done", result)
         return
-    except ProviderRuntimeError:
+    except ProviderRuntimeError as exc:
+        logger.warning(
+            "Family QA 流式调用失败，切换到同步降级 capability=qa_generation trace_id=%s household_id=%s requester_member_id=%s session_id=%s provider=%s error_code=%s",
+            trace_id,
+            payload.household_id,
+            payload.requester_member_id or "-",
+            str((payload.context.get("request_context") or {}).get("session_id") or "-"),
+            provider_code,
+            exc.error_code,
+        )
         response = await ainvoke_capability(
             db,
             AiGatewayInvokeRequest(
@@ -244,6 +256,16 @@ async def stream_family_qa(
                 requester_member_id=payload.requester_member_id,
                 payload=_build_qa_generation_payload(prepared),
             ),
+        )
+        logger.info(
+            "Family QA 同步降级完成 capability=qa_generation trace_id=%s fallback_trace_id=%s household_id=%s requester_member_id=%s provider=%s degraded=%s attempts=%s",
+            trace_id,
+            response.trace_id,
+            payload.household_id,
+            payload.requester_member_id or "-",
+            response.provider_code,
+            response.degraded,
+            _summarize_ai_gateway_attempts(response.attempts),
         )
         text = str(response.normalized_output.get("text") or prepared.answer_text)
         if text:
@@ -306,6 +328,18 @@ def _prepare_family_qa_turn(db: Session, payload: FamilyQaQueryRequest, actor: A
         agent_runtime_context=agent_runtime_context,
         conversation_history=conversation_history,
     )
+
+
+def _summarize_ai_gateway_attempts(attempts: list[object]) -> str:
+    if not attempts:
+        return "-"
+    fragments: list[str] = []
+    for attempt in attempts:
+        provider_code = str(getattr(attempt, "provider_code", "-"))
+        status = str(getattr(attempt, "status", "-"))
+        error_code = str(getattr(attempt, "error_code", "") or "ok")
+        fragments.append(f"{provider_code}:{status}:{error_code}")
+    return ",".join(fragments)
 
 
 def list_family_qa_suggestions(

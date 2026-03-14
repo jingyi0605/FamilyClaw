@@ -1,3 +1,4 @@
+import logging
 from typing import cast
 from uuid import uuid4
 
@@ -27,6 +28,8 @@ from app.modules.ai_gateway.schemas import (
     AiTransportType,
 )
 from app.modules.ai_gateway.service import log_model_call, resolve_capability_route
+
+logger = logging.getLogger(__name__)
 
 
 def build_invocation_plan(
@@ -205,6 +208,16 @@ def invoke_capability(
                 honor_timeout_override=payload.honor_timeout_override,
             )
         except ProviderRuntimeError as exc:
+            logger.warning(
+                "AI 调用失败 capability=%s trace_id=%s household_id=%s requester_member_id=%s provider=%s fallback_used=%s error_code=%s",
+                plan.capability,
+                plan.trace_id,
+                plan.household_id or "-",
+                plan.requester_member_id or "-",
+                candidate.provider_code,
+                index > 0,
+                exc.error_code,
+            )
             attempts.append(
                 _write_attempt_log(
                     db,
@@ -234,6 +247,16 @@ def invoke_capability(
                 usage={"transport_type": provider_row.transport_type},
             )
         )
+        if index > 0:
+            logger.info(
+                "AI 回退成功 capability=%s trace_id=%s household_id=%s requester_member_id=%s provider=%s attempts=%s",
+                plan.capability,
+                plan.trace_id,
+                plan.household_id or "-",
+                plan.requester_member_id or "-",
+                result.provider_code,
+                _summarize_attempts(attempts),
+            )
         return AiGatewayInvokeResponse(
             capability=plan.capability,
             household_id=plan.household_id,
@@ -250,6 +273,14 @@ def invoke_capability(
         )
 
     if not plan.template_fallback_enabled:
+        logger.warning(
+            "AI 调用耗尽且未启用模板降级 capability=%s trace_id=%s household_id=%s requester_member_id=%s attempts=%s",
+            plan.capability,
+            plan.trace_id,
+            plan.household_id or "-",
+            plan.requester_member_id or "-",
+            _summarize_attempts(attempts),
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="当前能力没有可用供应商，且未配置模板降级",
@@ -267,6 +298,15 @@ def invoke_capability(
             status="fallback_success",
             error_code=None,
         )
+    )
+    logger.warning(
+        "AI 调用降级到模板 capability=%s trace_id=%s household_id=%s requester_member_id=%s blocked_reason=%s attempts=%s",
+        plan.capability,
+        plan.trace_id,
+        plan.household_id or "-",
+        plan.requester_member_id or "-",
+        prepared_payload.blocked_reason or "-",
+        _summarize_attempts(attempts),
     )
     return AiGatewayInvokeResponse(
         capability=plan.capability,
@@ -369,6 +409,16 @@ async def ainvoke_capability(
                 honor_timeout_override=payload.honor_timeout_override,
             )
         except ProviderRuntimeError as exc:
+            logger.warning(
+                "AI 异步调用失败 capability=%s trace_id=%s household_id=%s requester_member_id=%s provider=%s fallback_used=%s error_code=%s",
+                plan.capability,
+                plan.trace_id,
+                plan.household_id or "-",
+                plan.requester_member_id or "-",
+                candidate.provider_code,
+                index > 0,
+                exc.error_code,
+            )
             attempts.append(
                 _write_attempt_log(
                     db,
@@ -398,6 +448,16 @@ async def ainvoke_capability(
                 usage={"transport_type": provider_row.transport_type},
             )
         )
+        if index > 0:
+            logger.info(
+                "AI 异步回退成功 capability=%s trace_id=%s household_id=%s requester_member_id=%s provider=%s attempts=%s",
+                plan.capability,
+                plan.trace_id,
+                plan.household_id or "-",
+                plan.requester_member_id or "-",
+                result.provider_code,
+                _summarize_attempts(attempts),
+            )
         return AiGatewayInvokeResponse(
             capability=plan.capability,
             household_id=plan.household_id,
@@ -414,6 +474,14 @@ async def ainvoke_capability(
         )
 
     if not plan.template_fallback_enabled:
+        logger.warning(
+            "AI 异步调用耗尽且未启用模板降级 capability=%s trace_id=%s household_id=%s requester_member_id=%s attempts=%s",
+            plan.capability,
+            plan.trace_id,
+            plan.household_id or "-",
+            plan.requester_member_id or "-",
+            _summarize_attempts(attempts),
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="当前能力没有可用供应商，且未配置模板降级",
@@ -431,6 +499,15 @@ async def ainvoke_capability(
             status="fallback_success",
             error_code=None,
         )
+    )
+    logger.warning(
+        "AI 异步调用降级到模板 capability=%s trace_id=%s household_id=%s requester_member_id=%s blocked_reason=%s attempts=%s",
+        plan.capability,
+        plan.trace_id,
+        plan.household_id or "-",
+        plan.requester_member_id or "-",
+        prepared_payload.blocked_reason or "-",
+        _summarize_attempts(attempts),
     )
     return AiGatewayInvokeResponse(
         capability=plan.capability,
@@ -638,6 +715,15 @@ def _map_error_code_to_status(error_code: str) -> str:
     if error_code == "validation_error":
         return "validation_error"
     return "failed"
+
+
+def _summarize_attempts(attempts: list[AiGatewayAttemptResult]) -> str:
+    if not attempts:
+        return "-"
+    return ",".join(
+        f"{attempt.provider_code}:{attempt.status}:{attempt.error_code or 'ok'}"
+        for attempt in attempts
+    )
 
 
 def _new_trace_id() -> str:

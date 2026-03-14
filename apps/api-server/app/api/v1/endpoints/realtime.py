@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 from http.cookies import SimpleCookie
 from typing import Any, cast
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext, ensure_actor_can_access_household
@@ -25,6 +26,7 @@ from app.modules.realtime.connection_manager import realtime_connection_manager
 from app.modules.realtime.schemas import BootstrapRealtimeClientEvent, build_bootstrap_realtime_event
 
 router = APIRouter(tags=["realtime"])
+logger = logging.getLogger(__name__)
 
 
 @router.websocket("/realtime/agent-bootstrap")
@@ -124,10 +126,13 @@ async def realtime_agent_bootstrap_websocket(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         return
     except Exception:
-        if accepted:
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-        else:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        await _log_and_close_websocket_on_error(
+            websocket=websocket,
+            accepted=accepted,
+            route_name="realtime.agent-bootstrap",
+            household_id=household_id,
+            session_id=session_id,
+        )
     finally:
         if accepted and household_id and session_id:
             realtime_connection_manager.unregister(household_id=household_id, session_id=session_id, websocket=websocket)
@@ -233,10 +238,13 @@ async def realtime_conversation_websocket(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         return
     except Exception:
-        if accepted:
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-        else:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        await _log_and_close_websocket_on_error(
+            websocket=websocket,
+            accepted=accepted,
+            route_name="realtime.conversation",
+            household_id=household_id,
+            session_id=session_id,
+        )
     finally:
         if accepted and household_id and session_id:
             realtime_connection_manager.unregister(household_id=household_id, session_id=session_id, websocket=websocket)
@@ -276,6 +284,31 @@ def _extract_session_token(websocket: WebSocket) -> str | None:
     if morsel is None:
         return None
     return morsel.value
+
+
+async def _log_and_close_websocket_on_error(
+    *,
+    websocket: WebSocket,
+    accepted: bool,
+    route_name: str,
+    household_id: str,
+    session_id: str,
+) -> None:
+    client_host = websocket.client.host if websocket.client else "unknown"
+    client_port = websocket.client.port if websocket.client else "unknown"
+    logger.exception(
+        "WebSocket 异常 route=%s accepted=%s household_id=%s session_id=%s client=%s:%s",
+        route_name,
+        accepted,
+        household_id or "-",
+        session_id or "-",
+        client_host,
+        client_port,
+    )
+    if accepted:
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+    else:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
 
 
 async def _send_event(
