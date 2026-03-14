@@ -129,7 +129,7 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
           >
             <option value="CN">中国</option>
           </select>
-          <div className="form-hint">当前可选中国，已包含大陆和台湾省地区。</div>
+          <div className="form-hint">当前可选中国，已包含大陆、香港、澳门和台湾地区。</div>
         </div>
       </div>
       <div className="setup-form-grid">

@@ -9,7 +9,7 @@ from urllib.request import urlopen
 MODood_PCAS_URL = "https://raw.githubusercontent.com/modood/Administrative-divisions-of-China/master/dist/pcas-code.json"
 CHINA_DIVISION_META_URL = "https://registry.npmjs.org/china-division"
 OUTPUT_FILE = Path(__file__).resolve().parents[1] / "app" / "modules" / "region" / "data" / "cn_regions.json"
-SOURCE_VERSION = "modood-mainland-plus-china-division-taiwan"
+SOURCE_VERSION = "modood-mainland-plus-china-division-hk-mo-tw"
 DIRECT_PROVINCES = {"11", "12", "31", "50"}
 DIRECT_CITY_NAMES = {"市辖区", "县"}
 TAIWAN_CITY_CODE_MAP = {
@@ -40,6 +40,15 @@ TAIWAN_EXTRA_TOWNS = {
     "金门县": ["金城镇", "金湖镇", "金沙镇", "金宁乡", "烈屿乡", "乌丘乡"],
     "连江县": ["南竿乡", "北竿乡", "莒光乡", "东引乡"],
 }
+HONG_KONG_CITY_CODE_MAP = {
+    "香港岛": "810100",
+    "九龙": "810200",
+    "新界": "810300",
+}
+MACAO_CITY_CODE_MAP = {
+    "澳门半岛": "820100",
+    "澳门外岛": "820200",
+}
 
 
 def fetch_json(url: str) -> Any:
@@ -47,7 +56,7 @@ def fetch_json(url: str) -> Any:
         return json.load(response)
 
 
-def fetch_china_division_taiwan() -> dict[str, list[str]]:
+def fetch_hk_mo_tw_data() -> dict[str, dict[str, list[str]]]:
     meta = cast(dict[str, Any], fetch_json(CHINA_DIVISION_META_URL))
     latest = meta["dist-tags"]["latest"]
     tarball_url = meta["versions"][latest]["dist"]["tarball"]
@@ -62,7 +71,8 @@ def fetch_china_division_taiwan() -> dict[str, list[str]]:
     taiwan = dict(payload.get("台湾省", {}))
     for city_name, towns in TAIWAN_EXTRA_TOWNS.items():
         taiwan[city_name] = towns
-    return taiwan
+    payload["台湾省"] = taiwan
+    return payload
 
 
 def build_mainland_nodes() -> list[dict[str, object]]:
@@ -134,7 +144,7 @@ def build_mainland_nodes() -> list[dict[str, object]]:
 
 
 def build_taiwan_nodes() -> list[dict[str, object]]:
-    area_data = fetch_china_division_taiwan()
+    area_data = fetch_hk_mo_tw_data()["台湾省"]
     province_code = "710000"
     province_name = "台湾省"
     nodes: list[dict[str, object]] = [
@@ -190,10 +200,85 @@ def build_taiwan_nodes() -> list[dict[str, object]]:
     return nodes
 
 
+def build_special_region_nodes(
+    *,
+    province_code: str,
+    province_name: str,
+    timezone: str,
+    city_code_map: dict[str, str],
+    city_data: dict[str, list[str]],
+) -> list[dict[str, object]]:
+    nodes: list[dict[str, object]] = [
+        {
+            "provider_code": "builtin.cn-mainland",
+            "country_code": "CN",
+            "region_code": province_code,
+            "parent_region_code": None,
+            "admin_level": "province",
+            "name": province_name,
+            "full_name": province_name,
+            "path_codes": [province_code],
+            "path_names": [province_name],
+            "timezone": timezone,
+            "source_version": SOURCE_VERSION,
+        }
+    ]
+    for city_name, city_code in city_code_map.items():
+        district_names = city_data.get(city_name, [])
+        nodes.append(
+            {
+                "provider_code": "builtin.cn-mainland",
+                "country_code": "CN",
+                "region_code": city_code,
+                "parent_region_code": province_code,
+                "admin_level": "city",
+                "name": city_name,
+                "full_name": f"{province_name} / {city_name}",
+                "path_codes": [province_code, city_code],
+                "path_names": [province_name, city_name],
+                "timezone": timezone,
+                "source_version": SOURCE_VERSION,
+            }
+        )
+        for index, district_name in enumerate(district_names, start=1):
+            district_code = f"{city_code[:4]}{index:02d}"
+            nodes.append(
+                {
+                    "provider_code": "builtin.cn-mainland",
+                    "country_code": "CN",
+                    "region_code": district_code,
+                    "parent_region_code": city_code,
+                    "admin_level": "district",
+                    "name": district_name,
+                    "full_name": f"{province_name} / {city_name} / {district_name}",
+                    "path_codes": [province_code, city_code, district_code],
+                    "path_names": [province_name, city_name, district_name],
+                    "timezone": timezone,
+                    "source_version": SOURCE_VERSION,
+                }
+            )
+    return nodes
+
+
 def main() -> None:
     mainland_nodes = build_mainland_nodes()
+    hk_mo_tw_data = fetch_hk_mo_tw_data()
+    hong_kong_nodes = build_special_region_nodes(
+        province_code="810000",
+        province_name="香港特别行政区",
+        timezone="Asia/Hong_Kong",
+        city_code_map=HONG_KONG_CITY_CODE_MAP,
+        city_data=hk_mo_tw_data["香港特别行政区"],
+    )
+    macao_nodes = build_special_region_nodes(
+        province_code="820000",
+        province_name="澳门特别行政区",
+        timezone="Asia/Macau",
+        city_code_map=MACAO_CITY_CODE_MAP,
+        city_data=hk_mo_tw_data["澳门特别行政区"],
+    )
     taiwan_nodes = build_taiwan_nodes()
-    all_nodes = sorted(mainland_nodes + taiwan_nodes, key=lambda item: str(item["region_code"]))
+    all_nodes = sorted(mainland_nodes + hong_kong_nodes + macao_nodes + taiwan_nodes, key=lambda item: str(item["region_code"]))
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(json.dumps(all_nodes, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"已生成 {len(all_nodes)} 条中国地区目录数据")

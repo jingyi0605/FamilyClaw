@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--source-version",
-        default="modood-mainland-plus-china-area-data-taiwan",
+        default="modood-mainland-plus-china-division-hk-mo-tw",
         help="数据源版本标识",
     )
     parser.add_argument(
