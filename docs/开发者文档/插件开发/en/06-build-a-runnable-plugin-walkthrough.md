@@ -203,87 +203,68 @@ Do not jump into API calls immediately. First pass these 4 checks:
 
 If these four checks fail, API testing is just wasted time.
 
-## 7. Step Six: Run One Full Sync Call
+## 7. Step Six: Create One Background Job And Follow It To A Final State
 
 The best current API entry for validating this kind of plugin is:
 
-- `POST /api/v1/ai-config/{household_id}/agents/{agent_id}/plugin-memory-checkpoint`
+- `POST /api/v1/plugin-jobs`
 
 Request example:
 
 ```json
 {
   "plugin_id": "health-demo-sync",
+  "plugin_type": "connector",
   "payload": {
     "member_id": "member-001",
     "captured_at": "2026-03-13T07:30:00Z"
   },
-  "trigger": "agent-checkpoint"
+  "trigger": "manual"
 }
 ```
 
-This one call will automatically do all of this:
+This call does not synchronously finish the whole pipeline. It does this first:
 
-1. invoke the `connector`
-2. save raw records
-3. invoke the `memory-ingestor`
-4. write Observation memory
-5. return fresh Agent memory insight
+1. create a `plugin_job`
+2. return `job_id` and the current task state quickly
+3. let a background worker execute the `connector`
+4. save raw records
+5. invoke the `memory-ingestor`
+6. write Observation memory
 
 ## 8. Step Seven: What You Should See
 
 On success, you should at least see:
 
-- `pipeline_success = true`
-- `raw_record_count = 2`
-- `memory_card_count = 2`
-- `used_plugins` contains `health-demo-sync`
+- the create API first returns `queued = true`
+- you get a `job_id`
+- after worker execution, `job.status = succeeded`
+- `latest_attempt.status = succeeded`
+- for data plugins, raw-record and memory-write results line up afterward
 
-Response example:
+Create response example:
 
 ```json
 {
-  "agent_id": "agent-001",
-  "agent_name": "Family Butler",
-  "household_id": "household-001",
-  "plugin_id": "health-demo-sync",
-  "trigger": "agent-checkpoint",
-  "pipeline_run_id": "run-001",
-  "pipeline_success": true,
-  "raw_record_count": 2,
-  "memory_card_count": 2,
-  "degraded": false,
-  "insight": {
-    "agent_id": "agent-001",
-    "agent_name": "Family Butler",
-    "household_id": "household-001",
-    "summary": "Family Butler has read plugin-written family memory: member-001 daily_steps observation / 9032 / count; member-001 heart_rate observation / 68 / bpm.",
-    "suggestions": [
-      "Keep tracking step changes for today",
-      "Use heart-rate trends for health reminders"
-    ],
-    "used_plugins": [
-      "health-demo-sync"
-    ],
-    "facts": [
-      {
-        "memory_id": "memory-001",
-        "source_plugin_id": "health-demo-sync",
-        "category": "daily_steps",
-        "summary": "member-001 daily_steps observation / 9032 / count",
-        "observed_at": "2026-03-13T07:30:00Z"
-      },
-      {
-        "memory_id": "memory-002",
-        "source_plugin_id": "health-demo-sync",
-        "category": "heart_rate",
-        "summary": "member-001 heart_rate observation / 68 / bpm",
-        "observed_at": "2026-03-13T07:30:00Z"
-      }
-    ]
+  "job": {
+    "id": "job-001",
+    "plugin_id": "health-demo-sync",
+    "status": "queued"
   }
 }
 ```
+
+Then query:
+
+- `GET /api/v1/plugin-jobs/{job_id}`
+- `GET /api/v1/plugin-jobs`
+
+Focus on:
+
+- `job.status`
+- `latest_attempt.status`
+- `last_error_code`
+- `recent_notifications`
 
 ## 9. If It Fails, Check Here First
 
@@ -326,6 +307,6 @@ If you can get through this walkthrough, then you already understand the core in
 - declare the plugin through `manifest`
 - return raw records from a `connector`
 - convert them into Observation records through `memory-ingestor`
-- sync data into the project through the unified API path
+- move data into the project through the background-job execution path
 
 That is the real plugin path that works today.

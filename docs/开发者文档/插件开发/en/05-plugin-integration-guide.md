@@ -20,6 +20,12 @@ Directory layout and `manifest` fields are only the shell. What developers reall
 3. what output a plugin should return
 4. how plugin data enters the system, becomes memory, and is then used by the Agent
 
+One important truth comes first:
+
+- the external main path is no longer “an API call synchronously executes the plugin”
+- the accurate model now is “an API or Agent entry creates a background job first, then a worker executes the plugin”
+- `execute_plugin()` and `run_plugin_sync_pipeline()` still exist, but they are now internal execution-layer and testing tools more than public integration semantics
+
 ## 1. Say The Plain Truth First
 
 Two states must be separated here:
@@ -45,12 +51,14 @@ This is the most complete path, and the closest thing to the main plugin integra
 
 Flow:
 
-1. a `connector` plugin is invoked
-2. the plugin returns raw `records`
-3. the system stores those `records` in `plugin_raw_records`
-4. a `memory-ingestor` plugin converts raw records into normalized Observation objects
-5. the system writes those Observations into family memory
-6. the Agent reads them later from memory
+1. the caller creates a `plugin_job`
+2. a worker claims the job and invokes the `connector`
+3. the plugin returns raw `records`
+4. the system stores those `records` in `plugin_raw_records`
+5. a `memory-ingestor` plugin converts raw records into normalized Observation objects
+6. the system writes those Observations into family memory
+7. the system updates task status, attempts, and notifications
+8. the Agent reads them later from memory
 
 Relevant code:
 
@@ -73,7 +81,7 @@ Relevant code:
 - `apps/api-server/app/modules/plugin/agent_bridge.py:29`
 - constraint: `apps/api-server/app/modules/plugin/agent_bridge.py:103`
 
-The point is simple: the Agent cannot call every plugin type directly. Only controlled read capabilities and skill capabilities are allowed now.
+The point is simple: the Agent cannot call every plugin type directly. Only controlled read capabilities and skill capabilities are allowed now, and the current return semantics are task-oriented rather than synchronous final-result oriented.
 
 ### 2.3 Action Execution Path
 
@@ -86,7 +94,8 @@ Flow:
 3. the system verifies that the plugin declares the required permission
 4. the system verifies that the current member is allowed to execute the action
 5. if the plugin risk level is `high`, manual confirmation is required first
-6. only after that will the plugin be executed
+6. after that, a background job is created
+7. the worker executes the plugin later
 
 Relevant code:
 
@@ -127,6 +136,11 @@ So the real responsibility of the plugin author is:
 - make sure the Python module actually exists
 - make sure the target function is callable
 
+Do not confuse that with public runtime semantics:
+
+- a callable entrypoint does not mean the system will synchronously finish the plugin before returning to the caller
+- the public path now persists a `plugin_job` first
+
 ## 4. What Input A Plugin Receives
 
 The unified runtime entry passes a `dict payload` into the plugin function.
@@ -155,6 +169,11 @@ What you can depend on today is:
 - your own plugin logic and configuration
 
 Simple, but clear.
+
+What the caller should depend on is now split into two layers:
+
+- task fields like `job_id`, `job_status`, and `queued`
+- the later execution result obtained through job queries, notifications, or responses
 
 ## 4.1 Plugin Function Signature Rules
 

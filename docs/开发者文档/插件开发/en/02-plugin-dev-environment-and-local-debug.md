@@ -210,6 +210,18 @@ If this is a `connector + memory-ingestor` plugin, then move on to:
 - `run_plugin_sync_pipeline()`
 - Agent bridge entries
 
+But keep the boundary clear:
+
+- these are internal execution-layer checks for entrypoints and orchestration
+- the real system-facing flow now also needs background-job validation
+
+At minimum, also validate:
+
+- `POST /api/v1/plugin-jobs`
+- `GET /api/v1/plugin-jobs/{job_id}`
+- `GET /api/v1/plugin-jobs`
+- worker execution results, attempts, and notifications
+
 There are already repository tests covering these flows.
 
 ## 7. Existing Debug References You Can Reuse
@@ -234,6 +246,9 @@ These already cover:
 
 There are current HTTP entries that can validate plugin flows, such as:
 
+- `POST /api/v1/plugin-jobs`
+- `GET /api/v1/plugin-jobs/{job_id}`
+- `GET /api/v1/plugin-jobs`
 - `POST /api/v1/ai-config/{household_id}/agents/{agent_id}/plugin-invocations`
 - `POST /api/v1/ai-config/{household_id}/agents/{agent_id}/plugin-memory-checkpoint`
 - `POST /api/v1/ai-config/{household_id}/agents/{agent_id}/action-plugin-invocations`
@@ -243,8 +258,9 @@ But this document does not require you to start the dev server right now.
 The safer order is:
 
 1. static checks first
-2. service-layer validation next
-3. HTTP integration only if needed later
+2. internal execution-layer validation next
+3. background-job API and worker validation after that
+4. Agent or action entry validation only if needed later
 
 That is much easier to debug.
 

@@ -29,6 +29,7 @@ So the accurate statement is no longer “all plugins run the same way.” It is
 - built-in plugins keep using the current same-process runtime
 - third-party plugins should now be documented as `independent plugin repo + own dependencies + runner protocol`
 - the registry handles discovery and review; the main service should stop directly importing third-party plugin code by default
+- regardless of built-in vs third-party, the external execution path now creates a background job first instead of promising a synchronous final result
 
 These items are explicitly out of scope now:
 
@@ -77,7 +78,8 @@ Do it in this order. Do not start with fancy extras.
 3. Declare entrypoints, permissions, risk level, and triggers in the `manifest`.
 4. Add the code files so each entrypoint resolves to a real Python module path.
 5. Compare with existing built-in plugins to make sure your fields and layout are aligned.
-6. Add minimal tests and self-check notes, then prepare later registry submission material.
+6. Run one real background-job flow so task creation, worker execution, and result lookup all line up.
+7. Add minimal tests and self-check notes, then prepare later registry submission material.
 
 In one sentence: version one is about clear declaration, runnable entrypoints, and staying inside the boundary.
 
@@ -155,6 +157,7 @@ These are not suggestions. They come directly from the current codebase:
 - `risk_level=high` action plugins go through manual confirmation instead of direct execution
 - `manifest.json` `id` values may contain only lowercase letters, digits, and hyphens
 - `entrypoints` must use the `module_path.function_name` format
+- external entries now return task-oriented fields like `job_id`, `job_status`, and `queued` instead of promising a synchronous final result
 
 If the docs ever disagree with the code, keep the simpler option that does not break the current implementation. Do not document features the repository does not actually support.
 

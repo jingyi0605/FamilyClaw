@@ -81,7 +81,7 @@ At minimum, confirm:
 
 This is where you verify whether the main service will really accept the plugin output.
 
-Until the runner exists, you can still reuse the current service-layer tests to validate output shape and core pipeline rules.
+The runner and background-job path already exist now, so testing must stop pretending that one synchronous function call is the whole story.
 
 ### 4.1 Validate the basic execution entry
 
@@ -108,6 +108,17 @@ That chain covers:
 3. invoke `memory-ingestor`
 4. write normalized memory
 5. write audit logs
+
+But keep the boundary clear:
+
+- `run_plugin_sync_pipeline()` is an internal orchestration check
+- the real public path now also needs background-job validation
+
+At minimum, also validate:
+
+- `POST /api/v1/plugin-jobs`
+- worker execution reaches a terminal state
+- `GET /api/v1/plugin-jobs/{job_id}` returns attempts and notifications
 
 References:
 
@@ -196,6 +207,10 @@ At minimum, confirm:
 
 The current project entries are:
 
+- `POST /api/v1/plugin-jobs`
+- `GET /api/v1/plugin-jobs/{job_id}`
+- `GET /api/v1/plugin-jobs`
+- `POST /api/v1/plugin-jobs/{job_id}/responses`
 - `POST /api/v1/ai-config/{household_id}/agents/{agent_id}/plugin-invocations`
 - `POST /api/v1/ai-config/{household_id}/agents/{agent_id}/plugin-memory-checkpoint`
 - `POST /api/v1/ai-config/{household_id}/agents/{agent_id}/action-plugin-invocations`
@@ -222,10 +237,10 @@ Before opening a registration PR, at least pass these 8 checks:
 1. `manifest` passes validation
 2. all entrypoints are importable
 3. returned structures match the declared plugin type
-4. if this is a data plugin, `run_plugin_sync_pipeline()` works
-5. if this is for Agent use, `invoke_agent_plugin()` works
-6. if this is an action plugin, both permission denial and high-risk confirmation were tested
-7. audit logs and runtime results line up
+4. if this is a data plugin, the internal pipeline is at least verified with `run_plugin_sync_pipeline()`
+5. at least one full `create job -> worker execute -> query result` flow works
+6. if this is for Agent use, confirm the return shape is now job-oriented instead of pretending to be a synchronous final result
+7. if this is an action plugin, permission denial, high-risk confirmation, and job response flow were all tested
 8. the README explains the minimum verification flow
 
 ## 9. One-Line Summary
