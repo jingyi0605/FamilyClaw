@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+import json
 
 from alembic import command
 from alembic.config import Config
@@ -60,6 +61,28 @@ class AiConfigCenterTests(unittest.TestCase):
         self.assertIn("provider_code", field_keys)
         self.assertIn("model_name", field_keys)
         self.assertIn("secret_ref", field_keys)
+
+    def test_create_siliconflow_qwen_provider_sets_disable_thinking_default(self) -> None:
+        provider = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                provider_code="family-siliconflow-main",
+                display_name="SiliconFlow 主模型",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://api.siliconflow.cn/v1",
+                secret_ref="env://SILICONFLOW_API_KEY",
+                enabled=True,
+                supported_capabilities=["qa_generation", "qa_structured_answer"],
+                privacy_level="public_cloud",
+                extra_config={
+                    "adapter_code": "siliconflow",
+                    "model_name": "Qwen/Qwen3.5-9B",
+                },
+            ),
+        )
+        self.assertEqual(False, provider.extra_config["default_request_body"]["enable_thinking"])
+        self.assertEqual(128, provider.extra_config["default_request_body"]["thinking_budget"])
 
     def test_runtime_policy_default_entry_stays_unique(self) -> None:
         household = create_household(
@@ -129,6 +152,10 @@ class AiConfigCenterTests(unittest.TestCase):
         assert second_runtime is not None
         self.assertFalse(first_runtime.default_entry)
         self.assertTrue(second_runtime.default_entry)
+        self.assertEqual(
+            {"memory": "ask", "config": "ask", "action": "ask"},
+            json.loads(second_runtime.autonomous_action_policy_json),
+        )
 
     def test_setup_status_moves_forward_after_formal_ai_config_completed(self) -> None:
         household = create_household(

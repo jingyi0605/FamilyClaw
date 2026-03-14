@@ -36,6 +36,7 @@ def build_invocation_plan(
     household_id: str | None = None,
     requester_member_id: str | None = None,
     trace_id: str | None = None,
+    timeout_ms_override: int | None = None,
 ) -> AiInvocationPlan:
     route = resolve_capability_route(
         db,
@@ -74,7 +75,7 @@ def build_invocation_plan(
         requester_member_id=requester_member_id,
         trace_id=trace_id or _new_trace_id(),
         routing_mode=route.routing_mode,
-        timeout_ms=route.timeout_ms,
+        timeout_ms=timeout_ms_override or route.timeout_ms,
         max_retry_count=route.max_retry_count,
         allow_remote=route.allow_remote,
         prompt_policy=route.prompt_policy,
@@ -91,6 +92,10 @@ def prepare_payload_for_invocation(
     payload: dict[str, object],
 ) -> AiPreparedPayload:
     prepared_payload = dict(payload)
+    prepared_payload["request_context"] = _merge_request_context(
+        payload.get("request_context"),
+        trace_id=plan.trace_id,
+    )
     masked_fields: list[str] = []
     blocked_reason = plan.blocked_reason
 
@@ -110,6 +115,12 @@ def prepare_payload_for_invocation(
     )
 
 
+def _merge_request_context(raw_context: object, *, trace_id: str) -> dict[str, object]:
+    base: dict[str, object] = dict(raw_context) if isinstance(raw_context, dict) else {}
+    base["trace_id"] = trace_id
+    return base
+
+
 def invoke_capability(
     db: Session,
     payload: AiGatewayInvokeRequest,
@@ -119,6 +130,7 @@ def invoke_capability(
         capability=payload.capability,
         household_id=payload.household_id,
         requester_member_id=payload.requester_member_id,
+        timeout_ms_override=payload.timeout_ms_override,
     )
     prepared_payload = prepare_payload_for_invocation(plan, payload.payload)
     attempts: list[AiGatewayAttemptResult] = []
@@ -190,6 +202,7 @@ def invoke_capability(
                 provider_profile=provider_row,
                 payload=prepared_payload.payload,
                 timeout_ms=plan.timeout_ms,
+                honor_timeout_override=payload.honor_timeout_override,
             )
         except ProviderRuntimeError as exc:
             attempts.append(

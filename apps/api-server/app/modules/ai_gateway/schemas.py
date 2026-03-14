@@ -197,6 +197,8 @@ class AiGatewayInvokeRequest(BaseModel):
     household_id: str | None = Field(default=None, min_length=1)
     requester_member_id: str | None = Field(default=None, min_length=1)
     payload: dict[str, Any] = Field(default_factory=dict)
+    timeout_ms_override: int | None = Field(default=None, ge=100, le=120000)
+    honor_timeout_override: bool = False
 
 
 class AiGatewayAttemptResult(BaseModel):

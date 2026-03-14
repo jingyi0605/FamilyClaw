@@ -48,6 +48,12 @@ def create_provider_profile(db: Session, payload: AiProviderProfileCreate) -> Ai
     if existing is not None:
         raise AiGatewayConfigurationError("provider_code 已存在")
 
+    normalized_extra_config = _normalize_provider_extra_config(
+        payload.extra_config,
+        transport_type=payload.transport_type,
+        api_family=payload.api_family,
+        base_url=payload.base_url,
+    )
     row = AiProviderProfile(
         id=new_uuid(),
         provider_code=payload.provider_code,
@@ -62,7 +68,7 @@ def create_provider_profile(db: Session, payload: AiProviderProfileCreate) -> Ai
         privacy_level=payload.privacy_level,
         latency_budget_ms=payload.latency_budget_ms,
         cost_policy_json=dump_json(payload.cost_policy),
-        extra_config_json=dump_json(payload.extra_config),
+        extra_config_json=dump_json(normalized_extra_config),
         updated_at=utc_now_iso(),
     )
     repository.add_provider_profile(db, row)
@@ -103,7 +109,14 @@ def update_provider_profile(
     if "cost_policy" in data:
         row.cost_policy_json = dump_json(data["cost_policy"])
     if "extra_config" in data:
-        row.extra_config_json = dump_json(data["extra_config"])
+        row.extra_config_json = dump_json(
+            _normalize_provider_extra_config(
+                cast(dict[str, object], data["extra_config"]),
+                transport_type=data.get("transport_type", row.transport_type),
+                api_family=data.get("api_family", row.api_family),
+                base_url=data.get("base_url", row.base_url),
+            )
+        )
 
     row.updated_at = utc_now_iso()
     db.flush()
@@ -275,6 +288,61 @@ def _validate_capability_route(db: Session, payload: AiCapabilityRouteUpsert) ->
 
         if payload.routing_mode == "local_only" and provider_row.privacy_level != "local_only":
             raise AiGatewayConfigurationError("local_only 路由只能绑定本地供应商")
+
+
+def _normalize_provider_extra_config(
+    extra_config: dict[str, object] | None,
+    *,
+    transport_type: str | None,
+    api_family: str | None,
+    base_url: str | None,
+) -> dict[str, object]:
+    normalized = dict(extra_config or {})
+    if not _should_disable_thinking_by_default(
+        extra_config=normalized,
+        transport_type=transport_type,
+        api_family=api_family,
+        base_url=base_url,
+    ):
+        return normalized
+
+    default_request_body = normalized.get("default_request_body")
+    if not isinstance(default_request_body, dict):
+        default_request_body = {}
+
+    if "enable_thinking" not in default_request_body:
+        default_request_body["enable_thinking"] = False
+    if "thinking_budget" not in default_request_body:
+        default_request_body["thinking_budget"] = 128
+
+    normalized["default_request_body"] = default_request_body
+    return normalized
+
+
+def _should_disable_thinking_by_default(
+    *,
+    extra_config: dict[str, object],
+    transport_type: str | None,
+    api_family: str | None,
+    base_url: str | None,
+) -> bool:
+    transport = str(transport_type or "").strip().lower()
+    api_family_value = str(api_family or "").strip().lower()
+    adapter_code = str(extra_config.get("adapter_code") or "").strip().lower()
+    model_name = str(extra_config.get("model_name") or extra_config.get("default_model") or "").strip().lower()
+    base_url_value = str(base_url or "").strip().lower()
+
+    if transport != "openai_compatible" and api_family_value != "openai_chat_completions":
+        return False
+    if adapter_code != "siliconflow" and "siliconflow.cn" not in base_url_value:
+        return False
+
+    is_qwen3_thinking = (
+        "qwen3-" in model_name or model_name.endswith("qwen3") or "/qwen3" in model_name
+    ) and "qwen3-235b" not in model_name
+    is_qwen35_thinking = "qwen3.5-" in model_name or "/qwen3.5" in model_name
+    is_deepseek_r1 = "deepseek-r1" in model_name
+    return is_qwen3_thinking or is_qwen35_thinking or is_deepseek_r1
 
 
 def _to_provider_profile_read(row: AiProviderProfile) -> AiProviderProfileRead:

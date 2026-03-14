@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
+import logging
 import os
 import socket
 from time import perf_counter
@@ -30,6 +31,14 @@ class ProviderRuntimeError(RuntimeError):
         self.error_code = error_code
 
 
+@dataclass(frozen=True)
+class ProviderRequestContext:
+    request_id: str
+    trace_id: str
+    session_id: str
+    channel: str
+
+
 class ProviderAdapter:
     transport_type: str
 
@@ -43,6 +52,7 @@ class ProviderAdapter:
         provider_profile: AiProviderProfile,
         payload: Mapping[str, object],
         timeout_ms: int | None = None,
+        honor_timeout_override: bool = False,
     ) -> ProviderInvokeResult:
         extra_config = load_json(provider_profile.extra_config_json) or {}
         api_family = str(getattr(provider_profile, "api_family", "") or "").strip().lower()
@@ -56,12 +66,13 @@ class ProviderAdapter:
             raise ProviderRuntimeError(error_code, f"{provider_profile.provider_code} simulated failure")
 
         if api_family == "openai_chat_completions" or self.transport_type in {"openai_compatible", "local_gateway"}:
-            return _invoke_openai_compatible(
-                capability=capability,
-                provider_profile=provider_profile,
-                payload=payload,
-                timeout_ms=timeout_ms,
-            )
+                return _invoke_openai_compatible(
+                    capability=capability,
+                    provider_profile=provider_profile,
+                    payload=payload,
+                    timeout_ms=timeout_ms,
+                    honor_timeout_override=honor_timeout_override,
+                )
 
         if self.transport_type == "native_sdk":
             if api_family == "anthropic_messages":
@@ -70,6 +81,7 @@ class ProviderAdapter:
                     provider_profile=provider_profile,
                     payload=payload,
                     timeout_ms=timeout_ms,
+                    honor_timeout_override=honor_timeout_override,
                 )
             if api_family == "gemini_generate_content":
                 return _invoke_gemini_generate_content(
@@ -77,6 +89,7 @@ class ProviderAdapter:
                     provider_profile=provider_profile,
                     payload=payload,
                     timeout_ms=timeout_ms,
+                    honor_timeout_override=honor_timeout_override,
                 )
 
         return _invoke_simulated(
@@ -97,6 +110,31 @@ def build_template_fallback_output(
     capability: AiCapability,
     payload: Mapping[str, object],
 ) -> dict[str, object]:
+    task_type = str(payload.get("task_type") or "").strip()
+    if task_type == "conversation_intent_detection":
+        return {
+            "text": json.dumps(
+                {
+                    "primary_intent": "free_chat",
+                    "secondary_intents": [],
+                    "confidence": 0.0,
+                    "reason": "意图识别已降级，先按 free_chat 保守处理。",
+                    "candidate_actions": [],
+                },
+                ensure_ascii=False,
+            ),
+            "mode": "template_fallback",
+        }
+    if task_type == "free_chat":
+        user_message = str(payload.get("user_message") or "").strip()
+        if user_message in {"你好", "哈喽", "嗨", "hello", "hi", "您好"}:
+            text = "你好，我在。刚才响应有点慢，但现在可以继续聊。"
+        else:
+            text = "我还在，只是刚才模型响应有点慢。你可以继续说，我会尽量直接回答。"
+        return {
+            "text": text,
+            "mode": "template_fallback",
+        }
     if capability == "qa_generation":
         question = str(payload.get("question") or "当前问题")
         agent_name = _read_agent_name_from_payload(payload)
@@ -129,10 +167,13 @@ def _invoke_openai_compatible(
     provider_profile: AiProviderProfile,
     payload: Mapping[str, object],
     timeout_ms: int | None,
+    honor_timeout_override: bool = False,
 ) -> ProviderInvokeResult:
     started_at = perf_counter()
+    logger = logging.getLogger(__name__)
     extra_config = load_json(provider_profile.extra_config_json) or {}
     model_name = _resolve_model_name(provider_profile)
+    request_context = _read_request_context(payload)
     api_key = _resolve_provider_secret(provider_profile, extra_config)
     endpoint = _resolve_chat_endpoint(provider_profile, extra_config)
     if not endpoint:
@@ -182,6 +223,18 @@ def _invoke_openai_compatible(
             provider_profile=provider_profile,
             extra_config=extra_config,
             requested_timeout_ms=timeout_ms,
+            honor_requested_timeout=honor_timeout_override,
+        )
+        logger.info(
+            "[Invoke] Calling provider=%s model=%s timeout_ms=%s request_id=%s trace_id=%s session_id=%s channel=%s endpoint=%s",
+            provider_profile.provider_code,
+            model_name,
+            effective_timeout_ms,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            request_context.channel,
+            endpoint,
         )
         raw_request = request.Request(
             endpoint,
@@ -193,12 +246,49 @@ def _invoke_openai_compatible(
             response_text = response.read().decode("utf-8")
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")
+        logger.exception(
+            "[Invoke] HTTPError provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s detail=%s",
+            provider_profile.provider_code,
+            model_name,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            exc.code,
+            detail[:300],
+        )
         raise ProviderRuntimeError(_map_http_status_to_error_code(exc.code), detail or str(exc)) from exc
     except socket.timeout as exc:
+        logger.exception(
+            "[Invoke] socket.timeout provider=%s model=%s request_id=%s trace_id=%s session_id=%s timeout_ms=%s",
+            provider_profile.provider_code,
+            model_name,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            effective_timeout_ms,
+        )
         raise ProviderRuntimeError("timeout", "provider request timeout") from exc
     except error.URLError as exc:
         if isinstance(exc.reason, TimeoutError | socket.timeout):
+            logger.exception(
+                "[Invoke] URLError timeout provider=%s model=%s request_id=%s trace_id=%s session_id=%s timeout_ms=%s",
+                provider_profile.provider_code,
+                model_name,
+                request_context.request_id,
+                request_context.trace_id,
+                request_context.session_id,
+                effective_timeout_ms,
+            )
             raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+        logger.exception(
+            "[Invoke] URLError provider=%s model=%s request_id=%s trace_id=%s session_id=%s reason=%s",
+            provider_profile.provider_code,
+            model_name,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            exc.reason,
+        )
         raise ProviderRuntimeError("provider_failed", str(exc.reason)) from exc
 
     try:
@@ -210,6 +300,17 @@ def _invoke_openai_compatible(
     latency_ms = max(int((perf_counter() - started_at) * 1000), 1)
     response_model_name = str(response_json.get("model") or model_name)
     finish_reason = _extract_finish_reason(response_json)
+    logger.info(
+        "[Invoke] Completed provider=%s model=%s request_id=%s trace_id=%s session_id=%s total_ms=%s finish_reason=%s chars=%s",
+        provider_profile.provider_code,
+        response_model_name,
+        request_context.request_id,
+        request_context.trace_id,
+        request_context.session_id,
+        latency_ms,
+        finish_reason,
+        len(normalized_text),
+    )
     return ProviderInvokeResult(
         provider_code=provider_profile.provider_code,
         model_name=response_model_name,
@@ -229,13 +330,15 @@ def _stream_openai_compatible(
     provider_profile: AiProviderProfile,
     payload: Mapping[str, object],
     timeout_ms: int | None,
+    honor_timeout_override: bool = False,
 ):
     """流式调用 OpenAI 兼容 API，生成器模式"""
-    import logging
     logger = logging.getLogger(__name__)
 
+    started_at = perf_counter()
     extra_config = load_json(provider_profile.extra_config_json) or {}
     model_name = _resolve_model_name(provider_profile)
+    request_context = _read_request_context(payload)
     api_key = _resolve_provider_secret(provider_profile, extra_config)
     endpoint = _resolve_chat_endpoint(provider_profile, extra_config)
     if not endpoint:
@@ -263,7 +366,17 @@ def _stream_openai_compatible(
         capability="qa_generation",
     )
 
-    logger.info(f"[Stream] Calling {endpoint} with model={model_name}, body_keys={list(request_body.keys())}")
+    logger.info(
+        "[Stream] Calling provider=%s model=%s request_id=%s trace_id=%s session_id=%s channel=%s endpoint=%s body_keys=%s",
+        provider_profile.provider_code,
+        model_name,
+        request_context.request_id,
+        request_context.trace_id,
+        request_context.session_id,
+        request_context.channel,
+        endpoint,
+        list(request_body.keys()),
+    )
 
     request_headers = {"Content-Type": "application/json"}
     if api_key:
@@ -282,8 +395,16 @@ def _stream_openai_compatible(
         provider_profile=provider_profile,
         extra_config=extra_config,
         requested_timeout_ms=timeout_ms,
+        honor_requested_timeout=honor_timeout_override,
     )
-    logger.info(f"[Stream] Timeout: {effective_timeout_ms}ms")
+    logger.info(
+        "[Stream] Timeout provider=%s model=%s request_id=%s trace_id=%s timeout_ms=%s",
+        provider_profile.provider_code,
+        model_name,
+        request_context.request_id,
+        request_context.trace_id,
+        effective_timeout_ms,
+    )
 
     raw_request = request.Request(
         endpoint,
@@ -294,8 +415,24 @@ def _stream_openai_compatible(
 
     try:
         with request.urlopen(raw_request, timeout=effective_timeout_ms / 1000) as response:
+            connected_ms = max(int((perf_counter() - started_at) * 1000), 1)
+            logger.info(
+                "[Stream] Connected provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s connected_ms=%s",
+                provider_profile.provider_code,
+                model_name,
+                request_context.request_id,
+                request_context.trace_id,
+                request_context.session_id,
+                getattr(response, "status", "unknown"),
+                connected_ms,
+            )
             buffer = ""
+            chunk_count = 0
+            yielded_char_count = 0
+            first_chunk_logged = False
+            first_content_ms: int | None = None
             for chunk in response:
+                chunk_count += 1
                 chunk_text = chunk.decode("utf-8")
                 buffer += chunk_text
                 while "\n" in buffer:
@@ -304,6 +441,19 @@ def _stream_openai_compatible(
                     if not line:
                         continue
                     if line == "data: [DONE]":
+                        total_ms = max(int((perf_counter() - started_at) * 1000), 1)
+                        logger.info(
+                            "[Stream] Done provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunks=%s chars=%s first_content_ms=%s total_ms=%s",
+                            provider_profile.provider_code,
+                            model_name,
+                            request_context.request_id,
+                            request_context.trace_id,
+                            request_context.session_id,
+                            chunk_count,
+                            yielded_char_count,
+                            first_content_ms,
+                            total_ms,
+                        )
                         return
                     if line.startswith("data: "):
                         data_str = line[6:]
@@ -314,17 +464,69 @@ def _stream_openai_compatible(
                                 delta = choices[0].get("delta", {})
                                 content = delta.get("content", "")
                                 if content:
+                                    yielded_char_count += len(content)
+                                    if not first_chunk_logged:
+                                        first_chunk_logged = True
+                                        first_content_ms = max(int((perf_counter() - started_at) * 1000), 1)
+                                        logger.info(
+                                            "[Stream] First content chunk provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunk_index=%s first_content_ms=%s preview=%s",
+                                            provider_profile.provider_code,
+                                            model_name,
+                                            request_context.request_id,
+                                            request_context.trace_id,
+                                            request_context.session_id,
+                                            chunk_count,
+                                            first_content_ms,
+                                            content[:80],
+                                        )
                                     yield content
                         except json.JSONDecodeError:
                             continue
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")
+        logger.exception(
+            "[Stream] HTTPError provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s detail=%s",
+            provider_profile.provider_code,
+            model_name,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            exc.code,
+            detail[:300],
+        )
         raise ProviderRuntimeError(_map_http_status_to_error_code(exc.code), detail or str(exc)) from exc
     except socket.timeout as exc:
+        logger.exception(
+            "[Stream] socket.timeout provider=%s model=%s request_id=%s trace_id=%s session_id=%s timeout_ms=%s",
+            provider_profile.provider_code,
+            model_name,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            effective_timeout_ms,
+        )
         raise ProviderRuntimeError("timeout", "provider request timeout") from exc
     except error.URLError as exc:
         if isinstance(exc.reason, TimeoutError | socket.timeout):
+            logger.exception(
+                "[Stream] URLError timeout provider=%s model=%s request_id=%s trace_id=%s session_id=%s timeout_ms=%s",
+                provider_profile.provider_code,
+                model_name,
+                request_context.request_id,
+                request_context.trace_id,
+                request_context.session_id,
+                effective_timeout_ms,
+            )
             raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+        logger.exception(
+            "[Stream] URLError provider=%s model=%s request_id=%s trace_id=%s session_id=%s reason=%s",
+            provider_profile.provider_code,
+            model_name,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            exc.reason,
+        )
         raise ProviderRuntimeError("provider_failed", str(exc.reason)) from exc
 
 
@@ -333,6 +535,7 @@ def stream_provider_invoke(
     provider_profile: AiProviderProfile,
     payload: Mapping[str, object],
     timeout_ms: int | None = None,
+    honor_timeout_override: bool = False,
 ):
     """流式调用供应商 API"""
     api_family = str(getattr(provider_profile, "api_family", "") or "").strip().lower()
@@ -343,6 +546,7 @@ def stream_provider_invoke(
             provider_profile=provider_profile,
             payload=payload,
             timeout_ms=timeout_ms,
+            honor_timeout_override=honor_timeout_override,
         )
     else:
         # 不支持流式的 API，降级为普通调用后一次性返回
@@ -353,6 +557,7 @@ def stream_provider_invoke(
             provider_profile=provider_profile,
             payload=payload,
             timeout_ms=timeout_ms,
+            honor_timeout_override=honor_timeout_override,
         )
         yield result.normalized_output.get("text", "")
 
@@ -389,6 +594,7 @@ def _invoke_anthropic_messages(
     provider_profile: AiProviderProfile,
     payload: Mapping[str, object],
     timeout_ms: int | None,
+    honor_timeout_override: bool = False,
 ) -> ProviderInvokeResult:
     started_at = perf_counter()
     extra_config = load_json(provider_profile.extra_config_json) or {}
@@ -424,6 +630,7 @@ def _invoke_anthropic_messages(
         provider_profile=provider_profile,
         extra_config=extra_config,
         timeout_ms=timeout_ms,
+        honor_timeout_override=honor_timeout_override,
     )
 
     normalized_text = _extract_anthropic_response_text(response_json)
@@ -449,6 +656,7 @@ def _invoke_gemini_generate_content(
     provider_profile: AiProviderProfile,
     payload: Mapping[str, object],
     timeout_ms: int | None,
+    honor_timeout_override: bool = False,
 ) -> ProviderInvokeResult:
     started_at = perf_counter()
     extra_config = load_json(provider_profile.extra_config_json) or {}
@@ -486,6 +694,7 @@ def _invoke_gemini_generate_content(
         provider_profile=provider_profile,
         extra_config=extra_config,
         timeout_ms=timeout_ms,
+        honor_timeout_override=honor_timeout_override,
     )
 
     normalized_text = _extract_gemini_response_text(response_json)
@@ -589,6 +798,7 @@ def _post_json(
     provider_profile: AiProviderProfile,
     extra_config: dict[str, object],
     timeout_ms: int | None,
+    honor_timeout_override: bool = False,
 ) -> dict[str, object]:
     _apply_provider_specific_headers(
         request_headers=request_headers,
@@ -601,6 +811,7 @@ def _post_json(
             provider_profile=provider_profile,
             extra_config=extra_config,
             requested_timeout_ms=timeout_ms,
+            honor_requested_timeout=honor_timeout_override,
         )
         raw_request = request.Request(
             endpoint,
@@ -701,7 +912,11 @@ def _resolve_effective_timeout_ms(
     provider_profile: AiProviderProfile,
     extra_config: dict[str, object],
     requested_timeout_ms: int | None,
+    honor_requested_timeout: bool = False,
 ) -> int:
+    if honor_requested_timeout and isinstance(requested_timeout_ms, int) and requested_timeout_ms > 0:
+        return requested_timeout_ms
+
     runtime_config = settings.ai_runtime.provider_configs.get(provider_profile.provider_code)
     candidates = [
         int(value)
@@ -1069,3 +1284,20 @@ def _build_conversation_history_messages(payload: Mapping[str, object]) -> list[
             continue
         messages.append({"role": role, "content": content})
     return messages
+
+
+def _read_request_context(payload: Mapping[str, object]) -> ProviderRequestContext:
+    raw_context = payload.get("request_context")
+    if not isinstance(raw_context, Mapping):
+        return ProviderRequestContext(
+            request_id="-",
+            trace_id="-",
+            session_id="-",
+            channel="-",
+        )
+    return ProviderRequestContext(
+        request_id=str(raw_context.get("request_id") or "-"),
+        trace_id=str(raw_context.get("trace_id") or "-"),
+        session_id=str(raw_context.get("session_id") or "-"),
+        channel=str(raw_context.get("channel") or "-"),
+    )
