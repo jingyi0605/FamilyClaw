@@ -148,7 +148,7 @@ class ConversationShadowModeTests(unittest.TestCase):
             reason="影子模式下语义路由认为更像实时查询。",
             target_kind="state_query",
             requires_clarification=False,
-            source="semantic_router",
+            source="intent_mapping",
         )
 
         result = run_orchestrated_turn(

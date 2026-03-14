@@ -14,9 +14,8 @@ dependencies = [
   "alembic>=1.16,<2.0",
   "pydantic-settings>=2.6,<3.0",
   "httpx>=0.28,<1.0",
-  "cryptography>=44,<46",
   "websockets>=14,<16",
-  "sentence-transformers>=3.4,<4.0",
+  "cryptography>=44,<46",
 ]
 
 [tool.setuptools.packages.find]

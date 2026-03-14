@@ -15,7 +15,6 @@ from app.modules.device.models import Device
 from app.modules.device.service import list_devices
 from app.modules.device_action.schemas import DeviceActionExecuteRequest
 from app.modules.device_action.service import aexecute_device_action, execute_device_action
-from app.modules.conversation.semantic_router import SemanticRouter
 from app.modules.context.service import get_context_overview
 from app.modules.conversation.models import ConversationSession
 from app.modules.family_qa.schemas import FamilyQaQueryRequest, FamilyQaQueryResponse
@@ -417,8 +416,6 @@ def select_conversation_lane(
     message: str,
     detection: ConversationIntentDetection,
     request_context: dict | None = None,
-    semantic_router: SemanticRouter | None = None,
-    semantic_router_enabled: bool | None = None,
 ) -> ConversationLaneSelection:
     _ = request_context
     if session.session_mode == "agent_config":
@@ -443,22 +440,6 @@ def select_conversation_lane(
         )
         detection.lane_selection = selection
         return selection
-    if semantic_router_enabled is None:
-        semantic_router_enabled = settings.conversation_embedding_provider_enabled
-    if semantic_router_enabled:
-        router = semantic_router or SemanticRouter(enabled=True)
-        router_result = router.route(message)
-        if router_result.enabled:
-            selection = ConversationLaneSelection(
-                lane=ConversationLane(router_result.lane),
-                confidence=router_result.confidence,
-                reason=router_result.reason,
-                target_kind=router_result.target_kind,
-                requires_clarification=router_result.requires_clarification,
-                source="semantic_router",
-            )
-            detection.lane_selection = selection
-            return selection
     selection = _build_lane_selection_from_intent(detection.route_intent)
     detection.lane_selection = selection
     return selection

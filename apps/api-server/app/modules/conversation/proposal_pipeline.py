@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from dataclasses import dataclass, field, replace
-from typing import Callable
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
+from app.modules.account.service import AuthenticatedActor
 from app.modules.agent import repository as agent_repository
 from app.modules.conversation import repository
 from app.modules.conversation.models import ConversationMessage, ConversationProposalBatch, ConversationProposalItem, ConversationSession
 from app.modules.conversation.proposal_analyzers import ProposalAnalyzerFailure, ProposalAnalyzerRegistry, ProposalDraft
-from app.modules.conversation.semantic_router import ProposalGateScore
 from app.modules.llm_task import invoke_llm
 from app.modules.llm_task.output_models import ProposalBatchExtractionOutput
+from app.modules.memory import repository as memory_repository
 
 
 @dataclass(frozen=True)
@@ -25,14 +27,18 @@ class TurnProposalEvidence:
 
 @dataclass
 class TurnProposalContext:
+    db: Session | None
     session_id: str
     request_id: str
+    household_id: str
+    requester_member_id: str | None
+    authenticated_actor: AuthenticatedActor | None
     turn_messages: list[TurnProposalEvidence]
     trusted_events: list[dict]
     conversation_history_excerpt: list[dict[str, str]]
     lane_result: dict
     main_reply_summary: str
-    proposal_gate_scores: list[ProposalGateScore] = field(default_factory=list)
+    persist_enabled: bool = False
 
     @property
     def user_messages(self) -> list[TurnProposalEvidence]:
@@ -132,8 +138,11 @@ class ProposalPipeline:
         persist: bool,
     ) -> ProposalPipelineResult:
         extraction_output = self.extractor(db, turn_context, session.household_id)
+        turn_context.persist_enabled = persist
         drafts, failures = self.registry.run(turn_context, extraction_output)
         drafts = _filter_noop_config_drafts(db, session=session, drafts=drafts)
+        drafts = _filter_existing_memory_drafts(db, session=session, drafts=drafts)
+        drafts = _filter_redundant_reminder_drafts(drafts)
         if not drafts or not persist:
             return ProposalPipelineResult(
                 batch_id=None,
@@ -160,19 +169,24 @@ class ProposalPipeline:
 
 def build_turn_proposal_context(
     *,
+    db: Session | None,
     session: ConversationSession,
     request_id: str,
+    authenticated_actor: AuthenticatedActor | None,
     user_message: ConversationMessage,
     assistant_message: ConversationMessage,
     conversation_history_excerpt: list[dict[str, str]],
     lane_result: dict,
     main_reply_summary: str,
-    proposal_gate_scores: list[ProposalGateScore] | None = None,
     trusted_events: list[dict] | None = None,
 ) -> TurnProposalContext:
     return TurnProposalContext(
+        db=db,
         session_id=session.id,
         request_id=request_id,
+        household_id=session.household_id,
+        requester_member_id=session.requester_member_id,
+        authenticated_actor=authenticated_actor,
         turn_messages=[
             TurnProposalEvidence(
                 message_id=user_message.id,
@@ -191,7 +205,6 @@ def build_turn_proposal_context(
         conversation_history_excerpt=conversation_history_excerpt,
         lane_result=lane_result,
         main_reply_summary=main_reply_summary,
-        proposal_gate_scores=proposal_gate_scores or [],
     )
 
 
@@ -354,3 +367,171 @@ def _filter_noop_config_drafts(
             continue
         filtered.append(replace(draft, payload=payload))
     return filtered
+
+
+def _filter_existing_memory_drafts(
+    db: Session,
+    *,
+    session: ConversationSession,
+    drafts: list[ProposalDraft],
+) -> list[ProposalDraft]:
+    existing_memory_rows = _load_existing_memory_rows(db, household_id=session.household_id)
+    existing_memory_corpus = _build_existing_memory_corpus(
+        rows=existing_memory_rows,
+        requester_member_id=session.requester_member_id,
+    )
+    filtered: list[ProposalDraft] = []
+    for draft in drafts:
+        if draft.proposal_kind != "memory_write":
+            filtered.append(draft)
+            continue
+        dedupe_key = _build_stable_memory_dedupe_key(session=session, draft=draft)
+        existing = memory_repository.get_memory_card_by_dedupe_key(
+            db,
+            household_id=session.household_id,
+            dedupe_key=dedupe_key,
+        )
+        if existing is not None and getattr(existing, "status", "active") not in {"invalidated", "deleted"}:
+            continue
+        if existing_memory_corpus and _memory_draft_terms_already_covered(
+            draft=draft,
+            memory_corpus=existing_memory_corpus,
+        ):
+            continue
+        filtered.append(replace(draft, dedupe_key=dedupe_key))
+    return filtered
+
+
+def _filter_redundant_reminder_drafts(drafts: list[ProposalDraft]) -> list[ProposalDraft]:
+    scheduled_evidence_sets = [
+        set(draft.evidence_message_ids)
+        for draft in drafts
+        if draft.proposal_kind == "scheduled_task_create" and draft.evidence_message_ids
+    ]
+    if not scheduled_evidence_sets:
+        return drafts
+    filtered: list[ProposalDraft] = []
+    for draft in drafts:
+        if draft.proposal_kind != "reminder_create":
+            filtered.append(draft)
+            continue
+        evidence_ids = set(draft.evidence_message_ids)
+        if evidence_ids and any(evidence_ids & scheduled_ids for scheduled_ids in scheduled_evidence_sets):
+            continue
+        filtered.append(draft)
+    return filtered
+
+
+def _load_existing_memory_rows(db: Session, *, household_id: str) -> list[Any]:
+    rows: list[Any] = []
+    page = 1
+    page_size = 200
+    while True:
+        page_rows, total = memory_repository.list_memory_cards(
+            db,
+            household_id=household_id,
+            page=page,
+            page_size=page_size,
+        )
+        rows.extend(page_rows)
+        if len(rows) >= total or not page_rows:
+            return rows
+        page += 1
+
+
+def _build_existing_memory_corpus(*, rows: list[Any], requester_member_id: str | None) -> str:
+    parts: list[str] = []
+    for row in rows:
+        status = str(getattr(row, "status", "") or "")
+        if status in {"invalidated", "deleted"}:
+            continue
+        subject_member_id = getattr(row, "subject_member_id", None)
+        if requester_member_id and subject_member_id not in {None, requester_member_id}:
+            continue
+        parts.extend(_extract_existing_memory_text_parts(row))
+    return " ".join(part for part in parts if part)
+
+
+def _extract_existing_memory_text_parts(row: Any) -> list[str]:
+    parts = [
+        _normalize_match_text(getattr(row, "title", None)),
+        _normalize_match_text(getattr(row, "summary", None)),
+    ]
+    content = load_json(getattr(row, "content_json", None))
+    parts.extend(_collect_text_fragments(content))
+    return [part for part in parts if part]
+
+
+def _memory_draft_terms_already_covered(*, draft: ProposalDraft, memory_corpus: str) -> bool:
+    terms = _extract_memory_match_terms(draft)
+    if not terms:
+        return False
+    return all(term in memory_corpus for term in terms)
+
+
+def _extract_memory_match_terms(draft: ProposalDraft) -> list[str]:
+    payload = dict(draft.payload)
+    for key in ("kind", "memory_type", "type", "title", "summary"):
+        payload.pop(key, None)
+    terms = [term for term in _collect_text_fragments(payload) if len(term) >= 2]
+    if terms:
+        return sorted(set(terms))
+    fallback_terms = [
+        term
+        for term in (
+            _normalize_match_text(draft.summary),
+            _normalize_match_text(draft.title),
+        )
+        if term
+    ]
+    return sorted(set(fallback_terms))
+
+
+def _build_stable_memory_dedupe_key(
+    *,
+    session: ConversationSession,
+    draft: ProposalDraft,
+) -> str:
+    payload = dict(draft.payload)
+    memory_type = str(payload.get("memory_type") or payload.get("type") or "fact").strip() or "fact"
+    subject_key = session.requester_member_id or "global"
+    signature_parts = [
+        _normalize_match_text(draft.title),
+        _normalize_match_text(draft.summary),
+        *_collect_text_fragments(payload),
+    ]
+    normalized_signature = "|".join(part for part in signature_parts if part)
+    if not normalized_signature:
+        normalized_signature = "empty"
+    digest = sha256(normalized_signature.encode("utf-8")).hexdigest()[:24]
+    return f"memory:{session.household_id}:{memory_type}:{subject_key}:{digest}"
+
+
+def _collect_text_fragments(value: Any) -> list[str]:
+    if isinstance(value, str):
+        normalized = _normalize_match_text(value)
+        return [normalized] if normalized else []
+    if isinstance(value, bool):
+        return []
+    if isinstance(value, (int, float)):
+        normalized = _normalize_match_text(str(value))
+        return [normalized] if normalized else []
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            parts.extend(_collect_text_fragments(item))
+        return parts
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key, item in value.items():
+            if str(key).strip() in {"kind", "memory_type", "type", "title", "summary"}:
+                continue
+            parts.extend(_collect_text_fragments(item))
+        return parts
+    return []
+
+
+def _normalize_match_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).strip().lower().split())

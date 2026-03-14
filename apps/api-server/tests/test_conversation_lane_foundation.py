@@ -6,28 +6,14 @@ from app.modules.conversation.orchestrator import (
     ConversationIntentDetection,
     ConversationIntentLabel,
     ConversationLane,
+    ConversationOrchestratorResult,
     select_conversation_lane,
 )
-
-
-class _FakeSemanticRouter:
-    def __init__(self, *, lane: str, confidence: float, target_kind: str, reason: str) -> None:
-        self._payload = SimpleNamespace(
-            enabled=True,
-            lane=lane,
-            confidence=confidence,
-            target_kind=target_kind,
-            reason=reason,
-            requires_clarification=False,
-        )
-
-    def route(self, user_message: str):
-        _ = user_message
-        return self._payload
+from app.modules.conversation.service import _build_orchestrator_debug_payload
 
 
 class ConversationLaneFoundationTests(unittest.TestCase):
-    def test_select_conversation_lane_hits_fast_action_from_semantic_router(self) -> None:
+    def test_select_conversation_lane_hits_fast_action_from_hard_signal(self) -> None:
         detection = ConversationIntentDetection(
             primary_intent=ConversationIntentLabel.FREE_CHAT,
             route_intent=ConversationIntent.FREE_CHAT,
@@ -40,18 +26,11 @@ class ConversationLaneFoundationTests(unittest.TestCase):
             session=session,
             message="把客厅灯关掉",
             detection=detection,
-            semantic_router=_FakeSemanticRouter(
-                lane="fast_action",
-                confidence=0.91,
-                target_kind="device_action",
-                reason="命中设备控制 descriptor。",
-            ),
-            semantic_router_enabled=True,
         )
 
         self.assertEqual(ConversationLane.FAST_ACTION, selection.lane)
         self.assertEqual("device_action", selection.target_kind)
-        self.assertEqual("semantic_router", selection.source)
+        self.assertEqual("hard_signal", selection.source)
         self.assertIs(detection.lane_selection, selection)
 
     def test_select_conversation_lane_maps_structured_qa_to_realtime_query(self) -> None:
@@ -67,7 +46,6 @@ class ConversationLaneFoundationTests(unittest.TestCase):
             session=session,
             message="现在家里有人吗",
             detection=detection,
-            semantic_router_enabled=False,
         )
 
         self.assertEqual(ConversationLane.REALTIME_QUERY, selection.lane)
@@ -92,12 +70,42 @@ class ConversationLaneFoundationTests(unittest.TestCase):
                 session=session,
                 message="以后提醒我时先发消息",
                 detection=detection,
-                semantic_router_enabled=False,
             )
 
             self.assertEqual(ConversationLane.FREE_CHAT, selection.lane)
             self.assertEqual("none", selection.target_kind)
             self.assertFalse(selection.requires_clarification)
+
+
+class ConversationDebugPayloadTests(unittest.TestCase):
+    def test_build_orchestrator_debug_payload_distinguishes_final_and_detected_intent(self) -> None:
+        detection = ConversationIntentDetection(
+            primary_intent=ConversationIntentLabel.CONFIG_CHANGE,
+            route_intent=ConversationIntent.CONFIG_EXTRACTION,
+            confidence=0.9,
+            reason="用户要改名字。",
+        )
+        result = ConversationOrchestratorResult(
+            intent=ConversationIntent.FREE_CHAT,
+            text="好的",
+            degraded=False,
+            facts=[],
+            suggestions=[],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=None,
+            effective_agent_name=None,
+            intent_detection=detection,
+        )
+
+        payload = _build_orchestrator_debug_payload(result)
+
+        self.assertEqual("free_chat", payload["final_result_intent"])
+        self.assertEqual("config_extraction", payload["detected_route_intent"])
+        self.assertNotIn("route_intent", payload)
 
 
 if __name__ == "__main__":

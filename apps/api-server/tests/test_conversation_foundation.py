@@ -1481,7 +1481,7 @@ class ConversationFoundationTests(unittest.TestCase):
                 reason="语义路由命中状态查询车道。",
                 target_kind="state_query",
                 requires_clarification=False,
-                source="semantic_router",
+                source="intent_mapping",
             )
             query_family_qa_mock.return_value = SimpleNamespace(
                 answer="现在家里有人。",
@@ -1545,7 +1545,7 @@ class ConversationFoundationTests(unittest.TestCase):
                 reason="语义路由命中实时取数。",
                 target_kind="state_query",
                 requires_clarification=False,
-                source="semantic_router",
+                source="intent_mapping",
             )
             query_family_qa_mock.return_value = SimpleNamespace(
                 answer="客厅温度是 24 度。",
