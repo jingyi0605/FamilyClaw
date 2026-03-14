@@ -50,8 +50,8 @@
 
 ## 阶段 1：先把 `open-xiaoai-gateway` 立住
 
-- [ ] 1.1 定 `open-xiaoai-gateway` 的进程边界和危险能力白名单
-  - 状态：TODO
+- [x] 1.1 定 `open-xiaoai-gateway` 的进程边界和危险能力白名单
+  - 状态：DONE
   - 这一步到底做什么：明确网关是独立进程、监听 `4399`，并把允许能力和禁止能力写进代码与配置。
   - 做完你能看到什么：后面所有人都知道这层只干协议翻译和播放中转，不准偷偷加业务逻辑。
   - 先依赖什么：0.1
@@ -69,9 +69,13 @@
   - 怎么验证：
     - 设计走查
     - 配置与能力声明检查
+  - 本轮回写：
+    - 已新建 `apps/open-xiaoai-gateway/` 独立进程骨架，默认监听 `4399`
+    - 已在网关翻译层写死能力白名单：`audio_input / audio_output / playback_stop / playback_abort / heartbeat`
+    - 已在网关翻译层裁掉黑名单能力：`shell_exec / script_exec / system_upgrade / reboot_control / business_logic`
 
-- [ ] 1.2 定内部统一语音事件协议和终端模型
-  - 状态：TODO
+- [x] 1.2 定内部统一语音事件协议和终端模型
+  - 状态：DONE
   - 这一步到底做什么：定义 `terminal.online / session.start / audio.append / play.start / play.abort` 这套内部事件，不让 `api-server` 直接理解 `open-xiaoai` 私有字段。
   - 做完你能看到什么：后面即使换终端适配器，`voice_pipeline` 也不用改协议脑子。
   - 先依赖什么：1.1
@@ -91,9 +95,13 @@
   - 怎么验证：
     - 协议样例检查
     - 事件序列回放测试
+  - 本轮回写：
+    - 已新增 `apps/api-server/app/modules/voice/protocol.py`
+    - 已落地统一事件集合、终端能力模型、播放回执结构和错误码结构
+    - `api-server` 通过 `voice` 模块理解内部统一协议，不直接理解 `open-xiaoai` 私有字段
 
 - [ ] 1.3 实现 `open-xiaoai WS -> 内部 voice session events`
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：让网关能接住 `open-xiaoai` 音频流和终端状态，并转成内部统一事件推给 `/api/v1/realtime/voice`。
   - 做完你能看到什么：`api-server` 终于能把小爱终端当正式语音终端来看。
   - 先依赖什么：1.2
@@ -112,9 +120,14 @@
   - 怎么验证：
     - 网关到 `api-server` 联调测试
     - 重连与幂等测试
+  - 本轮回写：
+    - 已新增网关终端桥接逻辑，支持文本事件翻译和二进制音频帧转 `audio.append`
+    - 已新增 `api-server /api/v1/realtime/voice` 入口和最小会话收口
+    - 已补最小测试覆盖终端上线、会话开始和音频事件结构
+    - 还没做实机联调和断线重连幂等校正，所以先不标 DONE
 
 - [ ] 1.4 实现 `内部 play/stop/abort -> open-xiaoai WS commands`
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：把 `voice_pipeline` 的播放、停止和打断控制翻回终端命令，并把播放回执回写系统。
   - 做完你能看到什么：系统说“播了”就是真的播了，用户打断也是真的停了。
   - 先依赖什么：1.3
@@ -133,6 +146,11 @@
   - 怎么验证：
     - 播放控制集成测试
     - 打断联调测试
+  - 本轮回写：
+    - 已新增 `playback_service`，能下发 `play.start / play.stop / play.abort`
+    - 已在网关翻译层把内部播放命令翻成终端侧 `play / stop / abort` 消息
+    - 已支持把 `playback.started / completed / failed / interrupted` 翻回统一回执结构
+    - 还没做终端实播联调，所以先不标 DONE
 
 - [ ] 1.5 阶段检查：终端接入层是不是收干净了
   - 状态：TODO
@@ -150,7 +168,7 @@
 ## 阶段 2：接 `voice_pipeline`，打通快路径主链
 
 - [ ] 2.1 建语音会话编排器，接流式 ASR 和最终转写
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：把网关送来的音频事件、流式 ASR 回调、最终转写和会话状态流转收口成正式的 `voice_pipeline`。
   - 做完你能看到什么：一段音频进来后，系统能稳定给出部分转写、最终转写和后续路由入口。
   - 先依赖什么：1.5
@@ -170,9 +188,15 @@
   - 怎么验证：
     - 语音会话集成测试
     - 流式转写回放测试
+  - 本轮回写：
+    - 已把 `voice/pipeline.py` 从纯状态收口升级为最小编排器
+    - 已新增 `voice/runtime_client.py`，为后续 `voice-runtime` 留正式接缝
+    - 已支持 `audio.commit -> runtime -> route -> playback` 这条最小闭环
+    - 已补运行时不可用、快路径成功、慢路径回退三类测试
+    - 还没接真实流式 ASR，也还没把最终转写正式持久化到数据库，所以先不标 DONE
 
 - [ ] 2.2 建快路径动作解析并复用现有 `device_action / scene`
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：把“开灯、关空调、拉窗帘、进入睡前模式”这类语音命令解析成现有设备动作或场景执行，不再走 LLM 主链。
   - 做完你能看到什么：简单语音控制终于能快起来，而且不是新造一套控制器。
   - 先依赖什么：2.1
@@ -194,6 +218,10 @@
   - 怎么验证：
     - 快路径集成测试
     - 模糊目标回退测试
+  - 本轮回写：
+    - 已新增 `voice/fast_action_service.py` 和 `voice/router.py`
+    - 已用最小规则复用现有 `device_action / scene` 服务
+    - 当前只支持很窄的命令模式和单设备精确命中，多目标追问和更复杂语言解析还没做
 
 - [ ] 2.3 建身份融合和高风险动作保护
   - 状态：TODO
@@ -232,7 +260,7 @@
 ## 阶段 3：把慢路径和声纹链路补齐
 
 - [ ] 3.1 建语音慢路径到 `conversation` 的桥接
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：把复杂语音问题正式转成现有 `conversation` 请求，复用会话、提案、记忆和后续任务草稿能力。
   - 做完你能看到什么：语音问“奶奶今天吃药了吗”时，背后用的还是同一个 AI 主链。
   - 先依赖什么：2.4
@@ -251,6 +279,10 @@
     3. 不新增第二套语音专用问答链路
   - 怎么验证：
     - 慢路径集成测试
+  - 本轮回写：
+    - 已新增 `voice/conversation_bridge.py` 最小桥接骨架
+    - 当前先把语音会话正式挂到 `conversation session`，并返回降级提示文本
+    - 还没真正复用完整 `conversation` 实时编排，所以先不标 IN_REVIEW
     - 对话能力回归测试
 
 - [ ] 3.2 建声纹注册、更新和停用链路

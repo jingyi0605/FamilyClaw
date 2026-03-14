@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "familyclaw-open-xiaoai-gateway"
+version = "0.1.0"
+description = "FamilyClaw open-xiaoai gateway"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic-settings>=2.6,<3.0",
+  "websockets>=14,<16",
+]
+
+[project.scripts]
+familyclaw-open-xiaoai-gateway = "open_xiaoai_gateway.main:main"
+
+[tool.setuptools.packages.find]
+include = ["open_xiaoai_gateway*"]

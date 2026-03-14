@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     scheduler_worker_poll_interval_seconds: float = 1.0
     scheduler_worker_batch_size: int = 100
     scheduler_definition_failure_threshold: int = 3
+    voice_gateway_token: str = "dev-voice-gateway-token"
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_household_username: str = "user"

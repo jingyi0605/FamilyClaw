@@ -24,9 +24,15 @@ from app.modules.conversation.service import (
 from app.modules.conversation import repository as conversation_repository
 from app.modules.realtime.connection_manager import realtime_connection_manager
 from app.modules.realtime.schemas import BootstrapRealtimeClientEvent, build_bootstrap_realtime_event
+from app.modules.voice.realtime_service import voice_realtime_service
 
 router = APIRouter(tags=["realtime"])
 logger = logging.getLogger(__name__)
+
+
+@router.websocket("/realtime/voice")
+async def realtime_voice_gateway_websocket(websocket: WebSocket) -> None:
+    await voice_realtime_service.handle_gateway_websocket(websocket)
 
 
 @router.websocket("/realtime/agent-bootstrap")
