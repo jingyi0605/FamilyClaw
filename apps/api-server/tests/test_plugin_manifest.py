@@ -136,6 +136,183 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(["region-provider"], manifest.types)
         self.assertEqual("plugin.region_provider.handle", manifest.entrypoints.region_provider)
 
+    def test_manifest_accepts_channel_plugin_with_channel_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "telegram-channel-plugin",
+                        "name": "Telegram 通讯通道插件",
+                        "version": "0.1.0",
+                        "types": ["channel"],
+                        "permissions": ["channel.receive", "channel.send"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"channel": "plugin.channel.handle"},
+                        "capabilities": {
+                            "channel": {
+                                "platform_code": "telegram",
+                                "inbound_modes": ["webhook"],
+                                "delivery_modes": ["reply", "push"],
+                                "supports_member_binding": True,
+                                "supports_group_chat": True,
+                                "supports_threading": True,
+                                "reserved": False,
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        self.assertEqual(["channel"], manifest.types)
+        self.assertEqual("plugin.channel.handle", manifest.entrypoints.channel)
+        assert manifest.capabilities.channel is not None
+        self.assertEqual("telegram", manifest.capabilities.channel.platform_code)
+        self.assertEqual(["webhook"], manifest.capabilities.channel.inbound_modes)
+        self.assertEqual(["reply", "push"], manifest.capabilities.channel.delivery_modes)
+
+    def test_reject_channel_plugin_missing_channel_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-channel-plugin",
+                        "name": "坏通道插件",
+                        "version": "0.1.0",
+                        "types": ["channel"],
+                        "permissions": ["channel.receive"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "capabilities": {
+                            "channel": {
+                                "platform_code": "telegram",
+                                "inbound_modes": ["webhook"],
+                                "delivery_modes": ["reply"],
+                                "reserved": False,
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("entrypoints", str(context.exception))
+        self.assertIn("channel", str(context.exception))
+
+    def test_reject_channel_plugin_with_invalid_inbound_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "invalid-channel-plugin",
+                        "name": "非法通道插件",
+                        "version": "0.1.0",
+                        "types": ["channel"],
+                        "permissions": ["channel.receive"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"channel": "plugin.channel.handle"},
+                        "capabilities": {
+                            "channel": {
+                                "platform_code": "telegram",
+                                "inbound_modes": ["smtp"],
+                                "delivery_modes": ["reply"],
+                                "reserved": False,
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("inbound_modes", str(context.exception))
+        self.assertIn("smtp", str(context.exception))
+
+    def test_manifest_accepts_schedule_templates_when_schedule_trigger_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "schedule-template-plugin",
+                        "name": "计划模板插件",
+                        "version": "0.1.0",
+                        "types": ["connector"],
+                        "permissions": ["health.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual", "schedule"],
+                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "schedule_templates": [
+                            {
+                                "code": "daily-check",
+                                "name": "每日巡检",
+                                "description": "每天帮我看一次",
+                                "default_definition": {
+                                    "trigger_type": "schedule",
+                                    "schedule_type": "daily",
+                                    "schedule_expr": "09:00"
+                                },
+                                "enabled_by_default": False,
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        self.assertEqual(1, len(manifest.schedule_templates))
+        self.assertEqual("daily-check", manifest.schedule_templates[0].code)
+
+    def test_manifest_rejects_schedule_templates_without_schedule_trigger(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-schedule-template-plugin",
+                        "name": "坏模板插件",
+                        "version": "0.1.0",
+                        "types": ["connector"],
+                        "permissions": ["health.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "schedule_templates": [
+                            {
+                                "code": "daily-check",
+                                "name": "每日巡检",
+                                "default_definition": {"trigger_type": "schedule"},
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("triggers 必须包含 schedule", str(context.exception))
+
     def test_reject_runtime_region_provider_without_required_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             manifest_path = Path(tempdir) / "manifest.json"
@@ -242,6 +419,74 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual("in_process", result.execution_backend)
+
+    def test_execute_plugin_supports_channel_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            plugin_dir = root / "channel_runtime_plugin"
+            package_dir = plugin_dir / "plugin"
+            package_dir.mkdir(parents=True)
+
+            (plugin_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "channel-runtime-plugin",
+                        "name": "通道运行时插件",
+                        "version": "0.1.0",
+                        "types": ["channel"],
+                        "permissions": ["channel.receive", "channel.send"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {
+                            "channel": "plugin.channel.handle"
+                        },
+                        "capabilities": {
+                            "channel": {
+                                "platform_code": "telegram",
+                                "inbound_modes": ["webhook"],
+                                "delivery_modes": ["reply"],
+                                "reserved": False,
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (package_dir / "__init__.py").write_text("", encoding="utf-8")
+            (package_dir / "channel.py").write_text(
+                "def handle(payload=None):\n"
+                "    data = payload or {}\n"
+                "    return {\n"
+                "        'source': 'channel-runtime-plugin',\n"
+                "        'mode': 'channel',\n"
+                "        'echo': data,\n"
+                "    }\n",
+                encoding="utf-8",
+            )
+
+            result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-runtime-plugin",
+                    plugin_type="channel",
+                    payload={"platform_code": "telegram", "event_id": "evt-001"},
+                ),
+                root_dir=root,
+                source_type="third_party",
+                runner_config=PluginRunnerConfig(
+                    plugin_root=str(plugin_dir),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_dir),
+                    timeout_seconds=10,
+                ),
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual("subprocess_runner", result.execution_backend)
+        self.assertIsInstance(result.output, dict)
+        assert isinstance(result.output, dict)
+        self.assertEqual("channel", result.output["mode"])
+        self.assertEqual("evt-001", result.output["echo"]["event_id"])
 
     def test_execute_plugin_dispatches_to_subprocess_runner_for_third_party_plugin(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

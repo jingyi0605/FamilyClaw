@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+import base64
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.db.utils import utc_now_iso
+from app.modules.channel.conversation_bridge import (
+    ChannelConversationBridgeError,
+    handle_inbound_message,
+)
+from app.modules.channel.delivery_service import send_reply
+from app.modules.channel import repository
+from app.modules.channel.schemas import (
+    ChannelGatewayInboundEvent,
+    ChannelGatewayWebhookAck,
+    ChannelInboundEventCreate,
+)
+from app.modules.channel.service import record_channel_inbound_event
+from app.modules.plugin.schemas import PluginExecutionRequest
+from app.modules.plugin.service import (
+    PluginExecutionError,
+    execute_plugin,
+    resolve_plugin_execution_context,
+)
+
+
+class ChannelGatewayServiceError(ValueError):
+    pass
+
+
+def handle_channel_webhook(
+    db: Session,
+    *,
+    account_id: str,
+    method: str,
+    headers: dict[str, str],
+    query_params: dict[str, str],
+    body: bytes,
+) -> ChannelGatewayWebhookAck:
+    account = repository.get_channel_plugin_account(db, account_id)
+    if account is None:
+        raise ChannelGatewayServiceError("channel account not found")
+    if account.status == "disabled":
+        raise ChannelGatewayServiceError("channel account is disabled")
+
+    execution_context = resolve_plugin_execution_context(
+        db,
+        household_id=account.household_id,
+        plugin_id=account.plugin_id,
+    )
+    execution = execute_plugin(
+        PluginExecutionRequest(
+            plugin_id=account.plugin_id,
+            plugin_type="channel",
+            payload={
+                "action": "webhook",
+                "account": {
+                    "id": account.id,
+                    "household_id": account.household_id,
+                    "plugin_id": account.plugin_id,
+                    "platform_code": account.platform_code,
+                    "account_code": account.account_code,
+                    "connection_mode": account.connection_mode,
+                    "config": account.config_json,
+                },
+                "request": {
+                    "method": method,
+                    "headers": headers,
+                    "query_params": query_params,
+                    "body_text": body.decode("utf-8", errors="ignore"),
+                    "body_base64": base64.b64encode(body).decode("ascii"),
+                },
+            },
+            trigger="channel-webhook",
+        ),
+        root_dir=execution_context.root_dir,
+        source_type=execution_context.source_type,
+        execution_backend=execution_context.execution_backend,
+        runner_config=execution_context.runner_config,
+    )
+    if not execution.success:
+        raise PluginExecutionError(execution.error_message or "channel plugin execution failed")
+    if not isinstance(execution.output, dict):
+        raise ChannelGatewayServiceError("channel plugin must return a JSON object")
+
+    event_payload = execution.output.get("event")
+    message = execution.output.get("message")
+    ack_message = message if isinstance(message, str) and message.strip() else None
+    if event_payload is None:
+        return ChannelGatewayWebhookAck(
+            accepted=True,
+            account_id=account.id,
+            plugin_id=account.plugin_id,
+            event_recorded=False,
+            duplicate=False,
+            inbound_event_id=None,
+            external_event_id=None,
+            status="accepted",
+            message=ack_message,
+        )
+    if not isinstance(event_payload, dict):
+        raise ChannelGatewayServiceError("channel plugin event payload must be an object")
+
+    normalized_event = ChannelGatewayInboundEvent.model_validate(event_payload)
+    inbound_event, created = record_channel_inbound_event(
+        db,
+        payload=ChannelInboundEventCreate(
+            household_id=account.household_id,
+            channel_account_id=account.id,
+            external_event_id=normalized_event.external_event_id,
+            event_type=normalized_event.event_type,
+            external_user_id=normalized_event.external_user_id,
+            external_conversation_key=normalized_event.external_conversation_key,
+            normalized_payload=normalized_event.normalized_payload,
+            status=normalized_event.status,
+            conversation_session_id=normalized_event.conversation_session_id,
+            error_code=normalized_event.error_code,
+            error_message=normalized_event.error_message,
+            received_at=normalized_event.received_at,
+            processed_at=normalized_event.processed_at,
+        ),
+    )
+    if not created:
+        return ChannelGatewayWebhookAck(
+            accepted=True,
+            account_id=account.id,
+            plugin_id=account.plugin_id,
+            event_recorded=True,
+            duplicate=True,
+            inbound_event_id=inbound_event.id,
+            external_event_id=inbound_event.external_event_id,
+            status="accepted",
+            message=ack_message,
+            processing_status=inbound_event.status,
+            member_id=None,
+            conversation_session_id=inbound_event.conversation_session_id,
+            assistant_message_id=None,
+            reply_text=None,
+        )
+
+    processing_status = "recorded"
+    member_id: str | None = None
+    conversation_session_id: str | None = None
+    assistant_message_id: str | None = None
+    reply_text: str | None = None
+    delivery_id: str | None = None
+    delivery_status: str | None = None
+    provider_message_ref: str | None = None
+    if normalized_event.event_type == "message":
+        try:
+            bridge_result = handle_inbound_message(
+                db,
+                household_id=account.household_id,
+                channel_account_id=account.id,
+                inbound_event_id=inbound_event.id,
+            )
+            processing_status = bridge_result.disposition
+            member_id = bridge_result.member_id
+            conversation_session_id = bridge_result.conversation_session_id
+            assistant_message_id = bridge_result.assistant_message_id
+            reply_text = bridge_result.reply_text
+        except (ChannelConversationBridgeError, ValueError) as exc:
+            inbound_event_row = repository.get_channel_inbound_event(db, inbound_event.id)
+            if inbound_event_row is not None:
+                inbound_event_row.status = "failed"
+                inbound_event_row.error_code = "channel_session_binding_failed"
+                inbound_event_row.error_message = str(exc)
+                inbound_event_row.processed_at = utc_now_iso()
+            processing_status = "failed"
+            reply_text = None
+        else:
+            if reply_text is not None and reply_text.strip():
+                try:
+                    dispatch = send_reply(
+                        db,
+                        household_id=account.household_id,
+                        channel_account_id=account.id,
+                        external_conversation_key=_resolve_delivery_conversation_key(
+                            inbound_event.external_conversation_key,
+                            external_user_id=inbound_event.external_user_id,
+                        ),
+                        text=reply_text,
+                        delivery_type="reply" if member_id is not None else "notice",
+                        conversation_session_id=conversation_session_id,
+                        assistant_message_id=assistant_message_id,
+                    )
+                    delivery_id = dispatch.delivery.id
+                    delivery_status = dispatch.delivery.status
+                    provider_message_ref = dispatch.provider_message_ref
+                except ValueError as exc:
+                    processing_status = "failed"
+                    inbound_event_row = repository.get_channel_inbound_event(db, inbound_event.id)
+                    if inbound_event_row is not None:
+                        inbound_event_row.status = "failed"
+                        inbound_event_row.error_code = "channel_delivery_failed"
+                        inbound_event_row.error_message = str(exc)
+                        inbound_event_row.processed_at = utc_now_iso()
+    return ChannelGatewayWebhookAck(
+        accepted=True,
+        account_id=account.id,
+        plugin_id=account.plugin_id,
+        event_recorded=True,
+        duplicate=not created,
+        inbound_event_id=inbound_event.id,
+        external_event_id=inbound_event.external_event_id,
+        status="accepted",
+        message=ack_message,
+        processing_status=processing_status,
+        member_id=member_id,
+        conversation_session_id=conversation_session_id,
+        assistant_message_id=assistant_message_id,
+        reply_text=reply_text,
+        delivery_id=delivery_id,
+        delivery_status=delivery_status,
+        provider_message_ref=provider_message_ref,
+    )
+
+
+def _resolve_delivery_conversation_key(
+    external_conversation_key: str | None,
+    *,
+    external_user_id: str | None,
+) -> str:
+    if isinstance(external_conversation_key, str) and external_conversation_key.strip():
+        return external_conversation_key.strip()
+    if isinstance(external_user_id, str) and external_user_id.strip():
+        return f"direct:{external_user_id.strip()}"
+    raise ChannelGatewayServiceError("delivery target external conversation key is missing")

@@ -5,8 +5,16 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-PluginType = Literal["connector", "memory-ingestor", "action", "agent-skill", "region-provider"]
-PluginManifestType = Literal["connector", "memory-ingestor", "action", "agent-skill", "locale-pack", "region-provider"]
+PluginType = Literal["connector", "memory-ingestor", "action", "agent-skill", "channel", "region-provider"]
+PluginManifestType = Literal[
+    "connector",
+    "memory-ingestor",
+    "action",
+    "agent-skill",
+    "channel",
+    "locale-pack",
+    "region-provider",
+]
 RiskLevel = Literal["low", "medium", "high"]
 PluginSourceType = Literal["builtin", "official", "third_party"]
 PluginExecutionBackend = Literal["in_process", "subprocess_runner"]
@@ -30,6 +38,7 @@ ENTRYPOINT_KEY_BY_TYPE: dict[PluginType, str] = {
     "memory-ingestor": "memory_ingestor",
     "action": "action",
     "agent-skill": "agent_skill",
+    "channel": "channel",
     "region-provider": "region_provider",
 }
 
@@ -54,9 +63,10 @@ class PluginManifestEntrypoints(BaseModel):
     memory_ingestor: str | None = None
     action: str | None = None
     agent_skill: str | None = None
+    channel: str | None = None
     region_provider: str | None = None
 
-    @field_validator("connector", "memory_ingestor", "action", "agent_skill", "region_provider")
+    @field_validator("connector", "memory_ingestor", "action", "agent_skill", "channel", "region_provider")
     @classmethod
     def validate_entrypoint(cls, value: str | None) -> str | None:
         if value is None:
@@ -95,8 +105,52 @@ class PluginManifestRegionProviderSpec(BaseModel):
         return _normalize_text_list(value, field_name="country_codes")
 
 
+class PluginManifestChannelSpec(BaseModel):
+    platform_code: str | None = None
+    inbound_modes: list[str] = Field(default_factory=list)
+    delivery_modes: list[str] = Field(default_factory=list)
+    supports_member_binding: bool = False
+    supports_group_chat: bool = False
+    supports_threading: bool = False
+    reserved: bool = True
+
+    @field_validator("platform_code")
+    @classmethod
+    def validate_platform_code(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("platform_code 不能为空")
+        allowed = set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        if any(char not in allowed for char in normalized):
+            raise ValueError("platform_code 只能包含小写字母、数字和连字符")
+        return normalized
+
+    @field_validator("inbound_modes")
+    @classmethod
+    def validate_inbound_modes(cls, value: list[str]) -> list[str]:
+        normalized = _normalize_text_list(value, field_name="inbound_modes")
+        allowed_modes = {"webhook", "polling", "websocket"}
+        invalid_modes = [item for item in normalized if item not in allowed_modes]
+        if invalid_modes:
+            raise ValueError(f"inbound_modes 包含不支持的模式: {', '.join(invalid_modes)}")
+        return normalized
+
+    @field_validator("delivery_modes")
+    @classmethod
+    def validate_delivery_modes(cls, value: list[str]) -> list[str]:
+        normalized = _normalize_text_list(value, field_name="delivery_modes")
+        allowed_modes = {"reply", "push"}
+        invalid_modes = [item for item in normalized if item not in allowed_modes]
+        if invalid_modes:
+            raise ValueError(f"delivery_modes 包含不支持的模式: {', '.join(invalid_modes)}")
+        return normalized
+
+
 class PluginManifestCapabilities(BaseModel):
     context_reads: PluginManifestContextReads = Field(default_factory=PluginManifestContextReads)
+    channel: PluginManifestChannelSpec | None = None
     region_provider: PluginManifestRegionProviderSpec | None = None
 
 
@@ -132,6 +186,24 @@ class PluginManifestLocaleSpec(BaseModel):
         return normalized.replace("\\", "/")
 
 
+class PluginManifestScheduleTemplate(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=255)
+    default_definition: dict[str, Any] = Field(default_factory=dict)
+    enabled_by_default: bool = False
+
+    @field_validator("code", "name", "description")
+    @classmethod
+    def validate_template_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+
 class PluginManifest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=100)
@@ -143,6 +215,7 @@ class PluginManifest(BaseModel):
     entrypoints: PluginManifestEntrypoints = Field(default_factory=PluginManifestEntrypoints)
     capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
+    schedule_templates: list[PluginManifestScheduleTemplate] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -227,8 +300,34 @@ class PluginManifest(BaseModel):
             raise ValueError("locale-pack 插件至少要声明一个 locale")
         if "locale-pack" not in self.types and self.locales:
             raise ValueError("只有 locale-pack 插件才能声明 locales")
+        if self.schedule_templates and "schedule" not in self.triggers:
+            raise ValueError("声明计划任务模板前，triggers 必须包含 schedule")
+        self._validate_channel_capability()
         self._validate_region_provider_capability()
         return self
+
+    def _validate_channel_capability(self) -> None:
+        spec = self.capabilities.channel
+        if spec is None:
+            if "channel" in self.types:
+                raise ValueError("channel 插件必须声明 capabilities.channel")
+            return
+
+        if spec.reserved:
+            if "channel" in self.types:
+                raise ValueError("channel 插件不能把 capabilities.channel 标成 reserved")
+            return
+
+        if "channel" not in self.types:
+            raise ValueError("启用通讯通道运行时必须把 channel 写进 types")
+        if spec.platform_code is None:
+            raise ValueError("通讯通道运行时必须声明 platform_code")
+        if not spec.inbound_modes:
+            raise ValueError("通讯通道运行时至少要声明一个 inbound_mode")
+        if not spec.delivery_modes:
+            raise ValueError("通讯通道运行时至少要声明一个 delivery_mode")
+        if self.entrypoints.channel is None:
+            raise ValueError("通讯通道运行时必须声明 entrypoints.channel")
 
     def _validate_region_provider_capability(self) -> None:
         spec = self.capabilities.region_provider
@@ -281,6 +380,7 @@ class PluginRegistryItem(BaseModel):
     entrypoints: PluginManifestEntrypoints
     capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
+    schedule_templates: list[PluginManifestScheduleTemplate] = Field(default_factory=list)
     source_type: PluginSourceType = "builtin"
     execution_backend: PluginExecutionBackend | None = None
     runner_config: PluginRunnerConfig | None = None
@@ -368,6 +468,8 @@ class PluginJobCreate(BaseModel):
     request_payload: dict[str, Any] = Field(default_factory=dict)
     payload_summary: dict[str, Any] | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    source_task_definition_id: str | None = Field(default=None, min_length=1)
+    source_task_run_id: str | None = Field(default=None, min_length=1)
     initial_status: Literal["queued", "waiting_response"] = "queued"
     max_attempts: int = Field(default=1, ge=1, le=20)
     retry_after_at: str | None = None
@@ -424,6 +526,8 @@ class PluginJobRead(BaseModel):
     request_payload: Any
     payload_summary: Any | None = None
     idempotency_key: str | None = None
+    source_task_definition_id: str | None = None
+    source_task_run_id: str | None = None
     current_attempt: int
     max_attempts: int
     last_error_code: str | None = None

@@ -10,6 +10,13 @@ from app.modules.agent.models import (
 )
 from app.modules.ai_gateway.models import AiCapabilityRoute, AiModelCallLog, AiProviderProfile
 from app.modules.audit.models import AuditLog
+from app.modules.channel.models import (
+    ChannelConversationBinding,
+    ChannelDelivery,
+    ChannelInboundEvent,
+    ChannelPluginAccount,
+    MemberChannelBinding,
+)
 from app.modules.context.models import ContextConfig
 from app.modules.conversation.models import (
     ConversationActionRecord,
@@ -58,6 +65,10 @@ __all__ = [
     "AiModelCallLog",
     "AiProviderProfile",
     "AuditLog",
+    "ChannelConversationBinding",
+    "ChannelDelivery",
+    "ChannelInboundEvent",
+    "ChannelPluginAccount",
     "ContextConfig",
     "ConversationSession",
     "ConversationMessage",
@@ -70,6 +81,7 @@ __all__ = [
     "DeviceBinding",
     "Household",
     "Member",
+    "MemberChannelBinding",
     "MemberPermission",
     "PluginRawRecord",
     "PluginJob",

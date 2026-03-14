@@ -32,8 +32,9 @@
 
 ## 阶段 1：先把通道插件底座立起来
 
-- [ ] 1.1 新增 `channel` 插件类型和通道 manifest 约束
-  - 状态：TODO
+- [x] 1.1 新增 `channel` 插件类型和通道 manifest 约束
+  - 状态：DONE
+  - 完成说明：已在现有插件系统里新增正式 `channel` 类型、`entrypoints.channel` 和 `capabilities.channel` 约束，不再把通讯平台继续伪装成普通 `connector`。通道插件现在必须显式声明 `platform_code`、`inbound_modes`、`delivery_modes`，缺入口或声明非法会直接拒绝。
   - 这一步到底做什么：给现有插件系统补一个正式的 `channel` 类型，把聊天平台从普通 `connector` 里分出来
   - 做完你能看到什么：系统能识别“这不是同步数据插件，而是通讯平台插件”
   - 先依赖什么：无
@@ -54,11 +55,15 @@
   - 怎么验证：
     - manifest 校验测试
     - 插件注册测试
+  - 已验证：
+    - `python -m unittest apps.api-server.tests.test_plugin_manifest`
+    - `python -m unittest tests.test_plugin_mounts tests.test_plugin_region_provider_runtime`
   - 对应需求：`requirements.md` 需求 1
   - 对应设计：`design.md` 1.4、3.1、3.3
 
-- [ ] 1.2 建平台账号、成员绑定、外部会话映射和入出站记录表
-  - 状态：TODO
+- [x] 1.2 建平台账号、成员绑定、外部会话映射和入出站记录表
+  - 状态：DONE
+  - 完成说明：已新增 `channel_plugin_accounts`、`member_channel_bindings`、`channel_conversation_bindings`、`channel_inbound_events`、`channel_deliveries` 五类正式表结构，并补了 `channel` 模块模型与仓储。迁移严格按 `0029 / 0030 / 0031` 三步拆分，唯一约束直接覆盖账号码、外部用户标识、外部会话键、外部事件幂等等关键场景。
   - 这一步到底做什么：把通道接入需要的核心数据模型正式落到数据库
   - 做完你能看到什么：平台账号、成员绑定、外部会话映射、入站事件、出站投递都有正式表结构，不再靠临时 JSON 拼
   - 先依赖什么：1.1
@@ -78,11 +83,14 @@
   - 怎么验证：
     - Alembic migration 验证
     - repository 测试
+  - 已验证：
+    - `python -m unittest tests.test_channel_repository tests.test_plugin_mounts tests.test_plugin_region_provider_runtime`
   - 对应需求：`requirements.md` 需求 2、3、4、5、6
   - 对应设计：`design.md` 3.2、4.1、4.2
 
-- [ ] 1.3 建通用通道服务：账号管理、绑定管理、幂等入站记录、出站投递记录
-  - 状态：TODO
+- [x] 1.3 建通用通道服务：账号管理、绑定管理、幂等入站记录、出站投递记录
+  - 状态：DONE
+  - 完成说明：已补齐 `channel` 模块的通用 schema、账号服务、绑定服务和通用记录服务。平台账号创建现在会复用插件注册结果校验 `channel` 类型和连接模式；成员绑定统一从账号派生 `platform_code`，不再允许手填两份；入站事件记录具备按 `household + account + external_event_id` 幂等去重；出站投递记录也统一从通道账号派生平台信息。
   - 这一步到底做什么：把通道核心服务收口，后面平台插件和管理端都走同一套服务
   - 做完你能看到什么：平台账号、成员绑定、入站记录、出站记录都有正式 service 和 schema
   - 先依赖什么：1.2
@@ -104,11 +112,15 @@
   - 怎么验证：
     - 单元测试
     - API 层集成测试
+  - 已验证：
+    - `python -m unittest tests.test_channel_services tests.test_channel_repository tests.test_plugin_mounts tests.test_plugin_region_provider_runtime`
+  - 说明：本任务只收口服务接口，还没有正式 HTTP 管理端和 gateway 路由，因此 API 层集成测试放到后续接口任务一起补，不在这里伪造一层假接口。
   - 对应需求：`requirements.md` 需求 2、3、5、6
   - 对应设计：`design.md` 2.2、3.3.1、3.3.2、3.3.5
 
-- [ ] 1.4 阶段检查：通道底座是不是站稳了
-  - 状态：TODO
+- [x] 1.4 阶段检查：通道底座是不是站稳了
+  - 状态：DONE
+  - 完成说明：已完成协议层、数据层、服务层三块底座检查。当前 `channel` 类型边界、五类核心表、通用服务接口和幂等约束已经闭合，后面接真实平台时不需要再回头改插件类型或重拆表结构，主要只剩平台适配和会话桥接。
   - 这一步到底做什么：只检查协议、表结构、核心服务是不是已经足够支撑后面接平台
   - 做完你能看到什么：后面开始接真实平台时，不需要再返工数据模型
   - 先依赖什么：1.1、1.2、1.3
@@ -124,13 +136,18 @@
   - 怎么验证：
     - 人工走查
     - 核心测试回归
+  - 已验证：
+    - 已人工走查 `plugin manifest -> channel models -> channel services -> migrations`
+    - `python -m unittest apps.api-server.tests.test_plugin_manifest`
+    - `python -m unittest tests.test_channel_services tests.test_channel_repository tests.test_plugin_mounts tests.test_plugin_region_provider_runtime`
   - 对应需求：`requirements.md` 需求 1、2、3、5、6
   - 对应设计：`design.md` 2.2、3.2、4.1、4.2
 
 ## 阶段 2：把外部消息接到现有 AI 会话主链
 
-- [ ] 2.1 建统一入站消息标准化协议和平台 gateway 入口
-  - 状态：TODO
+- [x] 2.1 建统一入站消息标准化协议和平台 gateway 入口
+  - 状态：DONE
+  - 完成说明：已新增统一的标准化入站事件 schema、通道 gateway 服务和固定 webhook 路由 `POST /api/v1/channel-gateways/accounts/{account_id}/webhook`。gateway 现在只负责收原始请求、定位通道账号和插件、执行 `channel` 插件入口、拿回标准化事件并写入幂等入站记录，不把平台特例逻辑塞进核心 API。
   - 这一步到底做什么：给所有平台统一一套“标准化入站事件”格式，并建立统一 gateway 入口
   - 做完你能看到什么：平台回调先被标准化，再进入系统，而不是每个平台各写各的入口
   - 先依赖什么：1.4
@@ -151,11 +168,14 @@
   - 怎么验证：
     - gateway API 测试
     - 重复事件测试
+  - 已验证：
+    - `python -m unittest tests.test_channel_gateway_api tests.test_channel_services tests.test_channel_repository tests.test_plugin_mounts tests.test_plugin_region_provider_runtime`
   - 对应需求：`requirements.md` 需求 1、4、5
   - 对应设计：`design.md` 2.3.3、3.3.3
 
-- [ ] 2.2 建成员绑定解析和外部会话映射桥接
-  - 状态：TODO
+- [x] 2.2 建成员绑定解析和外部会话映射桥接
+  - 状态：DONE
+  - 完成说明：已新增统一成员绑定解析逻辑和 `conversation_bridge` 桥接服务。系统现在会先按 `household + platform_code + external_user_id` 找有效绑定，再按 `household + channel_account + external_conversation_key` 复用或创建 `channel_conversation_bindings`。未绑定策略也已收口成统一规则：私聊固定提示并记 `ignored`，群聊默认忽略并记 `ignored`。
   - 这一步到底做什么：让平台消息能稳定找到内部成员和内部会话
   - 做完你能看到什么：同一个平台对话不会反复新建 session，也不会把消息投错人
   - 先依赖什么：2.1
@@ -175,11 +195,15 @@
   - 怎么验证：
     - 绑定解析测试
     - 会话映射幂等测试
+  - 已验证：
+    - `python -m unittest tests.test_channel_conversation_bridge tests.test_channel_gateway_api tests.test_channel_services tests.test_channel_repository tests.test_plugin_mounts tests.test_plugin_region_provider_runtime`
+  - 说明：`tasks.md` 这里写的是 `session_bridge.py`，但 `design.md` 明确用的是 `conversation_bridge.py`。本次按设计文档落地为 `conversation_bridge.py`，因为它和现有 `conversation` 主链命名一致，歧义更少。
   - 对应需求：`requirements.md` 需求 3、4、5
   - 对应设计：`design.md` 2.3.2、3.2.3、4.1、6.1
 
-- [ ] 2.3 复用现有 conversation 主链生成外部平台回复
-  - 状态：TODO
+- [x] 2.3 复用现有 conversation 主链生成外部平台回复
+  - 状态：DONE
+  - 完成说明：外部文本消息现在已经通过 `ChannelConversationBridge.handle_inbound_message` 正式复用 `create_conversation_session` 和 `create_conversation_turn`，不再走任何简化问答旁路。统一 gateway 在收到标准化消息后，会把已绑定成员的消息继续送进现有 `conversation` 主链，生成和网页端同一套 assistant 输出、提案、动作与记忆处理结果。
   - 这一步到底做什么：把外部平台消息真正接到现有 `conversation` 会话和 turn 处理逻辑里
   - 做完你能看到什么：网页和外部平台面对的是同一个 AI，不会分脑子
   - 先依赖什么：2.2
@@ -198,11 +222,14 @@
   - 怎么验证：
     - 集成测试
     - 对话链回归测试
+  - 已验证：
+    - `python -m unittest tests.test_channel_conversation_bridge tests.test_channel_gateway_api tests.test_channel_services tests.test_channel_repository tests.test_plugin_mounts tests.test_plugin_region_provider_runtime`
   - 对应需求：`requirements.md` 需求 4
   - 对应设计：`design.md` 2.3.4、3.3.4、6.3
 
-- [ ] 2.4 建统一出站投递与失败重试记录
-  - 状态：TODO
+- [x] 2.4 建统一出站投递与失败重试记录
+  - 状态：DONE
+  - 完成说明：已新增统一 `ChannelDeliveryService` 和 `status_service`。外部平台回复现在会先落一条 `pending` 投递记录，再尝试调用通道插件发送，最后把记录更新为 `sent / failed / skipped`，并保留 `provider_message_ref`、错误码、错误信息和尝试次数。重复入站事件不会重复发送；失败投递也支持按记录重试，并能按平台账号汇总最近失败摘要。
   - 这一步到底做什么：把 AI 输出封成平台出站消息，并把发送结果和失败信息正式落库
   - 做完你能看到什么：原路回复、失败可查、重试有依据
   - 先依赖什么：2.3
@@ -222,11 +249,14 @@
   - 怎么验证：
     - 投递成功测试
     - 投递失败和重试测试
+  - 已验证：
+    - `python -m unittest tests.test_channel_delivery_service tests.test_channel_conversation_bridge tests.test_channel_gateway_api tests.test_channel_services tests.test_channel_repository tests.test_plugin_mounts tests.test_plugin_region_provider_runtime`
   - 对应需求：`requirements.md` 需求 5、6
   - 对应设计：`design.md` 2.3.4、3.2.5、3.3.5、5.3
 
-- [ ] 2.5 阶段检查：外部会话到内部 AI 主链是不是打通了
-  - 状态：TODO
+- [x] 2.5 阶段检查：外部会话到内部 AI 主链是不是打通了
+  - 状态：DONE
+  - 完成说明：第二阶段主链已经闭合：平台 webhook 进入统一 gateway，通道插件产出标准化事件，系统完成成员绑定解析、外部会话映射、未绑定默认策略、`conversation` 主链复用，以及原路出站投递记录。现在继续接真实平台时，主要剩平台适配和管理端接口，不需要再返工第二阶段的链路边界。
   - 这一步到底做什么：检查“平台消息进来 -> 找到成员 -> 复用内部会话 -> AI 回复 -> 原路发回去”这条主链是否闭合
   - 做完你能看到什么：后面接具体平台时，只需要补平台差异，不需要再改主链
   - 先依赖什么：2.1、2.2、2.3、2.4
@@ -242,6 +272,9 @@
   - 怎么验证：
     - 集成测试
     - 人工链路回放
+  - 已验证：
+    - 已人工走查 `gateway -> inbound event -> binding resolve -> conversation bridge -> delivery`
+    - `python -m unittest tests.test_channel_delivery_service tests.test_channel_conversation_bridge tests.test_channel_gateway_api tests.test_channel_services tests.test_channel_repository tests.test_plugin_mounts tests.test_plugin_region_provider_runtime`
   - 对应需求：`requirements.md` 需求 3、4、5、6
   - 对应设计：`design.md` 2.3.3、2.3.4、4.1、5.3、6.1、6.3
 
