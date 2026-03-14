@@ -13,6 +13,7 @@ import {
 import { api } from '../lib/api';
 import type { HouseholdSetupStatus } from '../lib/types';
 import { useHouseholdContext } from './household';
+import { loadHouseholdSetupStatus } from './compat';
 
 interface SetupContextValue {
   setupStatus: HouseholdSetupStatus | null;
@@ -40,7 +41,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     setSetupStatusError('');
 
     try {
-      const result = await api.getHouseholdSetupStatus(householdId);
+      const result = await loadHouseholdSetupStatus(api, householdId);
       setSetupStatus(result);
       return result;
     } catch (error) {
@@ -63,12 +64,12 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    const loadSetupStatus = async () => {
+    const loadCurrentSetupStatus = async () => {
       setSetupStatusLoading(true);
       setSetupStatusError('');
 
       try {
-        const result = await api.getHouseholdSetupStatus(currentHouseholdId);
+        const result = await loadHouseholdSetupStatus(api, currentHouseholdId);
         if (!cancelled) {
           setSetupStatus(result);
         }
@@ -84,7 +85,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    void loadSetupStatus();
+    void loadCurrentSetupStatus();
 
     return () => {
       cancelled = true;

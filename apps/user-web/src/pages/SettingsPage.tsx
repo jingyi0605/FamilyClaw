@@ -3,7 +3,7 @@
  * ============================================================ */
 import { useEffect, useMemo, useState } from 'react';
 import { Outlet, useMatch, Navigate } from 'react-router-dom';
-import { formatLocaleOptionLabel, getLocaleSourceLabel, useI18n } from '../i18n';
+import { formatLocaleOptionLabel, useI18n, type LocaleId } from '../i18n';
 import { useTheme, themeList, type ThemeId } from '../theme';
 import { PageHeader, Card, Section, ToggleSwitch } from '../components/base';
 import { SettingsNav } from '../components/SettingsNav';
@@ -256,15 +256,69 @@ export function LegacySettingsAi() {
 /* ---- 语言与地区 ---- */
 export function SettingsLanguage() {
   const { t, locale, setLocale, locales } = useI18n();
+  const { currentHouseholdId, currentHousehold, refreshCurrentHousehold, refreshHouseholds } = useHouseholdContext();
+  const [timezone, setTimezone] = useState(currentHousehold?.timezone ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [status, setStatus] = useState('');
 
-  function renderLocaleSource(localeItem: typeof locales[number]) {
-    switch (getLocaleSourceLabel(localeItem)) {
-      case 'builtin':
-        return t('settings.language.sourceBuiltin');
-      case 'official':
-        return t('settings.language.sourceOfficial');
-      default:
-        return t('settings.language.sourceThirdParty');
+  const timezoneOptions = useMemo(() => [
+    { value: 'Asia/Shanghai', label: 'Asia/Shanghai (UTC+8)' },
+    { value: 'Asia/Tokyo', label: 'Asia/Tokyo (UTC+9)' },
+    { value: 'America/New_York', label: 'America/New_York (UTC-5)' },
+    { value: 'America/Los_Angeles', label: 'America/Los_Angeles (UTC-8)' },
+    { value: 'Europe/London', label: 'Europe/London (UTC+0)' },
+    { value: 'UTC', label: 'UTC (UTC+0)' },
+  ], []);
+
+  useEffect(() => {
+    if (currentHousehold?.timezone) {
+      setTimezone(currentHousehold.timezone);
+    }
+  }, [currentHousehold?.timezone]);
+
+  async function saveHouseholdLanguageSettings(patch: { locale?: LocaleId; timezone?: string }, successMessage: string) {
+    if (!currentHouseholdId) {
+      setError(t('settings.language.noHousehold'));
+      setStatus('');
+      return false;
+    }
+
+    setSaving(true);
+    setError('');
+    setStatus('');
+
+    try {
+      await api.updateHousehold(currentHouseholdId, patch);
+      await refreshCurrentHousehold(currentHouseholdId);
+      await refreshHouseholds();
+      setStatus(successMessage);
+      return true;
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : t('settings.language.saveFailed'));
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleLocaleChange(nextLocale: LocaleId) {
+    const previousLocale = locale;
+    setLocale(nextLocale);
+
+    const saved = await saveHouseholdLanguageSettings({ locale: nextLocale }, t('settings.language.localeSaved'));
+    if (!saved) {
+      setLocale(previousLocale);
+    }
+  }
+
+  async function handleTimezoneChange(nextTimezone: string) {
+    const previousTimezone = timezone;
+    setTimezone(nextTimezone);
+
+    const saved = await saveHouseholdLanguageSettings({ timezone: nextTimezone }, t('settings.language.timezoneSaved'));
+    if (!saved) {
+      setTimezone(previousTimezone);
     }
   }
 
@@ -274,43 +328,24 @@ export function SettingsLanguage() {
         <div className="settings-form">
           <div className="form-group">
             <label>{t('settings.language.interfaceLang')}</label>
-            <select className="form-select" value={locale} onChange={e => setLocale(e.target.value)}>
+            <select className="form-select" value={locale} onChange={e => void handleLocaleChange(e.target.value as LocaleId)} disabled={saving}>
               {locales.map(item => (
                 <option key={item.id} value={item.id}>{formatLocaleOptionLabel(item)}</option>
               ))}
             </select>
           </div>
           <div className="form-group">
-            <label>{t('settings.language.dateFormat')}</label>
-            <select className="form-select" value="YYYY-MM-DD" disabled>
-              <option>YYYY-MM-DD</option>
-              <option>MM/DD/YYYY</option>
-              <option>DD/MM/YYYY</option>
-            </select>
-            <div className="form-help">日期格式当前跟随系统默认规则展示，暂不支持单独保存。</div>
-          </div>
-          <div className="form-group">
-            <label>{t('settings.language.timeFormat')}</label>
-            <select className="form-select" value="24 小时制" disabled>
-              <option>24 小时制</option>
-              <option>12 小时制</option>
-            </select>
-            <div className="form-help">时间格式当前跟随系统默认规则展示，暂不支持单独保存。</div>
-          </div>
-          <div className="form-group">
-            <label>{t('settings.language.localeCatalog')}</label>
-            <div className="settings-note">
-              <span>🧩</span> 语言是否可选、谁覆盖谁，当前都以家庭语言接口返回的结果为准。
-            </div>
-            <div className="settings-note">
-              {locales.map(item => (
-                <div key={item.id}>
-                  {formatLocaleOptionLabel(item)} / {renderLocaleSource(item)} / {t('settings.language.pluginId')}: {item.pluginId ?? t('settings.language.none')} / {t('settings.language.fallback')}: {item.fallback ?? t('settings.language.none')} / {t('settings.language.overrides')}: {item.overriddenPluginIds?.join(', ') || t('settings.language.none')}
-                </div>
+            <label>{t('settings.language.timezone')}</label>
+            <select className="form-select" value={timezone} onChange={e => void handleTimezoneChange(e.target.value)} disabled={saving || !currentHouseholdId}>
+              {timezoneOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </div>
+              {!timezoneOptions.some(option => option.value === timezone) && timezone ? <option value={timezone}>{timezone}</option> : null}
+            </select>
           </div>
         </div>
+        {error && <div className="settings-note"><span>⚠️</span> {error}</div>}
+        {status && <div className="settings-note"><span>✅</span> {status}</div>}
       </Section>
     </div>
   );

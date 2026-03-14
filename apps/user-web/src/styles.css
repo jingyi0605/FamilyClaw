@@ -6917,26 +6917,57 @@ body::before {
 }
 
 .plugin-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: var(--spacing-md);
 }
 
 .plugin-card {
-  padding: var(--spacing-lg);
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
 }
 
 .plugin-card--expanded {
   border-color: var(--brand-primary);
 }
 
+/* 卡片顶部：图标 + 信息 + 开关 */
 .plugin-card__header {
   display: flex;
-  justify-content: space-between;
   align-items: flex-start;
   gap: var(--spacing-md);
 }
 
+/* 插件图标 */
+.plugin-card__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+
+.plugin-card__icon--builtin {
+  background: var(--brand-primary-light);
+  color: var(--brand-primary);
+}
+
+.plugin-card__icon--official {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.plugin-card__icon--third_party {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+
+/* 插件信息区 */
 .plugin-card__info {
   flex: 1;
   min-width: 0;
@@ -6945,7 +6976,7 @@ body::before {
 .plugin-card__title-row {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-xs);
   flex-wrap: wrap;
   margin-bottom: var(--spacing-xs);
 }
@@ -6954,6 +6985,7 @@ body::before {
   font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
+  margin-right: var(--spacing-xs);
 }
 
 .plugin-card__meta {
@@ -6964,10 +6996,51 @@ body::before {
   flex-wrap: wrap;
 }
 
+/* 卡片顶部右侧开关 */
+.plugin-card__toggle {
+  flex-shrink: 0;
+}
+
+/* 卡片标签行 */
+.plugin-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+}
+
+/* 卡片底部操作按钮 */
+.plugin-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border-light);
+  margin-top: var(--spacing-xs);
+}
+
+/* 兼容旧版 actions 样式 */
 .plugin-card__actions {
   display: flex;
   gap: var(--spacing-sm);
   flex-shrink: 0;
+}
+
+/* 卡片标签行 */
+.plugin-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+/* 卡片底部 */
+.plugin-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border-light);
+  margin-top: auto;
 }
 
 .plugin-card__permissions {
@@ -7046,6 +7119,222 @@ body::before {
   gap: var(--spacing-sm);
 }
 
+/* 插件卡片快捷开关 */
+.plugin-card__toggle {
+  display: flex;
+  align-items: center;
+  margin-right: var(--spacing-xs);
+}
+
+.toggle-switch--compact {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+}
+
+.toggle-switch--compact .toggle-switch__thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  top: 2px;
+  left: 2px;
+}
+
+.toggle-switch--compact.toggle-switch--on .toggle-switch__thumb {
+  left: 18px;
+}
+
+.toggle-switch--loading {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+/* 插件工具栏 */
+.plugin-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+/* 视图切换按钮组 */
+.plugin-view-toggle {
+  display: flex;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.plugin-view-toggle__btn {
+  padding: var(--spacing-xs) var(--spacing-md);
+  background: var(--bg-card);
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-size-md);
+  color: var(--text-tertiary);
+  transition: background 0.15s, color 0.15s;
+}
+
+.plugin-view-toggle__btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.plugin-view-toggle__btn--active {
+  background: var(--brand-primary);
+  color: white;
+}
+
+.plugin-view-toggle__btn--active:hover {
+  background: var(--brand-primary);
+  color: white;
+}
+
+.plugin-view-toggle__btn:first-child {
+  border-right: 1px solid var(--border-light);
+}
+
+/* 类型筛选器 */
+.plugin-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.plugin-filter__label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.plugin-filter__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.plugin-filter__chip {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.plugin-filter__chip:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-primary);
+}
+
+.plugin-filter__chip--active {
+  background: var(--brand-primary-light);
+  border-color: var(--brand-primary);
+  color: var(--brand-primary);
+}
+
+/* 列表视图表格 */
+.plugin-table-wrapper {
+  overflow-x: auto;
+  margin-bottom: var(--spacing-lg);
+}
+
+.plugin-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.plugin-table__th {
+  padding: var(--spacing-md);
+  text-align: left;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border-light);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.plugin-table__row {
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.15s;
+}
+
+.plugin-table__row:hover {
+  background: var(--bg-hover);
+}
+
+.plugin-table__row:last-child {
+  border-bottom: none;
+}
+
+.plugin-table__td {
+  padding: var(--spacing-md);
+  vertical-align: middle;
+}
+
+.plugin-table__th--name,
+.plugin-table__td--name {
+  min-width: 200px;
+}
+
+.plugin-table__th--types,
+.plugin-table__td--types {
+  min-width: 150px;
+}
+
+.plugin-table__th--source,
+.plugin-table__td--source,
+.plugin-table__th--risk,
+.plugin-table__td--risk,
+.plugin-table__th--status,
+.plugin-table__td--status {
+  min-width: 80px;
+  text-align: center;
+}
+
+.plugin-table__td--source,
+.plugin-table__td--risk,
+.plugin-table__td--status {
+  text-align: center;
+}
+
+.plugin-table__th--actions,
+.plugin-table__td--actions {
+  min-width: 100px;
+  text-align: right;
+}
+
+.plugin-table__td--actions {
+  white-space: nowrap;
+}
+
+.plugin-table__name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plugin-table__name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plugin-table__id {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
 /* 插件市场占位 */
 .plugin-market-placeholder {
   padding: var(--spacing-xl);
@@ -7102,17 +7391,53 @@ body::before {
 
 /* 响应式 - 插件管理 */
 @media (max-width: 768px) {
+  .plugin-list {
+    grid-template-columns: 1fr;
+  }
+
   .plugin-stats {
     gap: var(--spacing-lg);
   }
 
   .plugin-card__header {
-    flex-direction: column;
+    flex-wrap: wrap;
   }
 
-  .plugin-card__actions {
+  .plugin-card__footer {
+    flex-wrap: wrap;
+  }
+
+  .plugin-card__footer .btn {
+    flex: 1;
+  }
+
+  .plugin-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .plugin-filter {
     width: 100%;
-    justify-content: flex-start;
+  }
+
+  .plugin-filter__chips {
+    max-width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: var(--spacing-xs);
+  }
+
+  /* 列表视图在移动端隐藏部分列 */
+  .plugin-table__th--types,
+  .plugin-table__td--types,
+  .plugin-table__th--source,
+  .plugin-table__td--source {
+    display: none;
+  }
+
+  .plugin-table__th--name,
+  .plugin-table__td--name {
+    min-width: 160px;
   }
 }
 

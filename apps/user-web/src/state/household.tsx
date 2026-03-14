@@ -11,17 +11,11 @@ import {
   type ReactNode,
 } from 'react';
 import { api } from '../lib/api';
-import type { Household } from '../lib/types';
-
-export interface HouseholdSummary {
-  id: string;
-  name: string;
-  city?: string | null;
-  timezone?: string;
-  locale?: string;
-  status?: string;
-  region?: Household['region'];
-}
+import {
+  HOUSEHOLD_STORAGE_KEY,
+  toHouseholdSummary,
+  type HouseholdSummary,
+} from './compat';
 
 interface HouseholdContextValue {
   currentHouseholdId: string;
@@ -34,26 +28,12 @@ interface HouseholdContextValue {
   refreshCurrentHousehold: (householdId?: string) => Promise<void>;
 }
 
-const STORAGE_KEY = 'familyclaw-household';
-
 function getStoredHousehold(): string {
   try {
-    return localStorage.getItem(STORAGE_KEY) ?? '';
+    return localStorage.getItem(HOUSEHOLD_STORAGE_KEY) ?? '';
   } catch {
     return '';
   }
-}
-
-function toHouseholdSummary(household: Household): HouseholdSummary {
-  return {
-    id: household.id,
-    name: household.name,
-    city: household.city,
-    timezone: household.timezone,
-    locale: household.locale,
-    status: household.status,
-    region: household.region,
-  };
 }
 
 const HouseholdContext = createContext<HouseholdContextValue | null>(null);
@@ -69,7 +49,7 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     setId(id);
     if (!id) {
       try {
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(HOUSEHOLD_STORAGE_KEY);
       } catch {
         /* noop */
       }
@@ -78,7 +58,7 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      localStorage.setItem(STORAGE_KEY, id);
+      localStorage.setItem(HOUSEHOLD_STORAGE_KEY, id);
     } catch {
       /* noop */
     }
@@ -95,16 +75,29 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
 
       if (nextHouseholds.length === 0) {
         setCurrentHousehold(null);
-        if (currentHouseholdId) {
-          setCurrentHouseholdId('');
+        setId('');
+        try {
+          localStorage.removeItem(HOUSEHOLD_STORAGE_KEY);
+        } catch {
+          /* noop */
         }
         return;
       }
 
-      const hasCurrent = currentHouseholdId && nextHouseholds.some(h => h.id === currentHouseholdId);
-      if (!hasCurrent) {
-        setCurrentHouseholdId(nextHouseholds[0].id);
-      }
+      // 使用函数式更新获取最新的 currentHouseholdId
+      setId((prevId) => {
+        const hasCurrent = prevId && nextHouseholds.some(h => h.id === prevId);
+        if (!hasCurrent && nextHouseholds.length > 0) {
+          const newId = nextHouseholds[0].id;
+          try {
+            localStorage.setItem(HOUSEHOLD_STORAGE_KEY, newId);
+          } catch {
+            /* noop */
+          }
+          return newId;
+        }
+        return prevId;
+      });
     } catch (error) {
       setHouseholds([]);
       setCurrentHousehold(null);
@@ -112,7 +105,8 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     } finally {
       setHouseholdsLoading(false);
     }
-  }, [currentHouseholdId, setCurrentHouseholdId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setCurrentHouseholdId]);
 
   const refreshCurrentHousehold = useCallback(async (householdId = currentHouseholdId) => {
     if (!householdId) {

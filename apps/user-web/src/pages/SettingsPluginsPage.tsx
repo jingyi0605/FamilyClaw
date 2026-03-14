@@ -298,6 +298,51 @@ export function SettingsPluginsPage() {
   return (
     <div className="settings-page">
       <Section title={t('plugins.installed')}>
+        {/* 工具栏：视图切换 + 类型筛选 */}
+        {plugins.length > 0 && (
+          <div className="plugin-toolbar">
+            {/* 视图切换 */}
+            <div className="plugin-view-toggle">
+              <button
+                className={`plugin-view-toggle__btn ${viewMode === 'card' ? 'plugin-view-toggle__btn--active' : ''}`}
+                onClick={() => handleViewModeChange('card')}
+                title={t('plugins.view.card')}
+              >
+                ▦
+              </button>
+              <button
+                className={`plugin-view-toggle__btn ${viewMode === 'list' ? 'plugin-view-toggle__btn--active' : ''}`}
+                onClick={() => handleViewModeChange('list')}
+                title={t('plugins.view.list')}
+              >
+                ≡
+              </button>
+            </div>
+
+            {/* 类型筛选 */}
+            <div className="plugin-filter">
+              <span className="plugin-filter__label">{t('plugins.filter.byType')}:</span>
+              <div className="plugin-filter__chips">
+                <button
+                  className={`plugin-filter__chip ${selectedTypes.length === 0 ? 'plugin-filter__chip--active' : ''}`}
+                  onClick={clearTypeFilter}
+                >
+                  {t('plugins.filter.all')}
+                </button>
+                {FILTERABLE_TYPES.map(type => (
+                  <button
+                    key={type}
+                    className={`plugin-filter__chip ${selectedTypes.includes(type) ? 'plugin-filter__chip--active' : ''}`}
+                    onClick={() => toggleTypeFilter(type)}
+                  >
+                    {PLUGIN_TYPE_LABELS[type]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 统计概览 */}
         {plugins.length > 0 && (
           <Card className="plugin-stats-card">
@@ -314,6 +359,12 @@ export function SettingsPluginsPage() {
                 <span className="plugin-stat__value plugin-stat__value--secondary">{pluginStats.disabled}</span>
                 <span className="plugin-stat__label">{t('plugins.disabled')}</span>
               </div>
+              {selectedTypes.length > 0 && (
+                <div className="plugin-stat">
+                  <span className="plugin-stat__value">{filteredPlugins.length}</span>
+                  <span className="plugin-stat__label">{t('plugins.filteredCount').replace('{count}', '')}</span>
+                </div>
+              )}
             </div>
           </Card>
         )}
@@ -347,131 +398,208 @@ export function SettingsPluginsPage() {
           />
         )}
 
-        {/* 插件列表 */}
-        <div className="plugin-list">
-          {plugins.map(plugin => {
-            const sourceInfo = formatSourceType(plugin.source_type);
-            const riskInfo = formatRiskLevel(plugin.risk_level);
-            const isEnabled = getPluginEnabledState(plugin.id);
-            const isToggling = togglingPluginId === plugin.id;
-            const isSelected = selectedPluginId === plugin.id;
-            const isBuiltin = plugin.source_type === 'builtin';
+        {/* 筛选后无结果 */}
+        {!loading && plugins.length > 0 && filteredPlugins.length === 0 && (
+          <EmptyState
+            title={t('plugins.empty')}
+            description="没有符合筛选条件的插件"
+          />
+        )}
 
-            return (
-              <Card
-                key={plugin.id}
-                className={`plugin-card ${isSelected ? 'plugin-card--expanded' : ''}`}
-              >
-                <div className="plugin-card__header">
-                  <div className="plugin-card__info">
-                    <div className="plugin-card__title-row">
-                      <span className="plugin-card__name">{plugin.name}</span>
-                      <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
-                      <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>
-                      <span className={`badge badge--${isEnabled ? 'success' : 'secondary'}`}>
-                        {isEnabled ? t('plugins.status.enabled') : t('plugins.status.disabled')}
-                      </span>
+        {/* 卡片视图 */}
+        {viewMode === 'card' && filteredPlugins.length > 0 && (
+          <div className="plugin-list">
+            {filteredPlugins.map(plugin => {
+              const sourceInfo = formatSourceType(plugin.source_type);
+              const riskInfo = formatRiskLevel(plugin.risk_level);
+              const isEnabled = getPluginEnabledState(plugin.id);
+              const isToggling = togglingPluginId === plugin.id;
+              const isSelected = selectedPluginId === plugin.id;
+              const isBuiltin = plugin.source_type === 'builtin';
+
+              // 根据来源类型选择图标
+              const iconClass = `plugin-card__icon plugin-card__icon--${plugin.source_type}`;
+              const iconEmoji = plugin.source_type === 'builtin' ? '📦' : plugin.source_type === 'official' ? '✓' : '⚡';
+
+              return (
+                <Card
+                  key={plugin.id}
+                  className={`plugin-card ${isSelected ? 'plugin-card--expanded' : ''}`}
+                >
+                  {/* 顶部：图标 + 信息 + 开关 */}
+                  <div className="plugin-card__header">
+                    <div className={iconClass}>{iconEmoji}</div>
+                    <div className="plugin-card__info">
+                      <div className="plugin-card__title-row">
+                        <span className="plugin-card__name">{plugin.name}</span>
+                      </div>
+                      <div className="plugin-card__meta">
+                        <span>{plugin.id}</span>
+                        <span>·</span>
+                        <span>v{plugin.version}</span>
+                      </div>
                     </div>
-                    <div className="plugin-card__meta">
-                      <span>{plugin.id}</span>
-                      <span>·</span>
-                      <span>v{plugin.version}</span>
-                      <span>·</span>
-                      <span>{plugin.types.join(', ')}</span>
+                    {/* 快捷启停开关 */}
+                    <div className="plugin-card__toggle">
+                      <div
+                        className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isBuiltin ? 'toggle-switch--disabled' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`}
+                        onClick={() => !isBuiltin && !isToggling && handleTogglePlugin(plugin)}
+                        title={isBuiltin ? '内置插件不支持禁用' : isEnabled ? t('plugins.action.disable') : t('plugins.action.enable')}
+                      >
+                        <div className="toggle-switch__thumb" />
+                      </div>
                     </div>
                   </div>
-                  <div className="plugin-card__actions">
+
+                  {/* 标签行 */}
+                  <div className="plugin-card__tags">
+                    <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
+                    <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>
+                    {plugin.types.slice(0, 2).map(type => (
+                      <span key={type} className="badge badge--secondary">
+                        {PLUGIN_TYPE_LABELS[type] || type}
+                      </span>
+                    ))}
+                    {plugin.types.length > 2 && (
+                      <span className="badge badge--secondary">+{plugin.types.length - 2}</span>
+                    )}
+                  </div>
+
+                  {/* 底部操作按钮 */}
+                  <div className="plugin-card__footer">
                     <button
                       className="btn btn--ghost btn--sm"
                       onClick={() => openPluginDetail(plugin)}
-                      title={t('plugins.action.viewDetail')}
                     >
                       {t('plugins.action.viewDetail')}
                     </button>
-                    {!isBuiltin && (
-                      <button
-                        className="btn btn--outline btn--sm"
-                        onClick={() => handleTogglePlugin(plugin)}
-                        disabled={isToggling || loading}
-                        title={isBuiltin ? '内置插件不支持禁用' : undefined}
-                      >
-                        {isToggling
-                          ? t('common.loading')
-                          : isEnabled
-                            ? t('plugins.action.disable')
-                            : t('plugins.action.enable')}
-                      </button>
-                    )}
                     <button
                       className="btn btn--outline btn--sm"
                       onClick={() => setSelectedPluginId(isSelected ? null : plugin.id)}
                       disabled={jobsLoading}
                     >
-                      {isSelected ? t('common.back') : t('plugins.action.viewJobs')}
+                      {t('plugins.action.viewJobs')}
                     </button>
                   </div>
-                </div>
 
-                {/* 权限信息 */}
-                {plugin.permissions.length > 0 && (
-                  <div className="plugin-card__permissions">
-                    <span className="plugin-card__permissions-label">{t('plugins.permissions')}:</span>
-                    <span className="plugin-card__permissions-list">{plugin.permissions.join(', ')}</span>
-                  </div>
-                )}
+                  {/* 展开显示任务列表 */}
+                  {isSelected && (
+                    <div className="plugin-card__jobs">
+                      <h4>{t('plugins.recentJobs')}</h4>
+                      {jobsLoading ? (
+                        <div className="settings-note">{t('common.loading')}</div>
+                      ) : jobs && jobs.items.length > 0 ? (
+                        <div className="plugin-job-list">
+                          {jobs.items.map(item => {
+                            const jobStatus = formatJobStatus(item.job.status);
+                            return (
+                              <div key={item.job.id} className="plugin-job-item">
+                                <div className="plugin-job-item__info">
+                                  <span className="plugin-job-item__trigger">{item.job.trigger}</span>
+                                  <span className={`badge badge--${jobStatus.tone}`}>{jobStatus.label}</span>
+                                </div>
+                                <div className="plugin-job-item__meta">
+                                  <span>{formatTimestamp(item.job.created_at)}</span>
+                                  <span>·</span>
+                                  <span>{t('plugins.jobAttempts')}: {item.job.current_attempt}/{item.job.max_attempts}</span>
+                                </div>
+                                {item.job.last_error_message && (
+                                  <div className="plugin-job-item__error">
+                                    {item.job.last_error_message}
+                                  </div>
+                                )}
+                                {item.allowed_actions.length > 0 && (
+                                  <div className="plugin-job-item__actions">
+                                    {item.allowed_actions.includes('retry') && (
+                                      <button className="btn btn--outline btn--sm">{t('plugins.jobRetry')}</button>
+                                    )}
+                                    {item.allowed_actions.includes('confirm') && (
+                                      <button className="btn btn--outline btn--sm">{t('plugins.jobConfirm')}</button>
+                                    )}
+                                    {item.allowed_actions.includes('cancel') && (
+                                      <button className="btn btn--outline btn--sm">{t('plugins.jobCancel')}</button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="settings-note">{t('plugins.noJobs')}</div>
+                      )}
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        )}
 
-                {/* 展开显示任务列表 */}
-                {isSelected && (
-                  <div className="plugin-card__jobs">
-                    <h4>{t('plugins.recentJobs')}</h4>
-                    {jobsLoading ? (
-                      <div className="settings-note">{t('common.loading')}</div>
-                    ) : jobs && jobs.items.length > 0 ? (
-                      <div className="plugin-job-list">
-                        {jobs.items.map(item => {
-                          const jobStatus = formatJobStatus(item.job.status);
-                          return (
-                            <div key={item.job.id} className="plugin-job-item">
-                              <div className="plugin-job-item__info">
-                                <span className="plugin-job-item__trigger">{item.job.trigger}</span>
-                                <span className={`badge badge--${jobStatus.tone}`}>{jobStatus.label}</span>
-                              </div>
-                              <div className="plugin-job-item__meta">
-                                <span>{formatTimestamp(item.job.created_at)}</span>
-                                <span>·</span>
-                                <span>{t('plugins.jobAttempts')}: {item.job.current_attempt}/{item.job.max_attempts}</span>
-                              </div>
-                              {item.job.last_error_message && (
-                                <div className="plugin-job-item__error">
-                                  {item.job.last_error_message}
-                                </div>
-                              )}
-                              {item.allowed_actions.length > 0 && (
-                                <div className="plugin-job-item__actions">
-                                  {item.allowed_actions.includes('retry') && (
-                                    <button className="btn btn--outline btn--sm">{t('plugins.jobRetry')}</button>
-                                  )}
-                                  {item.allowed_actions.includes('confirm') && (
-                                    <button className="btn btn--outline btn--sm">{t('plugins.jobConfirm')}</button>
-                                  )}
-                                  {item.allowed_actions.includes('cancel') && (
-                                    <button className="btn btn--outline btn--sm">{t('plugins.jobCancel')}</button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="settings-note">{t('plugins.noJobs')}</div>
-                    )}
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-        </div>
+        {/* 列表视图 */}
+        {viewMode === 'list' && filteredPlugins.length > 0 && (
+          <div className="plugin-table-wrapper">
+            <table className="plugin-table">
+              <thead>
+                <tr>
+                  <th className="plugin-table__th plugin-table__th--name">名称</th>
+                  <th className="plugin-table__th plugin-table__th--types">类型</th>
+                  <th className="plugin-table__th plugin-table__th--source">来源</th>
+                  <th className="plugin-table__th plugin-table__th--risk">风险</th>
+                  <th className="plugin-table__th plugin-table__th--status">状态</th>
+                  <th className="plugin-table__th plugin-table__th--actions">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPlugins.map(plugin => {
+                  const sourceInfo = formatSourceType(plugin.source_type);
+                  const riskInfo = formatRiskLevel(plugin.risk_level);
+                  const isEnabled = getPluginEnabledState(plugin.id);
+                  const isToggling = togglingPluginId === plugin.id;
+                  const isBuiltin = plugin.source_type === 'builtin';
+
+                  return (
+                    <tr key={plugin.id} className="plugin-table__row">
+                      <td className="plugin-table__td plugin-table__td--name">
+                        <div className="plugin-table__name-cell">
+                          <span className="plugin-table__name">{plugin.name}</span>
+                          <span className="plugin-table__id">{plugin.id} · v{plugin.version}</span>
+                        </div>
+                      </td>
+                      <td className="plugin-table__td plugin-table__td--types">
+                        {plugin.types.map(t => PLUGIN_TYPE_LABELS[t] || t).join('、')}
+                      </td>
+                      <td className="plugin-table__td plugin-table__td--source">
+                        <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
+                      </td>
+                      <td className="plugin-table__td plugin-table__td--risk">
+                        <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>
+                      </td>
+                      <td className="plugin-table__td plugin-table__td--status">
+                        <div
+                          className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isBuiltin ? 'toggle-switch--disabled' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`}
+                          onClick={() => !isBuiltin && !isToggling && handleTogglePlugin(plugin)}
+                          title={isBuiltin ? '内置插件不支持禁用' : isEnabled ? t('plugins.action.disable') : t('plugins.action.enable')}
+                        >
+                          <div className="toggle-switch__thumb" />
+                        </div>
+                      </td>
+                      <td className="plugin-table__td plugin-table__td--actions">
+                        <button
+                          className="btn btn--ghost btn--sm"
+                          onClick={() => openPluginDetail(plugin)}
+                          title={t('plugins.action.viewDetail')}
+                        >
+                          {t('plugins.action.viewDetail')}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Section>
 
       {/* 市场入口（降级占位） */}
