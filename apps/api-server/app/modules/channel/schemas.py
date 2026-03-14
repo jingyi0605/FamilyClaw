@@ -56,6 +56,7 @@ class ChannelAccountRead(BaseModel):
 
 class MemberChannelBindingCreate(BaseModel):
     channel_account_id: str = Field(min_length=1)
+    member_id: str = Field(min_length=1)
     external_user_id: str = Field(min_length=1, max_length=255)
     external_chat_id: str | None = Field(default=None, max_length=255)
     display_hint: str | None = Field(default=None, max_length=255)

@@ -46,6 +46,16 @@ def list_member_channel_bindings(db: Session, *, member_id: str) -> list[MemberC
     return list(db.scalars(stmt).all())
 
 
+def list_channel_account_bindings(db: Session, *, channel_account_id: str) -> list[MemberChannelBinding]:
+    """列出某个平台账号下的所有绑定"""
+    stmt: Select[tuple[MemberChannelBinding]] = (
+        select(MemberChannelBinding)
+        .where(MemberChannelBinding.channel_account_id == channel_account_id)
+        .order_by(MemberChannelBinding.created_at.desc(), MemberChannelBinding.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
 def get_member_channel_binding_by_external_user(
     db: Session,
     *,

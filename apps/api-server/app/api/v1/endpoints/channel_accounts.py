@@ -16,6 +16,15 @@ from app.modules.channel.schemas import (
     ChannelAccountUpdate,
     ChannelDeliveryRead,
     ChannelInboundEventRead,
+    MemberChannelBindingCreate,
+    MemberChannelBindingRead,
+    MemberChannelBindingUpdate,
+)
+from app.modules.channel.binding_service import (
+    MemberChannelBindingServiceError,
+    create_channel_account_binding,
+    list_channel_account_bindings,
+    update_channel_account_binding,
 )
 from app.modules.channel.service import create_channel_account, list_channel_accounts, update_channel_account
 from app.modules.channel.status_service import (
@@ -183,3 +192,108 @@ def list_channel_inbound_events_endpoint(
         platform_code=platform_code,
         status=status_value,
     )
+
+
+# ====== 绑定管理接口（平台账号视角）======
+
+
+@router.get(
+    "/{household_id}/channel-accounts/{account_id}/bindings",
+    response_model=list[MemberChannelBindingRead],
+)
+def list_channel_account_bindings_endpoint(
+    household_id: str,
+    account_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> list[MemberChannelBindingRead]:
+    """列出某个平台账号下的所有成员绑定"""
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        return list_channel_account_bindings(db, household_id=household_id, account_id=account_id)
+    except ChannelAccountServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{household_id}/channel-accounts/{account_id}/bindings",
+    response_model=MemberChannelBindingRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_channel_account_binding_endpoint(
+    household_id: str,
+    account_id: str,
+    payload: MemberChannelBindingCreate,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> MemberChannelBindingRead:
+    """在某个平台账号下创建成员绑定"""
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        # 确保 payload 中的 channel_account_id 与路径一致
+        if payload.channel_account_id != account_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="channel_account_id in payload does not match path",
+            )
+        result = create_channel_account_binding(db, household_id=household_id, payload=payload)
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="channel_account_binding.create",
+            target_type="member_channel_binding",
+            target_id=result.id,
+            result="success",
+            details=payload.model_dump(mode="json"),
+        )
+        db.commit()
+        return result
+    except (ChannelAccountServiceError, MemberChannelBindingServiceError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.put(
+    "/{household_id}/channel-accounts/{account_id}/bindings/{binding_id}",
+    response_model=MemberChannelBindingRead,
+)
+def update_channel_account_binding_endpoint(
+    household_id: str,
+    account_id: str,
+    binding_id: str,
+    payload: MemberChannelBindingUpdate,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> MemberChannelBindingRead:
+    """更新某个平台账号下的成员绑定"""
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = update_channel_account_binding(
+            db,
+            household_id=household_id,
+            account_id=account_id,
+            binding_id=binding_id,
+            payload=payload,
+        )
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="channel_account_binding.update",
+            target_type="member_channel_binding",
+            target_id=result.id,
+            result="success",
+            details=payload.model_dump(mode="json", exclude_unset=True),
+        )
+        db.commit()
+        return result
+    except (ChannelAccountServiceError, MemberChannelBindingServiceError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc

@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.member.service import get_member_or_404
+from app.modules.member.models import Member
 
 from . import repository
 from .account_service import get_channel_account_or_404
@@ -166,3 +167,94 @@ def _to_member_channel_binding_read(row: MemberChannelBinding) -> MemberChannelB
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+# ====== 平台账号视角的绑定管理 ======
+
+
+def list_channel_account_bindings(
+    db: Session,
+    *,
+    household_id: str,
+    account_id: str,
+) -> list[MemberChannelBindingRead]:
+    """列出某个平台账号下的所有绑定"""
+    account = get_channel_account_or_404(db, household_id=household_id, account_id=account_id)
+    bindings = repository.list_channel_account_bindings(db, channel_account_id=account.id)
+    return [_to_member_channel_binding_read(item) for item in bindings]
+
+
+def create_channel_account_binding(
+    db: Session,
+    *,
+    household_id: str,
+    payload: MemberChannelBindingCreate,
+) -> MemberChannelBindingRead:
+    """从平台账号视角创建绑定"""
+    account = get_channel_account_or_404(db, household_id=household_id, account_id=payload.channel_account_id)
+    member = get_member_or_404(db, payload.member_id)
+
+    # 确保成员属于同一家庭
+    if member.household_id != household_id:
+        raise MemberChannelBindingServiceError("member does not belong to current household")
+
+    # 检查外部用户 ID 冲突
+    _ensure_external_user_not_conflicted(
+        db,
+        household_id=household_id,
+        platform_code=account.platform_code,
+        external_user_id=payload.external_user_id,
+        binding_id=None,
+    )
+
+    now = utc_now_iso()
+    row = MemberChannelBinding(
+        id=new_uuid(),
+        household_id=household_id,
+        member_id=member.id,
+        channel_account_id=account.id,
+        platform_code=account.platform_code,
+        external_user_id=payload.external_user_id.strip(),
+        external_chat_id=payload.external_chat_id.strip() if isinstance(payload.external_chat_id, str) and payload.external_chat_id.strip() else None,
+        display_hint=payload.display_hint.strip() if isinstance(payload.display_hint, str) and payload.display_hint.strip() else None,
+        binding_status=payload.binding_status,
+        created_at=now,
+        updated_at=now,
+    )
+    repository.add_member_channel_binding(db, row)
+    db.flush()
+    return _to_member_channel_binding_read(row)
+
+
+def update_channel_account_binding(
+    db: Session,
+    *,
+    household_id: str,
+    account_id: str,
+    binding_id: str,
+    payload: MemberChannelBindingUpdate,
+) -> MemberChannelBindingRead:
+    """从平台账号视角更新绑定"""
+    account = get_channel_account_or_404(db, household_id=household_id, account_id=account_id)
+    row = repository.get_member_channel_binding(db, binding_id)
+    if row is None or row.channel_account_id != account.id:
+        raise MemberChannelBindingServiceError("member channel binding not found")
+
+    if payload.external_user_id is not None:
+        _ensure_external_user_not_conflicted(
+            db,
+            household_id=household_id,
+            platform_code=account.platform_code,
+            external_user_id=payload.external_user_id,
+            binding_id=row.id,
+        )
+        row.external_user_id = payload.external_user_id.strip()
+    if payload.external_chat_id is not None:
+        row.external_chat_id = payload.external_chat_id.strip() if payload.external_chat_id.strip() else None
+    if payload.display_hint is not None:
+        row.display_hint = payload.display_hint.strip() if payload.display_hint.strip() else None
+    if payload.binding_status is not None:
+        row.binding_status = payload.binding_status
+    row.updated_at = utc_now_iso()
+    db.flush()
+    return _to_member_channel_binding_read(row)

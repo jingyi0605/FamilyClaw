@@ -24,6 +24,7 @@ import {
   SettingsAccessibility,
   SettingsIntegrations,
 } from './pages/SettingsPage';
+import { SettingsChannelAccess } from './pages/SettingsChannelAccessPage';
 import { LoginPage } from './pages/LoginPage';
 import { useHouseholdContext } from './state/household';
 
@@ -127,6 +128,14 @@ function AuthenticatedUserApp() {
               <Route path="notifications" element={<SettingsNotifications />} />
               <Route path="accessibility" element={<SettingsAccessibility />} />
               <Route path="integrations" element={<SettingsIntegrations />} />
+              <Route
+                path="channel-access"
+                element={(
+                  <SetupGuard mode="protected">
+                    <SettingsChannelAccess />
+                  </SetupGuard>
+                )}
+              />
             </Route>
           </Route>
         </Routes>

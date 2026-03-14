@@ -11,4 +11,6 @@ apps/api-server/data/*.db-*
 apps/api-server/data/*.sqlite3
 .augment-rag/
 apps/api-server/data/logs
-apps/api-server/data/models/embeddings/descriptor_cache
+apps/api-server/data/models/embeddings/
+apps/api-server/data/
+apps/api-server/scripts/20260314-语义路由评估.py

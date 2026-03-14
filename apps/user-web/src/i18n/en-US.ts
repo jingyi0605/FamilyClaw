@@ -113,6 +113,18 @@ const enUS = {
   'settings.accessibilityDesc': 'Larger fonts, higher contrast, and simpler layout',
   'settings.integrations': 'Devices & Integrations',
   'settings.integrationsDesc': 'Manage smart home devices and Home Assistant connection',
+  'settings.channelAccess': 'Channel Access',
+  'settings.channelAccessDesc': 'Configure external chat platform bot integrations like Telegram, Discord',
+
+  /* 设置 - 通讯平台接入 */
+  'settings.channelAccess.platformConfig': 'Platform Configuration',
+  'settings.channelAccess.selectPlatform': 'Select platform',
+  'settings.channelAccess.accountCode': 'Account Code',
+  'settings.channelAccess.accountCodeHelp': 'Unique identifier within family, cannot be changed after creation.',
+  'settings.channelAccess.displayName': 'Display Name',
+  'settings.channelAccess.connectionMode': 'Connection Mode',
+  'settings.channelAccess.status': 'Status',
+  'settings.channelAccess.statusHelp': 'Recommend setting to draft first, enable after configuration.',
 
   /* 设置 - 外观 */
   'settings.appearance.theme': 'Theme',

@@ -111,6 +111,18 @@ const zhCN = {
   'settings.accessibilityDesc': '更大字号、更高对比度、更简洁的界面',
   'settings.integrations': '设备与集成',
   'settings.integrationsDesc': '管理智能家居设备和 Home Assistant 连接',
+  'settings.channelAccess': '通讯平台接入',
+  'settings.channelAccessDesc': '配置 Telegram、Discord 等外部聊天平台的机器人接入',
+
+  /* 设置 - 通讯平台接入 */
+  'settings.channelAccess.platformConfig': '平台配置',
+  'settings.channelAccess.selectPlatform': '请选择平台',
+  'settings.channelAccess.accountCode': '账号代码',
+  'settings.channelAccess.accountCodeHelp': '家庭内唯一的英文标识，创建后不可修改。',
+  'settings.channelAccess.displayName': '显示名称',
+  'settings.channelAccess.connectionMode': '连接方式',
+  'settings.channelAccess.status': '状态',
+  'settings.channelAccess.statusHelp': '建议先设为草稿，配置完成后再启用。',
 
   /* 设置 - 外观 */
   'settings.appearance.theme': '主题模式',

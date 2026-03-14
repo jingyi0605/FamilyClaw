@@ -11,6 +11,15 @@ import type {
   AiProviderProfile,
   AiProviderProfileCreatePayload,
   AiProviderProfileUpdatePayload,
+  ChannelAccountRead,
+  ChannelAccountCreate,
+  ChannelAccountUpdate,
+  ChannelAccountStatusRead,
+  MemberChannelBindingRead,
+  MemberChannelBindingCreate,
+  MemberChannelBindingUpdate,
+  ChannelDeliveryRead,
+  ChannelInboundEventRead,
   ContextConfigRead,
   ContextOverviewRead,
   ConversationActionExecutionResponse,
@@ -789,5 +798,102 @@ export const api = {
     return request<void>(`/scheduled-tasks/${encodeURIComponent(taskId)}`, {
       method: 'DELETE',
     });
+  },
+
+  // ====== 通讯通道管理 ======
+
+  listChannelAccounts(householdId: string) {
+    return request<ChannelAccountRead[]>(`/ai-config/${encodeURIComponent(householdId)}/channel-accounts`);
+  },
+
+  createChannelAccount(householdId: string, payload: ChannelAccountCreate) {
+    return request<ChannelAccountRead>(`/ai-config/${encodeURIComponent(householdId)}/channel-accounts`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  updateChannelAccount(householdId: string, accountId: string, payload: ChannelAccountUpdate) {
+    return request<ChannelAccountRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  probeChannelAccount(householdId: string, accountId: string) {
+    return request<ChannelAccountStatusRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/probe`,
+      { method: 'POST' },
+    );
+  },
+
+  getChannelAccountStatus(householdId: string, accountId: string) {
+    return request<ChannelAccountStatusRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/status`,
+    );
+  },
+
+  listChannelDeliveries(
+    householdId: string,
+    params?: { channel_account_id?: string; platform_code?: string; status?: string },
+  ) {
+    const query = new URLSearchParams();
+    if (params?.channel_account_id) query.set('channel_account_id', params.channel_account_id);
+    if (params?.platform_code) query.set('platform_code', params.platform_code);
+    if (params?.status) query.set('status', params.status);
+    const queryString = query.toString();
+    return request<ChannelDeliveryRead[]>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-deliveries${queryString ? `?${queryString}` : ''}`,
+    );
+  },
+
+  listChannelInboundEvents(
+    householdId: string,
+    params?: { channel_account_id?: string; platform_code?: string; status?: string },
+  ) {
+    const query = new URLSearchParams();
+    if (params?.channel_account_id) query.set('channel_account_id', params.channel_account_id);
+    if (params?.platform_code) query.set('platform_code', params.platform_code);
+    if (params?.status) query.set('status', params.status);
+    const queryString = query.toString();
+    return request<ChannelInboundEventRead[]>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-inbound-events${queryString ? `?${queryString}` : ''}`,
+    );
+  },
+
+  // ====== 平台账号绑定管理 ======
+
+  listChannelAccountBindings(householdId: string, accountId: string) {
+    return request<MemberChannelBindingRead[]>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/bindings`,
+    );
+  },
+
+  createChannelAccountBinding(householdId: string, accountId: string, payload: MemberChannelBindingCreate) {
+    return request<MemberChannelBindingRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/bindings`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  updateChannelAccountBinding(
+    householdId: string,
+    accountId: string,
+    bindingId: string,
+    payload: MemberChannelBindingUpdate,
+  ) {
+    return request<MemberChannelBindingRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/bindings/${encodeURIComponent(bindingId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
   },
 };
