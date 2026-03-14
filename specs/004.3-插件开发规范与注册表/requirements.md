@@ -28,6 +28,7 @@
 - **插件注册表**：按统一 schema 保存插件元数据的索引源，不直接保存插件运行代码
 - **官方注册表**：由项目官方维护的注册表源
 - **第三方注册表**：由社区或其他组织维护，但仍遵守同一 schema 的注册表源
+- **runner**：主服务 worker 在子进程里执行第三方插件入口的最小运行方式
 
 ## 范围说明
 
@@ -40,6 +41,7 @@
 - GitHub 注册表格式
 - 插件注册 PR 提交流程
 - 官方注册表 / 第三方注册表机制
+- 第三方插件独立依赖与 runner 边界说明
 
 ### Out of Scope
 
@@ -59,6 +61,7 @@
 1. WHEN 开发者阅读插件开发规范 THEN System SHALL 说明插件支持的类型、入口约定、目录结构和最小实现要求。
 2. WHEN 开发者创建新插件 THEN System SHALL 提供统一的 `manifest.json` 字段说明和示例。
 3. WHEN 开发者尝试实现超出第一版范围的能力 THEN System SHALL 明确说明哪些能力当前先不支持。
+4. WHEN 开发者阅读运行说明 THEN System SHALL 说明第三方插件对外会先进入后台任务，再由 worker 触发 runner，而不是 HTTP 直接同步执行。
 
 ### 需求 2：官方和市场可以按统一 schema 识别插件
 
@@ -101,6 +104,7 @@
 
 1. WHEN 后续新增插件类型或注册字段 THEN System SHALL 能在不推翻现有 schema 的前提下扩展。
 2. WHEN 前端市场接入多个注册表 THEN System SHALL 继续使用统一的插件注册项结构。
+3. WHEN 第三方插件增加自己的依赖 THEN System SHALL 继续把依赖隔离在插件环境，不要求污染主 API 环境。
 
 ### 非功能需求 3：可审计性
 

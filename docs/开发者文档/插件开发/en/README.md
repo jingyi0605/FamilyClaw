@@ -17,7 +17,7 @@ Keep one boundary in mind:
 
 - the repository already implements built-in same-process plugins
 - the recommended target path for third-party plugins is `main service + same-container subprocess runner + plugin-owned venv`
-- until the runner is implemented, the docs will clearly separate what already works today from the intended third-party direction
+- the public execution path already moved to “create a background job first, then let workers execute plugins”
 
 ## Current documents
 

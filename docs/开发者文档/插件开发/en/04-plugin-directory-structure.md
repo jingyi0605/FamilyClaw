@@ -13,6 +13,12 @@ This document answers one question only: how should a plugin directory be laid o
 
 Do not make version one complicated. Keep the structure close to what the current repository already runs.
 
+Do not mix up directory layout with execution semantics:
+
+- directory layout decides where plugin code lives, where dependencies are isolated, and how a runner can resolve entrypoints
+- it does not change the public execution model
+- public execution now still means “create a background job first, then let workers and runners handle it”
+
 ## 1. Minimum Directory Template
 
 ```text
@@ -80,6 +86,7 @@ They do not need to be exactly identical because Python modules usually use unde
 - stores plugin-owned Python dependencies
 - should not assume automatic platform installation
 - should use explicit version ranges
+- should be consumed by the plugin-owned environment, not by the main API environment as a fallback
 
 ### `plugin/connector.py`
 

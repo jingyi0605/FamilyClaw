@@ -16,6 +16,11 @@ You do not need to understand how the backend parses the registry, and you do no
 
 Your job is simple: prepare the required material using the project template, then submit the PR.
 
+One more thing needs to stay clear:
+
+- approval of a registry PR does not mean the plugin will be synchronously executed over HTTP
+- the real runtime model is still “create a background job first, then let a worker trigger the runner or built-in execution layer”
+
 ## 1. Confirm You Are Actually Ready To Submit
 
 Do not rush into registration before the plugin is really ready.
@@ -84,6 +89,7 @@ Use this order. It causes the least pain:
 1. clean up the plugin source repository first
 2. verify that `manifest.json`, README, and minimum test notes are complete
 3. verify that `requirements.txt` and minimum runner self-check notes are complete
+   - that runner self-check proves entrypoints and dependencies are sane; it does not replace the background-job execution path
 4. fork the official registry repository, or modify the project branch specified by maintainers
 5. add the registry entry file using the provided template
 6. open the PR and clearly write the repository URL, docs URL, and risk notes

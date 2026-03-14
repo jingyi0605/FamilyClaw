@@ -16,6 +16,12 @@ The rules here follow the validation logic that already exists in the repository
 - `apps/api-server/app/modules/plugin/schemas.py`
 - The built-in plugin examples under `apps/api-server/app/plugins/builtin/`
 
+One boundary must stay explicit:
+
+- `manifest.json` declares what the plugin is, where entrypoints live, and how risky it is
+- it does not replace the background-job model
+- external execution now creates a `plugin_job` first instead of using `manifest` as a reason to synchronously finish the whole plugin call
+
 ## 1. Minimum Example For Version One
 
 ```json

@@ -16,6 +16,12 @@
 - `apps/api-server/app/modules/plugin/schemas.py`
 - `apps/api-server/app/plugins/builtin/` 里的现有内置插件
 
+这里顺手再把边界说死：
+
+- `manifest.json` 负责声明插件是什么、入口在哪、风险多高
+- 它不负责替代后台任务模型
+- 对外执行现在默认先创建 `plugin_job`，而不是根据 `manifest` 直接同步跑完整插件
+
 ## 1. 第一版最小示例
 
 ```json
