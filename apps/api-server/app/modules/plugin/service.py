@@ -20,7 +20,7 @@ from app.modules.memory.service import upsert_plugin_observation_memory
 from app.modules.region.plugin_runtime import get_runtime_region_provider_spec, sync_household_plugin_region_providers
 from app.modules.region.service import resolve_household_region_context
 from app.modules.plugin.executors import get_executor, load_entrypoint_callable, resolve_execution_backend
-from app.modules.plugin import repository
+from . import repository
 from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun
 from app.modules.plugin.runner_errors import PLUGIN_EXECUTION_FAILED, PluginRunnerError
 from app.modules.plugin.schemas import PluginManifest
