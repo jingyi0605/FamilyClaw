@@ -769,12 +769,19 @@ export type AgentMemberCognition = {
   updated_at: string;
 };
 
+export type AgentAutonomousActionPolicy = {
+  memory: "ask" | "notify" | "auto";
+  config: "ask" | "notify" | "auto";
+  action: "ask" | "notify" | "auto";
+};
+
 export type AgentRuntimePolicy = {
   agent_id: string;
   conversation_enabled: boolean;
   default_entry: boolean;
   routing_tags: string[];
   memory_scope: Record<string, unknown> | null;
+  autonomous_action_policy: AgentAutonomousActionPolicy;
   updated_at: string;
 };
 
@@ -844,6 +851,7 @@ export type AgentRuntimePolicyUpsertPayload = {
   default_entry: boolean;
   routing_tags: string[];
   memory_scope: Record<string, unknown> | null;
+  autonomous_action_policy: AgentAutonomousActionPolicy;
 };
 
 export type AiCapabilityRoute = {

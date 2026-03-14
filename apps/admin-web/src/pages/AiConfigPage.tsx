@@ -115,6 +115,9 @@ export function AiConfigPage() {
     default_entry: false,
     routing_tags_text: "",
     memory_scope_json: "{}",
+    memory_action_level: "ask" as "ask" | "notify" | "auto",
+    config_action_level: "ask" as "ask" | "notify" | "auto",
+    operation_action_level: "ask" as "ask" | "notify" | "auto",
   });
   const [cognitionForm, setCognitionForm] = useState<AgentCognitionFormItem[]>([]);
 
@@ -144,6 +147,9 @@ export function AiConfigPage() {
         default_entry: false,
         routing_tags_text: "",
         memory_scope_json: "{}",
+        memory_action_level: "ask",
+        config_action_level: "ask",
+        operation_action_level: "ask",
       });
       setCognitionForm([]);
       return;
@@ -164,6 +170,9 @@ export function AiConfigPage() {
       default_entry: nextDetail.runtime_policy?.default_entry ?? false,
       routing_tags_text: (nextDetail.runtime_policy?.routing_tags ?? []).join(", "),
       memory_scope_json: stringifyJson(nextDetail.runtime_policy?.memory_scope ?? {}),
+      memory_action_level: nextDetail.runtime_policy?.autonomous_action_policy?.memory ?? "ask",
+      config_action_level: nextDetail.runtime_policy?.autonomous_action_policy?.config ?? "ask",
+      operation_action_level: nextDetail.runtime_policy?.autonomous_action_policy?.action ?? "ask",
     });
 
     setCognitionForm(
@@ -313,6 +322,11 @@ export function AiConfigPage() {
           .map((item) => item.trim())
           .filter(Boolean),
         memory_scope: parseJsonObject(policyForm.memory_scope_json, "记忆范围"),
+        autonomous_action_policy: {
+          memory: policyForm.memory_action_level,
+          config: policyForm.config_action_level,
+          action: policyForm.operation_action_level,
+        },
       });
       await Promise.all([refreshAgents(), loadAgentDetail(selectedAgentId)]);
       setMessage({ tone: "success", text: "运行时策略已保存。" });
@@ -500,7 +514,7 @@ export function AiConfigPage() {
 
       <PageSection
         title="运行时策略"
-        description="这里控制该 Agent 是否能出现在对话入口，以及默认入口和路由标签。"
+        description="这里控制该 Agent 能不能进入对话，以及 AI 识别出动作后是先问、先做再通知，还是直接自动执行。"
         actions={
           <button type="button" onClick={() => void handleSavePolicy()} disabled={!selectedAgentId || savingPolicy}>
             {savingPolicy ? "保存中..." : "保存策略"}
@@ -531,6 +545,39 @@ export function AiConfigPage() {
               onChange={(event) => setPolicyForm((current) => ({ ...current, routing_tags_text: event.target.value }))}
               placeholder="例如：家庭综合, 饮食, 运动"
             />
+          </label>
+          <label>
+            记忆动作
+            <select
+              value={policyForm.memory_action_level}
+              onChange={(event) => setPolicyForm((current) => ({ ...current, memory_action_level: event.target.value as "ask" | "notify" | "auto" }))}
+            >
+              <option value="ask">先问我，再写入</option>
+              <option value="notify">先写入，再通知我</option>
+              <option value="auto">自动写入，只留痕</option>
+            </select>
+          </label>
+          <label>
+            配置建议
+            <select
+              value={policyForm.config_action_level}
+              onChange={(event) => setPolicyForm((current) => ({ ...current, config_action_level: event.target.value as "ask" | "notify" | "auto" }))}
+            >
+              <option value="ask">先问我，再修改</option>
+              <option value="notify">先修改，再通知我</option>
+              <option value="auto">自动修改，只留痕</option>
+            </select>
+          </label>
+          <label>
+            提醒和后续动作
+            <select
+              value={policyForm.operation_action_level}
+              onChange={(event) => setPolicyForm((current) => ({ ...current, operation_action_level: event.target.value as "ask" | "notify" | "auto" }))}
+            >
+              <option value="ask">先问我，再执行</option>
+              <option value="notify">先执行，再通知我</option>
+              <option value="auto">自动执行，只留痕</option>
+            </select>
           </label>
         </div>
         <label>

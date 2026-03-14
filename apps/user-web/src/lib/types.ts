@@ -476,6 +476,9 @@ export type ConversationMessageRole = 'user' | 'assistant' | 'system';
 export type ConversationMessageType = 'text' | 'error' | 'memory_candidate_notice';
 export type ConversationMessageStatus = 'pending' | 'streaming' | 'completed' | 'failed';
 export type ConversationCandidateStatus = 'pending_review' | 'confirmed' | 'dismissed';
+export type ConversationActionCategory = 'memory' | 'config' | 'action';
+export type ConversationActionPolicyMode = 'ask' | 'notify' | 'auto';
+export type ConversationActionStatus = 'pending_confirmation' | 'completed' | 'failed' | 'dismissed' | 'undone' | 'undo_failed';
 
 export type ConversationMessage = {
   id: string;
@@ -512,6 +515,29 @@ export type ConversationMemoryCandidate = {
   updated_at: string;
 };
 
+export type ConversationActionRecord = {
+  id: string;
+  session_id: string;
+  request_id: string | null;
+  trigger_message_id: string | null;
+  source_message_id: string | null;
+  intent: string;
+  action_category: ConversationActionCategory;
+  action_name: string;
+  policy_mode: ConversationActionPolicyMode;
+  status: ConversationActionStatus;
+  title: string;
+  summary: string | null;
+  target_ref: string | null;
+  plan_payload: Record<string, unknown>;
+  result_payload: Record<string, unknown>;
+  undo_payload: Record<string, unknown>;
+  created_at: string;
+  executed_at: string | null;
+  undone_at: string | null;
+  updated_at: string;
+};
+
 export type ConversationSession = {
   id: string;
   household_id: string;
@@ -532,6 +558,7 @@ export type ConversationSession = {
 export type ConversationSessionDetail = ConversationSession & {
   messages: ConversationMessage[];
   memory_candidates: ConversationMemoryCandidate[];
+  action_records: ConversationActionRecord[];
 };
 
 export type ConversationSessionListResponse = {
@@ -553,6 +580,16 @@ export type ConversationTurnResponse = {
 export type ConversationMemoryCandidateActionResponse = {
   candidate: ConversationMemoryCandidate;
   memory_card_id: string | null;
+};
+
+export type ConversationActionExecutionResponse = {
+  action: ConversationActionRecord;
+};
+
+export type AgentAutonomousActionPolicy = {
+  memory: 'ask' | 'notify' | 'auto';
+  config: 'ask' | 'notify' | 'auto';
+  action: 'ask' | 'notify' | 'auto';
 };
 
 export type AgentType = 'butler' | 'nutritionist' | 'fitness_coach' | 'study_coach' | 'custom';
@@ -594,6 +631,7 @@ export type AgentRuntimePolicy = {
   default_entry: boolean;
   routing_tags: string[];
   memory_scope: Record<string, unknown> | null;
+  autonomous_action_policy: AgentAutonomousActionPolicy;
   updated_at: string;
 };
 

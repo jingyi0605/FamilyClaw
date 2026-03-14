@@ -1636,6 +1636,92 @@ input, select, textarea {
   flex-wrap: wrap;
 }
 
+.message__action-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  width: 100%;
+}
+
+.message__action-card {
+  width: 100%;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.88);
+  padding: 0.875rem 1rem;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+}
+
+.message__action-card--ask {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: rgba(255, 251, 235, 0.95);
+}
+
+.message__action-card--notify {
+  border-color: rgba(59, 130, 246, 0.18);
+  background: rgba(239, 246, 255, 0.92);
+}
+
+.message__action-card--auto {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(248, 250, 252, 0.95);
+}
+
+.message__action-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-primary);
+}
+
+.message__action-icon {
+  font-size: 1rem;
+}
+
+.message__action-text {
+  margin: 0.5rem 0 0;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message__action-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #475569;
+}
+
+.message__action-icons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.message__action-icon-btn {
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  cursor: pointer;
+}
+
+.message__action-details {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.message__action-detail-row {
+  padding-top: 0.625rem;
+  border-top: 1px dashed rgba(148, 163, 184, 0.28);
+}
+
 .msg-action-btn {
   font-size: 0.75rem;
   color: var(--text-secondary);
@@ -1793,6 +1879,16 @@ input, select, textarea {
   display: flex;
   justify-content: space-between;
   padding: var(--spacing-sm) 0;
+}
+
+.context-memory-item--block {
+  display: block;
+}
+
+.context-memory-item__sub {
+  margin-top: 0.35rem;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
 }
 
 .context-item__label {

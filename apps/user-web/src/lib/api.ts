@@ -13,6 +13,7 @@ import type {
   AiProviderProfileUpdatePayload,
   ContextConfigRead,
   ContextOverviewRead,
+  ConversationActionExecutionResponse,
   ConversationMemoryCandidateActionResponse,
   ConversationSessionDetail,
   ConversationSessionListResponse,
@@ -560,10 +561,10 @@ export const api = {
     if (params.requester_member_id) {
       query.set('requester_member_id', params.requester_member_id);
     }
-    return request<ConversationSessionListResponse>(`/conversations/sessions?${query.toString()}`);
+    return request<ConversationSessionListResponse>(`/conversations/sessions?${query.toString()}`, undefined, 20000);
   },
   getConversationSession(sessionId: string) {
-    return request<ConversationSessionDetail>(`/conversations/sessions/${encodeURIComponent(sessionId)}`);
+    return request<ConversationSessionDetail>(`/conversations/sessions/${encodeURIComponent(sessionId)}`, undefined, 20000);
   },
   createConversationTurn(sessionId: string, payload: {
     message: string;
@@ -584,6 +585,24 @@ export const api = {
   dismissConversationMemoryCandidate(candidateId: string) {
     return request<ConversationMemoryCandidateActionResponse>(
       `/conversations/memory-candidates/${encodeURIComponent(candidateId)}/dismiss`,
+      { method: 'POST' },
+    );
+  },
+  confirmConversationAction(actionId: string) {
+    return request<ConversationActionExecutionResponse>(
+      `/conversations/actions/${encodeURIComponent(actionId)}/confirm`,
+      { method: 'POST' },
+    );
+  },
+  dismissConversationAction(actionId: string) {
+    return request<ConversationActionExecutionResponse>(
+      `/conversations/actions/${encodeURIComponent(actionId)}/dismiss`,
+      { method: 'POST' },
+    );
+  },
+  undoConversationAction(actionId: string) {
+    return request<ConversationActionExecutionResponse>(
+      `/conversations/actions/${encodeURIComponent(actionId)}/undo`,
       { method: 'POST' },
     );
   },

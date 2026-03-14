@@ -44,6 +44,9 @@ export function AgentConfigPanel({ householdId, compact = false, onlyButler = fa
     conversationEnabled: true,
     defaultEntry: false,
     routingTags: '',
+    memoryActionLevel: 'ask' as 'ask' | 'notify' | 'auto',
+    configActionLevel: 'ask' as 'ask' | 'notify' | 'auto',
+    operationActionLevel: 'ask' as 'ask' | 'notify' | 'auto',
   });
   const [cognitionForm, setCognitionForm] = useState<Record<string, {
     displayAddress: string;
@@ -77,6 +80,9 @@ export function AgentConfigPanel({ householdId, compact = false, onlyButler = fa
       conversationEnabled: result.runtime_policy?.conversation_enabled ?? true,
       defaultEntry: result.runtime_policy?.default_entry ?? false,
       routingTags: stringifyTags(result.runtime_policy?.routing_tags ?? []),
+      memoryActionLevel: result.runtime_policy?.autonomous_action_policy?.memory ?? 'ask',
+      configActionLevel: result.runtime_policy?.autonomous_action_policy?.config ?? 'ask',
+      operationActionLevel: result.runtime_policy?.autonomous_action_policy?.action ?? 'ask',
     });
     setCognitionForm(Object.fromEntries(result.member_cognitions.map(item => [
       item.member_id,
@@ -262,6 +268,11 @@ export function AgentConfigPanel({ householdId, compact = false, onlyButler = fa
         default_entry: runtimeForm.defaultEntry,
         routing_tags: parseTags(runtimeForm.routingTags),
         memory_scope: null,
+        autonomous_action_policy: {
+          memory: runtimeForm.memoryActionLevel,
+          config: runtimeForm.configActionLevel,
+          action: runtimeForm.operationActionLevel,
+        },
       });
       setStatus('运行时策略已保存。');
       await reload(detail.id);
@@ -410,6 +421,32 @@ export function AgentConfigPanel({ householdId, compact = false, onlyButler = fa
                       <label className="setup-choice"><input type="checkbox" checked={runtimeForm.defaultEntry} onChange={event => setRuntimeForm(current => ({ ...current, defaultEntry: event.target.checked }))} /> <span>设为默认入口</span></label>
                     </div>
                     <div className="form-group"><label>路由标签</label><input className="form-input" value={runtimeForm.routingTags} onChange={event => setRuntimeForm(current => ({ ...current, routingTags: event.target.value }))} /></div>
+                    <div className="form-grid">
+                      <div className="form-group">
+                        <label>记忆动作怎么处理</label>
+                        <select className="form-select" value={runtimeForm.memoryActionLevel} onChange={event => setRuntimeForm(current => ({ ...current, memoryActionLevel: event.target.value as 'ask' | 'notify' | 'auto' }))}>
+                          <option value="ask">先问我，再写入</option>
+                          <option value="notify">先执行，再通知我</option>
+                          <option value="auto">自动执行，只留痕</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label>配置建议怎么处理</label>
+                        <select className="form-select" value={runtimeForm.configActionLevel} onChange={event => setRuntimeForm(current => ({ ...current, configActionLevel: event.target.value as 'ask' | 'notify' | 'auto' }))}>
+                          <option value="ask">先问我，再修改</option>
+                          <option value="notify">先修改，再通知我</option>
+                          <option value="auto">自动修改，只留痕</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label>提醒和后续动作怎么处理</label>
+                        <select className="form-select" value={runtimeForm.operationActionLevel} onChange={event => setRuntimeForm(current => ({ ...current, operationActionLevel: event.target.value as 'ask' | 'notify' | 'auto' }))}>
+                          <option value="ask">先问我，再执行</option>
+                          <option value="notify">先执行，再通知我</option>
+                          <option value="auto">自动执行，只留痕</option>
+                        </select>
+                      </div>
+                    </div>
                     <div className="setup-form-actions"><button type="button" className="btn btn--primary" onClick={() => void handleSaveRuntime()} disabled={saving}>保存运行时策略</button></div>
                   </Card>
 
