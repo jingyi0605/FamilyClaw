@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.household.models import Household
 from app.modules.region.models import HouseholdRegionBinding, RegionNode
+from app.modules.region.providers import (
+    BUILTIN_CN_MAINLAND_COUNTRY,
+    BUILTIN_CN_MAINLAND_PROVIDER,
+    RegionProvider,
+    region_provider_registry,
+)
 from app.modules.region.schemas import (
     HouseholdRegionErrorRead,
     HouseholdRegionRead,
@@ -18,8 +25,6 @@ from app.modules.region.schemas import (
     RegionSelection,
 )
 
-BUILTIN_CN_MAINLAND_PROVIDER = "builtin.cn-mainland"
-BUILTIN_CN_MAINLAND_COUNTRY = "CN"
 DISTRICT_LEVEL = "district"
 
 
@@ -115,20 +120,12 @@ def list_region_catalog(
     parent_region_code: str | None = None,
     admin_level: str | None = None,
 ) -> list[RegionNodeRead]:
-    _ensure_builtin_cn_supported(provider_code=provider_code, country_code=country_code)
-    statement = select(RegionNode).where(
-        RegionNode.provider_code == provider_code,
-        RegionNode.country_code == country_code,
-        RegionNode.enabled.is_(True),
+    provider = _require_provider(provider_code=provider_code, country_code=country_code)
+    return provider.list_children(
+        db,
+        parent_region_code=parent_region_code,
+        admin_level=admin_level,
     )
-    if parent_region_code is None:
-        statement = statement.where(RegionNode.parent_region_code.is_(None))
-    else:
-        statement = statement.where(RegionNode.parent_region_code == parent_region_code)
-    if admin_level:
-        statement = statement.where(RegionNode.admin_level == admin_level)
-    rows = db.scalars(statement.order_by(RegionNode.region_code.asc())).all()
-    return [_to_region_node_read(row) for row in rows]
 
 
 def search_region_catalog(
@@ -140,7 +137,6 @@ def search_region_catalog(
     admin_level: str | None = None,
     parent_region_code: str | None = None,
 ) -> list[RegionNodeRead]:
-    _ensure_builtin_cn_supported(provider_code=provider_code, country_code=country_code)
     normalized_keyword = keyword.strip()
     if not normalized_keyword:
         raise RegionServiceError(
@@ -148,22 +144,13 @@ def search_region_catalog(
             error_code="region_keyword_required",
             field="keyword",
         )
-    like_value = f"%{normalized_keyword.lower()}%"
-    statement = select(RegionNode).where(
-        RegionNode.provider_code == provider_code,
-        RegionNode.country_code == country_code,
-        RegionNode.enabled.is_(True),
-        or_(
-            func.lower(RegionNode.name).like(like_value),
-            func.lower(RegionNode.full_name).like(like_value),
-        ),
+    provider = _require_provider(provider_code=provider_code, country_code=country_code)
+    return provider.search(
+        db,
+        keyword=normalized_keyword,
+        admin_level=admin_level,
+        parent_region_code=parent_region_code,
     )
-    if admin_level:
-        statement = statement.where(RegionNode.admin_level == admin_level)
-    if parent_region_code:
-        statement = statement.where(RegionNode.parent_region_code == parent_region_code)
-    rows = db.scalars(statement.order_by(RegionNode.region_code.asc()).limit(50)).all()
-    return [_to_region_node_read(row) for row in rows]
 
 
 def get_household_region_binding(db: Session, household_id: str) -> HouseholdRegionBinding | None:
@@ -181,14 +168,14 @@ def upsert_household_region(
     selection: RegionSelection,
     source: str,
 ) -> HouseholdRegionBinding:
-    _ensure_builtin_cn_supported(
+    provider = _require_provider(
         provider_code=selection.provider_code,
         country_code=selection.country_code,
     )
     region_node = _get_region_node_or_raise(
         db,
-        provider_code=selection.provider_code,
-        country_code=selection.country_code,
+        provider_code=provider.provider_code,
+        country_code=provider.country_code,
         region_code=selection.region_code,
     )
     if region_node.admin_level != DISTRICT_LEVEL:
@@ -198,7 +185,11 @@ def upsert_household_region(
             field="region_selection.region_code",
         )
 
-    snapshot = _build_snapshot_from_node(region_node)
+    snapshot = _build_snapshot(provider=provider, node=region_node)
+    province = cast(dict[str, str], snapshot["province"])
+    city = cast(dict[str, str], snapshot["city"])
+    district = cast(dict[str, str], snapshot["district"])
+    display_name = cast(str, snapshot["display_name"])
     existing = db.get(HouseholdRegionBinding, household.id)
     if existing is None:
         existing = HouseholdRegionBinding(
@@ -207,13 +198,13 @@ def upsert_household_region(
             country_code=selection.country_code,
             region_code=selection.region_code,
             admin_level=DISTRICT_LEVEL,
-            province_code=snapshot["province"]["code"],
-            province_name=snapshot["province"]["name"],
-            city_code=snapshot["city"]["code"],
-            city_name=snapshot["city"]["name"],
-            district_code=snapshot["district"]["code"],
-            district_name=snapshot["district"]["name"],
-            display_name=snapshot["display_name"],
+            province_code=province["code"],
+            province_name=province["name"],
+            city_code=city["code"],
+            city_name=city["name"],
+            district_code=district["code"],
+            district_name=district["name"],
+            display_name=display_name,
             snapshot=dump_json(snapshot) or "{}",
             source=source,
         )
@@ -222,16 +213,16 @@ def upsert_household_region(
         existing.country_code = selection.country_code
         existing.region_code = selection.region_code
         existing.admin_level = DISTRICT_LEVEL
-        existing.province_code = snapshot["province"]["code"]
-        existing.province_name = snapshot["province"]["name"]
-        existing.city_code = snapshot["city"]["code"]
-        existing.city_name = snapshot["city"]["name"]
-        existing.district_code = snapshot["district"]["code"]
-        existing.district_name = snapshot["district"]["name"]
-        existing.display_name = snapshot["display_name"]
+        existing.province_code = province["code"]
+        existing.province_name = province["name"]
+        existing.city_code = city["code"]
+        existing.city_name = city["name"]
+        existing.district_code = district["code"]
+        existing.district_name = district["name"]
+        existing.display_name = display_name
         existing.snapshot = dump_json(snapshot) or "{}"
         existing.source = source
-    household.city = snapshot["display_name"]
+    household.city = display_name
     db.add(household)
     db.add(existing)
     return existing
@@ -243,12 +234,14 @@ def get_household_region_context(db: Session, household_id: str) -> HouseholdReg
         return HouseholdRegionRead(status="unconfigured")
 
     snapshot = load_json(binding.snapshot) or {}
+    provider = region_provider_registry.get(binding.provider_code)
+    status_value = "configured" if provider is not None else "provider_unavailable"
     return HouseholdRegionRead(
-        status="configured",
+        status=status_value,
         provider_code=binding.provider_code,
         country_code=binding.country_code,
         region_code=binding.region_code,
-        admin_level=binding.admin_level,
+        admin_level=cast(Any, binding.admin_level),
         province=_to_region_ref(snapshot.get("province")),
         city=_to_region_ref(snapshot.get("city")),
         district=_to_region_ref(snapshot.get("district")),
@@ -269,21 +262,23 @@ def resolve_household_region_context(db: Session, household_id: str) -> Househol
     return HouseholdRegionErrorRead(**context.model_dump())
 
 
-def _ensure_builtin_cn_supported(*, provider_code: str, country_code: str) -> None:
-    if provider_code != BUILTIN_CN_MAINLAND_PROVIDER:
+def _require_provider(*, provider_code: str, country_code: str) -> RegionProvider:
+    provider = region_provider_registry.get(provider_code)
+    if provider is None:
         raise RegionServiceError(
             detail=f"不支持的地区提供方: {provider_code}",
             error_code="region_provider_not_found",
             field="provider_code",
             status_code=status.HTTP_404_NOT_FOUND,
         )
-    if country_code != BUILTIN_CN_MAINLAND_COUNTRY:
+    if provider.country_code != country_code:
         raise RegionServiceError(
-            detail=f"当前只支持 {BUILTIN_CN_MAINLAND_COUNTRY}",
+            detail=f"提供方 {provider_code} 当前只支持 {provider.country_code}",
             error_code="region_country_not_supported",
             field="country_code",
             status_code=status.HTTP_400_BAD_REQUEST,
         )
+    return provider
 
 
 def _get_region_node_or_raise(
@@ -293,14 +288,8 @@ def _get_region_node_or_raise(
     country_code: str,
     region_code: str,
 ) -> RegionNode:
-    row = db.scalar(
-        select(RegionNode).where(
-            RegionNode.provider_code == provider_code,
-            RegionNode.country_code == country_code,
-            RegionNode.region_code == region_code,
-            RegionNode.enabled.is_(True),
-        )
-    )
+    provider = _require_provider(provider_code=provider_code, country_code=country_code)
+    row = provider.resolve(db, region_code=region_code)
     if row is None:
         raise RegionServiceError(
             detail=f"地区编码不存在: {region_code}",
@@ -311,7 +300,7 @@ def _get_region_node_or_raise(
     return row
 
 
-def _build_snapshot_from_node(node: RegionNode) -> dict[str, object]:
+def _build_snapshot(*, provider: RegionProvider, node: RegionNode) -> dict[str, object]:
     path_codes = load_json(node.path_codes) or []
     path_names = load_json(node.path_names) or []
     if len(path_codes) < 3 or len(path_names) < 3:
@@ -320,17 +309,7 @@ def _build_snapshot_from_node(node: RegionNode) -> dict[str, object]:
             error_code="region_parent_mismatch",
             field="region_selection.region_code",
         )
-    return {
-        "provider_code": node.provider_code,
-        "country_code": node.country_code,
-        "region_code": node.region_code,
-        "admin_level": node.admin_level,
-        "province": {"code": path_codes[0], "name": path_names[0]},
-        "city": {"code": path_codes[1], "name": path_names[1]},
-        "district": {"code": path_codes[2], "name": path_names[2]},
-        "display_name": f"{path_names[0]} {path_names[2]}",
-        "timezone": node.timezone,
-    }
+    return provider.build_snapshot(node)
 
 
 def _to_region_ref(value: object | None) -> RegionNodeRefRead | None:
@@ -349,7 +328,7 @@ def _to_region_node_read(row: RegionNode) -> RegionNodeRead:
         country_code=row.country_code,
         region_code=row.region_code,
         parent_region_code=row.parent_region_code,
-        admin_level=row.admin_level,
+        admin_level=cast(Any, row.admin_level),
         name=row.name,
         full_name=row.full_name,
         path_codes=load_json(row.path_codes) or [],

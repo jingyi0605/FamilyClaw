@@ -3,11 +3,13 @@
 ## 文档元数据
 
 - 文档目的：明确 `manifest.json` 的字段定义、硬约束、推荐写法和当前实现边界，避免开发者靠猜。
-- 当前版本：v1.1
+- 当前版本：v1.2
 - 关联文档：`docs/开发者文档/插件开发/zh-CN/01-插件开发总览.md`、`docs/开发者文档/插件开发/zh-CN/02-插件开发环境与本地调试.md`、`docs/开发者文档/插件开发/zh-CN/04-插件目录结构规范.md`、`apps/api-server/app/modules/plugin/schemas.py`
 - 修改记录：
   - `2026-03-13`：创建首版 manifest 字段规范。
   - `2026-03-13`：调整为按阅读顺序编号，并补充文档元数据。
+  - `2026-03-14`：新增 `locale-pack` 类型和 `locales` 字段说明。
+  - `2026-03-14`：补充地区上下文读取声明和地区 provider 预留字段。
 
 这份文档就是把 `manifest.json` 说透，不让开发者靠猜。
 
@@ -50,6 +52,18 @@
 
 注意：`description`、`vendor` 现在是规范建议字段，不是现有运行时硬校验字段。你可以先写上，后续注册表和市场都会用到。
 
+如果插件需要正式读取家庭地区上下文，可以再补一段：
+
+```json
+{
+  "capabilities": {
+    "context_reads": {
+      "household_region_context": true
+    }
+  }
+}
+```
+
 ## 2. 字段逐项说明
 
 ### `id`
@@ -88,13 +102,20 @@
 
 - 必填
 - 类型：`string[]`
-- 规则：至少 1 个；不能重复；只能是这 4 个值：
+- 规则：至少 1 个；不能重复；只能是这 5 个值：
   - `connector`
   - `memory-ingestor`
   - `action`
   - `agent-skill`
+  - `locale-pack`
 
-别扩新类型。现在仓库不认。
+其中前 4 个是可执行插件类型，`locale-pack` 是语言包插件类型。
+
+它的边界也要说死：
+
+- `locale-pack` 不走 worker，不创建后台执行任务
+- 它的作用只是把语言元数据和文案资源注册进系统
+- 比如繁体中文这种界面文案扩展，就应该用它，不要硬塞进 `action` 或 `agent-skill`
 
 ### `permissions`
 
@@ -134,10 +155,10 @@
 
 ### `entrypoints`
 
-- 必填
+- 对可执行插件必填；纯 `locale-pack` 插件可以留空对象
 - 类型：`object`
 - 规则：值必须是“模块路径 + 函数名”，而且能被真实 import 到
-- 规则：你声明了什么 `types`，这里就必须给对应入口
+- 规则：你声明了什么可执行类型，这里就必须给对应入口
 
 支持的 key：
 
@@ -168,6 +189,38 @@
 
 第一个少了函数名，第二个也少了函数名。
 
+### `locales`
+
+- 只有 `locale-pack` 插件可用
+- 类型：`object[]`
+- 规则：声明了 `locale-pack` 就至少要有 1 个 locale
+
+每一项至少包含：
+
+- `id`：语言 id，比如 `zh-TW`
+- `label`：给通用界面或后台展示用的语言名，比如 `Traditional Chinese`
+- `native_label`：给用户看的本地名称，比如 `繁體中文`
+- `resource`：语言资源相对路径，比如 `locales/zh-TW.json`
+- `fallback`：可选，缺失翻译时要回退到哪个语言，比如 `zh-CN`
+
+最小示例：
+
+```json
+{
+  "types": ["locale-pack"],
+  "entrypoints": {},
+  "locales": [
+    {
+      "id": "zh-TW",
+      "label": "Traditional Chinese",
+      "native_label": "繁體中文",
+      "resource": "locales/zh-TW.json",
+      "fallback": "zh-CN"
+    }
+  ]
+}
+```
+
 ### `description`
 
 - 选填，但强烈建议填写
@@ -188,6 +241,49 @@
 
 第一版不强制结构冻结，但必须让人能联系到维护者。
 
+### `capabilities`
+
+- 选填
+- 类型：`object`
+- 用途：声明插件要读取哪些受控上下文，以及预留哪些扩展能力字段
+
+当前这轮正式可用的只有一项：
+
+- `context_reads.household_region_context: true`
+
+写了这项以后，系统会在插件执行时把家庭地区上下文放进 `payload._system_context.region.household_context`。
+
+这一项不是让插件直接查数据库，而是走正式入口：
+
+- 受控入口名：`region.resolve_household_context`
+
+示例：
+
+```json
+{
+  "capabilities": {
+    "context_reads": {
+      "household_region_context": true
+    }
+  }
+}
+```
+
+另外还有一组这轮先预留、不直接开放运行的字段：
+
+- `capabilities.region_provider.provider_code`
+- `capabilities.region_provider.country_codes`
+- `capabilities.region_provider.entrypoint`
+- `capabilities.region_provider.reserved`
+
+这组字段的意思很直接：
+
+- 让开发者先按统一格式声明“我未来想提供哪个地区 provider”
+- 让 schema、文档和注册表先有稳定位置
+- 但这轮主服务不会直接加载第三方地区 provider 去接管地区目录
+
+别自欺欺人：现在能正式用的是“读取家庭地区上下文”，不是“第三方地区 provider 已经开放运行”。
+
 ## 3. 类型和入口最小对照
 
 | 类型 | 推荐模块 | 推荐函数 | 说明 |
@@ -196,6 +292,7 @@
 | `memory-ingestor` | `ingestor.py` | `transform` | 原始记录转标准记忆 |
 | `action` | `executor.py` | `run` | 执行动作 |
 | `agent-skill` | `skill.py` | `run` | 暴露给 Agent 的受控能力 |
+| `locale-pack` | `locales/*.json` | 无 | 注册界面语言和文案资源 |
 
 ## 4. 跟现有实现直接相关的硬约束
 
@@ -203,10 +300,12 @@
 
 1. `id` 不能重复，插件注册中心会拒绝重复插件 id。
 2. `manifest.json` 顶层必须是对象，不能是数组。
-3. `entrypoints` 指到的函数必须可调用。
-4. `types` 中每一种能力都必须有对应入口。
+3. 可执行插件的 `entrypoints` 指到的函数必须可调用。
+4. `types` 中每一种可执行能力都必须有对应入口；`locale-pack` 不需要 Python 入口。
 5. Agent 统一入口当前只允许 `connector` 和 `agent-skill`。
 6. `action` 插件还要额外过权限检查；高风险动作还要人工确认。
+7. `locale-pack` 至少要声明一个 `locales` 项，而且 `resource` 必须是插件目录内的相对路径。
+7. 如果插件要读家庭地区上下文，必须显式声明 `capabilities.context_reads.household_region_context=true`。
 
 ## 5. 第一版先不要写进 manifest 的东西
 
@@ -217,17 +316,19 @@
 - 沙箱策略配置
 - 全量签名验证字段
 - 市场前端展示布局元数据
+- 把第三方地区 provider 说成“现在已经能直接运行”的宣传字段
 
 一句话：先把运行声明写清楚，不要把还没实现的开放平台概念硬塞进去。
 
 ## 6. 开发者提交前自检
 
 1. `id` 是否满足字符规则？
-2. `types` 是否只用了当前支持的 4 类？
-3. `entrypoints` 是否每一项都能 import 到真实函数？
+2. `types` 是否只用了当前支持的 5 类？
+3. 如果是可执行插件，`entrypoints` 是否每一项都能 import 到真实函数？
 4. `permissions` 是否最小化，而不是乱申请？
 5. `risk_level` 是否和插件真实风险匹配？
 6. 如果是 `action`，是否已经明确风险和权限边界？
-7. 有没有偷偷依赖远程安装、远程执行、沙箱、签名平台？
+7. 如果是 `locale-pack`，是否已经提供 `locales/*.json` 这类真实资源文件，并写清回退语言？
+8. 有没有偷偷依赖远程安装、远程执行、沙箱、签名平台？
 
 这些都过了，再去准备注册表材料。

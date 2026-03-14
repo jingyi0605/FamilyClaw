@@ -56,6 +56,42 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertIn("version", str(context.exception))
 
+    def test_manifest_accepts_region_context_capability_and_reserved_region_provider_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "region-context-plugin",
+                        "name": "地区上下文插件",
+                        "version": "0.1.0",
+                        "types": ["connector"],
+                        "permissions": ["region.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "capabilities": {
+                            "context_reads": {"household_region_context": True},
+                            "region_provider": {
+                                "provider_code": "plugin.future-region-provider",
+                                "country_codes": ["JP", "US"],
+                                "entrypoint": "plugin.region_provider.build",
+                                "reserved": True,
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        self.assertTrue(manifest.capabilities.context_reads.household_region_context)
+        assert manifest.capabilities.region_provider is not None
+        self.assertEqual("plugin.future-region-provider", manifest.capabilities.region_provider.provider_code)
+        self.assertEqual(["JP", "US"], manifest.capabilities.region_provider.country_codes)
+
     def test_discover_builtin_manifests(self) -> None:
         manifests = discover_plugin_manifests(self.builtin_root)
 

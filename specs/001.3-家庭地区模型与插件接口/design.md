@@ -85,6 +85,12 @@
 3. 服务返回标准地区上下文，包括国家、提供方、当前节点、上级路径、兼容展示名。
 4. 天气、地区问答等插件只消费这个上下文，不再自己读 `households.city` 做字符串猜测。
 
+这轮再加一条落地规则：
+
+- 插件必须在 `manifest.capabilities.context_reads.household_region_context=true` 后，才能拿到系统注入的地区上下文。
+- 系统注入位置统一是 `payload._system_context.region.household_context`。
+- 受控入口名统一叫 `region.resolve_household_context`。
+
 #### 2.3.4 新地区提供方接入
 
 1. 新提供方按统一 `RegionProvider` 接口声明 `provider_code`、支持国家和目录查询能力。
@@ -96,6 +102,7 @@
 
 - 第一版先把 `RegionProvider` 作为后端内部扩展点收好
 - 对外开放第三方地区提供方之前，必须先把 `specs/004.3-插件开发规范与注册表/` 里的 manifest 和注册规则补齐
+- 这轮只把 manifest / schema / registry 的位置留好，不直接开放第三方地区 provider 运行
 
 ## 3. 组件和接口
 

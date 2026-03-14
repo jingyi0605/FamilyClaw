@@ -135,6 +135,7 @@
 | `risk_level` | string | 是 | 风险等级 | `low` / `medium` / `high` |
 | `triggers` | string[] | 是 | 插件支持的触发方式 | 第一版以手动或受控触发为主 |
 | `entrypoints` | object | 是 | 各类型对应入口 | 入口必须可定位 |
+| `capabilities` | object | 否 | 受控上下文读取和预留扩展声明 | 本轮部分字段正式可用 |
 | `description` | string | 否 | 插件用途说明 | 推荐填写 |
 | `vendor` | object | 否 | 插件维护者信息 | 推荐填写 |
 
@@ -160,8 +161,35 @@
 | `risk_level` | 只允许 `low`、`medium`、`high` | 现有权限和人工确认逻辑已经按这三档工作 |
 | `triggers` | 第一版推荐 `manual`、`schedule`、`agent` 这类可控触发 | 先把触发面收窄，别引入不可控自动执行 |
 | `entrypoints` | 每个能力类型都要能定位到真实函数 | 运行时最终就是按这里 import 并调用 |
+| `capabilities` | 声明插件要读取哪些受控系统上下文，也给未来地区 provider 等扩展点留固定位置 | 避免后面每种扩展都另发明一套字段 |
 | `description` | 推荐写一段人能看懂的话 | 方便审核和市场展示，不要求运行时依赖 |
 | `vendor` | 推荐写维护者名字、组织名、联系方式 | 方便追责、沟通和后续下架处理 |
+
+#### 3.2.1.1 `capabilities` 最小规则
+
+这轮只正式开放一个字段：
+
+- `context_reads.household_region_context`
+
+用途很直接：
+
+- 插件声明自己需要读取家庭地区上下文
+- 主服务在执行时把 `HouseholdRegionContext` 受控注入到 payload
+- 插件不再去读 `households.city` 猜地区
+
+同时再预留一组字段，先占住 schema 位置：
+
+- `region_provider.provider_code`
+- `region_provider.country_codes`
+- `region_provider.entrypoint`
+- `region_provider.reserved`
+
+这组字段现在的语义是“预留声明，不代表已经开放运行”。
+
+别把文档写假：
+
+- 这轮正式可用的是“插件读取地区上下文”
+- 这轮还没正式开放的是“第三方地区 provider 真正加载运行”
 
 #### 3.2.1.1 插件目录结构约定
 

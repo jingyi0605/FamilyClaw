@@ -65,6 +65,37 @@ class PluginManifestEntrypoints(BaseModel):
         return normalized
 
 
+class PluginManifestContextReads(BaseModel):
+    household_region_context: bool = False
+
+
+class PluginManifestRegionProviderSpec(BaseModel):
+    provider_code: str | None = None
+    country_codes: list[str] = Field(default_factory=list)
+    entrypoint: str | None = None
+    reserved: bool = True
+
+    @field_validator("provider_code", "entrypoint")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空字符串")
+        return normalized
+
+    @field_validator("country_codes")
+    @classmethod
+    def validate_country_codes(cls, value: list[str]) -> list[str]:
+        return _normalize_text_list(value, field_name="country_codes")
+
+
+class PluginManifestCapabilities(BaseModel):
+    context_reads: PluginManifestContextReads = Field(default_factory=PluginManifestContextReads)
+    region_provider: PluginManifestRegionProviderSpec | None = None
+
+
 class PluginManifest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=100)
@@ -74,6 +105,7 @@ class PluginManifest(BaseModel):
     risk_level: RiskLevel = "low"
     triggers: list[str] = Field(default_factory=list)
     entrypoints: PluginManifestEntrypoints
+    capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
 
     @field_validator("id")
     @classmethod
@@ -170,6 +202,7 @@ class PluginRegistryItem(BaseModel):
     enabled: bool
     manifest_path: str
     entrypoints: PluginManifestEntrypoints
+    capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
     source_type: PluginSourceType = "builtin"
     execution_backend: PluginExecutionBackend | None = None
     runner_config: PluginRunnerConfig | None = None
@@ -217,6 +250,7 @@ class PluginMountRead(BaseModel):
     risk_level: RiskLevel
     triggers: list[str]
     entrypoints: PluginManifestEntrypoints
+    capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
     source_type: Literal["official", "third_party"]
     execution_backend: Literal["subprocess_runner"] = "subprocess_runner"
     manifest_path: str

@@ -17,6 +17,7 @@ from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.audit.service import write_audit_log
 from app.modules.household.service import get_household_or_404
 from app.modules.memory.service import upsert_plugin_observation_memory
+from app.modules.region.service import resolve_household_region_context
 from app.modules.plugin.executors import get_executor, load_entrypoint_callable, resolve_execution_backend
 from app.modules.plugin import repository
 from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun
@@ -45,6 +46,7 @@ from app.modules.plugin.job_service import create_plugin_job
 BUILTIN_PLUGIN_ROOT = BASE_DIR / "app" / "plugins" / "builtin"
 REGISTRY_STATE_PATH = BASE_DIR / "data" / "plugin_registry_state.json"
 PLUGIN_EXECUTOR_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="plugin-worker")
+PLUGIN_SYSTEM_CONTEXT_KEY = "_system_context"
 
 
 @dataclass(slots=True)
@@ -113,6 +115,7 @@ def list_registered_plugins(
                 enabled=state_map.get(manifest.id, PluginRegistryStateEntry()).enabled,
                 manifest_path=str(manifest_path),
                 entrypoints=manifest.entrypoints,
+                capabilities=manifest.capabilities,
             )
             for manifest_path, manifest in manifest_entries
         ]
@@ -143,6 +146,7 @@ def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest
             "enabled": mount.enabled,
             "manifest_path": mount.manifest_path,
             "entrypoints": manifest.entrypoints.model_dump(mode="json"),
+            "capabilities": manifest.capabilities.model_dump(mode="json"),
             "source_type": mount.source_type,
             "execution_backend": mount.execution_backend,
             "runner_config": _build_runner_config_from_mount(mount).model_dump(mode="json"),
@@ -164,6 +168,7 @@ def _to_plugin_mount_read(row: PluginMount, *, manifest: PluginManifest | None =
             "risk_level": current_manifest.risk_level,
             "triggers": current_manifest.triggers,
             "entrypoints": current_manifest.entrypoints.model_dump(mode="json"),
+            "capabilities": current_manifest.capabilities.model_dump(mode="json"),
             "source_type": row.source_type,
             "execution_backend": row.execution_backend,
             "manifest_path": row.manifest_path,
@@ -379,6 +384,13 @@ def execute_household_plugin(
         source_type=context.source_type,
         execution_backend=context.execution_backend,
         runner_config=context.runner_config,
+        runtime_context=_build_plugin_runtime_context(
+            db,
+            household_id=household_id,
+            plugin_id=request.plugin_id,
+            root_dir=context.root_dir,
+            state_file=state_file,
+        ),
     )
 
 
@@ -416,6 +428,63 @@ def enqueue_household_plugin_job(
     )
 
 
+def _build_plugin_runtime_context(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    root_dir: str | Path | None,
+    state_file: str | Path | None,
+) -> dict[str, object] | None:
+    runtime_context: dict[str, object] = {}
+    region_context = resolve_plugin_household_region_context(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
+    if region_context is not None:
+        runtime_context["region"] = {
+            "household_context": region_context.model_dump(mode="json"),
+            "entry": "region.resolve_household_context",
+        }
+    return runtime_context or None
+
+
+def _merge_plugin_payload_with_runtime_context(
+    payload: dict[str, object],
+    runtime_context: dict[str, object] | None,
+) -> dict[str, object]:
+    merged_payload = dict(payload)
+    if runtime_context is None:
+        return merged_payload
+    merged_payload[PLUGIN_SYSTEM_CONTEXT_KEY] = runtime_context
+    return merged_payload
+
+
+def resolve_plugin_household_region_context(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+):
+    registry = list_registered_plugins_for_household(
+        db,
+        household_id=household_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
+    plugin = next((item for item in registry.items if item.id == plugin_id), None)
+    if plugin is None:
+        raise PluginExecutionError(f"插件不存在: {plugin_id}")
+    if not plugin.capabilities.context_reads.household_region_context:
+        return None
+    return resolve_household_region_context(db, household_id)
+
+
 async def aexecute_household_plugin(
     db: Session,
     *,
@@ -446,6 +515,13 @@ async def aexecute_household_plugin(
             source_type=context.source_type,
             execution_backend=context.execution_backend,
             runner_config=context.runner_config,
+            runtime_context=_build_plugin_runtime_context(
+                db,
+                household_id=household_id,
+                plugin_id=request.plugin_id,
+                root_dir=context.root_dir,
+                state_file=state_file,
+            ),
         ),
     )
 def enable_plugin(
@@ -474,6 +550,7 @@ def execute_plugin(
     source_type: PluginSourceType = "builtin",
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
+    runtime_context: dict[str, object] | None = None,
 ) -> PluginExecutionResult:
     started_at = utc_now_iso()
     run_id = new_uuid()
@@ -495,7 +572,14 @@ def execute_plugin(
 
         execution_backend = resolve_execution_backend(plugin, request)
         executor = get_executor(execution_backend)
-        output = executor.execute(plugin, request)
+        runtime_request = PluginExecutionRequest.model_validate(
+            {
+                **request.model_dump(mode="json"),
+                "payload": _merge_plugin_payload_with_runtime_context(request.payload, runtime_context),
+                "execution_backend": execution_backend,
+            }
+        )
+        output = executor.execute(plugin, runtime_request)
         return PluginExecutionResult(
             run_id=run_id,
             plugin_id=request.plugin_id,
@@ -723,6 +807,13 @@ def run_plugin_sync_pipeline(
         source_type=context.source_type,
         execution_backend=context.execution_backend,
         runner_config=context.runner_config,
+        runtime_context=_build_plugin_runtime_context(
+            db,
+            household_id=household_id,
+            plugin_id=request.plugin_id,
+            root_dir=context.root_dir,
+            state_file=state_file,
+        ),
     )
     run_row = PluginRun(
         id=execution.run_id,
@@ -835,6 +926,13 @@ async def arun_plugin_sync_pipeline(
             source_type=context.source_type,
             execution_backend=context.execution_backend,
             runner_config=context.runner_config,
+            runtime_context=_build_plugin_runtime_context(
+                db,
+                household_id=household_id,
+                plugin_id=request.plugin_id,
+                root_dir=context.root_dir,
+                state_file=state_file,
+            ),
         ),
     )
     run_row = PluginRun(
