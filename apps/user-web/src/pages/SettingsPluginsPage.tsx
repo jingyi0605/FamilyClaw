@@ -1,16 +1,55 @@
 /* ============================================================
  * 插件管理设置页
  * ============================================================ */
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useI18n } from '../i18n';
 import { Card, Section, EmptyState } from '../components/base';
 import { useHouseholdContext } from '../state/household';
 import { api, ApiError } from '../lib/api';
 import { PluginDetailDrawer } from '../components/PluginDetailDrawer';
-import type { PluginRegistryItem, PluginMountRead, PluginJobListRead } from '../lib/types';
+import type { PluginRegistryItem, PluginMountRead, PluginJobListRead, PluginManifestType } from '../lib/types';
+
+// 视图模式类型
+type ViewMode = 'card' | 'list';
+
+// localStorage key 用于保存视图偏好
+const VIEW_MODE_KEY = 'plugin-view-mode';
 
 type PluginSourceType = 'builtin' | 'official' | 'third_party';
 type PluginRiskLevel = 'low' | 'medium' | 'high';
+
+// 插件类型中文映射
+const PLUGIN_TYPE_LABELS: Record<PluginManifestType, string> = {
+  connector: '连接器',
+  'memory-ingestor': '记忆摄取',
+  action: '动作',
+  'agent-skill': 'Agent 技能',
+  channel: '通讯通道',
+  'locale-pack': '语言包',
+  'region-provider': '地区提供者',
+};
+
+// 所有可筛选的插件类型
+const FILTERABLE_TYPES: PluginManifestType[] = [
+  'connector',
+  'memory-ingestor',
+  'action',
+  'agent-skill',
+  'channel',
+  'locale-pack',
+  'region-provider',
+];
+
+// 获取初始视图模式
+function getInitialViewMode(): ViewMode {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem(VIEW_MODE_KEY);
+    if (saved === 'card' || saved === 'list') {
+      return saved;
+    }
+  }
+  return 'card';
+}
 
 function formatSourceType(sourceType: PluginSourceType): { label: string; tone: 'info' | 'success' | 'warning' } {
   switch (sourceType) {
@@ -89,6 +128,37 @@ export function SettingsPluginsPage() {
 
   // 操作中状态
   const [togglingPluginId, setTogglingPluginId] = useState<string | null>(null);
+
+  // 视图模式和筛选状态
+  const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
+  const [selectedTypes, setSelectedTypes] = useState<PluginManifestType[]>([]);
+
+  // 保存视图模式到 localStorage
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem(VIEW_MODE_KEY, mode);
+  }, []);
+
+  // 筛选后的插件列表
+  const filteredPlugins = useMemo(() => {
+    if (selectedTypes.length === 0) return plugins;
+    return plugins.filter(p => p.types.some(type => selectedTypes.includes(type)));
+  }, [plugins, selectedTypes]);
+
+  // 切换类型筛选
+  const toggleTypeFilter = useCallback((type: PluginManifestType) => {
+    setSelectedTypes(prev => {
+      if (prev.includes(type)) {
+        return prev.filter(t => t !== type);
+      }
+      return [...prev, type];
+    });
+  }, []);
+
+  // 清除类型筛选
+  const clearTypeFilter = useCallback(() => {
+    setSelectedTypes([]);
+  }, []);
 
   useEffect(() => {
     if (!currentHouseholdId) {
@@ -220,10 +290,10 @@ export function SettingsPluginsPage() {
   }
 
   const pluginStats = useMemo(() => {
-    const enabled = plugins.filter(p => getPluginEnabledState(p.id)).length;
-    const total = plugins.length;
+    const enabled = filteredPlugins.filter(p => getPluginEnabledState(p.id)).length;
+    const total = filteredPlugins.length;
     return { enabled, total, disabled: total - enabled };
-  }, [plugins, mounts]);
+  }, [filteredPlugins, mounts]);
 
   return (
     <div className="settings-page">

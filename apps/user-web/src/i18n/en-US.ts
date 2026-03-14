@@ -260,6 +260,22 @@ const enUS = {
   'plugins.detail.jobWaitingResponseDesc': 'A job is waiting for your confirmation or input.',
   'plugins.detail.jobFailed': 'Recent Job Failed',
 
+  /* 插件视图和筛选 */
+  'plugins.view.card': 'Card View',
+  'plugins.view.list': 'List View',
+  'plugins.filter.byType': 'Filter by Type',
+  'plugins.filter.all': 'All',
+  'plugins.filteredCount': '{count} plugins filtered',
+
+  /* 插件类型 */
+  'plugins.type.connector': 'Connector',
+  'plugins.type.memory-ingestor': 'Memory Ingestor',
+  'plugins.type.action': 'Action',
+  'plugins.type.agent-skill': 'Agent Skill',
+  'plugins.type.channel': 'Channel',
+  'plugins.type.locale-pack': 'Locale Pack',
+  'plugins.type.region-provider': 'Region Provider',
+
   /* 插件市场（降级占位） */
   'plugins.market.title': 'Plugin Market',
   'plugins.market.comingSoon': 'Coming Soon',

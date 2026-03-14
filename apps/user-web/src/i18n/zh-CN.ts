@@ -258,6 +258,22 @@ const zhCN = {
   'plugins.detail.jobWaitingResponseDesc': '有任务正在等待您的确认或输入。',
   'plugins.detail.jobFailed': '最近任务失败',
 
+  /* 插件视图和筛选 */
+  'plugins.view.card': '卡片视图',
+  'plugins.view.list': '列表视图',
+  'plugins.filter.byType': '按类型筛选',
+  'plugins.filter.all': '全部',
+  'plugins.filteredCount': '已筛选 {count} 个插件',
+
+  /* 插件类型 */
+  'plugins.type.connector': '连接器',
+  'plugins.type.memory-ingestor': '记忆摄取',
+  'plugins.type.action': '动作',
+  'plugins.type.agent-skill': 'Agent 技能',
+  'plugins.type.channel': '通讯通道',
+  'plugins.type.locale-pack': '语言包',
+  'plugins.type.region-provider': '地区提供者',
+
   /* 插件市场（降级占位） */
   'plugins.market.title': '插件市场',
   'plugins.market.comingSoon': '即将推出',
