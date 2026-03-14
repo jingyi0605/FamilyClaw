@@ -231,6 +231,136 @@ const enUS = {
   'common.more': 'More',
   'common.viewAll': 'View All',
   'common.comingSoon': 'Coming Soon',
+  'common.seconds': 'seconds',
+
+  /* 计划任务 */
+  'scheduledTasks.tab': 'Scheduled Tasks',
+  'scheduledTasks.title': 'Scheduled Tasks',
+  'scheduledTasks.subtitle': 'Manage your recurring reminders, periodic checks, and automations.',
+  'scheduledTasks.myTasks': 'My Tasks',
+  'scheduledTasks.familyTasks': 'Family Tasks',
+  'scheduledTasks.newTask': 'New Task',
+  'scheduledTasks.search': 'Search tasks...',
+  'scheduledTasks.noResults': 'No tasks found',
+  'scheduledTasks.noResultsHint': 'Try a different keyword or adjust filters',
+  'scheduledTasks.emptyMyTasks': 'You have no scheduled tasks yet',
+  'scheduledTasks.emptyMyTasksHint': 'Create one now to remind yourself when you want.',
+  'scheduledTasks.emptyFamilyTasks': 'This family has no shared tasks yet',
+  'scheduledTasks.emptyFamilyTasksHint': 'You can start by adding a daily reminder everyone uses.',
+  'scheduledTasks.loading': 'Loading task list...',
+
+  /* 计划任务 - 状态 */
+  'scheduledTasks.status.enabled': 'Enabled',
+  'scheduledTasks.status.paused': 'Paused',
+  'scheduledTasks.status.error': 'Needs Attention',
+  'scheduledTasks.status.invalid': 'Temporarily Unavailable',
+
+  /* 计划任务 - 触发方式 */
+  'scheduledTasks.trigger.schedule': 'Runs on schedule',
+  'scheduledTasks.trigger.heartbeat': 'Checks periodically, reminds when conditions met',
+
+  /* 计划任务 - 目标类型 */
+  'scheduledTasks.target.plugin': 'Run Plugin',
+  'scheduledTasks.target.agent': 'Send Reminder',
+  'scheduledTasks.target.system': 'System Notice',
+
+  /* 计划任务 - 运行结果 */
+  'scheduledTasks.result.succeeded': 'Completed as scheduled',
+  'scheduledTasks.result.suppressed': 'No reminder sent this time',
+  'scheduledTasks.result.failed': 'Did not succeed, try again later',
+  'scheduledTasks.result.skipped': 'Skipped this execution',
+  'scheduledTasks.result.queued': 'Waiting to run',
+  'scheduledTasks.result.dispatching': 'Running',
+
+  /* 计划任务 - 列表字段 */
+  'scheduledTasks.list.nextTime': 'Next Time',
+  'scheduledTasks.list.lastResult': 'Last Result',
+  'scheduledTasks.list.triggerMode': 'Trigger Mode',
+  'scheduledTasks.list.owner': 'Owner',
+  'scheduledTasks.list.status': 'Status',
+
+  /* 计划任务 - 归属 */
+  'scheduledTasks.owner.household': 'Family Shared',
+  'scheduledTasks.owner.member': 'Just Me',
+  'scheduledTasks.owner.memberOther': 'Member Task',
+
+  /* 计划任务 - 详情 */
+  'scheduledTasks.detail.title': 'Task Details',
+  'scheduledTasks.detail.name': 'Task Name',
+  'scheduledTasks.detail.description': 'Description',
+  'scheduledTasks.detail.triggerType': 'Trigger Type',
+  'scheduledTasks.detail.schedule': 'Schedule',
+  'scheduledTasks.detail.heartbeatInterval': 'Check Interval',
+  'scheduledTasks.detail.target': 'Target',
+  'scheduledTasks.detail.nextRun': 'Next Run Time',
+  'scheduledTasks.detail.nextCheck': 'Next Check Time',
+  'scheduledTasks.detail.lastRun': 'Last Run Time',
+  'scheduledTasks.detail.lastResult': 'Last Result',
+  'scheduledTasks.detail.status': 'Current Status',
+  'scheduledTasks.detail.owner': 'Owner',
+  'scheduledTasks.detail.runHistory': 'Run History',
+
+  /* 计划任务 - 操作 */
+  'scheduledTasks.action.pause': 'Pause Task',
+  'scheduledTasks.action.resume': 'Resume Task',
+  'scheduledTasks.action.edit': 'Edit Task',
+  'scheduledTasks.action.copy': 'Copy Task',
+  'scheduledTasks.action.delete': 'Delete Task',
+  'scheduledTasks.action.viewHistory': 'View History',
+
+  /* 计划任务 - 筛选 */
+  'scheduledTasks.filter.all': 'All',
+  'scheduledTasks.filter.enabled': 'Enabled',
+  'scheduledTasks.filter.paused': 'Paused',
+  'scheduledTasks.filter.needsAttention': 'Needs Attention',
+  'scheduledTasks.filter.schedule': 'Scheduled',
+  'scheduledTasks.filter.heartbeat': 'Periodic Check',
+
+  /* 计划任务 - 表单 */
+  'scheduledTasks.form.namePlaceholder': 'Give this task a name',
+  'scheduledTasks.form.descriptionPlaceholder': 'Describe what this task does',
+  'scheduledTasks.form.schedulePlaceholder': 'e.g., Every day at 09:00',
+  'scheduledTasks.form.heartbeatPlaceholder': 'e.g., Check every 5 minutes',
+  'scheduledTasks.form.nameRequired': 'Please enter a task name',
+  'scheduledTasks.form.scheduleRequired': 'Please enter the schedule time',
+  'scheduledTasks.form.ownerRequired': 'Please select a member',
+  'scheduledTasks.form.ownerScope': 'Owner Scope',
+  'scheduledTasks.form.ownerMember': 'Owner Member',
+  'scheduledTasks.form.selectMember': 'Select a member',
+  'scheduledTasks.form.ownerMemberHint': 'Only this member can see this reminder',
+  'scheduledTasks.form.ownerHouseholdHint': 'All family members can see this reminder',
+  'scheduledTasks.form.scheduleType': 'Frequency',
+  'scheduledTasks.form.scheduleDaily': 'Daily at fixed time',
+  'scheduledTasks.form.scheduleInterval': 'Repeat by interval',
+  'scheduledTasks.form.scheduleCron': 'Cron expression',
+  'scheduledTasks.form.dailyTime': 'Execution time',
+  'scheduledTasks.form.intervalExpr': 'Interval config',
+  'scheduledTasks.form.cronExpr': 'Cron expression',
+  'scheduledTasks.form.scheduleHint': 'Executes automatically at the scheduled time',
+  'scheduledTasks.form.heartbeatHint': 'Checks periodically, reminds when conditions are met',
+  'scheduledTasks.form.checkInterval': 'Check frequency',
+  'scheduledTasks.form.checkIntervalHint': 'Recommend 5+ minutes to reduce system load',
+  'scheduledTasks.form.timezone': 'Timezone',
+  'scheduledTasks.form.targetType': 'Target type',
+  'scheduledTasks.form.targetRef': 'Target reference',
+  'scheduledTasks.form.targetRefPlaceholder': 'e.g., plugin ID or agent code',
+  'scheduledTasks.form.enableNow': 'Enable immediately after creation',
+  'scheduledTasks.form.ruleType': 'Trigger rule',
+  'scheduledTasks.form.ruleNone': 'Execute unconditionally',
+  'scheduledTasks.form.ruleContext': 'Based on context',
+  'scheduledTasks.form.rulePresence': 'Based on presence',
+  'scheduledTasks.form.ruleDevice': 'Based on device status',
+
+  /* 计划任务 - 删除确认 */
+  'scheduledTasks.delete.title': 'Confirm Delete Task',
+  'scheduledTasks.delete.message': 'This cannot be undone. Delete "{name}"?',
+  'scheduledTasks.delete.confirm': 'Delete',
+
+  /* 计划任务 - 错误 */
+  'scheduledTasks.error.loadFailed': 'Failed to load tasks, please try again',
+  'scheduledTasks.error.saveFailed': 'Failed to save, please check settings and try again',
+  'scheduledTasks.error.permissionDenied': 'This task does not belong to you and cannot be modified',
+  'scheduledTasks.error.invalidDependency': 'This task can no longer use the original service, please reselect',
 } satisfies CompleteLocaleMessages;
 
 export default enUS;

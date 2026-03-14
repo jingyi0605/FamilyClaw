@@ -229,6 +229,136 @@ const zhCN = {
   'common.more': '更多',
   'common.viewAll': '查看全部',
   'common.comingSoon': '即将推出',
+  'common.seconds': '秒',
+
+  /* 计划任务 */
+  'scheduledTasks.tab': '计划任务',
+  'scheduledTasks.title': '计划任务',
+  'scheduledTasks.subtitle': '把你想定期提醒、定期检查和自动处理的事情放在这里。',
+  'scheduledTasks.myTasks': '我的任务',
+  'scheduledTasks.familyTasks': '家庭任务',
+  'scheduledTasks.newTask': '新建任务',
+  'scheduledTasks.search': '搜索任务...',
+  'scheduledTasks.noResults': '没有找到任务',
+  'scheduledTasks.noResultsHint': '试试换个关键词或调整筛选条件',
+  'scheduledTasks.emptyMyTasks': '你还没有计划任务',
+  'scheduledTasks.emptyMyTasksHint': '现在创建一个，按你想要的时间提醒自己。',
+  'scheduledTasks.emptyFamilyTasks': '这个家还没有公共计划任务',
+  'scheduledTasks.emptyFamilyTasksHint': '你可以先加一个每天都会用到的提醒。',
+  'scheduledTasks.loading': '正在加载任务列表...',
+
+  /* 计划任务 - 状态 */
+  'scheduledTasks.status.enabled': '已开启',
+  'scheduledTasks.status.paused': '已暂停',
+  'scheduledTasks.status.error': '需要处理',
+  'scheduledTasks.status.invalid': '暂时无法执行',
+
+  /* 计划任务 - 触发方式 */
+  'scheduledTasks.trigger.schedule': '到时间自动执行',
+  'scheduledTasks.trigger.heartbeat': '按间隔检查，满足条件才提醒',
+
+  /* 计划任务 - 目标类型 */
+  'scheduledTasks.target.plugin': '运行插件',
+  'scheduledTasks.target.agent': '发送提醒',
+  'scheduledTasks.target.system': '系统通知',
+
+  /* 计划任务 - 运行结果 */
+  'scheduledTasks.result.succeeded': '已按计划完成',
+  'scheduledTasks.result.suppressed': '这次没有发出提醒',
+  'scheduledTasks.result.failed': '这次没有成功，你可以稍后再试',
+  'scheduledTasks.result.skipped': '跳过了这次执行',
+  'scheduledTasks.result.queued': '等待执行中',
+  'scheduledTasks.result.dispatching': '正在执行',
+
+  /* 计划任务 - 列表字段 */
+  'scheduledTasks.list.nextTime': '下次时间',
+  'scheduledTasks.list.lastResult': '最近结果',
+  'scheduledTasks.list.triggerMode': '提醒方式',
+  'scheduledTasks.list.owner': '归属',
+  'scheduledTasks.list.status': '状态',
+
+  /* 计划任务 - 归属 */
+  'scheduledTasks.owner.household': '全家共享',
+  'scheduledTasks.owner.member': '只提醒我',
+  'scheduledTasks.owner.memberOther': '成员任务',
+
+  /* 计划任务 - 详情 */
+  'scheduledTasks.detail.title': '任务详情',
+  'scheduledTasks.detail.name': '任务名称',
+  'scheduledTasks.detail.description': '任务说明',
+  'scheduledTasks.detail.triggerType': '触发方式',
+  'scheduledTasks.detail.schedule': '执行时间',
+  'scheduledTasks.detail.heartbeatInterval': '检查频率',
+  'scheduledTasks.detail.target': '执行目标',
+  'scheduledTasks.detail.nextRun': '下次执行时间',
+  'scheduledTasks.detail.nextCheck': '下次检查时间',
+  'scheduledTasks.detail.lastRun': '上次执行时间',
+  'scheduledTasks.detail.lastResult': '最近结果',
+  'scheduledTasks.detail.status': '当前状态',
+  'scheduledTasks.detail.owner': '归属',
+  'scheduledTasks.detail.runHistory': '运行记录',
+
+  /* 计划任务 - 操作 */
+  'scheduledTasks.action.pause': '暂停任务',
+  'scheduledTasks.action.resume': '恢复任务',
+  'scheduledTasks.action.edit': '编辑任务',
+  'scheduledTasks.action.copy': '复制任务',
+  'scheduledTasks.action.delete': '删除任务',
+  'scheduledTasks.action.viewHistory': '查看运行记录',
+
+  /* 计划任务 - 筛选 */
+  'scheduledTasks.filter.all': '全部',
+  'scheduledTasks.filter.enabled': '已开启',
+  'scheduledTasks.filter.paused': '已暂停',
+  'scheduledTasks.filter.needsAttention': '需要处理',
+  'scheduledTasks.filter.schedule': '定时执行',
+  'scheduledTasks.filter.heartbeat': '定期检查',
+
+  /* 计划任务 - 表单 */
+  'scheduledTasks.form.namePlaceholder': '给这个任务起个名字',
+  'scheduledTasks.form.descriptionPlaceholder': '简单描述一下这个任务要做什么',
+  'scheduledTasks.form.schedulePlaceholder': '例如：每天 09:00',
+  'scheduledTasks.form.heartbeatPlaceholder': '例如：每 5 分钟检查一次',
+  'scheduledTasks.form.nameRequired': '请填写任务名称',
+  'scheduledTasks.form.scheduleRequired': '请填写执行时间',
+  'scheduledTasks.form.ownerRequired': '请选择归属成员',
+  'scheduledTasks.form.ownerScope': '归属范围',
+  'scheduledTasks.form.ownerMember': '归属成员',
+  'scheduledTasks.form.selectMember': '请选择成员',
+  'scheduledTasks.form.ownerMemberHint': '只有这个成员能看到这条提醒',
+  'scheduledTasks.form.ownerHouseholdHint': '全家成员都能看到这条提醒',
+  'scheduledTasks.form.scheduleType': '执行频率',
+  'scheduledTasks.form.scheduleDaily': '每天固定时间',
+  'scheduledTasks.form.scheduleInterval': '按间隔重复',
+  'scheduledTasks.form.scheduleCron': 'Cron 表达式',
+  'scheduledTasks.form.dailyTime': '执行时间',
+  'scheduledTasks.form.intervalExpr': '间隔配置',
+  'scheduledTasks.form.cronExpr': 'Cron 表达式',
+  'scheduledTasks.form.scheduleHint': '到设定的时间就会自动执行',
+  'scheduledTasks.form.heartbeatHint': '定期检查条件，满足时才提醒你',
+  'scheduledTasks.form.checkInterval': '检查频率',
+  'scheduledTasks.form.checkIntervalHint': '建议设置 5 分钟以上，太频繁会占用系统资源',
+  'scheduledTasks.form.timezone': '时区',
+  'scheduledTasks.form.targetType': '执行目标',
+  'scheduledTasks.form.targetRef': '目标标识',
+  'scheduledTasks.form.targetRefPlaceholder': '如插件 ID 或 Agent 编号',
+  'scheduledTasks.form.enableNow': '创建后立即启用',
+  'scheduledTasks.form.ruleType': '触发规则',
+  'scheduledTasks.form.ruleNone': '无条件执行',
+  'scheduledTasks.form.ruleContext': '根据上下文判断',
+  'scheduledTasks.form.rulePresence': '根据在场状态判断',
+  'scheduledTasks.form.ruleDevice': '根据设备状态判断',
+
+  /* 计划任务 - 删除确认 */
+  'scheduledTasks.delete.title': '确认删除任务',
+  'scheduledTasks.delete.message': '删除后无法恢复，确定要删除「{name}」吗？',
+  'scheduledTasks.delete.confirm': '确认删除',
+
+  /* 计划任务 - 错误 */
+  'scheduledTasks.error.loadFailed': '加载任务失败，请稍后重试',
+  'scheduledTasks.error.saveFailed': '保存失败，请检查设置后再试',
+  'scheduledTasks.error.permissionDenied': '这条任务不属于你，暂时不能修改',
+  'scheduledTasks.error.invalidDependency': '这条计划现在用不到原来的服务了，请重新选择提醒方式或目标',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

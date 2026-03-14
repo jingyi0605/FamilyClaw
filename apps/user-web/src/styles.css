@@ -2615,6 +2615,328 @@ input, select, textarea {
   font-size: var(--font-size-sm);
 }
 
+/* ---- 记忆页主标签页 ---- */
+.memory-main-tabs {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-lg);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.memory-main-tab {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition);
+}
+
+.memory-main-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+
+.memory-main-tab--active {
+  color: var(--brand-primary);
+  border-bottom-color: var(--brand-primary);
+}
+
+/* ---- 计划任务页 ---- */
+.scheduled-tasks-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.scheduled-tasks-summary {
+  display: flex;
+  gap: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+.scheduled-tasks-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  min-width: 100px;
+}
+
+.scheduled-tasks-stat--warning {
+  background: rgba(244, 67, 54, 0.08);
+  border-color: rgba(244, 67, 54, 0.16);
+}
+
+.scheduled-tasks-stat__value {
+  font-size: var(--font-size-xxl);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.scheduled-tasks-stat--warning .scheduled-tasks-stat__value {
+  color: var(--color-danger);
+}
+
+.scheduled-tasks-stat__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+/* 视图切换条 */
+.scheduled-tasks-view-tabs {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.scheduled-tasks-view-tab {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+}
+
+.scheduled-tasks-view-tab:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.scheduled-tasks-view-tab--active {
+  background: var(--brand-primary-light);
+  color: var(--brand-primary);
+}
+
+/* 工具栏 */
+.scheduled-tasks-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+.scheduled-tasks-filters {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.filter-btn {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+}
+
+.filter-btn:hover {
+  background: var(--bg-card-hover);
+}
+
+.filter-btn--active {
+  background: var(--brand-primary-light);
+  color: var(--brand-primary);
+}
+
+/* 主布局 */
+.scheduled-tasks-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: var(--spacing-lg);
+  min-height: 400px;
+}
+
+/* 任务列表 */
+.scheduled-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.scheduled-task-card {
+  cursor: pointer;
+  padding: var(--spacing-md);
+}
+
+.scheduled-task-card--selected {
+  border-color: var(--brand-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.scheduled-task-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.scheduled-task-card__name {
+  flex: 1;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.scheduled-task-card__desc {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-xs);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.scheduled-task-card__meta {
+  display: flex;
+  gap: var(--spacing-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.scheduled-task-card__item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+/* 详情抽屉 */
+.scheduled-tasks-detail {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  display: none;
+  flex-direction: column;
+}
+
+.scheduled-tasks-detail--open {
+  display: flex;
+}
+
+.scheduled-tasks-detail__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-lg);
+}
+
+.scheduled-tasks-detail__header h2 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.scheduled-tasks-detail__body {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.scheduled-tasks-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--divider);
+}
+
+.scheduled-tasks-detail__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+/* 运行记录 */
+.scheduled-tasks-runs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.scheduled-tasks-run-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+}
+
+.scheduled-tasks-run-item__time {
+  color: var(--text-secondary);
+}
+
+.scheduled-tasks-run-item__status {
+  font-weight: 500;
+}
+
+.scheduled-tasks-run-item__status--succeeded {
+  color: var(--color-success);
+}
+
+.scheduled-tasks-run-item__status--failed {
+  color: var(--color-danger);
+}
+
+.scheduled-tasks-run-item__status--suppressed {
+  color: var(--text-tertiary);
+}
+
+.scheduled-tasks-run-item__status--skipped {
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 1024px) {
+  .scheduled-tasks-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .scheduled-tasks-detail {
+    display: none;
+  }
+
+  .scheduled-tasks-detail--open {
+    display: flex;
+  }
+}
+
+@media (max-width: 768px) {
+  .scheduled-tasks-summary {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: var(--spacing-sm);
+  }
+
+  .scheduled-tasks-stat {
+    min-width: 80px;
+    flex-shrink: 0;
+  }
+
+  .scheduled-tasks-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .scheduled-tasks-view-tabs {
+    overflow-x: auto;
+  }
+
+  .scheduled-tasks-view-tab {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+}
+
 /* ---- 设置页 ---- */
 .settings-layout {
   display: grid;
@@ -5792,3 +6114,210 @@ body::before {
   }
 }
 
+
+/* ---- 对话框 ---- */
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog-content {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+.dialog-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  margin-bottom: var(--spacing-md);
+  color: var(--text-primary);
+}
+.dialog-message {
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-xl);
+  line-height: 1.5;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-md);
+}
+.btn--danger {
+  background: var(--color-danger);
+  color: white;
+  border-color: var(--color-danger);
+}
+.btn--danger:hover {
+  background: #dc3545;
+  border-color: #dc3545;
+}
+
+/* ---- 任务表单抽屉 ---- */
+.task-form-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 1000;
+}
+.task-form-drawer {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg) 0 0 0 0;
+  width: 480px;
+  max-width: 90vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.15);
+}
+.task-form-drawer__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-lg);
+  border-bottom: 1px solid var(--divider);
+}
+.task-form-drawer__header h2 {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.task-form-drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+}
+.task-form-drawer__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  border-top: 1px solid var(--divider);
+}
+
+/* ---- 表单样式 ---- */
+.form-field {
+  margin-bottom: var(--spacing-md);
+}
+.form-label {
+  display: block;
+  font-size: var(--font-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-xs);
+}
+.form-input,
+.form-select,
+.form-textarea {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-md);
+  color: var(--text-primary);
+  background: var(--bg-input);
+  transition: border-color var(--transition);
+}
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+  border-color: var(--color-primary);
+  outline: none;
+}
+.form-textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+.form-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+.form-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.form-radio:hover {
+  background: var(--bg-hover);
+}
+.form-radio input[type="radio"] {
+  margin-right: var(--spacing-sm);
+}
+.form-radio__label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.form-radio__hint {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+  display: block;
+}
+.form-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+}
+.form-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary);
+}
+.form-checkbox__label {
+  font-size: var(--font-md);
+  color: var(--text-primary);
+}
+.form-input-with-unit {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+.form-input-with-unit .form-input {
+  flex: 1;
+}
+.form-input-unit {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.form-hint {
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+  margin-top: var(--spacing-xs);
+}
+.form-error {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-danger);
+  color: white;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.form-hint {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}

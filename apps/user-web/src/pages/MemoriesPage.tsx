@@ -7,11 +7,13 @@ import { PageHeader, Card, EmptyState } from '../components/base';
 import { useHouseholdContext } from '../state/household';
 import { api } from '../lib/api';
 import type { MemoryCard, MemoryCardRevision, MemoryStatus, MemoryType, MemoryVisibility } from '../lib/types';
+import { ScheduledTasksTab } from '../components/ScheduledTasksTab';
 
 const ACTOR_ROLE = (import.meta.env.VITE_API_ACTOR_ROLE ?? 'admin').toLowerCase();
 const CAN_DELETE_MEMORY = ACTOR_ROLE === 'admin';
 
 type MemoryFilterType = 'all' | 'fact' | 'event' | 'preference' | 'relation';
+type MainTab = 'memories' | 'scheduledTasks';
 
 const typeMap: Record<MemoryFilterType, { labelKey: MessageKey; icon: string }> = {
   all: { labelKey: 'memory.all', icon: '📋' },
@@ -202,6 +204,7 @@ function collectRevisionChanges(revision: MemoryCardRevision): Array<{
 export function MemoriesPage() {
   const { t } = useI18n();
   const { currentHouseholdId } = useHouseholdContext();
+  const [mainTab, setMainTab] = useState<MainTab>('memories');
   const [activeType, setActiveType] = useState<MemoryFilterType>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -383,15 +386,35 @@ export function MemoriesPage() {
     <div className="page page--memories">
       <PageHeader title={t('nav.memories')} description={error ? '部分或全部记忆数据加载失败。' : actionStatus || undefined} />
 
-      <div className="memory-search">
-        <input
-          type="text"
-          placeholder={t('memory.search')}
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          className="search-input search-input--lg"
-        />
+      {/* 主标签页 */}
+      <div className="memory-main-tabs">
+        <button
+          className={`memory-main-tab ${mainTab === 'memories' ? 'memory-main-tab--active' : ''}`}
+          onClick={() => setMainTab('memories')}
+        >
+          {t('memory.all')}
+        </button>
+        <button
+          className={`memory-main-tab ${mainTab === 'scheduledTasks' ? 'memory-main-tab--active' : ''}`}
+          onClick={() => setMainTab('scheduledTasks')}
+        >
+          {t('scheduledTasks.tab')}
+        </button>
       </div>
+
+      {mainTab === 'scheduledTasks' ? (
+        <ScheduledTasksTab />
+      ) : (
+        <>
+          <div className="memory-search">
+            <input
+              type="text"
+              placeholder={t('memory.search')}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="search-input search-input--lg"
+            />
+          </div>
 
       <div className="memory-layout">
         <nav className="memory-categories">
@@ -535,6 +558,8 @@ export function MemoriesPage() {
           )}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }
