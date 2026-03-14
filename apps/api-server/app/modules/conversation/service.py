@@ -1,3 +1,5 @@
+from typing import cast
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -20,6 +22,7 @@ from app.modules.conversation.models import (
 from app.modules.conversation.orchestrator import (
     ConversationIntent,
     ConversationOrchestratorResult,
+    adetect_conversation_intent,
     run_orchestrated_turn,
     stream_orchestrated_turn,
 )
@@ -39,7 +42,7 @@ from app.modules.conversation.schemas import (
     ConversationTurnRead,
 )
 from app.modules.household.models import Household
-from app.modules.llm_task import invoke_llm
+from app.modules.llm_task import ainvoke_llm, invoke_llm
 from app.modules.llm_task.output_models import MemoryExtractionOutput
 from app.modules.memory.schemas import MemoryCardCorrectionPayload, MemoryCardManualCreate
 from app.modules.memory.service import correct_memory_card, create_manual_memory_card
@@ -256,6 +259,165 @@ def create_conversation_turn(
                 payload={"reason": "当前主路由没有直接给出记忆候选。"},
             )
             _generate_memory_candidates_for_turn(
+                db,
+                session=session,
+                request_id=request_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                actor=actor,
+            )
+            _append_debug_log(
+                db,
+                session=session,
+                request_id=request_id,
+                stage="memory.autogen.completed",
+                source="service",
+                message="保守记忆补提取完成。",
+                payload={"generated_candidates": _count_request_memory_candidates(db, session_id=session.id, request_id=request_id)},
+            )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="turn.completed",
+            source="service",
+            message="本轮聊天处理完成。",
+            payload={"outcome": outcome},
+        )
+    except Exception as exc:
+        outcome = "failed"
+        error_message = _render_turn_error(exc)
+        _fail_assistant_message(
+            db,
+            session=session,
+            assistant_message=assistant_message,
+            error_message=error_message,
+            error_code=_resolve_turn_error_code(exc),
+        )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="turn.failed",
+            source="service",
+            level="error",
+            message="本轮聊天处理失败。",
+            payload={
+                "error_message": error_message,
+                "error_code": _resolve_turn_error_code(exc),
+            },
+        )
+
+    db.flush()
+    return ConversationTurnRead(
+        request_id=request_id,
+        session_id=session.id,
+        user_message_id=user_message.id,
+        assistant_message_id=assistant_message.id,
+        outcome=outcome,
+        error_message=error_message,
+        session=_to_session_detail_read(db, session),
+    )
+
+
+async def acreate_conversation_turn(
+    db: Session,
+    *,
+    session_id: str,
+    payload: ConversationTurnCreate,
+    actor: ActorContext,
+) -> ConversationTurnRead:
+    session = _get_visible_session(db, session_id=session_id, actor=actor)
+    request_id, user_message, assistant_message = _create_pending_turn(
+        db,
+        session=session,
+        payload=payload,
+    )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.received",
+        source="service",
+        message="收到新的聊天请求。",
+        payload={
+            "user_message_id": user_message.id,
+            "assistant_message_id": assistant_message.id,
+            "message": payload.message.strip(),
+            "channel": payload.channel,
+            "session_mode": session.session_mode,
+        },
+    )
+
+    outcome = "completed"
+    error_message: str | None = None
+
+    try:
+        result = await _arun_orchestrated_turn(
+            db,
+            session=session,
+            question=payload.message.strip(),
+            request_id=request_id,
+            actor=actor,
+        )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="orchestrator.completed",
+            source="orchestrator",
+            message="编排层已完成意图识别和主路由。",
+            payload=_build_orchestrator_debug_payload(result),
+        )
+        _complete_assistant_message(
+            db,
+            session=session,
+            assistant_message=assistant_message,
+            result=result,
+        )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="assistant.completed",
+            source="service",
+            message="助手消息已落库。",
+            payload={
+                "assistant_message_id": assistant_message.id,
+                "intent": result.intent.value,
+                "content_preview": result.text[:120],
+                "degraded": result.degraded,
+            },
+        )
+        _apply_action_policy_for_turn(
+            db,
+            session=session,
+            request_id=request_id,
+            user_message=user_message,
+            assistant_message=assistant_message,
+            result=result,
+            actor=actor,
+        )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="action.policy.applied",
+            source="policy",
+            message="动作策略层处理完成。",
+            payload={"action_records": _serialize_action_records_for_debug(db, session_id=session.id, request_id=request_id)},
+        )
+        if not result.memory_candidate_payloads and result.intent in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA}:
+            _append_debug_log(
+                db,
+                session=session,
+                request_id=request_id,
+                stage="memory.autogen.started",
+                source="service",
+                message="开始执行保守记忆补提取。",
+                payload={"reason": "当前主路由没有直接给出记忆候选。"},
+            )
+            await _agenerate_memory_candidates_for_turn(
                 db,
                 session=session,
                 request_id=request_id,
@@ -1019,6 +1181,151 @@ def _run_orchestrated_turn(
     )
 
 
+async def _arun_orchestrated_turn(
+    db: Session,
+    *,
+    session: ConversationSession,
+    question: str,
+    request_id: str,
+    actor: ActorContext,
+) -> ConversationOrchestratorResult:
+    conversation_history = _build_recent_conversation_history(
+        db,
+        session_id=session.id,
+        current_request_id=request_id,
+    )
+    request_context = {
+        "request_id": request_id,
+        "trace_id": request_id,
+        "session_id": session.id,
+        "channel": "conversation_turn",
+    }
+    detection = await adetect_conversation_intent(
+        db,
+        session=session,
+        message=question,
+        conversation_history=conversation_history,
+        request_context=request_context,
+    )
+    _log_route_selection(request_context=request_context, detection=detection)
+    intent = detection.route_intent
+    if intent == ConversationIntent.STRUCTURED_QA:
+        result = await aquery_family_qa(
+            db,
+            FamilyQaQueryRequest(
+                household_id=session.household_id,
+                requester_member_id=session.requester_member_id,
+                agent_id=session.active_agent_id,
+                question=question,
+                channel="conversation_turn",
+                context={"conversation_history": conversation_history, "request_context": request_context},
+            ),
+            actor,
+        )
+        return _from_family_qa_result(intent, result, detection=detection)
+
+    if intent == ConversationIntent.CONFIG_EXTRACTION:
+        return await _arun_config_extraction(
+            db,
+            session=session,
+            message=question,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        )
+
+    if intent == ConversationIntent.MEMORY_EXTRACTION:
+        return await _arun_memory_extraction(
+            db,
+            session=session,
+            message=question,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        )
+
+    if intent == ConversationIntent.REMINDER_EXTRACTION:
+        return await _arun_reminder_extraction(
+            db,
+            session=session,
+            message=question,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        )
+
+    if intent == ConversationIntent.FREE_CHAT and detection.guardrail_rule == "fallback.free_chat":
+        result = await ainvoke_llm(
+            db,
+            task_type="free_chat",
+            variables=_build_free_chat_variables(
+                db,
+                session=session,
+                actor=actor,
+                user_message=question,
+                request_context=request_context,
+                log_memory_context=True,
+            ),
+            household_id=session.household_id,
+            conversation_history=conversation_history,
+            request_context=request_context,
+            timeout_ms_override=FREE_CHAT_DEGRADED_TIMEOUT_MS,
+            honor_timeout_override=True,
+        )
+        return ConversationOrchestratorResult(
+            intent=intent,
+            text=result.text,
+            degraded=False,
+            facts=[],
+            suggestions=[],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=getattr(result, "provider", None) or None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+            intent_detection=detection,
+        )
+
+    final_text = ""
+    final_result: ConversationOrchestratorResult | None = None
+    async for event in stream_orchestrated_turn(
+        db,
+        session=session,
+        message=question,
+        actor=actor,
+        conversation_history=conversation_history,
+        request_context=request_context,
+    ):
+        event_type, event_payload = event
+        if event_type == "chunk":
+            final_text += str(event_payload)
+            continue
+        final_result = cast(ConversationOrchestratorResult, event_payload)
+
+    if final_result is not None:
+        return final_result
+
+    return ConversationOrchestratorResult(
+        intent=intent,
+        text=final_text,
+        degraded=False,
+        facts=[],
+        suggestions=[],
+        memory_candidate_payloads=[],
+        config_suggestion=None,
+        action_payloads=[],
+        ai_trace_id=None,
+        ai_provider_code=None,
+        effective_agent_id=session.active_agent_id,
+        effective_agent_name=None,
+        intent_detection=detection,
+    )
+
+
 def _complete_assistant_message(
     db: Session,
     *,
@@ -1055,6 +1362,62 @@ def _generate_memory_candidates_for_turn(
 ) -> None:
     try:
         result = invoke_llm(
+            db,
+            task_type="memory_extraction",
+            variables={
+                "conversation": _build_memory_extraction_conversation(user_message, assistant_message),
+                "member_context": _build_member_context(db, household_id=session.household_id),
+            },
+            household_id=session.household_id,
+            request_context={
+                "request_id": request_id,
+                "trace_id": request_id,
+                "session_id": session.id,
+                "channel": "conversation_memory_autogen",
+            },
+        )
+    except Exception:
+        return
+
+    if not isinstance(result.data, MemoryExtractionOutput):
+        return
+
+    generated_result = ConversationOrchestratorResult(
+        intent=ConversationIntent.MEMORY_EXTRACTION,
+        text="",
+        degraded=False,
+        facts=[],
+        suggestions=[],
+        memory_candidate_payloads=[item for item in result.data.memories[:5] if isinstance(item, dict)],
+        config_suggestion=None,
+        action_payloads=[],
+        ai_trace_id=None,
+        ai_provider_code=getattr(result, "provider", None) or None,
+        effective_agent_id=session.active_agent_id,
+        effective_agent_name=None,
+    )
+    _apply_action_policy_for_turn(
+        db,
+        session=session,
+        request_id=request_id,
+        user_message=user_message,
+        assistant_message=assistant_message,
+        result=generated_result,
+        actor=actor,
+    )
+
+
+async def _agenerate_memory_candidates_for_turn(
+    db: Session,
+    *,
+    session: ConversationSession,
+    request_id: str,
+    user_message: ConversationMessage,
+    assistant_message: ConversationMessage,
+    actor: ActorContext,
+) -> None:
+    try:
+        result = await ainvoke_llm(
             db,
             task_type="memory_extraction",
             variables={
@@ -1196,6 +1559,7 @@ def _build_orchestrator_debug_payload(result: ConversationOrchestratorResult) ->
     detection_payload = result.intent_detection.to_payload() if result.intent_detection is not None else {}
     return {
         "route_intent": result.intent.value,
+        "lane_selection": result.lane_selection.to_payload() if result.lane_selection is not None else None,
         "intent_detection": detection_payload,
         "facts_count": len(result.facts),
         "suggestions_count": len(result.suggestions),
@@ -1409,10 +1773,10 @@ async def run_conversation_realtime_turn(
         payload={},
     )
 
+    result: ConversationOrchestratorResult | None = None
+    emitted_chunks: list[str] = []
     try:
-        result: ConversationOrchestratorResult | None = None
-        emitted_chunks: list[str] = []
-        for event_type, event_payload in stream_orchestrated_turn(
+        async for event_type, event_payload in stream_orchestrated_turn(
             db,
             session=session,
             message=user_message.strip(),
@@ -1441,7 +1805,7 @@ async def run_conversation_realtime_turn(
                     payload={"text": str(event_payload)},
                 )
                 continue
-            result = event_payload
+            result = cast(ConversationOrchestratorResult, event_payload)
 
         if result is None:
             raise RuntimeError("family_qa stream did not produce final result")
@@ -1506,7 +1870,7 @@ async def run_conversation_realtime_turn(
                 message="开始执行实时保守记忆补提取。",
                 payload={"reason": "当前主路由没有直接给出记忆候选。"},
             )
-            _generate_memory_candidates_for_turn(
+            await _agenerate_memory_candidates_for_turn(
                 db,
                 session=session,
                 request_id=request_id,
@@ -1554,7 +1918,7 @@ async def run_conversation_realtime_turn(
             payload={"snapshot": snapshot.model_dump(mode="json")},
         )
     except Exception as exc:
-        partial_text = "".join(emitted_chunks).strip() if 'emitted_chunks' in locals() else ""
+        partial_text = "".join(emitted_chunks).strip()
         if partial_text:
             assistant_message_row.content = partial_text
             assistant_message_row.status = "failed"

@@ -2,18 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import cast
 
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
+from app.core.config import settings
 from app.db.utils import utc_now_iso
 from app.modules.agent.service import build_agent_runtime_context
 from app.core.logging import dump_conversation_debug_event, get_conversation_debug_logger
+from app.modules.conversation.semantic_router import SemanticRouter
 from app.modules.context.service import get_context_overview
 from app.modules.conversation.models import ConversationSession
 from app.modules.family_qa.schemas import FamilyQaQueryRequest, FamilyQaQueryResponse
 from app.modules.family_qa.service import query_family_qa, stream_family_qa
-from app.modules.llm_task import invoke_llm, stream_llm
+from app.modules.llm_task import ainvoke_llm, invoke_llm, stream_llm
 from app.modules.llm_task.output_models import (
     ConversationIntentCandidateActionOutput,
     ConversationIntentDetectionOutput,
@@ -45,6 +48,32 @@ class ConversationIntent(StrEnum):
     REMINDER_EXTRACTION = "reminder_extraction"
 
 
+class ConversationLane(StrEnum):
+    FAST_ACTION = "fast_action"
+    REALTIME_QUERY = "realtime_query"
+    FREE_CHAT = "free_chat"
+
+
+@dataclass
+class ConversationLaneSelection:
+    lane: ConversationLane
+    confidence: float = 0.0
+    reason: str = ""
+    target_kind: str = "none"
+    requires_clarification: bool = False
+    source: str = "intent_mapping"
+
+    def to_payload(self) -> dict:
+        return {
+            "lane": self.lane.value,
+            "confidence": self.confidence,
+            "reason": self.reason,
+            "target_kind": self.target_kind,
+            "requires_clarification": self.requires_clarification,
+            "source": self.source,
+        }
+
+
 @dataclass
 class ConversationIntentDetection:
     primary_intent: ConversationIntentLabel
@@ -54,6 +83,7 @@ class ConversationIntentDetection:
     candidate_actions: list[ConversationIntentCandidateActionOutput] = field(default_factory=list)
     route_intent: ConversationIntent = ConversationIntent.FREE_CHAT
     guardrail_rule: str | None = None
+    lane_selection: ConversationLaneSelection | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -64,6 +94,7 @@ class ConversationIntentDetection:
             "candidate_actions": [item.model_dump(mode="json") for item in self.candidate_actions],
             "route_intent": self.route_intent.value,
             "guardrail_rule": self.guardrail_rule,
+            "lane_selection": self.lane_selection.to_payload() if self.lane_selection is not None else None,
         }
 
 
@@ -82,10 +113,17 @@ class ConversationOrchestratorResult:
     effective_agent_id: str | None
     effective_agent_name: str | None
     intent_detection: ConversationIntentDetection | None = None
+    lane_selection: ConversationLaneSelection | None = None
 
     def __post_init__(self) -> None:
         if self.intent_detection is None:
             self.intent_detection = _build_default_intent_detection(self.intent)
+        if self.lane_selection is None:
+            self.lane_selection = (
+                self.intent_detection.lane_selection
+                if self.intent_detection is not None and self.intent_detection.lane_selection is not None
+                else _build_default_lane_selection(self.intent)
+            )
 
 
 def detect_conversation_intent(
@@ -146,6 +184,64 @@ def detect_conversation_intent(
     return detection
 
 
+async def adetect_conversation_intent(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    conversation_history: list[dict[str, str]],
+    request_context: dict | None = None,
+) -> ConversationIntentDetection:
+    normalized_message = message.strip()
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="intent_detection.started",
+        message="开始执行 AI 意图识别。",
+        payload={"message": normalized_message},
+    )
+    if session.session_mode == "agent_config":
+        detection = _build_guardrail_intent_detection(
+            primary_intent=ConversationIntentLabel.CONFIG_CHANGE,
+            route_intent=ConversationIntent.CONFIG_EXTRACTION,
+            reason="当前会话处于 agent_config 模式，本轮直接按配置修改处理。",
+            guardrail_rule="session_mode.agent_config",
+        )
+        _log_intent_detection_result(request_context=request_context, detection=detection)
+        return detection
+    if not normalized_message:
+        detection = _build_fallback_intent_detection("用户消息为空，按 free_chat 处理。")
+        _log_intent_detection_result(request_context=request_context, detection=detection)
+        return detection
+
+    try:
+        result = await ainvoke_llm(
+            db,
+            task_type="conversation_intent_detection",
+            variables=_build_intent_detection_variables(
+                session=session,
+                message=normalized_message,
+                conversation_history=conversation_history or [],
+            ),
+            household_id=session.household_id,
+            request_context=request_context,
+            timeout_ms_override=INTENT_DETECTION_TIMEOUT_MS,
+            honor_timeout_override=True,
+        )
+    except Exception:
+        detection = _build_fallback_intent_detection("意图识别模型调用失败，按 free_chat 回落。")
+        _log_intent_detection_result(request_context=request_context, detection=detection)
+        return detection
+
+    if not isinstance(result.data, ConversationIntentDetectionOutput):
+        detection = _build_fallback_intent_detection("意图识别结果不可解析，按 free_chat 回落。")
+        _log_intent_detection_result(request_context=request_context, detection=detection)
+        return detection
+
+    detection = _normalize_intent_detection(result.data)
+    _log_intent_detection_result(request_context=request_context, detection=detection)
+    return detection
+
+
 def run_orchestrated_turn(
     db: Session,
     *,
@@ -162,9 +258,14 @@ def run_orchestrated_turn(
         conversation_history=conversation_history,
         request_context=request_context,
     )
+    lane_selection = select_conversation_lane(
+        session=session,
+        message=message,
+        detection=detection,
+        request_context=request_context,
+    )
     _log_route_selection(request_context=request_context, detection=detection)
-    intent = detection.route_intent
-    if intent == ConversationIntent.STRUCTURED_QA:
+    if lane_selection.lane == ConversationLane.REALTIME_QUERY:
         result = _run_structured_qa(
             db,
             session=session,
@@ -173,49 +274,23 @@ def run_orchestrated_turn(
             conversation_history=conversation_history,
             request_context=request_context,
         )
-        return _from_family_qa_result(intent, result, detection=detection)
-    if intent == ConversationIntent.CONFIG_EXTRACTION:
-        return _run_config_extraction(
-            db,
-            session=session,
-            message=message,
-            actor=actor,
-            conversation_history=conversation_history,
-            detection=detection,
-            request_context=request_context,
+        return _attach_lane_selection(
+            _from_family_qa_result(ConversationIntent.STRUCTURED_QA, result, detection=detection),
+            lane_selection=lane_selection,
         )
-    if intent == ConversationIntent.MEMORY_EXTRACTION:
-        return _run_memory_extraction(
-            db,
-            session=session,
-            message=message,
-            actor=actor,
-            conversation_history=conversation_history,
-            detection=detection,
-            request_context=request_context,
-        )
-    if intent == ConversationIntent.REMINDER_EXTRACTION:
-        return _run_reminder_extraction(
-            db,
-            session=session,
-            message=message,
-            conversation_history=conversation_history,
-            detection=detection,
-            request_context=request_context,
-        )
-    return _run_non_qa_chat(
+    return _run_non_realtime_lane(
         db,
-        intent=intent,
         session=session,
         message=message,
         actor=actor,
         conversation_history=conversation_history,
         detection=detection,
+        lane_selection=lane_selection,
         request_context=request_context,
     )
 
 
-def stream_orchestrated_turn(
+async def stream_orchestrated_turn(
     db: Session,
     *,
     session: ConversationSession,
@@ -224,17 +299,22 @@ def stream_orchestrated_turn(
     conversation_history: list[dict[str, str]],
     request_context: dict | None = None,
 ):
-    detection = detect_conversation_intent(
+    detection = await adetect_conversation_intent(
         db,
         session=session,
         message=message,
         conversation_history=conversation_history,
         request_context=request_context,
     )
+    lane_selection = select_conversation_lane(
+        session=session,
+        message=message,
+        detection=detection,
+        request_context=request_context,
+    )
     _log_route_selection(request_context=request_context, detection=detection)
-    intent = detection.route_intent
-    if intent == ConversationIntent.STRUCTURED_QA:
-        for event_type, event_payload in stream_family_qa(
+    if lane_selection.lane == ConversationLane.REALTIME_QUERY:
+        async for event_type, event_payload in stream_family_qa(
             db,
             FamilyQaQueryRequest(
                 household_id=session.household_id,
@@ -247,107 +327,28 @@ def stream_orchestrated_turn(
             actor,
         ):
             if event_type == "done":
-                yield event_type, _from_family_qa_result(intent, event_payload, detection=detection)
+                yield event_type, _attach_lane_selection(
+                    _from_family_qa_result(
+                        ConversationIntent.STRUCTURED_QA,
+                        cast(FamilyQaQueryResponse, event_payload),
+                        detection=detection,
+                    ),
+                    lane_selection=lane_selection,
+                )
             else:
                 yield event_type, event_payload
         return
-
-    if intent == ConversationIntent.CONFIG_EXTRACTION:
-        yield "done", _run_config_extraction(
-            db,
-            session=session,
-            message=message,
-            actor=actor,
-            conversation_history=conversation_history,
-            detection=detection,
-            request_context=request_context,
-        )
-        return
-
-    if intent == ConversationIntent.MEMORY_EXTRACTION:
-        yield "done", _run_memory_extraction(
-            db,
-            session=session,
-            message=message,
-            actor=actor,
-            conversation_history=conversation_history,
-            detection=detection,
-            request_context=request_context,
-        )
-        return
-
-    if intent == ConversationIntent.REMINDER_EXTRACTION:
-        yield "done", _run_reminder_extraction(
-            db,
-            session=session,
-            message=message,
-            conversation_history=conversation_history,
-            detection=detection,
-            request_context=request_context,
-        )
-        return
-
-    if intent == ConversationIntent.FREE_CHAT and detection.guardrail_rule == "fallback.free_chat":
-        _log_orchestrator_debug_event(
-            request_context=request_context,
-            stage="orchestrator.free_chat.degraded",
-            message="意图识别已降级，本轮 free_chat 改走非流式短超时兜底。",
-            payload={"timeout_ms": FREE_CHAT_DEGRADED_TIMEOUT_MS},
-        )
-        result = _run_non_qa_chat(
-            db,
-            intent=intent,
-            session=session,
-            message=message,
-            actor=actor,
-            conversation_history=conversation_history,
-            detection=detection,
-            request_context=request_context,
-            timeout_ms_override=FREE_CHAT_DEGRADED_TIMEOUT_MS,
-            honor_timeout_override=True,
-        )
-        if result.text:
-            yield "chunk", result.text
-        yield "done", result
-        return
-
-    full_text = ""
-    for event in stream_llm(
+    async for event_type, event_payload in _stream_non_realtime_lane(
         db,
-        task_type="free_chat",
-        variables=_build_free_chat_variables(
-            db,
-            session=session,
-            actor=actor,
-            user_message=message,
-            request_context=request_context,
-            log_memory_context=True,
-        ),
-        household_id=session.household_id,
+        session=session,
+        message=message,
+        actor=actor,
         conversation_history=conversation_history,
+        detection=detection,
+        lane_selection=lane_selection,
         request_context=request_context,
     ):
-        if event.event_type == "chunk":
-            full_text += event.content
-            yield "chunk", event.content
-            continue
-        if event.event_type == "done" and event.result is not None:
-            text = event.result.text or full_text
-            yield "done", ConversationOrchestratorResult(
-                intent=intent,
-                text=text,
-                degraded=False,
-                facts=[],
-                suggestions=[],
-                memory_candidate_payloads=[],
-                config_suggestion=None,
-                action_payloads=[],
-                ai_trace_id=None,
-                ai_provider_code=getattr(event.result, "provider", None) or None,
-                effective_agent_id=session.active_agent_id,
-                effective_agent_name=None,
-                intent_detection=detection,
-            )
+        yield event_type, event_payload
 
 
 def _run_structured_qa(
@@ -371,6 +372,293 @@ def _run_structured_qa(
         ),
         actor,
     )
+
+
+def select_conversation_lane(
+    *,
+    session: ConversationSession,
+    message: str,
+    detection: ConversationIntentDetection,
+    request_context: dict | None = None,
+    semantic_router: SemanticRouter | None = None,
+    semantic_router_enabled: bool | None = None,
+) -> ConversationLaneSelection:
+    _ = request_context
+    if session.session_mode == "agent_config":
+        selection = ConversationLaneSelection(
+            lane=ConversationLane.FREE_CHAT,
+            confidence=1.0,
+            reason="当前会话处于 agent_config 模式，主回复先按 free_chat 处理，配置变更走后续兼容链路。",
+            target_kind="none",
+            requires_clarification=False,
+            source="session_mode",
+        )
+        detection.lane_selection = selection
+        return selection
+    if semantic_router_enabled is None:
+        semantic_router_enabled = settings.conversation_embedding_provider_enabled
+    if semantic_router_enabled:
+        router = semantic_router or SemanticRouter(enabled=True)
+        router_result = router.route(message)
+        if router_result.enabled:
+            selection = ConversationLaneSelection(
+                lane=ConversationLane(router_result.lane),
+                confidence=router_result.confidence,
+                reason=router_result.reason,
+                target_kind=router_result.target_kind,
+                requires_clarification=router_result.requires_clarification,
+                source="semantic_router",
+            )
+            detection.lane_selection = selection
+            return selection
+    selection = _build_lane_selection_from_intent(detection.route_intent)
+    detection.lane_selection = selection
+    return selection
+
+
+def _run_non_realtime_lane(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    actor: ActorContext,
+    conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    lane_selection: ConversationLaneSelection,
+    request_context: dict | None = None,
+) -> ConversationOrchestratorResult:
+    intent = detection.route_intent
+    if intent == ConversationIntent.CONFIG_EXTRACTION:
+        return _attach_lane_selection(
+            _run_config_extraction(
+                db,
+                session=session,
+                message=message,
+                actor=actor,
+                conversation_history=conversation_history,
+                detection=detection,
+                request_context=request_context,
+            ),
+            lane_selection=lane_selection,
+        )
+    if intent == ConversationIntent.MEMORY_EXTRACTION:
+        return _attach_lane_selection(
+            _run_memory_extraction(
+                db,
+                session=session,
+                message=message,
+                actor=actor,
+                conversation_history=conversation_history,
+                detection=detection,
+                request_context=request_context,
+            ),
+            lane_selection=lane_selection,
+        )
+    if intent == ConversationIntent.REMINDER_EXTRACTION:
+        return _attach_lane_selection(
+            _run_reminder_extraction(
+                db,
+                session=session,
+                message=message,
+                conversation_history=conversation_history,
+                detection=detection,
+                request_context=request_context,
+            ),
+            lane_selection=lane_selection,
+        )
+    return _attach_lane_selection(
+        _run_non_qa_chat(
+            db,
+            intent=intent,
+            session=session,
+            message=message,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        ),
+        lane_selection=lane_selection,
+    )
+
+
+async def _stream_non_realtime_lane(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    actor: ActorContext,
+    conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    lane_selection: ConversationLaneSelection,
+    request_context: dict | None = None,
+):
+    intent = detection.route_intent
+    if intent == ConversationIntent.CONFIG_EXTRACTION:
+        yield "done", _attach_lane_selection(
+            await _arun_config_extraction(
+                db,
+                session=session,
+                message=message,
+                actor=actor,
+                conversation_history=conversation_history,
+                detection=detection,
+                request_context=request_context,
+            ),
+            lane_selection=lane_selection,
+        )
+        return
+    if intent == ConversationIntent.MEMORY_EXTRACTION:
+        yield "done", _attach_lane_selection(
+            await _arun_memory_extraction(
+                db,
+                session=session,
+                message=message,
+                actor=actor,
+                conversation_history=conversation_history,
+                detection=detection,
+                request_context=request_context,
+            ),
+            lane_selection=lane_selection,
+        )
+        return
+    if intent == ConversationIntent.REMINDER_EXTRACTION:
+        yield "done", _attach_lane_selection(
+            await _arun_reminder_extraction(
+                db,
+                session=session,
+                message=message,
+                conversation_history=conversation_history,
+                detection=detection,
+                request_context=request_context,
+            ),
+            lane_selection=lane_selection,
+        )
+        return
+    async for event_type, event_payload in _stream_non_qa_chat(
+        db,
+        intent=intent,
+        session=session,
+        message=message,
+        actor=actor,
+        conversation_history=conversation_history,
+        detection=detection,
+        lane_selection=lane_selection,
+        request_context=request_context,
+    ):
+        yield event_type, event_payload
+
+
+def _attach_lane_selection(
+    result: ConversationOrchestratorResult,
+    *,
+    lane_selection: ConversationLaneSelection,
+) -> ConversationOrchestratorResult:
+    result.lane_selection = lane_selection
+    if result.intent_detection is not None:
+        result.intent_detection.lane_selection = lane_selection
+    return result
+
+
+def _build_default_lane_selection(intent: ConversationIntent) -> ConversationLaneSelection:
+    return _build_lane_selection_from_intent(intent)
+
+
+def _build_lane_selection_from_intent(intent: ConversationIntent) -> ConversationLaneSelection:
+    if intent == ConversationIntent.STRUCTURED_QA:
+        return ConversationLaneSelection(
+            lane=ConversationLane.REALTIME_QUERY,
+            confidence=1.0,
+            reason="当前编排默认把 structured_qa 归到 realtime_query 车道。",
+            target_kind="state_query",
+            requires_clarification=False,
+            source="intent_mapping",
+        )
+    return ConversationLaneSelection(
+        lane=ConversationLane.FREE_CHAT,
+        confidence=1.0,
+        reason="当前编排默认把 free_chat、memory、config、reminder 归到 free_chat 车道。",
+        target_kind="none",
+        requires_clarification=False,
+        source="intent_mapping",
+    )
+
+
+async def _stream_non_qa_chat(
+    db: Session,
+    *,
+    intent: ConversationIntent,
+    session: ConversationSession,
+    message: str,
+    actor: ActorContext,
+    conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    lane_selection: ConversationLaneSelection,
+    request_context: dict | None = None,
+):
+    if intent == ConversationIntent.FREE_CHAT and detection.guardrail_rule == "fallback.free_chat":
+        _log_orchestrator_debug_event(
+            request_context=request_context,
+            stage="orchestrator.free_chat.degraded",
+            message="意图识别已降级，本轮 free_chat 改走非流式短超时兜底。",
+            payload={"timeout_ms": FREE_CHAT_DEGRADED_TIMEOUT_MS},
+        )
+        result = _run_non_qa_chat(
+            db,
+            intent=intent,
+            session=session,
+            message=message,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+            timeout_ms_override=FREE_CHAT_DEGRADED_TIMEOUT_MS,
+            honor_timeout_override=True,
+        )
+        if result.text:
+            yield "chunk", result.text
+        yield "done", _attach_lane_selection(result, lane_selection=lane_selection)
+        return
+
+    full_text = ""
+    async for event in stream_llm(
+        db,
+        task_type="free_chat",
+        variables=_build_free_chat_variables(
+            db,
+            session=session,
+            actor=actor,
+            user_message=message,
+            request_context=request_context,
+            log_memory_context=True,
+        ),
+        household_id=session.household_id,
+        conversation_history=conversation_history,
+        request_context=request_context,
+    ):
+        if event.event_type == "chunk":
+            full_text += event.content
+            yield "chunk", event.content
+            continue
+        if event.event_type == "done" and event.result is not None:
+            text = event.result.text or full_text
+            yield "done", _attach_lane_selection(
+                ConversationOrchestratorResult(
+                    intent=intent,
+                    text=text,
+                    degraded=False,
+                    facts=[],
+                    suggestions=[],
+                    memory_candidate_payloads=[],
+                    config_suggestion=None,
+                    action_payloads=[],
+                    ai_trace_id=None,
+                    ai_provider_code=getattr(event.result, "provider", None) or None,
+                    effective_agent_id=session.active_agent_id,
+                    effective_agent_name=None,
+                    intent_detection=detection,
+                ),
+                lane_selection=lane_selection,
+            )
 
 
 def _run_non_qa_chat(
@@ -490,6 +778,75 @@ def _run_config_extraction(
     )
 
 
+async def _arun_config_extraction(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    actor: ActorContext,
+    conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    request_context: dict | None = None,
+) -> ConversationOrchestratorResult:
+    variables = _build_free_chat_variables(
+        db,
+        session=session,
+        actor=actor,
+        user_message=message,
+        request_context=request_context,
+        log_memory_context=False,
+    )
+    current_config = _build_current_config_snapshot(db, session=session, actor=actor, user_message=message)
+    user_evidence = _build_user_only_conversation_excerpt(conversation_history, message)
+    extraction_result = await ainvoke_llm(
+        db,
+        task_type="config_extraction",
+        variables={
+            "agent_context": variables["agent_context"],
+            "current_config": _render_config_draft(current_config),
+            "conversation_excerpt": user_evidence,
+            "user_message": message,
+        },
+        household_id=session.household_id,
+        conversation_history=conversation_history,
+        request_context=request_context,
+    )
+    parsed = extraction_result.data
+    suggestion = _normalize_config_suggestion(
+        suggestion=_retain_config_values_with_user_evidence(
+            suggestion=_build_config_suggestion(parsed),
+            user_evidence=user_evidence,
+        ),
+        current_config=current_config,
+    )
+    text = _build_config_dialogue_reply(message=message, suggestion=suggestion)
+    facts = (
+        [{"type": "config_suggestion", "label": "Agent 配置建议", "source": "conversation_orchestrator", "extra": suggestion}]
+        if any(suggestion.values())
+        else []
+    )
+    suggestions = (
+        ["继续补充配置要求", "确认配置建议"]
+        if any(suggestion.values())
+        else ["修改名字", "调整说话风格", "补充性格标签"]
+    )
+    return ConversationOrchestratorResult(
+        intent=ConversationIntent.CONFIG_EXTRACTION,
+        text=text,
+        degraded=False,
+        facts=facts,
+        suggestions=suggestions,
+        memory_candidate_payloads=[],
+        config_suggestion=suggestion if any(suggestion.values()) else None,
+        action_payloads=[],
+        ai_trace_id=None,
+        ai_provider_code=getattr(extraction_result, "provider", None) or None,
+        effective_agent_id=session.active_agent_id,
+        effective_agent_name=None,
+        intent_detection=detection,
+    )
+
+
 def _run_memory_extraction(
     db: Session,
     *,
@@ -502,6 +859,79 @@ def _run_memory_extraction(
 ) -> ConversationOrchestratorResult:
     _ = actor
     result = invoke_llm(
+        db,
+        task_type="memory_extraction",
+        variables={
+            "conversation": _build_conversation_excerpt(conversation_history, message),
+            "member_context": _build_member_context(db, household_id=session.household_id),
+        },
+        household_id=session.household_id,
+        conversation_history=conversation_history,
+        request_context=request_context,
+    )
+    parsed = result.data
+    if parsed is None or not parsed.memories:
+        return ConversationOrchestratorResult(
+            intent=ConversationIntent.MEMORY_EXTRACTION,
+            text="我没有从这轮话里整理出足够稳的长期记忆。你可以直接告诉我“记住什么”，别让我猜。",
+            degraded=False,
+            facts=[],
+            suggestions=["明确告诉我要记住什么", "换一种更直接的说法"],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=getattr(result, "provider", None) or None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+            intent_detection=detection,
+        )
+
+    candidates: list[dict] = []
+    for item in parsed.memories[:5]:
+        if not isinstance(item, dict):
+            continue
+        summary = str(item.get("summary") or item.get("content") or "").strip()
+        if not summary:
+            continue
+        candidates.append(
+            {
+                "memory_type": str(item.get("type") or item.get("memory_type") or "fact"),
+                "title": str(item.get("title") or "").strip() or summary[:18],
+                "summary": summary,
+                "content": item,
+                "confidence": float(item.get("confidence") or 0.75),
+            }
+        )
+    return ConversationOrchestratorResult(
+        intent=ConversationIntent.MEMORY_EXTRACTION,
+        text="我已经整理出记忆候选了。它们现在只是候选，不会自己落库。",
+        degraded=False,
+        facts=[],
+        suggestions=["确认写入记忆", "忽略这次提取"],
+        memory_candidate_payloads=candidates,
+        config_suggestion=None,
+        action_payloads=[],
+        ai_trace_id=None,
+        ai_provider_code=getattr(result, "provider", None) or None,
+        effective_agent_id=session.active_agent_id,
+        effective_agent_name=None,
+        intent_detection=detection,
+    )
+
+
+async def _arun_memory_extraction(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    actor: ActorContext,
+    conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    request_context: dict | None = None,
+) -> ConversationOrchestratorResult:
+    _ = actor
+    result = await ainvoke_llm(
         db,
         task_type="memory_extraction",
         variables={
@@ -625,6 +1055,61 @@ def _run_reminder_extraction(
         memory_candidate_payloads=[],
         config_suggestion=None,
         action_payloads=[reminder_payload],
+        ai_trace_id=None,
+        ai_provider_code=getattr(result, "provider", None) or None,
+        effective_agent_id=session.active_agent_id,
+        effective_agent_name=None,
+        intent_detection=detection,
+    )
+
+
+async def _arun_reminder_extraction(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    request_context: dict | None = None,
+) -> ConversationOrchestratorResult:
+    result = await ainvoke_llm(
+        db,
+        task_type="reminder_extraction",
+        variables={
+            "current_time": utc_now_iso(),
+            "conversation_excerpt": _build_conversation_excerpt(conversation_history, message),
+            "user_message": message,
+        },
+        household_id=session.household_id,
+        request_context=request_context,
+    )
+    parsed = result.data
+    if not isinstance(parsed, ReminderExtractionOutput) or not parsed.should_create or not parsed.title or not parsed.trigger_at:
+        return ConversationOrchestratorResult(
+            intent=ConversationIntent.REMINDER_EXTRACTION,
+            text="我理解你像是在创建提醒，但这轮信息还不够完整。请直接告诉我提醒内容和具体时间，比如“明天早上 8 点提醒我带钥匙”。",
+            degraded=False,
+            facts=[],
+            suggestions=["补充提醒时间", "补充提醒内容"],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=getattr(result, "provider", None) or None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+            intent_detection=detection,
+        )
+
+    return ConversationOrchestratorResult(
+        intent=ConversationIntent.REMINDER_EXTRACTION,
+        text=f"我整理出一个提醒候选：{parsed.title}，时间是 {parsed.trigger_at}。确认后我再真正创建。",
+        degraded=False,
+        facts=[],
+        suggestions=["确认创建提醒", "修改提醒内容"],
+        memory_candidate_payloads=[],
+        config_suggestion=None,
+        action_payloads=[parsed.model_dump(mode="json")],
         ai_trace_id=None,
         ai_provider_code=getattr(result, "provider", None) or None,
         effective_agent_id=session.active_agent_id,
@@ -1064,6 +1549,7 @@ def _log_route_selection(
             "route_intent": detection.route_intent.value,
             "confidence": detection.confidence,
             "guardrail_rule": detection.guardrail_rule,
+            "lane_selection": detection.lane_selection.to_payload() if detection.lane_selection is not None else None,
         },
     )
 
