@@ -25,7 +25,15 @@ from app.modules.household.models import Household
 from app.modules.member.models import Member, MemberPreference
 from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember, MemoryCardRevision
 from app.modules.permission.models import MemberPermission
-from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun
+from app.modules.plugin.models import (
+    PluginJob,
+    PluginJobAttempt,
+    PluginJobNotification,
+    PluginJobResponse,
+    PluginMount,
+    PluginRawRecord,
+    PluginRun,
+)
 from app.modules.presence.models import MemberPresenceState, PresenceEvent
 from app.modules.reminder.models import ReminderAckEvent, ReminderDeliveryAttempt, ReminderRun, ReminderTask
 from app.modules.relationship.models import MemberRelationship
@@ -59,6 +67,10 @@ __all__ = [
     "Member",
     "MemberPermission",
     "PluginRawRecord",
+    "PluginJob",
+    "PluginJobAttempt",
+    "PluginJobNotification",
+    "PluginJobResponse",
     "PluginMount",
     "PluginRun",
     "MemberPreference",

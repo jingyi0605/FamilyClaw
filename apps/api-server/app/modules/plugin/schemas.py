@@ -8,6 +8,20 @@ PluginType = Literal["connector", "memory-ingestor", "action", "agent-skill"]
 RiskLevel = Literal["low", "medium", "high"]
 PluginSourceType = Literal["builtin", "official", "third_party"]
 PluginExecutionBackend = Literal["in_process", "subprocess_runner"]
+PluginJobStatus = Literal[
+    "queued",
+    "running",
+    "retry_waiting",
+    "waiting_response",
+    "succeeded",
+    "failed",
+    "cancelled",
+]
+PluginJobAttemptStatus = Literal["running", "succeeded", "failed", "timed_out"]
+PluginJobNotificationType = Literal["state_changed", "failed", "waiting_response", "recovered"]
+PluginJobNotificationChannel = Literal["websocket", "in_app"]
+PluginJobResponseAction = Literal["retry", "confirm", "cancel", "provide_input"]
+PluginJobActorType = Literal["member", "admin", "system"]
 
 ENTRYPOINT_KEY_BY_TYPE: dict[PluginType, str] = {
     "connector": "connector",
@@ -215,6 +229,80 @@ class PluginMountRead(BaseModel):
     enabled: bool
     created_at: str
     updated_at: str
+
+
+class PluginJobCreate(BaseModel):
+    household_id: str = Field(min_length=1)
+    plugin_id: str = Field(min_length=1, max_length=64)
+    plugin_type: PluginType
+    trigger: str = Field(min_length=1, max_length=50)
+    request_payload: dict[str, Any] = Field(default_factory=dict)
+    payload_summary: dict[str, Any] | None = None
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    initial_status: Literal["queued", "waiting_response"] = "queued"
+    max_attempts: int = Field(default=1, ge=1, le=20)
+    response_deadline_at: str | None = None
+
+
+class PluginJobAttemptRead(BaseModel):
+    id: str
+    job_id: str
+    attempt_no: int
+    status: PluginJobAttemptStatus
+    worker_id: str | None = None
+    started_at: str
+    finished_at: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    output_summary: Any | None = None
+
+
+class PluginJobNotificationRead(BaseModel):
+    id: str
+    job_id: str
+    notification_type: PluginJobNotificationType
+    channel: PluginJobNotificationChannel
+    payload: Any
+    delivered_at: str | None = None
+    created_at: str
+
+
+class PluginJobResponseCreate(BaseModel):
+    action: PluginJobResponseAction
+    actor_type: PluginJobActorType
+    actor_id: str | None = None
+    payload: dict[str, Any] | None = None
+
+
+class PluginJobResponseRead(BaseModel):
+    id: str
+    job_id: str
+    action: PluginJobResponseAction
+    actor_type: PluginJobActorType
+    actor_id: str | None = None
+    payload: Any | None = None
+    created_at: str
+
+
+class PluginJobRead(BaseModel):
+    id: str
+    household_id: str
+    plugin_id: str
+    plugin_type: PluginType
+    trigger: str
+    status: PluginJobStatus
+    request_payload: Any
+    payload_summary: Any | None = None
+    idempotency_key: str | None = None
+    current_attempt: int
+    max_attempts: int
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    response_deadline_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    updated_at: str
+    created_at: str
 
 
 class PluginExecutionRequest(BaseModel):
