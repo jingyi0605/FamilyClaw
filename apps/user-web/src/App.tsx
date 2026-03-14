@@ -25,6 +25,7 @@ import {
   SettingsIntegrations,
 } from './pages/SettingsPage';
 import { SettingsChannelAccess } from './pages/SettingsChannelAccessPage';
+import { SettingsPluginsPage } from './pages/SettingsPluginsPage';
 import { LoginPage } from './pages/LoginPage';
 import { useHouseholdContext } from './state/household';
 
@@ -133,6 +134,14 @@ function AuthenticatedUserApp() {
                 element={(
                   <SetupGuard mode="protected">
                     <SettingsChannelAccess />
+                  </SetupGuard>
+                )}
+              />
+              <Route
+                path="plugins"
+                element={(
+                  <SetupGuard mode="protected">
+                    <SettingsPluginsPage />
                   </SetupGuard>
                 )}
               />

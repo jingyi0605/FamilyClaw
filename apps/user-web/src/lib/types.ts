@@ -1108,3 +1108,177 @@ export type ChannelAccountStatusRead = {
   recent_delivery_count: number;
   recent_inbound_count: number;
 };
+
+/* ============================================================
+ * 插件管理类型定义
+ * ============================================================ */
+
+export type PluginSourceType = 'builtin' | 'official' | 'third_party';
+export type PluginRiskLevel = 'low' | 'medium' | 'high';
+export type PluginManifestType = 'connector' | 'memory-ingestor' | 'action' | 'agent-skill' | 'channel' | 'locale-pack' | 'region-provider';
+export type PluginJobStatus = 'queued' | 'running' | 'retry_waiting' | 'waiting_response' | 'succeeded' | 'failed' | 'cancelled';
+export type PluginJobResponseAction = 'retry' | 'confirm' | 'cancel' | 'provide_input';
+
+export type PluginManifestEntrypoints = {
+  connector?: string | null;
+  memory_ingestor?: string | null;
+  action?: string | null;
+  agent_skill?: string | null;
+  channel?: string | null;
+  region_provider?: string | null;
+};
+
+export type PluginManifestCapabilities = {
+  context_reads?: {
+    household_region_context?: boolean;
+  } | null;
+  channel?: {
+    platform_code?: string | null;
+    inbound_modes?: string[];
+    delivery_modes?: string[];
+    supports_member_binding?: boolean;
+    supports_group_chat?: boolean;
+    supports_threading?: boolean;
+  } | null;
+  region_provider?: {
+    provider_code?: string | null;
+    country_codes?: string[];
+  } | null;
+};
+
+// 插件注册表条目（包括内置、官方、第三方插件）
+export type PluginRegistryItem = {
+  id: string;
+  name: string;
+  version: string;
+  types: PluginManifestType[];
+  permissions: string[];
+  risk_level: PluginRiskLevel;
+  triggers: string[];
+  enabled: boolean;
+  manifest_path: string;
+  entrypoints: PluginManifestEntrypoints;
+  capabilities: PluginManifestCapabilities;
+  locales: Array<{
+    id: string;
+    label: string;
+    native_label: string;
+    resource: string;
+    fallback?: string | null;
+  }>;
+  schedule_templates: Array<{
+    code: string;
+    name: string;
+    description?: string | null;
+    default_definition: Record<string, unknown>;
+    enabled_by_default: boolean;
+  }>;
+  source_type: PluginSourceType;
+  execution_backend?: string | null;
+  runner_config?: {
+    plugin_root?: string | null;
+    python_path?: string | null;
+    working_dir?: string | null;
+    timeout_seconds?: number;
+    stdout_limit_bytes?: number;
+    stderr_limit_bytes?: number;
+  } | null;
+};
+
+export type PluginRegistrySnapshot = {
+  items: PluginRegistryItem[];
+};
+
+export type PluginMountRead = {
+  id: string;
+  household_id: string;
+  plugin_id: string;
+  name: string;
+  version: string;
+  types: PluginManifestType[];
+  permissions: string[];
+  risk_level: PluginRiskLevel;
+  triggers: string[];
+  entrypoints: PluginManifestEntrypoints;
+  capabilities: PluginManifestCapabilities;
+  source_type: 'official' | 'third_party';
+  execution_backend: 'subprocess_runner';
+  manifest_path: string;
+  plugin_root: string;
+  python_path: string;
+  working_dir: string | null;
+  timeout_seconds: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PluginMountCreate = {
+  source_type: 'official' | 'third_party';
+  execution_backend?: 'subprocess_runner';
+  plugin_root: string;
+  manifest_path?: string | null;
+  python_path: string;
+  working_dir?: string | null;
+  timeout_seconds?: number;
+  enabled?: boolean;
+};
+
+export type PluginMountUpdate = {
+  source_type?: 'official' | 'third_party' | null;
+  python_path?: string | null;
+  working_dir?: string | null;
+  timeout_seconds?: number | null;
+  enabled?: boolean | null;
+};
+
+export type PluginJobRead = {
+  id: string;
+  household_id: string;
+  plugin_id: string;
+  plugin_type: string;
+  trigger: string;
+  status: PluginJobStatus;
+  request_payload: unknown;
+  payload_summary: unknown | null;
+  idempotency_key: string | null;
+  current_attempt: number;
+  max_attempts: number;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  retry_after_at: string | null;
+  response_deadline_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+  created_at: string;
+};
+
+export type PluginJobListItemRead = {
+  job: PluginJobRead;
+  allowed_actions: PluginJobResponseAction[];
+};
+
+export type PluginJobListRead = {
+  items: PluginJobListItemRead[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type PluginJobEnqueueRequest = {
+  plugin_id: string;
+  plugin_type: string;
+  payload?: Record<string, unknown>;
+  trigger?: string;
+  idempotency_key?: string | null;
+  payload_summary?: Record<string, unknown> | null;
+  max_attempts?: number | null;
+};
+
+export type PluginJobResponseCreate = {
+  action: PluginJobResponseAction;
+  actor_type?: 'member' | 'admin' | 'system';
+  actor_id?: string | null;
+  payload?: Record<string, unknown> | null;
+};

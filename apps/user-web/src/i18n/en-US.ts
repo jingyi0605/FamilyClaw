@@ -182,6 +182,10 @@ const enUS = {
   'settings.language.dateFormat': 'Date Format',
   'settings.language.timeFormat': 'Time Format',
   'settings.language.timezone': 'Timezone',
+  'settings.language.localeSaved': 'Interface language updated.',
+  'settings.language.timezoneSaved': 'Timezone updated.',
+  'settings.language.saveFailed': 'Failed to save language settings',
+  'settings.language.noHousehold': 'Please select a household first.',
   'settings.language.localeCatalog': 'Available Locale Sources',
   'settings.language.sourceBuiltin': 'Built-in',
   'settings.language.sourceOfficial': 'Official Plugin',
@@ -208,6 +212,58 @@ const enUS = {
   'settings.integrations.haStatus': 'Home Assistant Status',
   'settings.integrations.lastSync': 'Last Sync',
   'settings.integrations.syncNow': 'Sync Now',
+
+  /* 设置 - 插件管理 */
+  'settings.plugins': 'Plugin Management',
+  'settings.pluginsDesc': 'View and manage installed plugins',
+  'plugins.installed': 'Installed Plugins',
+  'plugins.total': 'Total',
+  'plugins.enabled': 'Enabled',
+  'plugins.disabled': 'Disabled',
+  'plugins.empty': 'No plugins installed',
+  'plugins.emptyHint': 'System plugins load automatically. Third-party plugins can be mounted manually.',
+  'plugins.permissions': 'Permissions',
+  'plugins.recentJobs': 'Recent Jobs',
+  'plugins.noJobs': 'No job records',
+  'plugins.jobAttempts': 'Attempts',
+  'plugins.jobRetry': 'Retry',
+  'plugins.jobConfirm': 'Confirm',
+  'plugins.jobCancel': 'Cancel',
+  'plugins.enableSuccess': 'Plugin enabled',
+  'plugins.disableSuccess': 'Plugin disabled',
+
+  /* 插件状态 */
+  'plugins.status.enabled': 'Enabled',
+  'plugins.status.disabled': 'Disabled',
+
+  /* 插件操作 */
+  'plugins.action.enable': 'Enable',
+  'plugins.action.disable': 'Disable',
+  'plugins.action.viewJobs': 'View Jobs',
+  'plugins.action.viewDetail': 'View Details',
+
+  /* 插件详情 */
+  'plugins.detail.basicInfo': 'Basic Information',
+  'plugins.detail.version': 'Version',
+  'plugins.detail.types': 'Types',
+  'plugins.detail.source': 'Source',
+  'plugins.detail.permissions': 'Permissions',
+  'plugins.detail.noPermissions': 'No special permissions required',
+  'plugins.detail.triggers': 'Triggers',
+  'plugins.detail.entrypoints': 'Entrypoints',
+  'plugins.detail.noEntrypoints': 'No entrypoints',
+  'plugins.detail.locales': 'Supported Languages',
+  'plugins.detail.thirdPartyWarning': 'Third-Party Plugin',
+  'plugins.detail.thirdPartyWarningDesc': 'This plugin is from a third-party source. Please verify its trustworthiness before using.',
+  'plugins.detail.highRiskWarning': 'High-Risk Plugin',
+  'plugins.detail.jobWaitingResponse': 'Waiting for Response',
+  'plugins.detail.jobWaitingResponseDesc': 'A job is waiting for your confirmation or input.',
+  'plugins.detail.jobFailed': 'Recent Job Failed',
+
+  /* 插件市场（降级占位） */
+  'plugins.market.title': 'Plugin Market',
+  'plugins.market.comingSoon': 'Coming Soon',
+  'plugins.market.comingSoonHint': 'Plugin marketplace is under development. Browse official and third-party plugins here soon.',
 
   /* 家庭上下文 */
   'household.switch': 'Switch Family',

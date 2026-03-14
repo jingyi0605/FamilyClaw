@@ -180,6 +180,10 @@ const zhCN = {
   'settings.language.dateFormat': '日期格式',
   'settings.language.timeFormat': '时间格式',
   'settings.language.timezone': '时区',
+  'settings.language.localeSaved': '界面语言已更新。',
+  'settings.language.timezoneSaved': '时区已更新。',
+  'settings.language.saveFailed': '保存语言设置失败',
+  'settings.language.noHousehold': '请先选择家庭。',
   'settings.language.localeCatalog': '可用语言来源',
   'settings.language.sourceBuiltin': '内置',
   'settings.language.sourceOfficial': '官方插件',
@@ -206,6 +210,58 @@ const zhCN = {
   'settings.integrations.haStatus': 'Home Assistant 连接状态',
   'settings.integrations.lastSync': '上次同步',
   'settings.integrations.syncNow': '立即同步',
+
+  /* 设置 - 插件管理 */
+  'settings.plugins': '插件管理',
+  'settings.pluginsDesc': '查看和管理已安装的插件',
+  'plugins.installed': '已安装插件',
+  'plugins.total': '总计',
+  'plugins.enabled': '已启用',
+  'plugins.disabled': '已禁用',
+  'plugins.empty': '还没有安装插件',
+  'plugins.emptyHint': '系统插件会自动加载，第三方插件可以通过挂载方式接入。',
+  'plugins.permissions': '权限',
+  'plugins.recentJobs': '最近任务',
+  'plugins.noJobs': '暂无任务记录',
+  'plugins.jobAttempts': '尝试次数',
+  'plugins.jobRetry': '重试',
+  'plugins.jobConfirm': '确认',
+  'plugins.jobCancel': '取消',
+  'plugins.enableSuccess': '插件已启用',
+  'plugins.disableSuccess': '插件已禁用',
+
+  /* 插件状态 */
+  'plugins.status.enabled': '已启用',
+  'plugins.status.disabled': '已禁用',
+
+  /* 插件操作 */
+  'plugins.action.enable': '启用',
+  'plugins.action.disable': '禁用',
+  'plugins.action.viewJobs': '查看任务',
+  'plugins.action.viewDetail': '查看详情',
+
+  /* 插件详情 */
+  'plugins.detail.basicInfo': '基本信息',
+  'plugins.detail.version': '版本',
+  'plugins.detail.types': '类型',
+  'plugins.detail.source': '来源',
+  'plugins.detail.permissions': '权限声明',
+  'plugins.detail.noPermissions': '无需特殊权限',
+  'plugins.detail.triggers': '触发器',
+  'plugins.detail.entrypoints': '入口点',
+  'plugins.detail.noEntrypoints': '无入口点',
+  'plugins.detail.locales': '支持语言',
+  'plugins.detail.thirdPartyWarning': '第三方插件',
+  'plugins.detail.thirdPartyWarningDesc': '此插件来自第三方来源，请确认其可信度后再使用。',
+  'plugins.detail.highRiskWarning': '高风险插件',
+  'plugins.detail.jobWaitingResponse': '等待响应',
+  'plugins.detail.jobWaitingResponseDesc': '有任务正在等待您的确认或输入。',
+  'plugins.detail.jobFailed': '最近任务失败',
+
+  /* 插件市场（降级占位） */
+  'plugins.market.title': '插件市场',
+  'plugins.market.comingSoon': '即将推出',
+  'plugins.market.comingSoonHint': '插件市场正在开发中，届时可以从官方和第三方注册表浏览更多插件。',
 
   /* 家庭上下文 */
   'household.switch': '切换家庭',

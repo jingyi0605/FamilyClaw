@@ -6879,3 +6879,507 @@ body::before {
     margin-top: var(--spacing-sm);
   }
 }
+
+/* ---- 插件管理 ---- */
+.plugin-stats-card {
+  margin-bottom: var(--spacing-lg);
+}
+
+.plugin-stats {
+  display: flex;
+  gap: var(--spacing-xl);
+}
+
+.plugin-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.plugin-stat__value {
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plugin-stat__value--success {
+  color: var(--color-success);
+}
+
+.plugin-stat__value--secondary {
+  color: var(--text-tertiary);
+}
+
+.plugin-stat__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.plugin-card {
+  padding: var(--spacing-lg);
+}
+
+.plugin-card--expanded {
+  border-color: var(--brand-primary);
+}
+
+.plugin-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+}
+
+.plugin-card__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.plugin-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--spacing-xs);
+}
+
+.plugin-card__name {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plugin-card__meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+}
+
+.plugin-card__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+}
+
+.plugin-card__permissions {
+  margin-top: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.plugin-card__permissions-label {
+  font-weight: 500;
+  margin-right: var(--spacing-xs);
+}
+
+.plugin-card__permissions-list {
+  color: var(--text-tertiary);
+}
+
+.plugin-card__jobs {
+  margin-top: var(--spacing-lg);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--border-light);
+}
+
+.plugin-card__jobs h4 {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--spacing-md);
+}
+
+.plugin-job-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.plugin-job-item {
+  padding: var(--spacing-md);
+  background: var(--bg-app);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+}
+
+.plugin-job-item__info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.plugin-job-item__trigger {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.plugin-job-item__meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.plugin-job-item__error {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+}
+
+.plugin-job-item__actions {
+  margin-top: var(--spacing-sm);
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+/* 插件市场占位 */
+.plugin-market-placeholder {
+  padding: var(--spacing-xl);
+  text-align: center;
+}
+
+.plugin-market-placeholder__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.plugin-market-placeholder__icon {
+  font-size: 2.5rem;
+  margin-bottom: var(--spacing-sm);
+}
+
+.plugin-market-placeholder h3 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.plugin-market-placeholder p {
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  margin: 0;
+  max-width: 360px;
+}
+
+/* Badge 扩展 - 用于插件管理 */
+.badge--info {
+  background: var(--brand-primary-light);
+  color: var(--brand-primary);
+}
+
+.badge--danger {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+/* 设置提示扩展 */
+.settings-note--success {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.settings-note--error {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+/* 响应式 - 插件管理 */
+@media (max-width: 768px) {
+  .plugin-stats {
+    gap: var(--spacing-lg);
+  }
+
+  .plugin-card__header {
+    flex-direction: column;
+  }
+
+  .plugin-card__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* ============================================================
+ * 插件详情抽屉样式
+ * ============================================================ */
+
+.plugin-detail-drawer {
+  /* 复用 task-form-drawer 的基础样式 */
+}
+
+.plugin-detail-drawer__title-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.plugin-detail-drawer__title-area h2 {
+  margin: 0;
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plugin-detail-drawer__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.plugin-detail-drawer__alert {
+  display: flex;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.plugin-detail-drawer__alert-icon {
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+
+.plugin-detail-drawer__alert strong {
+  display: block;
+  font-weight: 600;
+  margin-bottom: var(--spacing-xs);
+}
+
+.plugin-detail-drawer__alert p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  opacity: 0.9;
+}
+
+.plugin-detail-drawer__alert--warning {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
+}
+
+.plugin-detail-drawer__alert--danger {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+
+.plugin-detail-drawer__alert--info {
+  background: var(--brand-primary-light);
+  color: var(--brand-primary);
+  border: 1px solid var(--brand-primary);
+}
+
+.plugin-detail-section {
+  margin-bottom: var(--spacing-lg);
+}
+
+.plugin-detail-section h3 {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 var(--spacing-md);
+  padding-bottom: var(--spacing-xs);
+  border-bottom: 1px solid var(--divider);
+}
+
+.plugin-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-md);
+}
+
+.plugin-detail-grid__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.plugin-detail-grid__label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.plugin-detail-grid__value {
+  font-size: var(--font-md);
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.plugin-detail-grid__value--info {
+  color: var(--brand-primary);
+}
+
+.plugin-detail-grid__value--success {
+  color: var(--color-success);
+}
+
+.plugin-detail-grid__value--warning {
+  color: var(--color-warning);
+}
+
+.plugin-detail-grid__value--danger {
+  color: var(--color-danger);
+}
+
+.plugin-detail-permissions,
+.plugin-detail-triggers,
+.plugin-detail-locales {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.plugin-detail-permission-tag {
+  display: inline-flex;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-warning-light);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-warning);
+}
+
+.plugin-detail-trigger-tag {
+  display: inline-flex;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--brand-primary-light);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--brand-primary);
+}
+
+.plugin-detail-locale-tag {
+  display: inline-flex;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.plugin-detail-entrypoints {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.plugin-detail-entrypoint {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.plugin-detail-entrypoint__key {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 100px;
+}
+
+.plugin-detail-entrypoint__value {
+  font-size: var(--font-size-sm);
+  font-family: monospace;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.plugin-detail-empty {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-md) 0;
+}
+
+.plugin-detail-loading,
+.plugin-detail-error {
+  padding: var(--spacing-md);
+  text-align: center;
+}
+
+.plugin-detail-loading {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-detail-error {
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-detail-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.plugin-detail-job {
+  padding: var(--spacing-md);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+}
+
+.plugin-detail-job__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-xs);
+}
+
+.plugin-detail-job__trigger {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.plugin-detail-job__meta {
+  display: flex;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.plugin-detail-job__error {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: var(--color-danger-light);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+}
+
+.plugin-detail-job__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+@media (max-width: 640px) {
+  .plugin-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .plugin-detail-drawer__title-area {
+    width: 100%;
+  }
+
+  .plugin-detail-drawer__badges {
+    width: 100%;
+  }
+}

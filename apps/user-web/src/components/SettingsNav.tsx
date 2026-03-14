@@ -2,7 +2,7 @@
  * SettingsNav - 设置页二级侧边导航
  * ============================================================ */
 import { NavLink } from 'react-router-dom';
-import { Palette, Bot, Globe, Bell, HeartHandshake, Link as LinkIcon, MessageCircle } from 'lucide-react';
+import { Palette, Bot, Globe, Bell, HeartHandshake, Link as LinkIcon, MessageCircle, Puzzle } from 'lucide-react';
 import { useI18n } from '../i18n';
 
 const settingsItems = [
@@ -13,6 +13,7 @@ const settingsItems = [
   { to: '/settings/accessibility', icon: <HeartHandshake size={20} />, labelKey: 'settings.accessibility' as const, descKey: 'settings.accessibilityDesc' as const },
   { to: '/settings/integrations', icon: <LinkIcon size={20} />, labelKey: 'settings.integrations' as const, descKey: 'settings.integrationsDesc' as const },
   { to: '/settings/channel-access', icon: <MessageCircle size={20} />, labelKey: 'settings.channelAccess' as const, descKey: 'settings.channelAccessDesc' as const },
+  { to: '/settings/plugins', icon: <Puzzle size={20} />, labelKey: 'settings.plugins' as const, descKey: 'settings.pluginsDesc' as const },
 ];
 
 export function SettingsNav() {

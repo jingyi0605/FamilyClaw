@@ -56,6 +56,13 @@ import type {
   ScheduledTaskDefinitionCreate,
   ScheduledTaskDefinitionUpdate,
   ScheduledTaskRun,
+  PluginRegistrySnapshot,
+  PluginMountRead,
+  PluginMountCreate,
+  PluginMountUpdate,
+  PluginJobListRead,
+  PluginJobEnqueueRequest,
+  PluginJobResponseCreate,
 } from './types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
@@ -892,6 +899,100 @@ export const api = {
       `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/bindings/${encodeURIComponent(bindingId)}`,
       {
         method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  // ====== 插件管理 ======
+
+  // 获取所有已注册插件（包括内置、官方、第三方）
+  listRegisteredPlugins(householdId: string) {
+    return request<PluginRegistrySnapshot>(`/ai-config/${encodeURIComponent(householdId)}/plugins`);
+  },
+
+  listPluginMounts(householdId: string) {
+    return request<PluginMountRead[]>(`/ai-config/${encodeURIComponent(householdId)}/plugin-mounts`);
+  },
+
+  createPluginMount(householdId: string, payload: PluginMountCreate) {
+    return request<PluginMountRead>(`/ai-config/${encodeURIComponent(householdId)}/plugin-mounts`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  updatePluginMount(householdId: string, pluginId: string, payload: PluginMountUpdate) {
+    return request<PluginMountRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugin-mounts/${encodeURIComponent(pluginId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  deletePluginMount(householdId: string, pluginId: string) {
+    return request<void>(`/ai-config/${encodeURIComponent(householdId)}/plugin-mounts/${encodeURIComponent(pluginId)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  enablePluginMount(householdId: string, pluginId: string) {
+    return this.updatePluginMount(householdId, pluginId, { enabled: true });
+  },
+
+  disablePluginMount(householdId: string, pluginId: string) {
+    return this.updatePluginMount(householdId, pluginId, { enabled: false });
+  },
+
+  // ====== 插件任务 ======
+
+  listPluginJobs(
+    householdId: string,
+    params?: {
+      status?: string;
+      plugin_id?: string;
+      created_from?: string;
+      created_to?: string;
+      page?: number;
+      page_size?: number;
+    },
+  ) {
+    const query = new URLSearchParams({ household_id: householdId });
+    if (params?.status) query.set('status', params.status);
+    if (params?.plugin_id) query.set('plugin_id', params.plugin_id);
+    if (params?.created_from) query.set('created_from', params.created_from);
+    if (params?.created_to) query.set('created_to', params.created_to);
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.page_size) query.set('page_size', String(params.page_size));
+    return request<PluginJobListRead>(`/plugin-jobs?${query.toString()}`);
+  },
+
+  getPluginJob(householdId: string, jobId: string) {
+    const query = new URLSearchParams({ household_id: householdId });
+    return request<{ job: PluginJobListRead['items'][0]['job']; allowed_actions: string[] }>(
+      `/plugin-jobs/${encodeURIComponent(jobId)}?${query.toString()}`,
+    );
+  },
+
+  createPluginJob(householdId: string, payload: PluginJobEnqueueRequest) {
+    const query = new URLSearchParams({ household_id: householdId });
+    return request<{ job: PluginJobListRead['items'][0]['job']; allowed_actions: string[] }>(
+      `/plugin-jobs?${query.toString()}`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  respondPluginJob(householdId: string, jobId: string, payload: PluginJobResponseCreate) {
+    const query = new URLSearchParams({ household_id: householdId });
+    return request<{ job: PluginJobListRead['items'][0]['job']; allowed_actions: string[] }>(
+      `/plugin-jobs/${encodeURIComponent(jobId)}/responses?${query.toString()}`,
+      {
+        method: 'POST',
         body: JSON.stringify(payload),
       },
     );
