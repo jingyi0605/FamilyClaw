@@ -17,6 +17,8 @@ from app.core.config import settings
 from app.main import app
 from app.modules.account.schemas import BootstrapAccountCompleteRequest
 from app.modules.account.service import authenticate_account, complete_bootstrap_account, create_account_session, ensure_pending_household_bootstrap_accounts
+from app.modules.agent.schemas import AgentCreate, AgentPluginMemoryCheckpointRequest
+from app.modules.agent.service import arun_agent_plugin_memory_checkpoint, create_agent
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.member.schemas import MemberCreate
@@ -24,6 +26,7 @@ from app.modules.member.service import create_member
 from app.modules.realtime.connection_manager import realtime_connection_manager
 from app.modules.plugin import repository
 from app.modules.plugin.job_notifier import publish_plugin_job_updates
+from app.modules.plugin.agent_bridge import invoke_agent_plugin
 from app.modules.plugin.job_worker import (
     claim_next_plugin_job,
     enqueue_plugin_execution_job,
@@ -42,7 +45,7 @@ from app.modules.plugin.job_service import (
     requeue_plugin_job,
     start_plugin_job_attempt,
 )
-from app.modules.plugin.schemas import PluginExecutionRequest, PluginJobCreate, PluginJobResponseCreate, PluginMountCreate
+from app.modules.plugin.schemas import AgentPluginInvokeRequest, PluginExecutionRequest, PluginJobCreate, PluginJobResponseCreate, PluginMountCreate
 from app.modules.plugin.service import register_plugin_mount
 
 
@@ -96,7 +99,18 @@ class PluginJobTests(unittest.TestCase):
             ),
         )
         _, self.session_token = create_account_session(self.db, account.id)
-        self.db.flush()
+        self.agent = create_agent(
+            self.db,
+            household_id=self.household.id,
+            payload=AgentCreate(
+                display_name="笨笨",
+                agent_type="butler",
+                self_identity="我是笨笨",
+                role_summary="家庭助手",
+                created_by="test",
+            ),
+        )
+        self.db.commit()
 
     def tearDown(self) -> None:
         self.db.close()
@@ -525,6 +539,92 @@ class PluginJobTests(unittest.TestCase):
         self.assertEqual("plugin.job.updated", websocket.sent_messages[-1]["type"])
         self.assertEqual(job.id, websocket.sent_messages[-1]["payload"]["job"]["id"])
         self.assertTrue(any(item.channel == "websocket" and item.delivered_at is not None for item in notifications))
+
+    def test_create_plugin_job_endpoint_then_worker_then_query(self) -> None:
+        transport = httpx.ASGITransport(app=app)
+
+        async def run_case() -> None:
+            websocket = _FakeWebSocket()
+            realtime_connection_manager.register(
+                household_id=self.household.id,
+                session_id="session-job-create",
+                websocket=websocket,  # type: ignore[arg-type]
+            )
+            try:
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    client.cookies.set(settings.auth_session_cookie_name, self.session_token)
+
+                    create_response = await client.post(
+                        "/api/v1/plugin-jobs",
+                        params={"household_id": self.household.id},
+                        json={
+                            "plugin_id": "health-basic-reader",
+                            "plugin_type": "connector",
+                            "payload": {"member_id": self.member.id},
+                            "trigger": "manual",
+                            "idempotency_key": "api-create-001",
+                        },
+                    )
+                    self.assertEqual(201, create_response.status_code)
+                    created = create_response.json()
+                    job_id = created["job"]["id"]
+                    self.assertEqual("queued", created["job"]["status"])
+
+                    await run_plugin_job_worker_cycle(worker_id="worker-e2e")
+
+                    detail_response = await client.get(
+                        f"/api/v1/plugin-jobs/{job_id}",
+                        params={"household_id": self.household.id},
+                    )
+                    self.assertEqual(200, detail_response.status_code)
+                    detail = detail_response.json()
+                    self.assertEqual("succeeded", detail["job"]["status"])
+                    self.assertEqual("succeeded", detail["latest_attempt"]["status"])
+            finally:
+                realtime_connection_manager.unregister(
+                    household_id=self.household.id,
+                    session_id="session-job-create",
+                    websocket=websocket,  # type: ignore[arg-type]
+                )
+
+            self.assertTrue(any(message["type"] == "plugin.job.updated" for message in websocket.sent_messages))
+
+        asyncio.run(run_case())
+
+    def test_existing_agent_plugin_entrypoints_now_enqueue_jobs(self) -> None:
+        invoke_result = invoke_agent_plugin(
+            self.db,
+            household_id=self.household.id,
+            agent_id=self.agent.id,
+            request=AgentPluginInvokeRequest(
+                plugin_id="health-basic-reader",
+                plugin_type="connector",
+                payload={"member_id": self.member.id},
+                trigger="agent",
+            ),
+        )
+        checkpoint_result = asyncio.run(
+            arun_agent_plugin_memory_checkpoint(
+                self.db,
+                household_id=self.household.id,
+                agent_id=self.agent.id,
+                payload=AgentPluginMemoryCheckpointRequest(
+                    plugin_id="health-basic-reader",
+                    payload={"member_id": self.member.id},
+                    trigger="agent-checkpoint",
+                ),
+            )
+        )
+        self.db.commit()
+
+        invoke_job = repository.get_plugin_job(self.db, invoke_result.job_id or "")
+        checkpoint_job = repository.get_plugin_job(self.db, checkpoint_result.job_id or "")
+        self.assertTrue(invoke_result.queued)
+        self.assertEqual("queued", invoke_result.job_status)
+        self.assertIsNotNone(invoke_job)
+        self.assertTrue(checkpoint_result.queued)
+        self.assertEqual("queued", checkpoint_result.job_status)
+        self.assertIsNotNone(checkpoint_job)
 
 
 if __name__ == "__main__":

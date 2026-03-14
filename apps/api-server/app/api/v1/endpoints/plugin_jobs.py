@@ -8,9 +8,50 @@ from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
 from app.modules.plugin import PluginJobNotFoundError, PluginJobStateError, get_plugin_job_detail, list_plugin_jobs_page, record_plugin_job_response
 from app.modules.plugin.job_notifier import publish_plugin_job_updates
-from app.modules.plugin.schemas import PluginJobDetailRead, PluginJobListRead, PluginJobResponseCreate, PluginJobStatus
+from app.modules.plugin.schemas import PluginExecutionRequest, PluginJobDetailRead, PluginJobEnqueueRequest, PluginJobListRead, PluginJobResponseCreate, PluginJobStatus
+from app.modules.plugin.service import PluginExecutionError, enqueue_household_plugin_job
 
 router = APIRouter(prefix="/plugin-jobs", tags=["plugin-jobs"])
+
+
+@router.post("", response_model=PluginJobDetailRead, status_code=status.HTTP_201_CREATED)
+async def create_plugin_job_endpoint(
+    payload: PluginJobEnqueueRequest,
+    household_id: str = Query(min_length=1),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> PluginJobDetailRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        job = enqueue_household_plugin_job(
+            db,
+            household_id=household_id,
+            request=PluginExecutionRequest(
+                plugin_id=payload.plugin_id,
+                plugin_type=payload.plugin_type,
+                payload=payload.payload,
+                trigger=payload.trigger,
+            ),
+            idempotency_key=payload.idempotency_key,
+            payload_summary=payload.payload_summary,
+            max_attempts=payload.max_attempts,
+        )
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="plugin.job.create",
+            target_type="plugin_job",
+            target_id=job.id,
+            result="success",
+            details=payload.model_dump(mode="json"),
+        )
+        db.commit()
+        await publish_plugin_job_updates(db, household_id=household_id, job_id=job.id)
+        return get_plugin_job_detail(db, household_id=household_id, job_id=job.id)
+    except PluginExecutionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/{job_id}", response_model=PluginJobDetailRead)

@@ -335,6 +335,16 @@ class PluginJobListRead(BaseModel):
     page_size: int = Field(ge=1)
 
 
+class PluginJobEnqueueRequest(BaseModel):
+    plugin_id: str = Field(min_length=1, max_length=64)
+    plugin_type: PluginType
+    payload: dict[str, Any] = Field(default_factory=dict)
+    trigger: str = Field(default="manual", min_length=1, max_length=50)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    payload_summary: dict[str, Any] | None = None
+    max_attempts: int | None = Field(default=None, ge=1, le=20)
+
+
 class PluginExecutionRequest(BaseModel):
     plugin_id: str = Field(min_length=1)
     plugin_type: PluginType
@@ -430,6 +440,9 @@ class AgentPluginInvokeResult(BaseModel):
     output: Any | None = None
     error_code: str | None = None
     error_message: str | None = None
+    queued: bool = False
+    job_id: str | None = None
+    job_status: PluginJobStatus | None = None
 
 
 class AgentActionPluginInvokeRequest(BaseModel):
@@ -454,6 +467,9 @@ class AgentActionPluginInvokeResult(BaseModel):
     output: Any | None = None
     error_code: str | None = None
     error_message: str | None = None
+    queued: bool = False
+    job_id: str | None = None
+    job_status: PluginJobStatus | None = None
 
 
 class AgentActionConfirmationRead(BaseModel):

@@ -326,10 +326,10 @@ def run_agent_plugin_memory_checkpoint(
     payload: AgentPluginMemoryCheckpointRequest,
 ) -> AgentPluginMemoryCheckpointRead:
     from app.modules.plugin.schemas import PluginExecutionRequest
-    from app.modules.plugin.service import run_plugin_sync_pipeline
+    from app.modules.plugin.service import enqueue_household_plugin_job
 
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
-    pipeline_result = run_plugin_sync_pipeline(
+    job = enqueue_household_plugin_job(
         db,
         household_id=household_id,
         request=PluginExecutionRequest(
@@ -338,6 +338,7 @@ def run_agent_plugin_memory_checkpoint(
             payload=payload.payload,
             trigger=payload.trigger,
         ),
+        payload_summary={"agent_id": agent.id, "agent_name": agent.display_name, "source": "agent_plugin_memory_checkpoint"},
     )
     insight = build_agent_memory_insight(
         db,
@@ -350,12 +351,56 @@ def run_agent_plugin_memory_checkpoint(
         household_id=household_id,
         plugin_id=payload.plugin_id,
         trigger=payload.trigger,
-        pipeline_run_id=pipeline_result.run.id,
-        pipeline_success=pipeline_result.run.status == "success",
-        raw_record_count=pipeline_result.run.raw_record_count,
-        memory_card_count=pipeline_result.run.memory_card_count,
-        degraded=pipeline_result.run.status != "success",
+        pipeline_run_id=None,
+        pipeline_success=None,
+        raw_record_count=0,
+        memory_card_count=0,
+        degraded=False,
         insight=insight,
+        queued=True,
+        job_id=job.id,
+        job_status=job.status,
+    )
+
+
+async def arun_agent_plugin_memory_checkpoint(
+    db: Session,
+    *,
+    household_id: str,
+    agent_id: str,
+    payload: AgentPluginMemoryCheckpointRequest,
+) -> AgentPluginMemoryCheckpointRead:
+    from app.modules.plugin.schemas import PluginExecutionRequest
+    from app.modules.plugin.service import enqueue_household_plugin_job
+
+    agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
+    job = enqueue_household_plugin_job(
+        db,
+        household_id=household_id,
+        request=PluginExecutionRequest(
+            plugin_id=payload.plugin_id,
+            plugin_type="connector",
+            payload=payload.payload,
+            trigger=payload.trigger,
+        ),
+        payload_summary={"agent_id": agent.id, "agent_name": agent.display_name, "source": "agent_plugin_memory_checkpoint"},
+    )
+    insight = build_agent_memory_insight(db, household_id=household_id, agent_id=agent.id)
+    return AgentPluginMemoryCheckpointRead(
+        agent_id=agent.id,
+        agent_name=agent.display_name,
+        household_id=household_id,
+        plugin_id=payload.plugin_id,
+        trigger=payload.trigger,
+        pipeline_run_id=None,
+        pipeline_success=None,
+        raw_record_count=0,
+        memory_card_count=0,
+        degraded=False,
+        insight=insight,
+        queued=True,
+        job_id=job.id,
+        job_status=job.status,
     )
 
 

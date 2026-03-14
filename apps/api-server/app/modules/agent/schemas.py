@@ -217,9 +217,12 @@ class AgentPluginMemoryCheckpointRead(BaseModel):
     household_id: str
     plugin_id: str
     trigger: str
-    pipeline_run_id: str
-    pipeline_success: bool
+    pipeline_run_id: str | None = None
+    pipeline_success: bool | None = None
     raw_record_count: int = Field(ge=0)
     memory_card_count: int = Field(ge=0)
     degraded: bool = False
     insight: AgentMemoryInsightRead
+    queued: bool = False
+    job_id: str | None = None
+    job_status: str | None = None

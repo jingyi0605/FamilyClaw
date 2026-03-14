@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 import json
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from typing import cast
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
+from app.core.config import settings
 from app.core.config import BASE_DIR
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.audit.service import write_audit_log
@@ -24,6 +27,8 @@ from app.modules.plugin.schemas import (
     PluginExecutionBackend,
     PluginExecutionRequest,
     PluginExecutionResult,
+    PluginJobCreate,
+    PluginJobRead,
     PluginMountCreate,
     PluginMountRead,
     PluginMountUpdate,
@@ -34,10 +39,12 @@ from app.modules.plugin.schemas import (
     PluginSourceType,
     PluginSyncPipelineResult,
 )
+from app.modules.plugin.job_service import create_plugin_job
 
 
 BUILTIN_PLUGIN_ROOT = BASE_DIR / "app" / "plugins" / "builtin"
 REGISTRY_STATE_PATH = BASE_DIR / "data" / "plugin_registry_state.json"
+PLUGIN_EXECUTOR_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="plugin-worker")
 
 
 @dataclass(slots=True)
@@ -372,6 +379,74 @@ def execute_household_plugin(
         source_type=context.source_type,
         execution_backend=context.execution_backend,
         runner_config=context.runner_config,
+    )
+
+
+def enqueue_household_plugin_job(
+    db: Session,
+    *,
+    household_id: str,
+    request: PluginExecutionRequest,
+    idempotency_key: str | None = None,
+    payload_summary: dict[str, object] | None = None,
+    max_attempts: int | None = None,
+) -> PluginJobRead:
+    get_household_or_404(db, household_id)
+    registry = list_registered_plugins_for_household(db, household_id=household_id)
+    plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
+    if plugin is None:
+        raise PluginExecutionError(f"插件不存在: {request.plugin_id}")
+    if not plugin.enabled:
+        raise PluginExecutionError(f"插件已禁用: {request.plugin_id}")
+    if request.plugin_type not in plugin.types:
+        raise PluginExecutionError(f"插件 {request.plugin_id} 没有声明 {request.plugin_type} 能力")
+
+    return create_plugin_job(
+        db,
+        payload=PluginJobCreate(
+            household_id=household_id,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            trigger=request.trigger,
+            request_payload=request.payload,
+            payload_summary=payload_summary,
+            idempotency_key=idempotency_key,
+            max_attempts=max_attempts or (1 if request.plugin_type == "action" else max(settings.plugin_job_default_max_attempts, 1)),
+        ),
+    )
+
+
+async def aexecute_household_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    request: PluginExecutionRequest,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
+) -> PluginExecutionResult:
+    context = resolve_plugin_execution_context(
+        db,
+        household_id=household_id,
+        plugin_id=request.plugin_id,
+        root_dir=root_dir,
+        source_type=source_type,
+        execution_backend=execution_backend,
+        runner_config=runner_config,
+    )
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        PLUGIN_EXECUTOR_POOL,
+        lambda: execute_plugin(
+            request,
+            root_dir=context.root_dir,
+            state_file=state_file,
+            source_type=context.source_type,
+            execution_backend=context.execution_backend,
+            runner_config=context.runner_config,
+        ),
     )
 def enable_plugin(
     plugin_id: str,
@@ -726,6 +801,96 @@ def run_plugin_sync_pipeline(
         raw_records=raw_records,
         written_memory_cards=written_memory_cards,
     )
+
+
+async def arun_plugin_sync_pipeline(
+    db: Session,
+    *,
+    household_id: str,
+    request: PluginExecutionRequest,
+    actor: ActorContext | None = None,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
+) -> PluginSyncPipelineResult:
+    get_household_or_404(db, household_id)
+    context = resolve_plugin_execution_context(
+        db,
+        household_id=household_id,
+        plugin_id=request.plugin_id,
+        root_dir=root_dir,
+        source_type=source_type,
+        execution_backend=execution_backend,
+        runner_config=runner_config,
+    )
+    loop = asyncio.get_running_loop()
+    execution = await loop.run_in_executor(
+        PLUGIN_EXECUTOR_POOL,
+        lambda: execute_plugin(
+            request,
+            root_dir=context.root_dir,
+            state_file=state_file,
+            source_type=context.source_type,
+            execution_backend=context.execution_backend,
+            runner_config=context.runner_config,
+        ),
+    )
+    run_row = PluginRun(
+        id=execution.run_id,
+        household_id=household_id,
+        plugin_id=execution.plugin_id,
+        plugin_type=request.plugin_type,
+        trigger=execution.trigger,
+        status="running" if execution.success else "failed",
+        raw_record_count=0,
+        memory_card_count=0,
+        error_code=execution.error_code,
+        error_message=execution.error_message,
+        started_at=execution.started_at,
+        finished_at=execution.finished_at,
+        created_at=utc_now_iso(),
+    )
+    repository.add_plugin_run(db, run_row)
+    db.flush()
+    raw_records: list[PluginRawRecordRead] = []
+    written_memory_cards: list[dict] = []
+    if execution.success:
+        output = execution.output if isinstance(execution.output, dict) else {}
+        raw_records = save_plugin_raw_records(db, household_id=household_id, execution_result=execution, raw_records=output.get("records", []))
+        if raw_records:
+            written_memory_cards = ingest_plugin_raw_records_to_memory(
+                db,
+                household_id=household_id,
+                plugin_id=execution.plugin_id,
+                run_id=execution.run_id,
+                root_dir=context.root_dir,
+                state_file=state_file,
+                source_type=context.source_type,
+                execution_backend=context.execution_backend,
+                runner_config=context.runner_config,
+            )
+        run_row.status = "success"
+        run_row.raw_record_count = len(raw_records)
+        run_row.memory_card_count = len(written_memory_cards)
+        run_row.error_code = None
+        run_row.error_message = None
+    else:
+        run_row.status = "failed"
+    db.flush()
+    if actor is not None:
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="plugin.sync_pipeline.run",
+            target_type="plugin",
+            target_id=request.plugin_id,
+            result="success" if run_row.status == "success" else "fail",
+            details={"run_id": run_row.id, "plugin_type": request.plugin_type, "raw_record_count": run_row.raw_record_count, "memory_card_count": run_row.memory_card_count},
+        )
+    return PluginSyncPipelineResult(run=_to_plugin_run_read(run_row), execution=execution, raw_records=raw_records, written_memory_cards=written_memory_cards)
 
 
 def set_plugin_enabled(

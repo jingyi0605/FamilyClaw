@@ -21,9 +21,15 @@ from app.modules.plugin.schemas import (
     AgentPluginInvokeResult,
     PluginExecutionRequest,
     PluginExecutionResult,
+    PluginJobRead,
     PluginRegistryItem,
 )
-from app.modules.plugin.service import execute_household_plugin, list_registered_plugins_for_household
+from app.modules.plugin.service import (
+    aexecute_household_plugin,
+    enqueue_household_plugin_job,
+    execute_household_plugin,
+    list_registered_plugins_for_household,
+)
 
 
 def invoke_agent_plugin(
@@ -39,12 +45,10 @@ def invoke_agent_plugin(
     get_household_or_404(db, household_id)
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
 
-    execution = _execute_agent_plugin_request(
+    queued = _enqueue_agent_plugin_request(
         db,
         request=request,
         household_id=household_id,
-        root_dir=root_dir,
-        state_file=state_file,
     )
 
     write_audit_log(
@@ -54,16 +58,15 @@ def invoke_agent_plugin(
         action="agent.plugin.invoke",
         target_type="plugin",
         target_id=request.plugin_id,
-        result="success" if execution.success else "fail",
+        result="success",
         details={
             "agent_id": agent.id,
             "agent_name": agent.display_name,
-            "plugin_id": execution.plugin_id,
-            "plugin_type": execution.plugin_type,
-            "run_id": execution.run_id,
-            "trigger": execution.trigger,
-            "error_code": execution.error_code,
-            "error_message": execution.error_message,
+            "plugin_id": queued.plugin_id,
+            "plugin_type": request.plugin_type,
+            "job_id": queued.id,
+            "trigger": request.trigger,
+            "job_status": queued.status,
         },
     )
     db.flush()
@@ -71,36 +74,64 @@ def invoke_agent_plugin(
     return AgentPluginInvokeResult(
         agent_id=agent.id,
         agent_name=agent.display_name,
-        plugin_id=execution.plugin_id,
+        plugin_id=queued.plugin_id,
         plugin_type=request.plugin_type,
-        run_id=execution.run_id,
-        success=execution.success,
-        trigger=execution.trigger,
-        started_at=execution.started_at,
-        finished_at=execution.finished_at,
-        output=execution.output,
-        error_code=execution.error_code,
-        error_message=execution.error_message,
+        run_id=queued.id,
+        success=True,
+        trigger=request.trigger,
+        started_at=queued.created_at,
+        finished_at=queued.created_at,
+        output=None,
+        error_code=None,
+        error_message=None,
+        queued=True,
+        job_id=queued.id,
+        job_status=queued.status,
     )
 
 
-def _execute_agent_plugin_request(
+async def ainvoke_agent_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    agent_id: str,
+    request: AgentPluginInvokeRequest,
+    actor: ActorContext | None = None,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> AgentPluginInvokeResult:
+    get_household_or_404(db, household_id)
+    agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
+    try:
+        queued = _enqueue_agent_plugin_request(db, request=request, household_id=household_id)
+    except ValueError as exc:
+        started_at = utc_now_iso()
+        return AgentPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, plugin_type=request.plugin_type, run_id=new_uuid(), success=False, trigger=request.trigger, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_plugin_invoke_failed", error_message=str(exc), queued=False)
+
+    write_audit_log(
+        db,
+        household_id=household_id,
+        actor=actor,
+        action="agent.plugin.invoke",
+        target_type="plugin",
+        target_id=request.plugin_id,
+        result="success",
+        details={"agent_id": agent.id, "agent_name": agent.display_name, "plugin_id": queued.plugin_id, "plugin_type": request.plugin_type, "job_id": queued.id, "trigger": request.trigger, "job_status": queued.status},
+    )
+    db.flush()
+    return AgentPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=queued.plugin_id, plugin_type=request.plugin_type, run_id=queued.id, success=True, trigger=request.trigger, started_at=queued.created_at, finished_at=queued.created_at, output=None, error_code=None, error_message=None, queued=True, job_id=queued.id, job_status=queued.status)
+
+
+def _enqueue_agent_plugin_request(
     db: Session,
     request: AgentPluginInvokeRequest,
     *,
     household_id: str,
-    root_dir: str | Path | None = None,
-    state_file: str | Path | None = None,
-) -> PluginExecutionResult:
-    started_at = utc_now_iso()
-    run_id = new_uuid()
-
+) -> PluginJobRead:
     try:
         registry = list_registered_plugins_for_household(
             db,
             household_id=household_id,
-            root_dir=root_dir,
-            state_file=state_file,
         )
         plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
         if plugin is None:
@@ -112,7 +143,7 @@ def _execute_agent_plugin_request(
         if request.plugin_type not in {"connector", "agent-skill"}:
             raise ValueError("Agent 统一入口当前只允许 connector 或 agent-skill")
 
-        return execute_household_plugin(
+        return enqueue_household_plugin_job(
             db,
             household_id=household_id,
             request=PluginExecutionRequest(
@@ -121,21 +152,10 @@ def _execute_agent_plugin_request(
                 payload=request.payload,
                 trigger=request.trigger,
             ),
-            root_dir=root_dir,
-            state_file=state_file,
+            payload_summary={"source": "agent_plugin_invoke"},
         )
     except ValueError as exc:
-        return PluginExecutionResult(
-            run_id=run_id,
-            plugin_id=request.plugin_id,
-            plugin_type=request.plugin_type,
-            success=False,
-            trigger=request.trigger,
-            started_at=started_at,
-            finished_at=utc_now_iso(),
-            error_code="agent_plugin_invoke_failed",
-            error_message=str(exc),
-        )
+        raise ValueError(str(exc)) from exc
 
 
 def invoke_agent_action_plugin(
@@ -183,16 +203,14 @@ def invoke_agent_action_plugin(
             error_message="高风险动作需要人工确认后才能执行",
         )
 
-    execution = _execute_agent_action_request(
+    queued = _enqueue_agent_action_request(
         db,
         household_id=household_id,
         actor=actor,
         plugin=plugin,
         request=request,
-        root_dir=root_dir,
-        state_file=state_file,
     )
-    authorization_status = "allowed" if execution.success else "denied"
+    authorization_status = "allowed"
     risk_level = plugin.risk_level if plugin is not None else "high"
 
     write_audit_log(
@@ -202,18 +220,17 @@ def invoke_agent_action_plugin(
         action="agent.plugin.invoke_action",
         target_type="plugin",
         target_id=request.plugin_id,
-        result="success" if execution.success else "fail",
+        result="success",
         details={
             "agent_id": agent.id,
             "agent_name": agent.display_name,
             "plugin_id": request.plugin_id,
             "plugin_type": "action",
-            "run_id": execution.run_id,
-            "trigger": execution.trigger,
+            "job_id": queued.id,
+            "trigger": request.trigger,
             "risk_level": risk_level,
             "authorization_status": authorization_status,
-            "error_code": execution.error_code,
-            "error_message": execution.error_message,
+            "job_status": queued.status,
         },
     )
     db.flush()
@@ -222,33 +239,31 @@ def invoke_agent_action_plugin(
         agent_id=agent.id,
         agent_name=agent.display_name,
         plugin_id=request.plugin_id,
-        run_id=execution.run_id,
-        success=execution.success,
-        trigger=execution.trigger,
+        run_id=queued.id,
+        success=True,
+        trigger=request.trigger,
         risk_level=risk_level,
         authorization_status=authorization_status,
         confirmation_request_id=None,
-        started_at=execution.started_at,
-        finished_at=execution.finished_at,
-        output=execution.output,
-        error_code=execution.error_code,
-        error_message=execution.error_message,
+        started_at=queued.created_at,
+        finished_at=queued.created_at,
+        output=None,
+        error_code=None,
+        error_message=None,
+        queued=True,
+        job_id=queued.id,
+        job_status=queued.status,
     )
 
 
-def _execute_agent_action_request(
+def _enqueue_agent_action_request(
     db: Session,
     *,
     household_id: str,
     actor: ActorContext | None,
     plugin: PluginRegistryItem | None,
     request: AgentActionPluginInvokeRequest,
-    root_dir: str | Path | None = None,
-    state_file: str | Path | None = None,
-) -> PluginExecutionResult:
-    started_at = utc_now_iso()
-    run_id = new_uuid()
-
+) -> PluginJobRead:
     try:
         if plugin is None:
             raise ValueError(f"插件不存在: {request.plugin_id}")
@@ -271,7 +286,7 @@ def _execute_agent_action_request(
         ):
             raise ValueError("当前成员没有动作执行权限")
 
-        return execute_household_plugin(
+        return enqueue_household_plugin_job(
             db,
             household_id=household_id,
             request=PluginExecutionRequest(
@@ -280,21 +295,10 @@ def _execute_agent_action_request(
                 payload=request.payload,
                 trigger=request.trigger,
             ),
-            root_dir=root_dir,
-            state_file=state_file,
+            payload_summary={"source": "agent_action_plugin_invoke"},
         )
     except ValueError as exc:
-        return PluginExecutionResult(
-            run_id=run_id,
-            plugin_id=request.plugin_id,
-            plugin_type="action",
-            success=False,
-            trigger=request.trigger,
-            started_at=started_at,
-            finished_at=utc_now_iso(),
-            error_code="agent_action_plugin_denied",
-            error_message=str(exc),
-        )
+        raise ValueError(str(exc)) from exc
 
 
 def request_agent_action_confirmation(
@@ -362,16 +366,14 @@ def confirm_agent_action_plugin(
         payload=confirmation.payload,
         trigger=f"{confirmation.trigger}:confirmed",
     )
-    execution = _execute_agent_action_request(
+    queued = _enqueue_agent_action_request(
         db,
         household_id=household_id,
         actor=actor,
         plugin=plugin,
         request=request,
-        root_dir=root_dir,
-        state_file=state_file,
     )
-    authorization_status = "allowed" if execution.success else "denied"
+    authorization_status = "allowed"
     risk_level = plugin.risk_level if plugin is not None else "high"
 
     write_audit_log(
@@ -381,7 +383,7 @@ def confirm_agent_action_plugin(
         action="agent.plugin.confirm_action",
         target_type="plugin_action_confirmation",
         target_id=confirmation_request_id,
-        result="success" if execution.success else "fail",
+        result="success",
         details={
             "agent_id": agent.id,
             "agent_name": agent.display_name,
@@ -389,10 +391,9 @@ def confirm_agent_action_plugin(
             "plugin_type": "action",
             "risk_level": risk_level,
             "trigger": confirmation.trigger,
-            "run_id": execution.run_id,
+            "job_id": queued.id,
             "authorization_status": authorization_status,
-            "error_code": execution.error_code,
-            "error_message": execution.error_message,
+            "job_status": queued.status,
         },
     )
     db.flush()
@@ -401,18 +402,79 @@ def confirm_agent_action_plugin(
         agent_id=agent.id,
         agent_name=agent.display_name,
         plugin_id=confirmation.plugin_id,
-        run_id=execution.run_id,
-        success=execution.success,
+        run_id=queued.id,
+        success=True,
         trigger=request.trigger,
         risk_level=risk_level,
         authorization_status=authorization_status,
         confirmation_request_id=confirmation_request_id,
-        started_at=execution.started_at,
-        finished_at=execution.finished_at,
-        output=execution.output,
-        error_code=execution.error_code,
-        error_message=execution.error_message,
+        started_at=queued.created_at,
+        finished_at=queued.created_at,
+        output=None,
+        error_code=None,
+        error_message=None,
+        queued=True,
+        job_id=queued.id,
+        job_status=queued.status,
     )
+
+
+async def ainvoke_agent_action_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    agent_id: str,
+    request: AgentActionPluginInvokeRequest,
+    actor: ActorContext | None = None,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> AgentActionPluginInvokeResult:
+    get_household_or_404(db, household_id)
+    agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
+    registry = list_registered_plugins_for_household(db, household_id=household_id, root_dir=root_dir, state_file=state_file)
+    plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
+    if plugin is not None and plugin.risk_level == "high":
+        confirmation = request_agent_action_confirmation(db, household_id=household_id, agent_id=agent.id, request=request, actor=actor, plugin=plugin)
+        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=confirmation.confirmation_request_id, success=False, trigger=request.trigger, risk_level=plugin.risk_level, authorization_status="confirmation_required", confirmation_request_id=confirmation.confirmation_request_id, started_at=confirmation.created_at, finished_at=confirmation.created_at, error_code="agent_action_confirmation_required", error_message="高风险动作需要人工确认后才能执行")
+
+    try:
+        queued = _enqueue_agent_action_request(db, household_id=household_id, actor=actor, plugin=plugin, request=request)
+    except ValueError as exc:
+        started_at = utc_now_iso()
+        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=new_uuid(), success=False, trigger=request.trigger, risk_level=plugin.risk_level if plugin is not None else "high", authorization_status="denied", confirmation_request_id=None, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_action_plugin_denied", error_message=str(exc), queued=False)
+    authorization_status = "allowed"
+    risk_level = plugin.risk_level if plugin is not None else "high"
+    write_audit_log(db, household_id=household_id, actor=actor, action="agent.plugin.invoke_action", target_type="plugin", target_id=request.plugin_id, result="success", details={"agent_id": agent.id, "agent_name": agent.display_name, "plugin_id": request.plugin_id, "plugin_type": "action", "job_id": queued.id, "trigger": request.trigger, "risk_level": risk_level, "authorization_status": authorization_status, "job_status": queued.status})
+    db.flush()
+    return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=queued.id, success=True, trigger=request.trigger, risk_level=risk_level, authorization_status=authorization_status, confirmation_request_id=None, started_at=queued.created_at, finished_at=queued.created_at, output=None, error_code=None, error_message=None, queued=True, job_id=queued.id, job_status=queued.status)
+
+
+async def aconfirm_agent_action_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    agent_id: str,
+    confirmation_request_id: str,
+    actor: ActorContext | None = None,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> AgentActionPluginInvokeResult:
+    get_household_or_404(db, household_id)
+    agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
+    confirmation = _load_pending_action_confirmation(db, household_id=household_id, confirmation_request_id=confirmation_request_id)
+    registry = list_registered_plugins_for_household(db, household_id=household_id, root_dir=root_dir, state_file=state_file)
+    plugin = next((item for item in registry.items if item.id == confirmation.plugin_id), None)
+    request = AgentActionPluginInvokeRequest(plugin_id=confirmation.plugin_id, payload=confirmation.payload, trigger=f"{confirmation.trigger}:confirmed")
+    try:
+        queued = _enqueue_agent_action_request(db, household_id=household_id, actor=actor, plugin=plugin, request=request)
+    except ValueError as exc:
+        started_at = utc_now_iso()
+        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=confirmation.plugin_id, run_id=new_uuid(), success=False, trigger=request.trigger, risk_level=plugin.risk_level if plugin is not None else "high", authorization_status="denied", confirmation_request_id=confirmation_request_id, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_action_plugin_denied", error_message=str(exc), queued=False)
+    authorization_status = "allowed"
+    risk_level = plugin.risk_level if plugin is not None else "high"
+    write_audit_log(db, household_id=household_id, actor=actor, action="agent.plugin.confirm_action", target_type="plugin_action_confirmation", target_id=confirmation_request_id, result="success", details={"agent_id": agent.id, "agent_name": agent.display_name, "plugin_id": confirmation.plugin_id, "plugin_type": "action", "risk_level": risk_level, "trigger": confirmation.trigger, "job_id": queued.id, "authorization_status": authorization_status, "job_status": queued.status})
+    db.flush()
+    return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=confirmation.plugin_id, run_id=queued.id, success=True, trigger=request.trigger, risk_level=risk_level, authorization_status=authorization_status, confirmation_request_id=confirmation_request_id, started_at=queued.created_at, finished_at=queued.created_at, output=None, error_code=None, error_message=None, queued=True, job_id=queued.id, job_status=queued.status)
 
 
 def _load_pending_action_confirmation(
