@@ -1603,6 +1603,76 @@ input, select, textarea {
   height: calc(100vh);
   overflow: hidden;
   min-height: 0;
+  --assistant-overlay-bg: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--nav-bg) 58%, var(--text-primary)) 54%,
+    transparent
+  );
+  --assistant-panel-shadow: var(--shadow-lg);
+  --assistant-card-shadow: var(--shadow-md);
+  --assistant-bubble-shadow: var(--shadow-md);
+  --assistant-avatar-assistant-bg: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--brand-primary) 16%, transparent),
+    color-mix(in srgb, var(--color-info) 18%, transparent)
+  );
+  --assistant-avatar-user-bg: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-warning) 18%, transparent),
+    color-mix(in srgb, var(--color-danger) 16%, transparent)
+  );
+  --assistant-bubble-user-bg: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-warning-light) 88%, var(--bg-card)),
+    color-mix(in srgb, var(--color-danger-light) 52%, var(--bg-card))
+  );
+  --assistant-bubble-user-border: color-mix(in srgb, var(--color-warning) 26%, var(--border));
+  --assistant-bubble-assistant-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--brand-primary-light) 88%, var(--bg-card)),
+    color-mix(in srgb, var(--color-info-light) 56%, var(--bg-card))
+  );
+  --assistant-bubble-assistant-border: color-mix(in srgb, var(--brand-primary) 18%, var(--border));
+  --assistant-memory-tag-bg: color-mix(in srgb, var(--color-info-light) 82%, var(--bg-card));
+  --assistant-memory-tag-border: color-mix(in srgb, var(--color-info) 22%, var(--border));
+  --assistant-action-card-bg: color-mix(in srgb, var(--bg-card) 92%, var(--bg-surface));
+  --assistant-action-card-border: color-mix(in srgb, var(--border) 72%, transparent);
+  --assistant-action-card-ask-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-warning-light) 74%, var(--bg-card)) 0%,
+    var(--bg-card) 100%
+  );
+  --assistant-action-card-ask-border: color-mix(in srgb, var(--color-warning) 28%, var(--border));
+  --assistant-action-card-notify-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-info-light) 74%, var(--bg-card)) 0%,
+    var(--bg-card) 100%
+  );
+  --assistant-action-card-notify-border: color-mix(in srgb, var(--color-info) 24%, var(--border));
+  --assistant-action-card-auto-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-input) 78%, var(--bg-card)) 0%,
+    var(--bg-card) 100%
+  );
+  --assistant-action-card-auto-border: color-mix(in srgb, var(--text-tertiary) 22%, var(--border));
+  --assistant-action-card-scheduled-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-success-light) 62%, var(--bg-card)) 0%,
+    color-mix(in srgb, var(--color-info-light) 44%, var(--bg-card)) 100%
+  );
+  --assistant-action-card-scheduled-border: color-mix(in srgb, var(--color-success) 24%, var(--border));
+  --assistant-proposal-chip-bg: color-mix(in srgb, var(--bg-input) 80%, var(--color-info-light));
+  --assistant-proposal-chip-border: color-mix(in srgb, var(--color-info) 18%, var(--border-light));
+  --assistant-proposal-warning-bg: color-mix(in srgb, var(--color-warning-light) 86%, var(--bg-card));
+  --assistant-action-btn-bg: color-mix(in srgb, var(--bg-input) 90%, var(--bg-card));
+  --assistant-action-btn-border: color-mix(in srgb, var(--border) 72%, transparent);
+  --assistant-action-btn-hover-bg: color-mix(in srgb, var(--brand-primary-light) 72%, var(--bg-card));
+  --assistant-action-btn-hover-shadow: var(--shadow-sm);
+  --assistant-composer-bg: color-mix(in srgb, var(--bg-card) 88%, var(--bg-surface));
+  --assistant-composer-border: color-mix(in srgb, var(--border) 60%, transparent);
+  --assistant-scrollbar-track: color-mix(in srgb, var(--bg-input) 76%, var(--bg-surface));
+  --assistant-scrollbar-thumb: color-mix(in srgb, var(--text-tertiary) 38%, var(--bg-card));
+  --assistant-scrollbar-thumb-hover: color-mix(in srgb, var(--brand-primary) 42%, var(--bg-card));
 }
 
 /* 弹出面板遮罩 */
@@ -1612,7 +1682,7 @@ input, select, textarea {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--assistant-overlay-bg);
   z-index: 200;
   backdrop-filter: blur(2px);
   animation: fadeIn 0.2s ease;
@@ -1628,7 +1698,7 @@ input, select, textarea {
   z-index: 201;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--assistant-panel-shadow);
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -1663,6 +1733,51 @@ input, select, textarea {
   flex: 1;
   overflow-y: auto;
   padding: var(--spacing-md);
+}
+
+.assistant-panel__content,
+.assistant-popover__content,
+.assistant-sidebar__list,
+.assistant-main__messages,
+.assistant-context {
+  scrollbar-width: thin;
+  scrollbar-color: var(--assistant-scrollbar-thumb) var(--assistant-scrollbar-track);
+}
+
+.assistant-panel__content::-webkit-scrollbar,
+.assistant-popover__content::-webkit-scrollbar,
+.assistant-sidebar__list::-webkit-scrollbar,
+.assistant-main__messages::-webkit-scrollbar,
+.assistant-context::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.assistant-panel__content::-webkit-scrollbar-track,
+.assistant-popover__content::-webkit-scrollbar-track,
+.assistant-sidebar__list::-webkit-scrollbar-track,
+.assistant-main__messages::-webkit-scrollbar-track,
+.assistant-context::-webkit-scrollbar-track {
+  background: var(--assistant-scrollbar-track);
+  border-radius: 999px;
+}
+
+.assistant-panel__content::-webkit-scrollbar-thumb,
+.assistant-popover__content::-webkit-scrollbar-thumb,
+.assistant-sidebar__list::-webkit-scrollbar-thumb,
+.assistant-main__messages::-webkit-scrollbar-thumb,
+.assistant-context::-webkit-scrollbar-thumb {
+  background: var(--assistant-scrollbar-thumb);
+  border: 2px solid var(--assistant-scrollbar-track);
+  border-radius: 999px;
+}
+
+.assistant-panel__content::-webkit-scrollbar-thumb:hover,
+.assistant-popover__content::-webkit-scrollbar-thumb:hover,
+.assistant-sidebar__list::-webkit-scrollbar-thumb:hover,
+.assistant-main__messages::-webkit-scrollbar-thumb:hover,
+.assistant-context::-webkit-scrollbar-thumb:hover {
+  background: var(--assistant-scrollbar-thumb-hover);
 }
 
 /* 顶部工具栏 */
@@ -1735,7 +1850,7 @@ input, select, textarea {
   background: var(--bg-surface);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--assistant-panel-shadow);
   z-index: 299;
   display: flex;
   flex-direction: column;
@@ -1950,16 +2065,16 @@ input, select, textarea {
   height: 2.5rem;
   border-radius: 1rem;
   font-size: 1.25rem;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--assistant-card-shadow);
 }
 
 .message__avatar--assistant {
-  background: linear-gradient(135deg, rgba(122, 92, 255, 0.16), rgba(74, 144, 226, 0.2));
+  background: var(--assistant-avatar-assistant-bg);
 }
 
 .message__avatar--user {
-  background: linear-gradient(135deg, rgba(255, 163, 102, 0.22), rgba(255, 111, 97, 0.18));
-  color: #b45309;
+  background: var(--assistant-avatar-user-bg);
+  color: var(--color-warning);
 }
 
 .message__role-name {
@@ -1992,18 +2107,18 @@ input, select, textarea {
   padding: 1rem 1.125rem;
   border-radius: 1.25rem;
   line-height: 1.6;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+  box-shadow: var(--assistant-bubble-shadow);
 }
 
 .message--user .message__bubble {
-  background: linear-gradient(135deg, rgba(255, 237, 228, 0.96), rgba(255, 247, 242, 0.98));
-  border: 1px solid rgba(230, 126, 97, 0.2);
+  background: var(--assistant-bubble-user-bg);
+  border: 1px solid var(--assistant-bubble-user-border);
   border-bottom-right-radius: 0.375rem;
 }
 
 .message--assistant .message__bubble {
-  background: linear-gradient(180deg, rgba(240, 242, 255, 0.96), rgba(232, 237, 255, 0.92));
-  border: 1px solid rgba(122, 92, 255, 0.12);
+  background: var(--assistant-bubble-assistant-bg);
+  border: 1px solid var(--assistant-bubble-assistant-border);
   border-bottom-left-radius: 0.375rem;
 }
 
@@ -2015,7 +2130,7 @@ input, select, textarea {
 }
 
 .message--user .message__content {
-  color: #7c2d12;
+  color: var(--text-primary);
 }
 
 .message--assistant .message__content {
@@ -2028,11 +2143,11 @@ input, select, textarea {
   gap: 0.25rem;
   margin-top: 0.5rem;
   font-size: 0.75rem;
-  color: #0369a1;
-  background: rgba(3, 105, 161, 0.08);
+  color: var(--color-info);
+  background: var(--assistant-memory-tag-bg);
   padding: 0.25rem 0.625rem;
   border-radius: 1rem;
-  border: 1px solid rgba(3, 105, 161, 0.15);
+  border: 1px solid var(--assistant-memory-tag-border);
 }
 
 .message__actions {
@@ -2052,31 +2167,30 @@ input, select, textarea {
 .message__action-card {
   width: 100%;
   border-radius: 1rem;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--assistant-action-card-border);
+  background: var(--assistant-action-card-bg);
   padding: 0.875rem 1rem;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  box-shadow: var(--assistant-card-shadow);
 }
 
 .message__action-card--ask {
-  border-color: rgba(245, 158, 11, 0.22);
-  background: rgba(255, 251, 235, 0.95);
+  border-color: var(--assistant-action-card-ask-border);
+  background: var(--assistant-action-card-ask-bg);
 }
 
 .message__action-card--notify {
-  border-color: rgba(59, 130, 246, 0.18);
-  background: rgba(239, 246, 255, 0.92);
+  border-color: var(--assistant-action-card-notify-border);
+  background: var(--assistant-action-card-notify-bg);
 }
 
 .message__action-card--auto {
-  border-color: rgba(148, 163, 184, 0.18);
-  background: rgba(248, 250, 252, 0.95);
+  border-color: var(--assistant-action-card-auto-border);
+  background: var(--assistant-action-card-auto-bg);
 }
 
 .message__proposal-card--scheduled {
-  border-color: rgba(14, 116, 144, 0.18);
-  background:
-    linear-gradient(180deg, rgba(240, 253, 250, 0.96), rgba(248, 250, 252, 0.94));
+  border-color: var(--assistant-action-card-scheduled-border);
+  background: var(--assistant-action-card-scheduled-bg);
 }
 
 .message__action-header {
@@ -2103,7 +2217,7 @@ input, select, textarea {
   gap: 0.25rem;
   margin-top: 0.5rem;
   font-size: 0.75rem;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .message__proposal-body {
@@ -2116,7 +2230,7 @@ input, select, textarea {
 .message__proposal-summary {
   font-size: 0.92rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--text-primary);
 }
 
 .message__proposal-chips {
@@ -2130,23 +2244,23 @@ input, select, textarea {
   align-items: center;
   padding: 0.28rem 0.65rem;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(14, 116, 144, 0.12);
+  background: var(--assistant-proposal-chip-bg);
+  border: 1px solid var(--assistant-proposal-chip-border);
   font-size: 0.76rem;
-  color: #155e75;
+  color: var(--color-info);
 }
 
 .message__proposal-warning {
   padding: 0.55rem 0.7rem;
   border-radius: 0.8rem;
-  background: rgba(254, 243, 199, 0.7);
-  color: #92400e;
+  background: var(--assistant-proposal-warning-bg);
+  color: var(--color-warning);
   font-size: 0.8rem;
   font-weight: 600;
 }
 
 .message__proposal-hint {
-  color: #64748b;
+  color: var(--text-secondary);
   font-size: 0.78rem;
   line-height: 1.5;
 }
@@ -2161,10 +2275,17 @@ input, select, textarea {
 .message__action-icon-btn {
   width: 2rem;
   height: 2rem;
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  border: 1px solid var(--assistant-action-card-border);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--bg-input);
+  color: var(--text-secondary);
   cursor: pointer;
+  transition: all var(--transition);
+}
+
+.message__action-icon-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--brand-primary);
 }
 
 .message__action-details {
@@ -2176,16 +2297,16 @@ input, select, textarea {
 
 .message__action-detail-row {
   padding-top: 0.625rem;
-  border-top: 1px dashed rgba(148, 163, 184, 0.28);
+  border-top: 1px dashed var(--assistant-action-card-border);
 }
 
 .msg-action-btn {
   font-size: 0.75rem;
   color: var(--text-secondary);
   padding: 0.375rem 0.75rem;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--assistant-action-btn-border);
   border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--assistant-action-btn-bg);
   transition: all var(--transition);
   cursor: pointer;
 }
@@ -2193,8 +2314,8 @@ input, select, textarea {
 .msg-action-btn:hover {
   color: var(--brand-primary);
   border-color: var(--brand-primary);
-  background: rgba(255, 255, 255, 1);
-  box-shadow: 0 2px 8px rgba(230, 126, 97, 0.12);
+  background: var(--assistant-action-btn-hover-bg);
+  box-shadow: var(--assistant-action-btn-hover-shadow);
 }
 
 .assistant-main__input {
@@ -2211,11 +2332,11 @@ input, select, textarea {
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--assistant-composer-bg);
   border-radius: 1.25rem;
   padding: 0.875rem 1rem;
-  box-shadow: 0 8px 32px rgba(15, 23, 42, 0.06);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  box-shadow: var(--assistant-panel-shadow);
+  border: 1px solid var(--assistant-composer-border);
   backdrop-filter: blur(16px);
 }
 
@@ -2259,7 +2380,7 @@ input, select, textarea {
   align-items: center;
   justify-content: center;
   padding: var(--spacing-xl);
-  background: rgba(15, 23, 42, 0.32);
+  background: var(--assistant-overlay-bg);
   backdrop-filter: blur(6px);
   z-index: 120;
 }
@@ -4175,7 +4296,7 @@ body::before {
     background: var(--bg-surface);
     transform: translateX(-100%);
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--assistant-panel-shadow);
   }
 
   .assistant-sidebar.is-open {
@@ -4189,7 +4310,7 @@ body::before {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--assistant-overlay-bg);
     z-index: 40; /* Below sidebar, above content */
     backdrop-filter: blur(2px);
     animation: fadeIn 0.3s ease;
@@ -4677,9 +4798,9 @@ body::before {
 }
 
 .ai-pill--success {
-  background: color-mix(in srgb, #22c55e 12%, transparent);
-  border-color: color-mix(in srgb, #22c55e 35%, transparent);
-  color: #15803d;
+  background: color-mix(in srgb, var(--color-success-light) 88%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+  color: var(--color-success);
 }
 
 .ai-pill--muted {
