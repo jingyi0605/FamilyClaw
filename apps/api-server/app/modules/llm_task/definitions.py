@@ -255,6 +255,26 @@ register(
 - 每个提案项都要带 `evidence_message_ids`
 - `payload` 里只放和该提案直接相关的结构化内容
 - 不要编造用户没说过的事实
+- `config_items[*].payload` 只允许使用这些字段：
+  - `display_name`
+  - `speaking_style`
+  - `personality_traits`
+- 禁止在 `config_items[*].payload` 里输出 `name`、`nickname`、`persona_name` 这类别名字段
+- 如果用户只是说“想改名”但没有给出新名字，`config_items` 可以保留空 payload，绝对不要用“新名字”“某个名字”这种占位值乱填
+- 如果用户明确说了新名字，比如“以后你就叫阿福”“就叫豆豆吧”，必须把它写进 `config_items[*].payload.display_name`
+- 如果用户明确说了风格或人格标签，也必须分别写进 `speaking_style`、`personality_traits`
+
+## 配置提案示例
+- 用户说：“以后你就叫阿福”
+  - `config_items[*].payload = {{"display_name":"阿福"}}`
+- 用户说：“就叫豆豆吧”
+  - `config_items[*].payload = {{"display_name":"豆豆"}}`
+- 用户说：“以后说话温柔一点”
+  - `config_items[*].payload = {{"speaking_style":"温柔"}}`
+- 用户说：“你的人设改成稳重、靠谱”
+  - `config_items[*].payload = {{"personality_traits":["稳重","靠谱"]}}`
+- 用户说：“我给你改个名字吧”
+  - 这时还没给出具体名字，不要乱填 `display_name`
 
 输出字段：
 {output_format}""",
