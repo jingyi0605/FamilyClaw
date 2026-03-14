@@ -4,6 +4,8 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from app.modules.conversation.models import (
+    ConversationActionRecord,
+    ConversationDebugLog,
     ConversationMemoryCandidate,
     ConversationMessage,
     ConversationSession,
@@ -83,7 +85,80 @@ def get_memory_candidate(db: Session, candidate_id: str) -> ConversationMemoryCa
     return db.get(ConversationMemoryCandidate, candidate_id)
 
 
+def add_action_record(db: Session, row: ConversationActionRecord) -> ConversationActionRecord:
+    db.add(row)
+    return row
+
+
+def list_action_records(db: Session, *, session_id: str) -> Sequence[ConversationActionRecord]:
+    stmt: Select[tuple[ConversationActionRecord]] = (
+        select(ConversationActionRecord)
+        .where(ConversationActionRecord.session_id == session_id)
+        .order_by(ConversationActionRecord.created_at.asc(), ConversationActionRecord.id.asc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def list_action_records_by_request(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str,
+) -> Sequence[ConversationActionRecord]:
+    stmt: Select[tuple[ConversationActionRecord]] = (
+        select(ConversationActionRecord)
+        .where(
+            ConversationActionRecord.session_id == session_id,
+            ConversationActionRecord.request_id == request_id,
+        )
+        .order_by(ConversationActionRecord.created_at.asc(), ConversationActionRecord.id.asc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def get_action_record(db: Session, action_id: str) -> ConversationActionRecord | None:
+    return db.get(ConversationActionRecord, action_id)
+
+
+def get_action_record_by_target_ref(
+    db: Session,
+    *,
+    target_ref: str,
+    action_name: str | None = None,
+) -> ConversationActionRecord | None:
+    stmt: Select[tuple[ConversationActionRecord]] = select(ConversationActionRecord).where(
+        ConversationActionRecord.target_ref == target_ref
+    )
+    if action_name is not None:
+        stmt = stmt.where(ConversationActionRecord.action_name == action_name)
+    stmt = stmt.order_by(ConversationActionRecord.created_at.desc())
+    return db.scalars(stmt).first()
+
+
 def claim_next_event_seq(db: Session, *, session: ConversationSession) -> int:
     session.last_event_seq += 1
     db.flush()
     return session.last_event_seq
+
+
+def add_debug_log(db: Session, row: ConversationDebugLog) -> ConversationDebugLog:
+    db.add(row)
+    return row
+
+
+def list_debug_logs(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str | None = None,
+    limit: int = 200,
+) -> Sequence[ConversationDebugLog]:
+    stmt: Select[tuple[ConversationDebugLog]] = (
+        select(ConversationDebugLog)
+        .where(ConversationDebugLog.session_id == session_id)
+        .order_by(ConversationDebugLog.created_at.asc(), ConversationDebugLog.id.asc())
+        .limit(limit)
+    )
+    if request_id is not None:
+        stmt = stmt.where(ConversationDebugLog.request_id == request_id)
+    return list(db.scalars(stmt).all())

@@ -9,6 +9,10 @@ ConversationMessageRole = Literal["user", "assistant", "system"]
 ConversationMessageType = Literal["text", "error", "memory_candidate_notice"]
 ConversationMessageStatus = Literal["pending", "streaming", "completed", "failed"]
 ConversationCandidateStatus = Literal["pending_review", "confirmed", "dismissed"]
+ConversationActionCategory = Literal["memory", "config", "action"]
+ConversationActionPolicyMode = Literal["ask", "notify", "auto"]
+ConversationActionStatus = Literal["pending_confirmation", "completed", "failed", "dismissed", "undone", "undo_failed"]
+ConversationDebugLogLevel = Literal["info", "warning", "error"]
 
 
 class ConversationSessionCreate(BaseModel):
@@ -60,6 +64,29 @@ class ConversationMemoryCandidateRead(BaseModel):
     updated_at: str
 
 
+class ConversationActionRecordRead(BaseModel):
+    id: str
+    session_id: str
+    request_id: str | None = None
+    trigger_message_id: str | None = None
+    source_message_id: str | None = None
+    intent: str
+    action_category: ConversationActionCategory
+    action_name: str
+    policy_mode: ConversationActionPolicyMode
+    status: ConversationActionStatus
+    title: str
+    summary: str | None = None
+    target_ref: str | None = None
+    plan_payload: dict[str, Any] = Field(default_factory=dict)
+    result_payload: dict[str, Any] = Field(default_factory=dict)
+    undo_payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    executed_at: str | None = None
+    undone_at: str | None = None
+    updated_at: str
+
+
 class ConversationSessionRead(BaseModel):
     id: str
     household_id: str
@@ -80,6 +107,7 @@ class ConversationSessionRead(BaseModel):
 class ConversationSessionDetailRead(ConversationSessionRead):
     messages: list[ConversationMessageRead] = Field(default_factory=list)
     memory_candidates: list[ConversationMemoryCandidateRead] = Field(default_factory=list)
+    action_records: list[ConversationActionRecordRead] = Field(default_factory=list)
 
 
 class ConversationSessionListResponse(BaseModel):
@@ -101,3 +129,26 @@ class ConversationTurnRead(BaseModel):
 class ConversationMemoryCandidateActionRead(BaseModel):
     candidate: ConversationMemoryCandidateRead
     memory_card_id: str | None = None
+
+
+class ConversationActionExecutionRead(BaseModel):
+    action: ConversationActionRecordRead
+
+
+class ConversationDebugLogRead(BaseModel):
+    id: str
+    session_id: str
+    request_id: str | None = None
+    stage: str
+    source: str
+    level: ConversationDebugLogLevel
+    message: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class ConversationDebugLogListRead(BaseModel):
+    session_id: str
+    debug_enabled: bool
+    request_id: str | None = None
+    items: list[ConversationDebugLogRead] = Field(default_factory=list)

@@ -10,6 +10,7 @@ from app.modules.agent.models import (
     FamilyAgentSoulProfile,
 )
 from app.modules.agent.schemas import (
+    AgentAutonomousActionPolicy,
     AgentCreate,
     AgentDetailRead,
     AgentListResponse,
@@ -104,6 +105,7 @@ def create_agent(
         default_entry=payload.default_entry if existing_primary is None else False,
         routing_tags_json=dump_json(["setup", payload.agent_type]) or "[]",
         memory_scope_json=None,
+        autonomous_action_policy_json=dump_json(AgentAutonomousActionPolicy().model_dump(mode="json")) or '{"memory":"ask","config":"ask","action":"ask"}',
         updated_at=utc_now_iso(),
     )
     repository.add_runtime_policy(db, runtime_policy)
@@ -213,6 +215,7 @@ def build_agent_runtime_context(
             "default_entry": runtime_policy.default_entry,
             "routing_tags": _load_json_list(runtime_policy.routing_tags_json),
             "memory_scope": _load_json_dict(runtime_policy.memory_scope_json),
+            "autonomous_action_policy": _load_autonomous_action_policy(runtime_policy.autonomous_action_policy_json).model_dump(mode="json"),
         }
         if runtime_policy is not None
         else {
@@ -220,6 +223,7 @@ def build_agent_runtime_context(
             "default_entry": False,
             "routing_tags": [],
             "memory_scope": None,
+            "autonomous_action_policy": AgentAutonomousActionPolicy().model_dump(mode="json"),
         },
     }
 
@@ -444,6 +448,7 @@ def upsert_agent_runtime_policy(
     row.default_entry = payload.default_entry
     row.routing_tags_json = dump_json(payload.routing_tags) or "[]"
     row.memory_scope_json = dump_json(payload.memory_scope)
+    row.autonomous_action_policy_json = dump_json(payload.autonomous_action_policy.model_dump(mode="json")) or '{"memory":"ask","config":"ask","action":"ask"}'
     row.updated_at = utc_now_iso()
     return _to_runtime_policy_read(row)
 
@@ -534,6 +539,7 @@ def _to_runtime_policy_read(row: FamilyAgentRuntimePolicy) -> AgentRuntimePolicy
         default_entry=row.default_entry,
         routing_tags=_load_json_list(row.routing_tags_json),
         memory_scope=_load_json_dict(row.memory_scope_json),
+        autonomous_action_policy=_load_autonomous_action_policy(row.autonomous_action_policy_json),
         updated_at=row.updated_at,
     )
 
@@ -545,6 +551,7 @@ def _default_runtime_policy_read(agent_id: str) -> AgentRuntimePolicyRead:
         default_entry=False,
         routing_tags=[],
         memory_scope=None,
+        autonomous_action_policy=AgentAutonomousActionPolicy(),
         updated_at="",
     )
 
@@ -575,6 +582,15 @@ def _load_json_dict(value: str | None) -> dict | None:
     if isinstance(data, dict):
         return data
     return None
+
+
+def _load_autonomous_action_policy(value: str | None) -> AgentAutonomousActionPolicy:
+    data = _load_json_dict(value) or {}
+    return AgentAutonomousActionPolicy(
+        memory=str(data.get("memory") or "ask"),
+        config=str(data.get("config") or "ask"),
+        action=str(data.get("action") or "ask"),
+    )
 
 
 def _resolve_card_observed_at(card: object) -> str:

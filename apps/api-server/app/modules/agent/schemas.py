@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 AgentType = Literal["butler", "nutritionist", "fitness_coach", "study_coach", "custom"]
 AgentStatus = Literal["draft", "active", "inactive"]
 ButlerBootstrapStatus = Literal["collecting", "reviewing", "completed", "cancelled"]
+AgentAutonomousActionLevel = Literal["ask", "notify", "auto"]
 ButlerBootstrapField = Literal[
     "display_name",
     "speaking_style",
@@ -42,12 +43,19 @@ class AgentMemberCognitionRead(BaseModel):
     updated_at: str
 
 
+class AgentAutonomousActionPolicy(BaseModel):
+    memory: AgentAutonomousActionLevel = "ask"
+    config: AgentAutonomousActionLevel = "ask"
+    action: AgentAutonomousActionLevel = "ask"
+
+
 class AgentRuntimePolicyRead(BaseModel):
     agent_id: str
     conversation_enabled: bool
     default_entry: bool
     routing_tags: list[str] = Field(default_factory=list)
     memory_scope: dict[str, Any] | None = None
+    autonomous_action_policy: AgentAutonomousActionPolicy = Field(default_factory=AgentAutonomousActionPolicy)
     updated_at: str
 
 
@@ -176,6 +184,7 @@ class AgentRuntimePolicyUpsert(BaseModel):
     default_entry: bool = False
     routing_tags: list[str] = Field(default_factory=list, max_length=20)
     memory_scope: dict[str, Any] | None = None
+    autonomous_action_policy: AgentAutonomousActionPolicy = Field(default_factory=AgentAutonomousActionPolicy)
 
 
 class AgentMemoryInsightFact(BaseModel):

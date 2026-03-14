@@ -1,6 +1,7 @@
 """LLM 任务统一调用"""
 
 from collections.abc import Generator
+import logging
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -14,6 +15,8 @@ from app.modules.ai_gateway.schemas import AiGatewayInvokeRequest
 from app.modules.ai_gateway.service import resolve_capability_route
 from app.modules.llm_task.definitions import get_task
 from app.modules.llm_task.parser import parse_to_model, strip_structured_output
+
+logger = logging.getLogger(__name__)
 
 
 class LlmResult:
@@ -71,6 +74,9 @@ def invoke_llm(
     *,
     household_id: str | None = None,
     conversation_history: list[dict] | None = None,
+    request_context: dict[str, Any] | None = None,
+    timeout_ms_override: int | None = None,
+    honor_timeout_override: bool = False,
 ) -> LlmResult:
     """调用 LLM 执行任务
 
@@ -110,10 +116,14 @@ def invoke_llm(
             capability=task.capability,
             household_id=household_id,
             payload={
+                "task_type": task_type,
                 "messages": messages,
                 "temperature": task.temperature,
                 "max_tokens": task.max_tokens,
+                "request_context": request_context or {},
             },
+            timeout_ms_override=timeout_ms_override,
+            honor_timeout_override=honor_timeout_override,
         ),
     )
 
@@ -123,6 +133,7 @@ def invoke_llm(
         provider=response.provider_code,
         latency_ms=response.attempts[-1].latency_ms or 0 if response.attempts else 0,
         output_model=task.output_model,
+        task_type=task_type,
     )
 
     return result
@@ -135,6 +146,7 @@ def stream_llm(
     *,
     household_id: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
+    request_context: dict[str, Any] | None = None,
 ) -> Generator[LlmStreamEvent, None, None]:
     """流式调用 LLM 任务。"""
     task = get_task(task_type)
@@ -156,6 +168,7 @@ def stream_llm(
             "messages": messages,
             "temperature": task.temperature,
             "max_tokens": task.max_tokens,
+            "request_context": request_context or {},
         },
         timeout_ms=timeout_ms,
     ):
@@ -183,6 +196,7 @@ def stream_llm(
             provider=provider_profile.provider_code,
             latency_ms=0,
             output_model=task.output_model,
+            task_type=task_type,
         ),
     )
 
@@ -193,8 +207,16 @@ def _build_result(
     provider: str,
     latency_ms: int,
     output_model: type[BaseModel] | None,
+    task_type: str,
 ) -> LlmResult:
     parsed = parse_to_model(raw_text, output_model) if output_model else None
+    if output_model is not None and parsed is None and raw_text.strip():
+        logger.warning(
+            "LLM structured parse failed: task_type=%s provider=%s raw_text_preview=%s",
+            task_type,
+            provider,
+            raw_text[:500],
+        )
     return LlmResult(
         raw_text=raw_text,
         display_text=strip_structured_output(raw_text),

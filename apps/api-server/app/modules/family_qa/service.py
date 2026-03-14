@@ -567,6 +567,7 @@ def _build_qa_generation_payload(prepared: PreparedFamilyQaTurn) -> dict[str, ob
         "fact_count": len(prepared.facts),
         "channel": prepared.payload.channel,
         "conversation_history": prepared.conversation_history,
+        "request_context": prepared.payload.context.get("request_context") if isinstance(prepared.payload.context, dict) else {},
         "agent_runtime_context": prepared.agent_runtime_context,
         "agent_memory_context": {
             "status": prepared.fact_view.memory_summary.status,

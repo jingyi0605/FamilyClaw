@@ -105,3 +105,69 @@ class ConversationMemoryCandidate(Base):
     confidence: Mapped[float] = mapped_column(nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+
+
+class ConversationActionRecord(Base):
+    __tablename__ = "conversation_action_records"
+    __table_args__ = (
+        Index("idx_conversation_action_records_session_created_at", "session_id", "created_at"),
+        Index("idx_conversation_action_records_source_message_id", "source_message_id"),
+        Index("idx_conversation_action_records_target_ref", "target_ref"),
+        Index("idx_conversation_action_records_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trigger_message_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("conversation_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_message_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("conversation_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    intent: Mapped[str] = mapped_column(String(40), nullable=False)
+    action_category: Mapped[str] = mapped_column(String(20), nullable=False)
+    action_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    policy_mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending_confirmation")
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    plan_payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    result_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    undo_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    executed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    undone_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+
+
+class ConversationDebugLog(Base):
+    __tablename__ = "conversation_debug_logs"
+    __table_args__ = (
+        Index("idx_conversation_debug_logs_session_created_at", "session_id", "created_at"),
+        Index("idx_conversation_debug_logs_request_id", "request_id"),
+        Index("idx_conversation_debug_logs_stage", "stage"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stage: Mapped[str] = mapped_column(String(80), nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="service")
+    level: Mapped[str] = mapped_column(String(20), nullable=False, default="info")
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)

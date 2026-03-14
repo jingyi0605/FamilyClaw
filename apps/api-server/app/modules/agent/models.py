@@ -110,6 +110,7 @@ class FamilyAgentRuntimePolicy(Base):
     default_entry: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     routing_tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     memory_scope_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    autonomous_action_policy_json: Mapped[str] = mapped_column(Text, nullable=False, default='{"memory":"ask","config":"ask","action":"ask"}')
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
 
 

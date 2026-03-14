@@ -1,7 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from alembic import command
 from alembic.config import Config
@@ -12,30 +13,49 @@ import app.db.models  # noqa: F401
 from app.api.dependencies import ActorContext
 from app.core.config import settings
 from app.db.utils import dump_json, new_uuid, utc_now_iso
-from app.modules.agent.schemas import AgentCreate
-from app.modules.agent.service import create_agent
+from app.modules.agent.schemas import AgentCreate, AgentRuntimePolicyUpsert
+from app.modules.agent.service import create_agent, upsert_agent_runtime_policy
 from app.modules.conversation import repository as conversation_repository
 from app.modules.conversation.models import ConversationMemoryCandidate, ConversationMessage
 from app.modules.conversation.orchestrator import (
     ConversationIntent,
+    ConversationIntentLabel,
     ConversationOrchestratorResult,
+    _build_free_chat_variables,
     detect_conversation_intent,
+    run_orchestrated_turn,
 )
 from app.modules.conversation.schemas import ConversationSessionCreate, ConversationTurnCreate
 from app.modules.conversation.service import (
+    confirm_conversation_action,
     confirm_memory_candidate,
     create_conversation_session,
     create_conversation_turn,
     dismiss_memory_candidate,
     get_conversation_session_detail,
+    list_conversation_debug_logs,
     list_conversation_sessions,
+    undo_conversation_action,
 )
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
-from app.modules.llm_task.output_models import MemoryExtractionOutput
+from app.modules.llm_task.output_models import (
+    ConversationIntentDetectionOutput,
+    MemoryExtractionOutput,
+    ReminderExtractionOutput,
+)
+from app.modules.llm_task.parser import parse_to_model
+from app.modules.ai_gateway.provider_runtime import build_template_fallback_output
 from app.modules.memory import repository as memory_repository
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
+
+
+class _FakeLlmResult:
+    def __init__(self, *, text: str = "", data=None, provider: str = "mock-provider") -> None:
+        self.text = text
+        self.data = data
+        self.provider = provider
 
 
 class ConversationFoundationTests(unittest.TestCase):
@@ -177,6 +197,79 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("pending_review", detail.memory_candidates[0].status)
         self.assertEqual("笨笨", detail.active_agent_name)
 
+    def test_list_conversation_debug_logs_reflects_env_switch(self) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        previous = settings.conversation_debug_log_enabled
+        try:
+            settings.conversation_debug_log_enabled = False
+            debug_logs = list_conversation_debug_logs(self.db, session_id=session.id, actor=self.actor)
+            self.assertFalse(debug_logs.debug_enabled)
+            self.assertEqual(0, len(debug_logs.items))
+
+            settings.conversation_debug_log_enabled = True
+            debug_logs = list_conversation_debug_logs(self.db, session_id=session.id, actor=self.actor)
+            self.assertTrue(debug_logs.debug_enabled)
+        finally:
+            settings.conversation_debug_log_enabled = previous
+
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_create_conversation_turn_writes_debug_logs_when_enabled(self, run_orchestrated_turn_mock) -> None:
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.FREE_CHAT,
+            text="你好，我在。",
+            degraded=False,
+            facts=[],
+            suggestions=[],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id="trace-debug",
+            ai_provider_code="mock-provider",
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
+        )
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        previous = settings.conversation_debug_log_enabled
+        try:
+            settings.conversation_debug_log_enabled = True
+            result = create_conversation_turn(
+                self.db,
+                session_id=session.id,
+                payload=ConversationTurnCreate(message="你好"),
+                actor=self.actor,
+            )
+            self.db.commit()
+
+            self.assertEqual("completed", result.outcome)
+            debug_logs = list_conversation_debug_logs(
+                self.db,
+                session_id=session.id,
+                actor=self.actor,
+                request_id=result.request_id,
+            )
+            stages = [item.stage for item in debug_logs.items]
+            self.assertTrue(debug_logs.debug_enabled)
+            self.assertIn("turn.received", stages)
+            self.assertIn("orchestrator.completed", stages)
+            self.assertIn("assistant.completed", stages)
+            self.assertIn("turn.completed", stages)
+        finally:
+            settings.conversation_debug_log_enabled = previous
+
     def test_list_sessions_only_returns_current_member_sessions(self) -> None:
         own_session = create_conversation_session(
             self.db,
@@ -239,6 +332,7 @@ class ConversationFoundationTests(unittest.TestCase):
             suggestions=["继续问一个问题"],
             memory_candidate_payloads=[],
             config_suggestion=None,
+            action_payloads=[],
             ai_trace_id="trace-sync",
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
@@ -298,8 +392,10 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("error", result.session.messages[1].message_type)
         self.assertEqual("provider failed", result.session.messages[1].content)
 
-    @patch("app.modules.conversation.service._run_orchestrated_turn")
-    def test_create_conversation_turn_passes_previous_history_into_query_context(self, run_orchestrated_turn_mock) -> None:
+    @patch("app.modules.conversation.service._generate_memory_candidates_for_turn")
+    @patch("app.modules.conversation.service.run_orchestrated_turn")
+    def test_create_conversation_turn_passes_previous_history_into_query_context(self, run_orchestrated_turn_mock, generate_memory_candidates_mock) -> None:
+        _ = generate_memory_candidates_mock
         session = create_conversation_session(
             self.db,
             payload=ConversationSessionCreate(
@@ -352,7 +448,7 @@ class ConversationFoundationTests(unittest.TestCase):
         conversation_repository.add_message(self.db, previous_assistant)
         self.db.commit()
 
-        def _fake_run(_db, session, message, actor, conversation_history):
+        def _fake_run(_db, session, message, actor, conversation_history, request_context=None):
             _ = session, message, actor
             self.assertEqual(
                 [
@@ -361,6 +457,11 @@ class ConversationFoundationTests(unittest.TestCase):
                 ],
                 conversation_history,
             )
+            self.assertTrue(isinstance(request_context, dict))
+            assert request_context is not None
+            self.assertEqual(session.id, request_context.get("session_id"))
+            self.assertEqual("conversation_turn", request_context.get("channel"))
+            self.assertTrue(isinstance(request_context.get("request_id"), str) and request_context.get("request_id"))
             return ConversationOrchestratorResult(
                 intent=ConversationIntent.STRUCTURED_QA,
                 text="这是新一轮回答",
@@ -369,6 +470,7 @@ class ConversationFoundationTests(unittest.TestCase):
                 suggestions=[],
                 memory_candidate_payloads=[],
                 config_suggestion=None,
+                action_payloads=[],
                 ai_trace_id="trace-history",
                 ai_provider_code="mock-provider",
                 effective_agent_id=self.agent.id,
@@ -399,6 +501,7 @@ class ConversationFoundationTests(unittest.TestCase):
             suggestions=[],
             memory_candidate_payloads=[],
             config_suggestion=None,
+            action_payloads=[],
             ai_trace_id="trace-memory",
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
@@ -441,8 +544,12 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual(1, len(result.session.memory_candidates))
         self.assertEqual("preference", result.session.memory_candidates[0].memory_type)
         self.assertEqual("不吃香菜", result.session.memory_candidates[0].title)
+        self.assertEqual(1, len(result.session.action_records))
+        self.assertEqual("memory.write", result.session.action_records[0].action_name)
+        self.assertEqual("pending_confirmation", result.session.action_records[0].status)
 
-    def test_detect_conversation_intent_routes_story_to_free_chat(self) -> None:
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_detect_conversation_intent_routes_story_to_free_chat(self, invoke_llm_mock) -> None:
         session = create_conversation_session(
             self.db,
             payload=ConversationSessionCreate(
@@ -451,10 +558,105 @@ class ConversationFoundationTests(unittest.TestCase):
             ),
             actor=self.actor,
         )
-        intent = detect_conversation_intent(session=session, message="讲500字的科幻故事")
-        self.assertEqual(ConversationIntent.FREE_CHAT, intent)
+        invoke_llm_mock.return_value = _FakeLlmResult(
+            data=ConversationIntentDetectionOutput(
+                primary_intent="free_chat",
+                secondary_intents=[],
+                confidence=0.93,
+                reason="这是普通创作闲聊。",
+                candidate_actions=[],
+            )
+        )
+        intent = detect_conversation_intent(self.db, session=session, message="讲500字的科幻故事")
+        self.assertEqual(ConversationIntentLabel.FREE_CHAT, intent.primary_intent)
+        self.assertEqual(ConversationIntent.FREE_CHAT, intent.route_intent)
 
-    def test_detect_conversation_intent_routes_family_status_to_structured_qa(self) -> None:
+    def test_parse_intent_detection_output_from_dirty_text(self) -> None:
+        parsed = parse_to_model(
+            """这是补充说明，不该出现。
+<output>
+{"primary_intent":"free_chat","secondary_intents":[],"confidence":0.91,"reason":"普通问候","candidate_actions":[]}
+</output>""",
+            ConversationIntentDetectionOutput,
+        )
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual("free_chat", parsed.primary_intent)
+
+    def test_parse_intent_detection_output_tolerates_string_candidate_actions(self) -> None:
+        parsed = parse_to_model(
+            """<output>
+{"primary_intent":"free_chat","secondary_intents":[],"confidence":0.6,"reason":"普通寒暄","candidate_actions":["继续进行一般性对话","提醒我明天开会"]}
+</output>""",
+            ConversationIntentDetectionOutput,
+        )
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual("free_chat", parsed.primary_intent)
+        self.assertEqual(1, len(parsed.candidate_actions))
+        self.assertEqual("reminder_create", parsed.candidate_actions[0].action_type)
+
+    def test_template_fallback_for_intent_detection_returns_structured_json(self) -> None:
+        output = build_template_fallback_output(
+            capability="qa_generation",
+            payload={"task_type": "conversation_intent_detection"},
+        )
+        parsed = parse_to_model(str(output.get("text") or ""), ConversationIntentDetectionOutput)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual("free_chat", parsed.primary_intent)
+
+    def test_template_fallback_for_free_chat_returns_human_greeting(self) -> None:
+        output = build_template_fallback_output(
+            capability="qa_generation",
+            payload={"task_type": "free_chat", "user_message": "你好"},
+        )
+        self.assertIn("你好，我在", str(output.get("text") or ""))
+
+    @patch("app.modules.conversation.orchestrator.get_conversation_debug_logger")
+    @patch("app.modules.conversation.orchestrator.build_memory_context_bundle")
+    @patch("app.modules.conversation.orchestrator.get_context_overview")
+    @patch("app.modules.conversation.orchestrator.build_agent_runtime_context")
+    def test_build_free_chat_variables_logs_memory_context_details(
+        self,
+        build_agent_runtime_context_mock,
+        get_context_overview_mock,
+        build_memory_context_bundle_mock,
+        get_conversation_debug_logger_mock,
+    ) -> None:
+        build_agent_runtime_context_mock.return_value = {
+            "agent": {"name": "笨笨"},
+            "identity": {"role_summary": "AI管家", "speaking_style": "自然亲切"},
+        }
+        get_context_overview_mock.return_value = SimpleNamespace(
+            active_member=SimpleNamespace(name="Owner"),
+            home_mode="home",
+            home_assistant_status="online",
+        )
+        build_memory_context_bundle_mock.return_value = SimpleNamespace(
+            capability="conversation_free_chat",
+            hot_summary=SimpleNamespace(
+                total_visible_cards=2,
+                top_memories=[
+                    SimpleNamespace(memory_id="memory-1", title="给管家改名", memory_type="preference", summary="用户想把AI管家改名为暖暖。", updated_at="2026-03-14T00:00:00Z"),
+                ],
+                preference_highlights=["用户想把AI管家改名为暖暖。"],
+                recent_event_highlights=[],
+            ),
+            query_result=SimpleNamespace(
+                total=1,
+                items=[
+                    SimpleNamespace(
+                        card=SimpleNamespace(id="memory-1", title="给管家改名", memory_type="preference", summary="用户想把AI管家改名为暖暖。"),
+                        score=48,
+                        matched_terms=["暖暖"],
+                    )
+                ],
+            ),
+        )
+        logger_mock = Mock()
+        get_conversation_debug_logger_mock.return_value = logger_mock
+
         session = create_conversation_session(
             self.db,
             payload=ConversationSessionCreate(
@@ -463,10 +665,22 @@ class ConversationFoundationTests(unittest.TestCase):
             ),
             actor=self.actor,
         )
-        intent = detect_conversation_intent(session=session, message="现在家里是什么状态？")
-        self.assertEqual(ConversationIntent.STRUCTURED_QA, intent)
+        variables = _build_free_chat_variables(
+            self.db,
+            session=session,
+            actor=self.actor,
+            user_message="你叫什么来着",
+            request_context={"request_id": "req-1", "session_id": session.id},
+            log_memory_context=True,
+        )
+        self.assertIn("暖暖", variables["memory_context"])
+        logger_mock.info.assert_called_once()
+        logged_text = logger_mock.info.call_args[0][0]
+        self.assertIn("memory_context.read", logged_text)
+        self.assertIn("memory-1", logged_text)
 
-    def test_detect_conversation_intent_routes_config_request_to_config_extraction(self) -> None:
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_detect_conversation_intent_routes_family_status_to_structured_qa(self, invoke_llm_mock) -> None:
         session = create_conversation_session(
             self.db,
             payload=ConversationSessionCreate(
@@ -475,8 +689,315 @@ class ConversationFoundationTests(unittest.TestCase):
             ),
             actor=self.actor,
         )
-        intent = detect_conversation_intent(session=session, message="以后你就叫阿福，说话风格温柔一点")
-        self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, intent)
+        invoke_llm_mock.return_value = _FakeLlmResult(
+            data=ConversationIntentDetectionOutput(
+                primary_intent="structured_qa",
+                secondary_intents=["free_chat"],
+                confidence=0.96,
+                reason="用户在问家庭状态。",
+                candidate_actions=[],
+            )
+        )
+        intent = detect_conversation_intent(self.db, session=session, message="现在家里是什么状态？")
+        self.assertEqual(ConversationIntentLabel.STRUCTURED_QA, intent.primary_intent)
+        self.assertEqual(ConversationIntent.STRUCTURED_QA, intent.route_intent)
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_detect_conversation_intent_routes_config_request_to_config_extraction(self, invoke_llm_mock) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        invoke_llm_mock.return_value = _FakeLlmResult(
+            data=ConversationIntentDetectionOutput(
+                primary_intent="config_change",
+                secondary_intents=[],
+                confidence=0.97,
+                reason="用户明确想改助手名字和说话风格。",
+                candidate_actions=[],
+            )
+        )
+        intent = detect_conversation_intent(self.db, session=session, message="以后你就叫阿福，说话风格温柔一点")
+        self.assertEqual(ConversationIntentLabel.CONFIG_CHANGE, intent.primary_intent)
+        self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, intent.route_intent)
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_detect_conversation_intent_routes_agent_name_query_to_free_chat(self, invoke_llm_mock) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        invoke_llm_mock.return_value = _FakeLlmResult(
+            data=ConversationIntentDetectionOutput(
+                primary_intent="free_chat",
+                secondary_intents=["config_change"],
+                confidence=0.9,
+                reason="这是在问助手名字，不是在改配置。",
+                candidate_actions=[],
+            )
+        )
+        intent = detect_conversation_intent(self.db, session=session, message="你叫什么")
+        self.assertEqual(ConversationIntentLabel.FREE_CHAT, intent.primary_intent)
+        self.assertEqual(ConversationIntent.FREE_CHAT, intent.route_intent)
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_detect_conversation_intent_low_confidence_falls_back_to_free_chat(self, invoke_llm_mock) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        invoke_llm_mock.return_value = _FakeLlmResult(
+            data=ConversationIntentDetectionOutput(
+                primary_intent="config_change",
+                secondary_intents=["free_chat"],
+                confidence=0.42,
+                reason="可能像是在改配置，但不够明确。",
+                candidate_actions=[],
+            )
+        )
+        intent = detect_conversation_intent(self.db, session=session, message="你觉得阿福这个名字怎么样")
+        self.assertEqual(ConversationIntentLabel.CONFIG_CHANGE, intent.primary_intent)
+        self.assertEqual(ConversationIntent.FREE_CHAT, intent.route_intent)
+
+    def test_detect_conversation_intent_agent_config_mode_is_hard_guardrail(self) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+                session_mode="agent_config",
+            ),
+            actor=self.actor,
+        )
+        intent = detect_conversation_intent(self.db, session=session, message="你叫什么")
+        self.assertEqual(ConversationIntentLabel.CONFIG_CHANGE, intent.primary_intent)
+        self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, intent.route_intent)
+        self.assertEqual("session_mode.agent_config", intent.guardrail_rule)
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_routes_reminder_intent_to_extraction(self, invoke_llm_mock) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        invoke_llm_mock.side_effect = [
+            _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="reminder_create",
+                    secondary_intents=[],
+                    confidence=0.95,
+                    reason="用户明确要求创建提醒。",
+                    candidate_actions=[],
+                )
+            ),
+            _FakeLlmResult(
+                data=ReminderExtractionOutput(
+                    should_create=True,
+                    title="带钥匙",
+                    description="出门前检查钥匙",
+                    trigger_at="2026-03-14T08:00:00+08:00",
+                )
+            ),
+        ]
+        result = run_orchestrated_turn(
+            self.db,
+            session=session,
+            message="明天早上八点提醒我带钥匙",
+            actor=self.actor,
+            conversation_history=[],
+        )
+        self.assertEqual(ConversationIntent.REMINDER_EXTRACTION, result.intent)
+        self.assertEqual(ConversationIntentLabel.REMINDER_CREATE, result.intent_detection.primary_intent)
+        self.assertEqual(1, len(result.action_payloads))
+        self.assertEqual("reminder_create", result.action_payloads[0]["action_type"])
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_uses_natural_reply_for_config_change(self, invoke_llm_mock) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        invoke_llm_mock.side_effect = [
+            _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="config_change",
+                    secondary_intents=[],
+                    confidence=0.95,
+                    reason="用户明确想给助手改名。",
+                    candidate_actions=[],
+                )
+            ),
+            _FakeLlmResult(
+                data=type(
+                    "_ConfigDraft",
+                    (),
+                    {
+                        "display_name": "阿福",
+                        "speaking_style": None,
+                        "personality_traits": [],
+                    },
+                )()
+            ),
+        ]
+        result = run_orchestrated_turn(
+            self.db,
+            session=session,
+            message="以后你就叫阿福",
+            actor=self.actor,
+            conversation_history=[],
+        )
+        self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
+        self.assertEqual("好，那我以后就叫阿福。你还想顺手调整一下我说话的风格，或者补几个性格标签吗？", result.text)
+        self.assertEqual("阿福", result.config_suggestion["display_name"])
+        self.assertEqual([], invoke_llm_mock.call_args_list[1].kwargs["conversation_history"])
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_passes_recent_history_to_config_extraction(self, invoke_llm_mock) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        invoke_llm_mock.side_effect = [
+            _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="config_change",
+                    secondary_intents=[],
+                    confidence=0.95,
+                    reason="用户在继续补充助手名字。",
+                    candidate_actions=[],
+                )
+            ),
+            _FakeLlmResult(
+                data=type(
+                    "_ConfigDraft",
+                    (),
+                    {
+                        "display_name": "暖暖",
+                        "speaking_style": None,
+                        "personality_traits": [],
+                    },
+                )()
+            ),
+        ]
+        history = [
+            {"role": "user", "content": "给你改个名字好不好"},
+            {"role": "assistant", "content": "当然可以，你想给我起什么新名字？"},
+        ]
+        result = run_orchestrated_turn(
+            self.db,
+            session=session,
+            message="叫暖暖吧",
+            actor=self.actor,
+            conversation_history=history,
+        )
+        self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
+        self.assertEqual("暖暖", result.config_suggestion["display_name"])
+        self.assertEqual("好，那我以后就叫暖暖。你还想顺手调整一下我说话的风格，或者补几个性格标签吗？", result.text)
+        self.assertEqual(history, invoke_llm_mock.call_args_list[1].kwargs["conversation_history"])
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_does_not_extract_current_name_as_new_config(self, invoke_llm_mock) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        invoke_llm_mock.side_effect = [
+            _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="config_change",
+                    secondary_intents=[],
+                    confidence=0.92,
+                    reason="用户想讨论改名。",
+                    candidate_actions=[],
+                )
+            ),
+            _FakeLlmResult(
+                data=type(
+                    "_ConfigDraft",
+                    (),
+                    {
+                        "display_name": self.agent.display_name,
+                        "speaking_style": "幽默风趣",
+                        "personality_traits": ["细心", "乐于助人"],
+                    },
+                )()
+            ),
+            _FakeLlmResult(text="当然可以，你想给我起什么新名字？也可以顺手告诉我想换成什么说话风格。"),
+        ]
+        result = run_orchestrated_turn(
+            self.db,
+            session=session,
+            message="我给你改个名怎么样",
+            actor=self.actor,
+            conversation_history=[
+                {"role": "assistant", "content": f"哈哈，我是{self.agent.display_name}，你的家庭AI管家哦！"}
+            ],
+        )
+        self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
+        self.assertEqual("当然可以，你想给我起什么新名字？也可以顺手告诉我想换成什么说话风格。", result.text)
+        self.assertIsNone(result.config_suggestion)
+        self.assertEqual([], result.facts)
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_low_confidence_returns_free_chat(self, invoke_llm_mock) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        invoke_llm_mock.side_effect = [
+            _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="config_change",
+                    secondary_intents=["free_chat"],
+                    confidence=0.35,
+                    reason="只是随口聊名字，不够像配置修改。",
+                    candidate_actions=[],
+                )
+            ),
+            _FakeLlmResult(text="我现在叫笨笨，你想给我起新名字也可以。"),
+        ]
+        result = run_orchestrated_turn(
+            self.db,
+            session=session,
+            message="你叫什么",
+            actor=self.actor,
+            conversation_history=[],
+        )
+        self.assertEqual(ConversationIntent.FREE_CHAT, result.intent)
+        self.assertIsNone(result.config_suggestion)
+        self.assertEqual("我现在叫笨笨，你想给我起新名字也可以。", result.text)
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     @patch("app.modules.conversation.service._run_orchestrated_turn")
@@ -490,6 +1011,7 @@ class ConversationFoundationTests(unittest.TestCase):
             suggestions=["去 AI 配置"],
             memory_candidate_payloads=[],
             config_suggestion={"display_name": "阿福"},
+            action_payloads=[],
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
@@ -535,6 +1057,7 @@ class ConversationFoundationTests(unittest.TestCase):
                 }
             ],
             config_suggestion=None,
+            action_payloads=[],
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
@@ -560,6 +1083,107 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("completed", result.outcome)
         self.assertEqual(1, len(result.session.memory_candidates))
         self.assertEqual("preference", result.session.memory_candidates[0].memory_type)
+        self.assertEqual(1, len(result.session.action_records))
+        self.assertEqual("memory.write", result.session.action_records[0].action_name)
+
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_notify_config_action_executes_and_can_undo(self, run_orchestrated_turn_mock) -> None:
+        upsert_agent_runtime_policy(
+            self.db,
+            household_id=self.household.id,
+            agent_id=self.agent.id,
+            payload=AgentRuntimePolicyUpsert(
+                conversation_enabled=True,
+                default_entry=True,
+                routing_tags=["qa"],
+                memory_scope=None,
+                autonomous_action_policy={"memory": "ask", "config": "notify", "action": "ask"},
+            ),
+        )
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.CONFIG_EXTRACTION,
+            text="我已经整理好了配置建议。",
+            degraded=False,
+            facts=[],
+            suggestions=[],
+            memory_candidate_payloads=[],
+            config_suggestion={"display_name": "阿福", "speaking_style": "温和直接", "personality_traits": ["稳重"]},
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code="mock-provider",
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
+        )
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(household_id=self.household.id, active_agent_id=self.agent.id),
+            actor=self.actor,
+        )
+
+        turn = create_conversation_turn(
+            self.db,
+            session_id=session.id,
+            payload=ConversationTurnCreate(message="以后你就叫阿福，说话温和直接一点"),
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        self.assertEqual(1, len(turn.session.action_records))
+        action = turn.session.action_records[0]
+        self.assertEqual("config.apply", action.action_name)
+        self.assertEqual("completed", action.status)
+        self.assertEqual("阿福", get_conversation_session_detail(self.db, session_id=session.id, actor=self.actor).active_agent_name)
+
+        undo_result = undo_conversation_action(self.db, action_id=action.id, actor=self.actor)
+        self.db.commit()
+        self.assertEqual("undone", undo_result.action.status)
+
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_confirm_pending_memory_action_creates_memory(self, run_orchestrated_turn_mock) -> None:
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.MEMORY_EXTRACTION,
+            text="我已经整理出了记忆候选。",
+            degraded=False,
+            facts=[],
+            suggestions=[],
+            memory_candidate_payloads=[
+                {
+                    "memory_type": "preference",
+                    "title": "不吃香菜",
+                    "summary": "用户明确表示自己不吃香菜。",
+                    "content": {"source": "conversation"},
+                    "confidence": 0.92,
+                }
+            ],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code="mock-provider",
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
+        )
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(household_id=self.household.id, active_agent_id=self.agent.id),
+            actor=self.actor,
+        )
+
+        turn = create_conversation_turn(
+            self.db,
+            session_id=session.id,
+            payload=ConversationTurnCreate(message="记住，我不吃香菜"),
+            actor=self.actor,
+        )
+        self.db.commit()
+        action = turn.session.action_records[0]
+
+        execution = confirm_conversation_action(self.db, action_id=action.id, actor=self.actor)
+        self.db.commit()
+
+        self.assertEqual("completed", execution.action.status)
+        self.assertEqual("memory.write", execution.action.action_name)
+        memory_card_id = execution.action.result_payload.get("memory_card_id")
+        self.assertTrue(isinstance(memory_card_id, str) and memory_card_id)
 
     def test_confirm_memory_candidate_creates_memory_card(self) -> None:
         session = create_conversation_session(

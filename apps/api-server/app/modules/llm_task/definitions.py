@@ -7,7 +7,9 @@ from pydantic import BaseModel
 from app.modules.ai_gateway.schemas import AiCapability
 from app.modules.llm_task.output_models import (
     ButlerBootstrapOutput,
+    ConversationIntentDetectionOutput,
     MemoryExtractionOutput,
+    ReminderExtractionOutput,
 )
 
 
@@ -191,7 +193,48 @@ register(
 )
 
 
-# 3. 家庭问答润色
+# 3. 聊天意图识别
+register(
+    LlmTaskDef(
+        task_type="conversation_intent_detection",
+        system_prompt="""你是聊天意图识别器，只判断这轮用户消息，不执行动作。
+
+可选意图：
+- free_chat：普通闲聊、寒暄、创作、问你是谁/你叫什么
+- structured_qa：查询家庭事实、设备状态、成员状态、提醒状态、场景状态
+- config_change：明确想改助手名字、说话风格、性格、人设
+- memory_write：明确要求记住长期有效的信息
+- reminder_create：明确要求创建提醒
+
+规则：
+1. 只判断当前这轮，最近对话只用于消歧。
+2. “你叫什么”“你是谁”是 free_chat，不是 config_change。
+3. 查询提醒/家庭/设备状态是 structured_qa，不是 reminder_create。
+4. 只是随口提到偏好或经历，但没明确要求长期记住，判 free_chat。
+5. 不确定时，primary_intent 必须是 free_chat，confidence 要低。
+6. candidate_actions 只保留真实动作候选；没有就返回 []。
+7. 只能输出一个 `<output>...</output>`，块内必须是合法 JSON。
+
+<output>
+{output_format}
+</output>""",
+        user_prompt="""会话模式：{session_mode}
+
+最近对话：
+{conversation_excerpt}
+
+当前用户消息：
+{user_message}
+
+请返回意图识别结果。""",
+        output_model=ConversationIntentDetectionOutput,
+        temperature=0.1,
+        max_tokens=256,
+    )
+)
+
+
+# 4. 家庭问答润色
 register(
     LlmTaskDef(
         task_type="qa_polish",
@@ -215,7 +258,7 @@ register(
 )
 
 
-# 4. 自由聊天
+# 5. 自由聊天
 register(
     LlmTaskDef(
         task_type="free_chat",
@@ -241,11 +284,43 @@ register(
 )
 
 
-# 5. 配置提取
+# 6. 配置提取
+register(
+    LlmTaskDef(
+        task_type="config_dialogue",
+        system_prompt="""你在和用户讨论 AI 管家的名字、说话风格或性格设定。
+
+要求：
+- 用自然中文继续对话，不要写成表单说明
+- 可以总结当前草稿，也可以追问还缺什么
+- 不要假装配置已经生效
+- 不要输出 JSON、标签、分隔线
+- 回复控制在 3 句内，优先直接、有温度
+""",
+        user_prompt="""当前 Agent 背景：
+{agent_context}
+
+当前配置草稿：
+{config_draft}
+
+最近对话：
+{conversation_excerpt}
+
+用户这轮输入：
+{user_message}
+
+请继续这段配置对话。""",
+        temperature=0.4,
+        max_tokens=192,
+    )
+)
+
+
+# 7. 配置提取
 register(
     LlmTaskDef(
         task_type="config_extraction",
-        system_prompt="""你是 AI 管家配置提取器。请从用户这轮表达里提取适合写入 Agent 配置的建议。
+        system_prompt="""你是 AI 管家配置提取器。只提取“用户新增表达出来的配置变更”，不要复述当前已有配置。
 
 ## 提取范围
 - 名称（display_name）
@@ -253,14 +328,23 @@ register(
 - 性格特点（personality_traits）
 
 ## 规则
-- 只提取用户明确表达或强烈暗示的内容
+- 只提取用户明确表达或强烈暗示的新变更
+- 最近对话只用于理解上下文，不要从助手的话里直接抽取配置值
+- 当前已有配置只用于判断“是不是新变化”，不能直接回填成建议
+- 如果用户只说“想改名/想调整风格”，但没给出新值，对应字段必须为空
 - 不要编造没有说过的偏好
-- 如果没有相关内容，字段保持空
+- 没有明确新值的字段保持空
 
 输出字段：
 {output_format}""",
         user_prompt="""当前 Agent 背景：
 {agent_context}
+
+当前已有配置：
+{current_config}
+
+最近对话：
+{conversation_excerpt}
 
 用户本轮输入：
 {user_message}
@@ -273,7 +357,37 @@ register(
 )
 
 
-# 6. 提醒文案生成
+# 8. 提醒创建提取
+register(
+    LlmTaskDef(
+        task_type="reminder_extraction",
+        system_prompt="""你是提醒创建提取器。请只在用户明确表达“要创建提醒”时提取结果。
+## 规则
+- 只处理创建提醒，不处理查询提醒
+- 如果时间不明确，`should_create` 必须是 false
+- `trigger_at` 必须是 ISO8601 时间字符串
+- 标题和说明写成人话
+
+输出字段：
+{output_format}""",
+        user_prompt="""当前时间：
+{current_time}
+
+最近对话：
+{conversation_excerpt}
+
+用户输入：
+{user_message}
+
+请判断是否要创建提醒，并提取提醒标题、说明和触发时间。""",
+        output_model=ReminderExtractionOutput,
+        temperature=0.1,
+        max_tokens=256,
+    )
+)
+
+
+# 9. 提醒文案生成
 register(
     LlmTaskDef(
         task_type="reminder_copywriting",
@@ -285,7 +399,7 @@ register(
 )
 
 
-# 7. 场景执行解释
+# 10. 场景执行解释
 register(
     LlmTaskDef(
         task_type="scene_explanation",

@@ -2,12 +2,17 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
+from app.core.config import settings
+from app.core.logging import dump_conversation_debug_event, get_conversation_debug_logger
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.agent import repository as agent_repository
-from app.modules.agent.service import AgentNotFoundError, resolve_effective_agent
+from app.modules.agent.schemas import AgentAutonomousActionPolicy, AgentSoulProfileUpsert, AgentUpdate
+from app.modules.agent.service import AgentNotFoundError, resolve_effective_agent, update_agent, upsert_agent_soul
 from app.modules.audit.service import write_audit_log
 from app.modules.conversation import repository
 from app.modules.conversation.models import (
+    ConversationActionRecord,
+    ConversationDebugLog,
     ConversationMemoryCandidate,
     ConversationMessage,
     ConversationSession,
@@ -19,6 +24,10 @@ from app.modules.conversation.orchestrator import (
     stream_orchestrated_turn,
 )
 from app.modules.conversation.schemas import (
+    ConversationActionExecutionRead,
+    ConversationDebugLogListRead,
+    ConversationDebugLogRead,
+    ConversationActionRecordRead,
     ConversationMemoryCandidateActionRead,
     ConversationMemoryCandidateRead,
     ConversationMessageRead,
@@ -32,9 +41,12 @@ from app.modules.conversation.schemas import (
 from app.modules.household.models import Household
 from app.modules.llm_task import invoke_llm
 from app.modules.llm_task.output_models import MemoryExtractionOutput
-from app.modules.memory.schemas import MemoryCardManualCreate
-from app.modules.memory.service import create_manual_memory_card
+from app.modules.memory.schemas import MemoryCardCorrectionPayload, MemoryCardManualCreate
+from app.modules.memory.service import correct_memory_card, create_manual_memory_card
 from app.modules.member import service as member_service
+from app.modules.reminder.schemas import ReminderTaskCreate
+from app.modules.reminder.service import create_task as create_reminder_task
+from app.modules.reminder.service import delete_task as delete_reminder_task
 from app.modules.realtime.connection_manager import RealtimeConnectionManager
 from app.modules.realtime.schemas import build_bootstrap_realtime_event
 
@@ -125,6 +137,24 @@ def get_conversation_session_snapshot(
     return get_conversation_session_detail(db, session_id=session_id, actor=actor)
 
 
+def list_conversation_debug_logs(
+    db: Session,
+    *,
+    session_id: str,
+    actor: ActorContext,
+    request_id: str | None = None,
+    limit: int = 200,
+) -> ConversationDebugLogListRead:
+    session = _get_visible_session(db, session_id=session_id, actor=actor)
+    rows = repository.list_debug_logs(db, session_id=session.id, request_id=request_id, limit=limit)
+    return ConversationDebugLogListRead(
+        session_id=session.id,
+        debug_enabled=settings.conversation_debug_log_enabled,
+        request_id=request_id,
+        items=[_to_debug_log_read(item) for item in rows],
+    )
+
+
 def create_conversation_turn(
     db: Session,
     *,
@@ -138,6 +168,21 @@ def create_conversation_turn(
         session=session,
         payload=payload,
     )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.received",
+        source="service",
+        message="收到新的聊天请求。",
+        payload={
+            "user_message_id": user_message.id,
+            "assistant_message_id": assistant_message.id,
+            "message": payload.message.strip(),
+            "channel": payload.channel,
+            "session_mode": session.session_mode,
+        },
+    )
 
     outcome = "completed"
     error_message: str | None = None
@@ -150,26 +195,92 @@ def create_conversation_turn(
             request_id=request_id,
             actor=actor,
         )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="orchestrator.completed",
+            source="orchestrator",
+            message="编排层已完成意图识别和主路由。",
+            payload=_build_orchestrator_debug_payload(result),
+        )
         _complete_assistant_message(
             db,
             session=session,
             assistant_message=assistant_message,
             result=result,
         )
-        if result.memory_candidate_payloads:
-            _persist_memory_candidate_payloads(
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="assistant.completed",
+            source="service",
+            message="助手消息已落库。",
+            payload={
+                "assistant_message_id": assistant_message.id,
+                "intent": result.intent.value,
+                "content_preview": result.text[:120],
+                "degraded": result.degraded,
+            },
+        )
+        _apply_action_policy_for_turn(
+            db,
+            session=session,
+            request_id=request_id,
+            user_message=user_message,
+            assistant_message=assistant_message,
+            result=result,
+            actor=actor,
+        )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="action.policy.applied",
+            source="policy",
+            message="动作策略层处理完成。",
+            payload={"action_records": _serialize_action_records_for_debug(db, session_id=session.id, request_id=request_id)},
+        )
+        if not result.memory_candidate_payloads and result.intent in {
+            ConversationIntent.FREE_CHAT,
+            ConversationIntent.STRUCTURED_QA,
+        }:
+            _append_debug_log(
                 db,
                 session=session,
-                assistant_message=assistant_message,
-                candidate_payloads=result.memory_candidate_payloads,
+                request_id=request_id,
+                stage="memory.autogen.started",
+                source="service",
+                message="开始执行保守记忆补提取。",
+                payload={"reason": "当前主路由没有直接给出记忆候选。"},
             )
-        elif result.intent != ConversationIntent.MEMORY_EXTRACTION:
             _generate_memory_candidates_for_turn(
                 db,
                 session=session,
+                request_id=request_id,
                 user_message=user_message,
                 assistant_message=assistant_message,
+                actor=actor,
             )
+            _append_debug_log(
+                db,
+                session=session,
+                request_id=request_id,
+                stage="memory.autogen.completed",
+                source="service",
+                message="保守记忆补提取完成。",
+                payload={"generated_candidates": _count_request_memory_candidates(db, session_id=session.id, request_id=request_id)},
+            )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="turn.completed",
+            source="service",
+            message="本轮聊天处理完成。",
+            payload={"outcome": outcome},
+        )
     except Exception as exc:
         outcome = "failed"
         error_message = _render_turn_error(exc)
@@ -179,6 +290,19 @@ def create_conversation_turn(
             assistant_message=assistant_message,
             error_message=error_message,
             error_code=_resolve_turn_error_code(exc),
+        )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="turn.failed",
+            source="service",
+            level="error",
+            message="本轮聊天处理失败。",
+            payload={
+                "error_message": error_message,
+                "error_code": _resolve_turn_error_code(exc),
+            },
         )
 
     db.flush()
@@ -230,6 +354,11 @@ def confirm_memory_candidate(
     )
     candidate.status = "confirmed"
     candidate.updated_at = utc_now_iso()
+    _mark_linked_memory_action_completed(
+        db,
+        candidate_id=candidate.id,
+        memory_card_id=memory_card.id,
+    )
     db.flush()
     return ConversationMemoryCandidateActionRead(
         candidate=_to_candidate_read(candidate),
@@ -251,11 +380,479 @@ def dismiss_memory_candidate(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="conversation memory candidate already resolved")
     candidate.status = "dismissed"
     candidate.updated_at = utc_now_iso()
+    _mark_linked_memory_action_dismissed(db, candidate_id=candidate.id)
     db.flush()
     return ConversationMemoryCandidateActionRead(
         candidate=_to_candidate_read(candidate),
         memory_card_id=None,
     )
+
+
+def confirm_conversation_action(
+    db: Session,
+    *,
+    action_id: str,
+    actor: ActorContext,
+) -> ConversationActionExecutionRead:
+    row = repository.get_action_record(db, action_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation action not found")
+    _get_visible_session(db, session_id=row.session_id, actor=actor)
+    if row.status != "pending_confirmation":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="conversation action is not waiting for confirmation")
+    _execute_action_record(db, row=row, actor=actor)
+    db.flush()
+    return ConversationActionExecutionRead(action=_to_action_read(row))
+
+
+def dismiss_conversation_action(
+    db: Session,
+    *,
+    action_id: str,
+    actor: ActorContext,
+) -> ConversationActionExecutionRead:
+    row = repository.get_action_record(db, action_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation action not found")
+    _get_visible_session(db, session_id=row.session_id, actor=actor)
+    if row.status != "pending_confirmation":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="conversation action is not waiting for confirmation")
+    if row.action_name == "memory.write" and row.target_ref:
+        dismiss_memory_candidate(db, candidate_id=row.target_ref, actor=actor)
+    row.status = "dismissed"
+    row.updated_at = utc_now_iso()
+    db.flush()
+    return ConversationActionExecutionRead(action=_to_action_read(row))
+
+
+def undo_conversation_action(
+    db: Session,
+    *,
+    action_id: str,
+    actor: ActorContext,
+) -> ConversationActionExecutionRead:
+    row = repository.get_action_record(db, action_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation action not found")
+    _get_visible_session(db, session_id=row.session_id, actor=actor)
+    if row.status != "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="conversation action cannot be undone")
+    undo_payload = load_json(row.undo_payload_json) or {}
+    if not isinstance(undo_payload, dict) or not undo_payload:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="conversation action does not support undo")
+    try:
+        _undo_action_record(db, row=row, undo_payload=undo_payload, actor=actor)
+        row.status = "undone"
+        row.undone_at = utc_now_iso()
+        row.updated_at = row.undone_at
+    except HTTPException:
+        row.status = "undo_failed"
+        row.updated_at = utc_now_iso()
+        raise
+    db.flush()
+    return ConversationActionExecutionRead(action=_to_action_read(row))
+
+
+def _apply_action_policy_for_turn(
+    db: Session,
+    *,
+    session: ConversationSession,
+    request_id: str,
+    user_message: ConversationMessage,
+    assistant_message: ConversationMessage,
+    result: ConversationOrchestratorResult,
+    actor: ActorContext,
+) -> None:
+    policy = _resolve_autonomous_action_policy(db, session=session)
+    action_plans = _build_turn_action_plans(result)
+    for plan in action_plans:
+        policy_mode = _resolve_policy_mode(policy, action_category=str(plan["action_category"]))
+        row = ConversationActionRecord(
+            id=new_uuid(),
+            session_id=session.id,
+            request_id=request_id,
+            trigger_message_id=user_message.id,
+            source_message_id=assistant_message.id,
+            intent=result.intent_detection.primary_intent.value if result.intent_detection is not None else result.intent.value,
+            action_category=str(plan["action_category"]),
+            action_name=str(plan["action_name"]),
+            policy_mode=policy_mode,
+            status="pending_confirmation" if policy_mode == "ask" else "completed",
+            title=str(plan["title"])[:200],
+            summary=str(plan["summary"]) if plan.get("summary") is not None else None,
+            target_ref=None,
+            plan_payload_json="{}",
+            result_payload_json=None,
+            undo_payload_json=None,
+            created_at=utc_now_iso(),
+            executed_at=None,
+            undone_at=None,
+            updated_at=utc_now_iso(),
+        )
+        repository.add_action_record(db, row)
+
+        plan_payload = dict(plan)
+        if result.intent_detection is not None:
+            plan_payload["intent_detection"] = result.intent_detection.to_payload()
+        if row.action_name == "memory.write":
+            candidate = _create_memory_candidate_from_payload(
+                db,
+                session=session,
+                source_message_id=assistant_message.id,
+                item=plan_payload,
+            )
+            if candidate is None:
+                row.status = "failed"
+                row.result_payload_json = dump_json({"error": "memory_candidate_invalid"})
+                row.updated_at = utc_now_iso()
+                continue
+            repository.add_memory_candidate(db, candidate)
+            row.target_ref = candidate.id
+            plan_payload["candidate_id"] = candidate.id
+
+        row.plan_payload_json = dump_json(plan_payload) or "{}"
+        row.updated_at = utc_now_iso()
+
+        if policy_mode == "ask":
+            continue
+
+        try:
+            _execute_action_record(db, row=row, actor=actor)
+        except HTTPException as exc:
+            row.status = "failed"
+            row.result_payload_json = dump_json({"error": exc.detail if isinstance(exc.detail, str) else "action_execution_failed"})
+            row.updated_at = utc_now_iso()
+
+
+def _build_turn_action_plans(result: ConversationOrchestratorResult) -> list[dict]:
+    plans: list[dict] = []
+    for item in result.memory_candidate_payloads:
+        if not isinstance(item, dict):
+            continue
+        summary = str(item.get("summary") or item.get("content") or "").strip()
+        title = str(item.get("title") or "").strip() or summary[:18]
+        if not summary or not title:
+            continue
+        plans.append(
+            {
+                "action_category": "memory",
+                "action_name": "memory.write",
+                "title": f"写入记忆：{title}",
+                "summary": summary,
+                "memory_type": str(item.get("memory_type") or item.get("type") or "fact"),
+                "candidate_title": title,
+                "candidate_summary": summary,
+                "content": item.get("content") if isinstance(item.get("content"), dict) else item,
+                "confidence": float(item.get("confidence") or 0.75),
+            }
+        )
+    if isinstance(result.config_suggestion, dict) and any(result.config_suggestion.values()):
+        plans.append(
+            {
+                "action_category": "config",
+                "action_name": "config.apply",
+                "title": "应用 Agent 配置建议",
+                "summary": _build_config_action_summary(result.config_suggestion),
+                "suggestion": result.config_suggestion,
+            }
+        )
+    for item in result.action_payloads:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("action_type")) == "reminder_create":
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            plans.append(
+                {
+                    "action_category": "action",
+                    "action_name": "reminder.create",
+                    "title": f"创建提醒：{title}",
+                    "summary": _build_reminder_action_summary(item),
+                    "reminder": item,
+                }
+            )
+    return plans
+
+
+def _execute_action_record(
+    db: Session,
+    *,
+    row: ConversationActionRecord,
+    actor: ActorContext,
+) -> None:
+    if row.action_name == "memory.write":
+        _execute_memory_action_record(db, row=row, actor=actor)
+        return
+    if row.action_name == "config.apply":
+        _execute_config_action_record(db, row=row)
+        return
+    if row.action_name == "reminder.create":
+        _execute_reminder_action_record(db, row=row)
+        return
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported conversation action")
+
+
+def _undo_action_record(
+    db: Session,
+    *,
+    row: ConversationActionRecord,
+    undo_payload: dict,
+    actor: ActorContext,
+) -> None:
+    if row.action_name == "memory.write":
+        memory_card_id = str(undo_payload.get("memory_card_id") or "")
+        if not memory_card_id:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="memory undo target missing")
+        correct_memory_card(
+            db,
+            memory_id=memory_card_id,
+            payload=MemoryCardCorrectionPayload(action="invalidate", reason="undo conversation action"),
+            actor=actor,
+        )
+        return
+    if row.action_name == "config.apply":
+        _restore_agent_config_snapshot(db, session_id=row.session_id, undo_payload=undo_payload)
+        return
+    if row.action_name == "reminder.create":
+        reminder_id = str(undo_payload.get("reminder_id") or "")
+        if not reminder_id:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="reminder undo target missing")
+        delete_reminder_task(db, task_id=reminder_id, updated_by="conversation-ai-undo")
+        return
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported conversation action undo")
+
+
+def _execute_memory_action_record(
+    db: Session,
+    *,
+    row: ConversationActionRecord,
+    actor: ActorContext,
+) -> None:
+    candidate_id = row.target_ref or str((load_json(row.plan_payload_json) or {}).get("candidate_id") or "")
+    if not candidate_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="memory candidate missing")
+    result = confirm_memory_candidate(db, candidate_id=candidate_id, actor=actor)
+    row.status = "completed"
+    row.executed_at = utc_now_iso()
+    row.updated_at = row.executed_at
+    row.result_payload_json = dump_json(
+        {
+            "candidate_id": candidate_id,
+            "memory_card_id": result.memory_card_id,
+        }
+    )
+    row.undo_payload_json = dump_json({"memory_card_id": result.memory_card_id})
+
+
+def _execute_config_action_record(db: Session, *, row: ConversationActionRecord) -> None:
+    plan_payload = load_json(row.plan_payload_json) or {}
+    suggestion = plan_payload.get("suggestion")
+    if not isinstance(suggestion, dict):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="config suggestion missing")
+    session = repository.get_session(db, row.session_id)
+    if session is None or not session.active_agent_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="active agent missing")
+    agent = agent_repository.get_agent_by_household_and_id(db, household_id=session.household_id, agent_id=session.active_agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
+    current_soul = agent_repository.get_active_soul_profile(db, agent_id=agent.id)
+    before_snapshot = {
+        "display_name": agent.display_name,
+        "soul": None if current_soul is None else {
+            "self_identity": current_soul.self_identity,
+            "role_summary": current_soul.role_summary,
+            "intro_message": current_soul.intro_message,
+            "speaking_style": current_soul.speaking_style,
+            "personality_traits": load_json(current_soul.personality_traits_json) or [],
+            "service_focus": load_json(current_soul.service_focus_json) or [],
+            "service_boundaries": load_json(current_soul.service_boundaries_json),
+        },
+    }
+    next_display_name = str(suggestion.get("display_name") or "").strip()
+    if next_display_name and next_display_name != agent.display_name:
+        update_agent(
+            db,
+            household_id=session.household_id,
+            agent_id=agent.id,
+            payload=AgentUpdate(display_name=next_display_name),
+        )
+    has_soul_change = bool(suggestion.get("speaking_style")) or bool(suggestion.get("personality_traits"))
+    if has_soul_change:
+        speaking_style = str(suggestion.get("speaking_style") or "").strip() or (current_soul.speaking_style if current_soul is not None else None)
+        personality_traits_raw = suggestion.get("personality_traits")
+        personality_traits = [str(item).strip() for item in personality_traits_raw] if isinstance(personality_traits_raw, list) else []
+        if not personality_traits and current_soul is not None:
+            personality_traits = [str(item) for item in (load_json(current_soul.personality_traits_json) or [])]
+        service_focus = [str(item) for item in (load_json(current_soul.service_focus_json) or [])] if current_soul is not None else []
+        upsert_agent_soul(
+            db,
+            household_id=session.household_id,
+            agent_id=agent.id,
+            payload=AgentSoulProfileUpsert(
+                self_identity=current_soul.self_identity if current_soul is not None else f"我是{next_display_name or agent.display_name}",
+                role_summary=current_soul.role_summary if current_soul is not None else "负责家庭事务",
+                intro_message=current_soul.intro_message if current_soul is not None else None,
+                speaking_style=speaking_style,
+                personality_traits=personality_traits,
+                service_focus=service_focus,
+                service_boundaries=load_json(current_soul.service_boundaries_json) if current_soul is not None else None,
+                created_by="conversation-ai",
+            ),
+        )
+    row.status = "completed"
+    row.target_ref = agent.id
+    row.executed_at = utc_now_iso()
+    row.updated_at = row.executed_at
+    row.result_payload_json = dump_json({"applied": suggestion})
+    row.undo_payload_json = dump_json(before_snapshot)
+
+
+def _execute_reminder_action_record(db: Session, *, row: ConversationActionRecord) -> None:
+    plan_payload = load_json(row.plan_payload_json) or {}
+    reminder = plan_payload.get("reminder")
+    if not isinstance(reminder, dict):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="reminder payload missing")
+    session = repository.get_session(db, row.session_id)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation session not found")
+    trigger_at = str(reminder.get("trigger_at") or "").strip()
+    title = str(reminder.get("title") or "").strip()
+    if not trigger_at or not title:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="reminder payload incomplete")
+    task = create_reminder_task(
+        db,
+        ReminderTaskCreate(
+            household_id=session.household_id,
+            owner_member_id=session.requester_member_id,
+            title=title,
+            description=str(reminder.get("description") or "").strip() or None,
+            reminder_type="family",
+            target_member_ids=[session.requester_member_id] if session.requester_member_id else [],
+            preferred_room_ids=[],
+            schedule_kind="once",
+            schedule_rule={"trigger_at": trigger_at},
+            priority="normal",
+            delivery_channels=["in_app"],
+            ack_required=False,
+            escalation_policy={},
+            enabled=True,
+            updated_by="conversation-ai",
+        ),
+    )
+    row.status = "completed"
+    row.target_ref = task.id
+    row.executed_at = utc_now_iso()
+    row.updated_at = row.executed_at
+    row.result_payload_json = dump_json({"reminder_id": task.id, "trigger_at": trigger_at})
+    row.undo_payload_json = dump_json({"reminder_id": task.id})
+
+
+def _restore_agent_config_snapshot(db: Session, *, session_id: str, undo_payload: dict) -> None:
+    session = repository.get_session(db, session_id)
+    if session is None or not session.active_agent_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation session not found")
+    agent = agent_repository.get_agent_by_household_and_id(db, household_id=session.household_id, agent_id=session.active_agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
+    display_name = str(undo_payload.get("display_name") or "").strip()
+    if display_name:
+        update_agent(
+            db,
+            household_id=session.household_id,
+            agent_id=agent.id,
+            payload=AgentUpdate(display_name=display_name),
+        )
+    soul = undo_payload.get("soul")
+    if isinstance(soul, dict):
+        upsert_agent_soul(
+            db,
+            household_id=session.household_id,
+            agent_id=agent.id,
+            payload=AgentSoulProfileUpsert(
+                self_identity=str(soul.get("self_identity") or "我是家庭助手"),
+                role_summary=str(soul.get("role_summary") or "负责家庭事务"),
+                intro_message=str(soul.get("intro_message") or "").strip() or None,
+                speaking_style=str(soul.get("speaking_style") or "").strip() or None,
+                personality_traits=[str(item) for item in soul.get("personality_traits", [])] if isinstance(soul.get("personality_traits"), list) else [],
+                service_focus=[str(item) for item in soul.get("service_focus", [])] if isinstance(soul.get("service_focus"), list) else [],
+                service_boundaries=soul.get("service_boundaries") if isinstance(soul.get("service_boundaries"), dict) else None,
+                created_by="conversation-ai-undo",
+            ),
+        )
+
+
+def _resolve_autonomous_action_policy(
+    db: Session,
+    *,
+    session: ConversationSession,
+) -> AgentAutonomousActionPolicy:
+    if not session.active_agent_id:
+        return AgentAutonomousActionPolicy()
+    runtime_policy = agent_repository.get_runtime_policy(db, agent_id=session.active_agent_id)
+    if runtime_policy is None:
+        return AgentAutonomousActionPolicy()
+    data = load_json(runtime_policy.autonomous_action_policy_json)
+    if not isinstance(data, dict):
+        return AgentAutonomousActionPolicy()
+    return AgentAutonomousActionPolicy(
+        memory=str(data.get("memory") or "ask"),
+        config=str(data.get("config") or "ask"),
+        action=str(data.get("action") or "ask"),
+    )
+
+
+def _resolve_policy_mode(policy: AgentAutonomousActionPolicy, *, action_category: str) -> str:
+    if action_category == "memory":
+        return policy.memory
+    if action_category == "config":
+        return policy.config
+    return policy.action
+
+
+def _build_config_action_summary(suggestion: dict) -> str:
+    parts: list[str] = []
+    display_name = str(suggestion.get("display_name") or "").strip()
+    speaking_style = str(suggestion.get("speaking_style") or "").strip()
+    personality_traits = suggestion.get("personality_traits")
+    if display_name:
+        parts.append(f"名称改成“{display_name}”")
+    if speaking_style:
+        parts.append(f"说话风格改成“{speaking_style}”")
+    if isinstance(personality_traits, list) and personality_traits:
+        parts.append(f"性格标签：{'、'.join(str(item) for item in personality_traits)}")
+    return "；".join(parts) or "应用本轮配置建议"
+
+
+def _build_reminder_action_summary(reminder: dict) -> str:
+    trigger_at = str(reminder.get("trigger_at") or "").strip()
+    description = str(reminder.get("description") or "").strip()
+    parts = [part for part in [trigger_at, description] if part]
+    return "；".join(parts) or "创建一次提醒"
+
+
+def _mark_linked_memory_action_completed(
+    db: Session,
+    *,
+    candidate_id: str,
+    memory_card_id: str,
+) -> None:
+    action = repository.get_action_record_by_target_ref(db, target_ref=candidate_id, action_name="memory.write")
+    if action is None:
+        return
+    action.status = "completed"
+    action.executed_at = utc_now_iso()
+    action.updated_at = action.executed_at
+    action.result_payload_json = dump_json({"candidate_id": candidate_id, "memory_card_id": memory_card_id})
+    action.undo_payload_json = dump_json({"memory_card_id": memory_card_id})
+
+
+def _mark_linked_memory_action_dismissed(db: Session, *, candidate_id: str) -> None:
+    action = repository.get_action_record_by_target_ref(db, target_ref=candidate_id, action_name="memory.write")
+    if action is None:
+        return
+    action.status = "dismissed"
+    action.updated_at = utc_now_iso()
 
 
 def _ensure_household_exists(db: Session, household_id: str) -> None:
@@ -413,6 +1010,12 @@ def _run_orchestrated_turn(
             session_id=session.id,
             current_request_id=request_id,
         ),
+        request_context={
+            "request_id": request_id,
+            "trace_id": request_id,
+            "session_id": session.id,
+            "channel": "conversation_turn",
+        },
     )
 
 
@@ -445,8 +1048,10 @@ def _generate_memory_candidates_for_turn(
     db: Session,
     *,
     session: ConversationSession,
+    request_id: str,
     user_message: ConversationMessage,
     assistant_message: ConversationMessage,
+    actor: ActorContext,
 ) -> None:
     try:
         result = invoke_llm(
@@ -457,6 +1062,12 @@ def _generate_memory_candidates_for_turn(
                 "member_context": _build_member_context(db, household_id=session.household_id),
             },
             household_id=session.household_id,
+            request_context={
+                "request_id": request_id,
+                "trace_id": request_id,
+                "session_id": session.id,
+                "channel": "conversation_memory_autogen",
+            },
         )
     except Exception:
         return
@@ -464,11 +1075,28 @@ def _generate_memory_candidates_for_turn(
     if not isinstance(result.data, MemoryExtractionOutput):
         return
 
-    _persist_memory_candidate_payloads(
+    generated_result = ConversationOrchestratorResult(
+        intent=ConversationIntent.MEMORY_EXTRACTION,
+        text="",
+        degraded=False,
+        facts=[],
+        suggestions=[],
+        memory_candidate_payloads=[item for item in result.data.memories[:5] if isinstance(item, dict)],
+        config_suggestion=None,
+        action_payloads=[],
+        ai_trace_id=None,
+        ai_provider_code=getattr(result, "provider", None) or None,
+        effective_agent_id=session.active_agent_id,
+        effective_agent_name=None,
+    )
+    _apply_action_policy_for_turn(
         db,
         session=session,
+        request_id=request_id,
+        user_message=user_message,
         assistant_message=assistant_message,
-        candidate_payloads=[item for item in result.data.memories[:5] if isinstance(item, dict)],
+        result=generated_result,
+        actor=actor,
     )
 
 
@@ -480,31 +1108,141 @@ def _persist_memory_candidate_payloads(
     candidate_payloads: list[dict],
 ) -> None:
     for item in candidate_payloads:
-        if not isinstance(item, dict):
-            continue
-        summary = str(item.get("summary") or item.get("content") or "").strip()
-        if not summary:
-            continue
-        title = str(item.get("title") or "").strip() or _build_memory_candidate_title(summary)
-        memory_type = str(item.get("type") or item.get("memory_type") or "fact").strip() or "fact"
-        confidence_raw = item.get("confidence")
-        confidence = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else 0.6
-        candidate = ConversationMemoryCandidate(
+        candidate = _create_memory_candidate_from_payload(
+            db,
+            session=session,
+            source_message_id=assistant_message.id,
+            item=item,
+        )
+        if candidate is not None:
+            repository.add_memory_candidate(db, candidate)
+    db.flush()
+
+
+def _create_memory_candidate_from_payload(
+    db: Session,
+    *,
+    session: ConversationSession,
+    source_message_id: str | None,
+    item: dict,
+) -> ConversationMemoryCandidate | None:
+    _ = db
+    if not isinstance(item, dict):
+        return None
+    summary = str(item.get("candidate_summary") or item.get("summary") or item.get("content") or "").strip()
+    if not summary:
+        return None
+    title = str(item.get("candidate_title") or item.get("title") or "").strip() or _build_memory_candidate_title(summary)
+    memory_type = str(item.get("memory_type") or item.get("type") or "fact").strip() or "fact"
+    confidence_raw = item.get("confidence")
+    confidence = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else 0.6
+    content = item.get("content") if isinstance(item.get("content"), dict) else item
+    return ConversationMemoryCandidate(
+        id=new_uuid(),
+        session_id=session.id,
+        source_message_id=source_message_id,
+        requester_member_id=session.requester_member_id,
+        status="pending_review",
+        memory_type=memory_type[:30],
+        title=title[:200],
+        summary=summary,
+        content_json=dump_json(content) or "{}",
+        confidence=max(0.0, min(confidence, 1.0)),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
+    )
+
+
+def _append_debug_log(
+    db: Session,
+    *,
+    session: ConversationSession,
+    request_id: str | None,
+    stage: str,
+    source: str,
+    message: str,
+    payload: dict | None = None,
+    level: str = "info",
+) -> None:
+    if not settings.conversation_debug_log_enabled:
+        return
+    event_payload = {
+        "session_id": session.id,
+        "request_id": request_id,
+        "stage": stage,
+        "source": source,
+        "level": level,
+        "message": message,
+        "payload": payload or {},
+    }
+    get_conversation_debug_logger().info(dump_conversation_debug_event(event_payload))
+    repository.add_debug_log(
+        db,
+        ConversationDebugLog(
             id=new_uuid(),
             session_id=session.id,
-            source_message_id=assistant_message.id,
-            requester_member_id=session.requester_member_id,
-            status="pending_review",
-            memory_type=memory_type[:30],
-            title=title[:200],
-            summary=summary,
-            content_json=dump_json(item) or "{}",
-            confidence=max(0.0, min(confidence, 1.0)),
+            request_id=request_id,
+            stage=stage[:80],
+            source=source[:40],
+            level=level[:20],
+            message=message,
+            payload_json=dump_json(payload or {}) or "{}",
             created_at=utc_now_iso(),
-            updated_at=utc_now_iso(),
-        )
-        repository.add_memory_candidate(db, candidate)
-    db.flush()
+        ),
+    )
+
+
+def _build_orchestrator_debug_payload(result: ConversationOrchestratorResult) -> dict:
+    detection_payload = result.intent_detection.to_payload() if result.intent_detection is not None else {}
+    return {
+        "route_intent": result.intent.value,
+        "intent_detection": detection_payload,
+        "facts_count": len(result.facts),
+        "suggestions_count": len(result.suggestions),
+        "memory_candidate_count": len(result.memory_candidate_payloads),
+        "action_payload_count": len(result.action_payloads),
+        "has_config_suggestion": bool(result.config_suggestion),
+        "degraded": result.degraded,
+    }
+
+
+def _serialize_action_records_for_debug(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str,
+) -> list[dict]:
+    return [
+        {
+            "id": row.id,
+            "intent": row.intent,
+            "action_name": row.action_name,
+            "policy_mode": row.policy_mode,
+            "status": row.status,
+            "title": row.title,
+        }
+        for row in repository.list_action_records_by_request(db, session_id=session_id, request_id=request_id)
+    ]
+
+
+def _count_request_memory_candidates(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str,
+) -> int:
+    source_message_ids = {
+        row.id
+        for row in repository.list_messages(db, session_id=session_id)
+        if row.request_id == request_id and row.role == "assistant"
+    }
+    if not source_message_ids:
+        return 0
+    return sum(
+        1
+        for candidate in repository.list_memory_candidates(db, session_id=session_id)
+        if candidate.source_message_id in source_message_ids
+    )
 
 
 def _fail_assistant_message(
@@ -644,6 +1382,22 @@ async def run_conversation_realtime_turn(
     )
     session.current_request_id = request_id
     db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.received",
+        source="service",
+        message="收到新的实时聊天请求。",
+        payload={
+            "user_message_id": user_message_row.id,
+            "assistant_message_id": assistant_message_row.id,
+            "message": user_message.strip(),
+            "channel": payload.channel,
+            "session_mode": session.session_mode,
+            "realtime": True,
+        },
+    )
 
     await _broadcast_conversation_event(
         db,
@@ -668,6 +1422,12 @@ async def run_conversation_realtime_turn(
                 session_id=session.id,
                 current_request_id=request_id,
             ),
+            request_context={
+                "request_id": request_id,
+                "trace_id": request_id,
+                "session_id": session.id,
+                "channel": "conversation_turn",
+            },
         ):
             if event_type == "chunk":
                 emitted_chunks.append(str(event_payload))
@@ -686,29 +1446,95 @@ async def run_conversation_realtime_turn(
         if result is None:
             raise RuntimeError("family_qa stream did not produce final result")
 
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="orchestrator.completed",
+            source="orchestrator",
+            message="实时编排层已完成意图识别和主路由。",
+            payload=_build_orchestrator_debug_payload(result),
+        )
         _complete_assistant_message(
             db,
             session=session,
             assistant_message=assistant_message_row,
             result=result,
         )
-        if result.memory_candidate_payloads:
-            _persist_memory_candidate_payloads(
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="assistant.completed",
+            source="service",
+            message="实时助手消息已落库。",
+            payload={
+                "assistant_message_id": assistant_message_row.id,
+                "intent": result.intent.value,
+                "content_preview": result.text[:120],
+                "degraded": result.degraded,
+            },
+        )
+        _apply_action_policy_for_turn(
+            db,
+            session=session,
+            request_id=request_id,
+            user_message=user_message_row,
+            assistant_message=assistant_message_row,
+            result=result,
+            actor=actor,
+        )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="action.policy.applied",
+            source="policy",
+            message="实时动作策略层处理完成。",
+            payload={"action_records": _serialize_action_records_for_debug(db, session_id=session.id, request_id=request_id)},
+        )
+        if not result.memory_candidate_payloads and result.intent in {
+            ConversationIntent.FREE_CHAT,
+            ConversationIntent.STRUCTURED_QA,
+        }:
+            _append_debug_log(
                 db,
                 session=session,
-                assistant_message=assistant_message_row,
-                candidate_payloads=result.memory_candidate_payloads,
+                request_id=request_id,
+                stage="memory.autogen.started",
+                source="service",
+                message="开始执行实时保守记忆补提取。",
+                payload={"reason": "当前主路由没有直接给出记忆候选。"},
             )
-        elif result.intent != ConversationIntent.MEMORY_EXTRACTION:
             _generate_memory_candidates_for_turn(
                 db,
                 session=session,
+                request_id=request_id,
                 user_message=user_message_row,
                 assistant_message=assistant_message_row,
+                actor=actor,
+            )
+            _append_debug_log(
+                db,
+                session=session,
+                request_id=request_id,
+                stage="memory.autogen.completed",
+                source="service",
+                message="实时保守记忆补提取完成。",
+                payload={"generated_candidates": _count_request_memory_candidates(db, session_id=session.id, request_id=request_id)},
             )
         session.current_request_id = None
         session.updated_at = utc_now_iso()
         db.flush()
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="turn.completed",
+            source="service",
+            message="本轮实时聊天处理完成。",
+            payload={"outcome": "completed", "chunk_count": len(emitted_chunks)},
+        )
         await _broadcast_conversation_event(
             db,
             connection_manager=connection_manager,
@@ -749,6 +1575,20 @@ async def run_conversation_realtime_turn(
         session.current_request_id = None
         session.updated_at = utc_now_iso()
         db.flush()
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="turn.failed",
+            source="service",
+            level="error",
+            message="本轮实时聊天处理失败。",
+            payload={
+                "error_message": _render_turn_error(exc),
+                "error_code": _resolve_turn_error_code(exc),
+                "partial_text": partial_text,
+            },
+        )
         await _broadcast_conversation_event(
             db,
             connection_manager=connection_manager,
@@ -807,10 +1647,12 @@ def _to_session_detail_read(db: Session, row: ConversationSession) -> Conversati
     session_read = _to_session_read(db, row)
     messages = [_to_message_read(item) for item in repository.list_messages(db, session_id=row.id)]
     candidates = [_to_candidate_read(item) for item in repository.list_memory_candidates(db, session_id=row.id)]
+    action_records = [_to_action_read(item) for item in repository.list_action_records(db, session_id=row.id)]
     return ConversationSessionDetailRead(
         **session_read.model_dump(mode="json"),
         messages=messages,
         memory_candidates=candidates,
+        action_records=action_records,
     )
 
 
@@ -853,4 +1695,47 @@ def _to_candidate_read(row: ConversationMemoryCandidate) -> ConversationMemoryCa
         confidence=row.confidence,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def _to_action_read(row: ConversationActionRecord) -> ConversationActionRecordRead:
+    plan_payload = load_json(row.plan_payload_json) or {}
+    result_payload = load_json(row.result_payload_json) or {}
+    undo_payload = load_json(row.undo_payload_json) or {}
+    return ConversationActionRecordRead(
+        id=row.id,
+        session_id=row.session_id,
+        request_id=row.request_id,
+        trigger_message_id=row.trigger_message_id,
+        source_message_id=row.source_message_id,
+        intent=row.intent,
+        action_category=row.action_category,
+        action_name=row.action_name,
+        policy_mode=row.policy_mode,
+        status=row.status,
+        title=row.title,
+        summary=row.summary,
+        target_ref=row.target_ref,
+        plan_payload=plan_payload if isinstance(plan_payload, dict) else {},
+        result_payload=result_payload if isinstance(result_payload, dict) else {},
+        undo_payload=undo_payload if isinstance(undo_payload, dict) else {},
+        created_at=row.created_at,
+        executed_at=row.executed_at,
+        undone_at=row.undone_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _to_debug_log_read(row: ConversationDebugLog) -> ConversationDebugLogRead:
+    payload = load_json(row.payload_json) or {}
+    return ConversationDebugLogRead(
+        id=row.id,
+        session_id=row.session_id,
+        request_id=row.request_id,
+        stage=row.stage,
+        source=row.source,
+        level=row.level,
+        message=row.message,
+        payload=payload if isinstance(payload, dict) else {},
+        created_at=row.created_at,
     )

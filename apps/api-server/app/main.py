@@ -10,7 +10,10 @@ from app.core.logging import setup_logging
 from app.db.session import SessionLocal
 from app.modules.account.service import ensure_bootstrap_admin_account, ensure_pending_household_bootstrap_accounts
 
-setup_logging(settings.log_level)
+setup_logging(
+    settings.log_level,
+    conversation_debug_enabled=settings.conversation_debug_log_enabled,
+)
 logger = logging.getLogger(__name__)
 
 

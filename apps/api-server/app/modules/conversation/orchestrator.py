@@ -1,18 +1,40 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
+from app.db.utils import utc_now_iso
 from app.modules.agent.service import build_agent_runtime_context
+from app.core.logging import dump_conversation_debug_event, get_conversation_debug_logger
 from app.modules.context.service import get_context_overview
 from app.modules.conversation.models import ConversationSession
 from app.modules.family_qa.schemas import FamilyQaQueryRequest, FamilyQaQueryResponse
 from app.modules.family_qa.service import query_family_qa, stream_family_qa
 from app.modules.llm_task import invoke_llm, stream_llm
+from app.modules.llm_task.output_models import (
+    ConversationIntentCandidateActionOutput,
+    ConversationIntentDetectionOutput,
+    ReminderExtractionOutput,
+)
 from app.modules.memory.context_engine import build_memory_context_bundle
+from app.modules.member import service as member_service
+
+
+INTENT_FALLBACK_THRESHOLD = 0.6
+INTENT_HISTORY_LIMIT = 6
+INTENT_DETECTION_TIMEOUT_MS = 4000
+FREE_CHAT_DEGRADED_TIMEOUT_MS = 8000
+
+
+class ConversationIntentLabel(StrEnum):
+    FREE_CHAT = "free_chat"
+    STRUCTURED_QA = "structured_qa"
+    CONFIG_CHANGE = "config_change"
+    MEMORY_WRITE = "memory_write"
+    REMINDER_CREATE = "reminder_create"
 
 
 class ConversationIntent(StrEnum):
@@ -20,6 +42,29 @@ class ConversationIntent(StrEnum):
     FREE_CHAT = "free_chat"
     CONFIG_EXTRACTION = "config_extraction"
     MEMORY_EXTRACTION = "memory_extraction"
+    REMINDER_EXTRACTION = "reminder_extraction"
+
+
+@dataclass
+class ConversationIntentDetection:
+    primary_intent: ConversationIntentLabel
+    secondary_intents: list[ConversationIntentLabel] = field(default_factory=list)
+    confidence: float = 0.0
+    reason: str = ""
+    candidate_actions: list[ConversationIntentCandidateActionOutput] = field(default_factory=list)
+    route_intent: ConversationIntent = ConversationIntent.FREE_CHAT
+    guardrail_rule: str | None = None
+
+    def to_payload(self) -> dict:
+        return {
+            "primary_intent": self.primary_intent.value,
+            "secondary_intents": [item.value for item in self.secondary_intents],
+            "confidence": self.confidence,
+            "reason": self.reason,
+            "candidate_actions": [item.model_dump(mode="json") for item in self.candidate_actions],
+            "route_intent": self.route_intent.value,
+            "guardrail_rule": self.guardrail_rule,
+        }
 
 
 @dataclass
@@ -31,27 +76,74 @@ class ConversationOrchestratorResult:
     suggestions: list[str]
     memory_candidate_payloads: list[dict]
     config_suggestion: dict | None
+    action_payloads: list[dict]
     ai_trace_id: str | None
     ai_provider_code: str | None
     effective_agent_id: str | None
     effective_agent_name: str | None
+    intent_detection: ConversationIntentDetection | None = None
+
+    def __post_init__(self) -> None:
+        if self.intent_detection is None:
+            self.intent_detection = _build_default_intent_detection(self.intent)
 
 
 def detect_conversation_intent(
+    db: Session,
     *,
     session: ConversationSession,
     message: str,
-) -> ConversationIntent:
-    normalized = message.strip().lower()
+    conversation_history: list[dict[str, str]] | None = None,
+    request_context: dict | None = None,
+) -> ConversationIntentDetection:
+    normalized_message = message.strip()
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="intent_detection.started",
+        message="开始执行 AI 意图识别。",
+        payload={"message": normalized_message},
+    )
     if session.session_mode == "agent_config":
-        return ConversationIntent.CONFIG_EXTRACTION
-    if _looks_like_config_intent(normalized):
-        return ConversationIntent.CONFIG_EXTRACTION
-    if _looks_like_memory_intent(normalized):
-        return ConversationIntent.MEMORY_EXTRACTION
-    if _looks_like_structured_qa(normalized):
-        return ConversationIntent.STRUCTURED_QA
-    return ConversationIntent.FREE_CHAT
+        detection = _build_guardrail_intent_detection(
+            primary_intent=ConversationIntentLabel.CONFIG_CHANGE,
+            route_intent=ConversationIntent.CONFIG_EXTRACTION,
+            reason="当前会话处于 agent_config 模式，本轮直接按配置修改处理。",
+            guardrail_rule="session_mode.agent_config",
+        )
+        _log_intent_detection_result(request_context=request_context, detection=detection)
+        return detection
+    if not normalized_message:
+        detection = _build_fallback_intent_detection("用户消息为空，按 free_chat 处理。")
+        _log_intent_detection_result(request_context=request_context, detection=detection)
+        return detection
+
+    try:
+        result = invoke_llm(
+            db,
+            task_type="conversation_intent_detection",
+            variables=_build_intent_detection_variables(
+                session=session,
+                message=normalized_message,
+                conversation_history=conversation_history or [],
+            ),
+            household_id=session.household_id,
+            request_context=request_context,
+            timeout_ms_override=INTENT_DETECTION_TIMEOUT_MS,
+            honor_timeout_override=True,
+        )
+    except Exception:
+        detection = _build_fallback_intent_detection("意图识别模型调用失败，按 free_chat 回落。")
+        _log_intent_detection_result(request_context=request_context, detection=detection)
+        return detection
+
+    if not isinstance(result.data, ConversationIntentDetectionOutput):
+        detection = _build_fallback_intent_detection("意图识别结果不可解析，按 free_chat 回落。")
+        _log_intent_detection_result(request_context=request_context, detection=detection)
+        return detection
+
+    detection = _normalize_intent_detection(result.data)
+    _log_intent_detection_result(request_context=request_context, detection=detection)
+    return detection
 
 
 def run_orchestrated_turn(
@@ -61,16 +153,66 @@ def run_orchestrated_turn(
     message: str,
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
+    request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
-    intent = detect_conversation_intent(session=session, message=message)
+    detection = detect_conversation_intent(
+        db,
+        session=session,
+        message=message,
+        conversation_history=conversation_history,
+        request_context=request_context,
+    )
+    _log_route_selection(request_context=request_context, detection=detection)
+    intent = detection.route_intent
     if intent == ConversationIntent.STRUCTURED_QA:
-        result = _run_structured_qa(db, session=session, message=message, actor=actor, conversation_history=conversation_history)
-        return _from_family_qa_result(intent, result)
+        result = _run_structured_qa(
+            db,
+            session=session,
+            message=message,
+            actor=actor,
+            conversation_history=conversation_history,
+            request_context=request_context,
+        )
+        return _from_family_qa_result(intent, result, detection=detection)
     if intent == ConversationIntent.CONFIG_EXTRACTION:
-        return _run_config_extraction(db, session=session, message=message, actor=actor, conversation_history=conversation_history)
+        return _run_config_extraction(
+            db,
+            session=session,
+            message=message,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        )
     if intent == ConversationIntent.MEMORY_EXTRACTION:
-        return _run_memory_extraction(db, session=session, message=message, actor=actor, conversation_history=conversation_history)
-    return _run_non_qa_chat(db, intent=intent, session=session, message=message, actor=actor, conversation_history=conversation_history)
+        return _run_memory_extraction(
+            db,
+            session=session,
+            message=message,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        )
+    if intent == ConversationIntent.REMINDER_EXTRACTION:
+        return _run_reminder_extraction(
+            db,
+            session=session,
+            message=message,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        )
+    return _run_non_qa_chat(
+        db,
+        intent=intent,
+        session=session,
+        message=message,
+        actor=actor,
+        conversation_history=conversation_history,
+        detection=detection,
+        request_context=request_context,
+    )
 
 
 def stream_orchestrated_turn(
@@ -80,8 +222,17 @@ def stream_orchestrated_turn(
     message: str,
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
+    request_context: dict | None = None,
 ):
-    intent = detect_conversation_intent(session=session, message=message)
+    detection = detect_conversation_intent(
+        db,
+        session=session,
+        message=message,
+        conversation_history=conversation_history,
+        request_context=request_context,
+    )
+    _log_route_selection(request_context=request_context, detection=detection)
+    intent = detection.route_intent
     if intent == ConversationIntent.STRUCTURED_QA:
         for event_type, event_payload in stream_family_qa(
             db,
@@ -91,25 +242,70 @@ def stream_orchestrated_turn(
                 agent_id=session.active_agent_id,
                 question=message,
                 channel="conversation_turn",
-                context={"conversation_history": conversation_history},
+                context={"conversation_history": conversation_history, "request_context": request_context or {}},
             ),
             actor,
         ):
             if event_type == "done":
-                yield event_type, _from_family_qa_result(intent, event_payload)
+                yield event_type, _from_family_qa_result(intent, event_payload, detection=detection)
             else:
                 yield event_type, event_payload
         return
 
     if intent == ConversationIntent.CONFIG_EXTRACTION:
-        result = _run_config_extraction(db, session=session, message=message, actor=actor, conversation_history=conversation_history)
-        if result.text:
-            yield "chunk", result.text
-        yield "done", result
+        yield "done", _run_config_extraction(
+            db,
+            session=session,
+            message=message,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        )
         return
 
     if intent == ConversationIntent.MEMORY_EXTRACTION:
-        result = _run_memory_extraction(db, session=session, message=message, actor=actor, conversation_history=conversation_history)
+        yield "done", _run_memory_extraction(
+            db,
+            session=session,
+            message=message,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        )
+        return
+
+    if intent == ConversationIntent.REMINDER_EXTRACTION:
+        yield "done", _run_reminder_extraction(
+            db,
+            session=session,
+            message=message,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+        )
+        return
+
+    if intent == ConversationIntent.FREE_CHAT and detection.guardrail_rule == "fallback.free_chat":
+        _log_orchestrator_debug_event(
+            request_context=request_context,
+            stage="orchestrator.free_chat.degraded",
+            message="意图识别已降级，本轮 free_chat 改走非流式短超时兜底。",
+            payload={"timeout_ms": FREE_CHAT_DEGRADED_TIMEOUT_MS},
+        )
+        result = _run_non_qa_chat(
+            db,
+            intent=intent,
+            session=session,
+            message=message,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            request_context=request_context,
+            timeout_ms_override=FREE_CHAT_DEGRADED_TIMEOUT_MS,
+            honor_timeout_override=True,
+        )
         if result.text:
             yield "chunk", result.text
         yield "done", result
@@ -119,9 +315,17 @@ def stream_orchestrated_turn(
     for event in stream_llm(
         db,
         task_type="free_chat",
-        variables=_build_free_chat_variables(db, session=session, actor=actor, user_message=message),
+        variables=_build_free_chat_variables(
+            db,
+            session=session,
+            actor=actor,
+            user_message=message,
+            request_context=request_context,
+            log_memory_context=True,
+        ),
         household_id=session.household_id,
         conversation_history=conversation_history,
+        request_context=request_context,
     ):
         if event.event_type == "chunk":
             full_text += event.content
@@ -137,10 +341,12 @@ def stream_orchestrated_turn(
                 suggestions=[],
                 memory_candidate_payloads=[],
                 config_suggestion=None,
+                action_payloads=[],
                 ai_trace_id=None,
-                ai_provider_code=event.result.provider or None,
+                ai_provider_code=getattr(event.result, "provider", None) or None,
                 effective_agent_id=session.active_agent_id,
                 effective_agent_name=None,
+                intent_detection=detection,
             )
 
 
@@ -151,6 +357,7 @@ def _run_structured_qa(
     message: str,
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
+    request_context: dict | None = None,
 ) -> FamilyQaQueryResponse:
     return query_family_qa(
         db,
@@ -160,7 +367,7 @@ def _run_structured_qa(
             agent_id=session.active_agent_id,
             question=message,
             channel="conversation_turn",
-            context={"conversation_history": conversation_history},
+            context={"conversation_history": conversation_history, "request_context": request_context or {}},
         ),
         actor,
     )
@@ -174,13 +381,27 @@ def _run_non_qa_chat(
     message: str,
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    request_context: dict | None = None,
+    timeout_ms_override: int | None = None,
+    honor_timeout_override: bool = False,
 ) -> ConversationOrchestratorResult:
     result = invoke_llm(
         db,
         task_type="free_chat",
-        variables=_build_free_chat_variables(db, session=session, actor=actor, user_message=message),
+        variables=_build_free_chat_variables(
+            db,
+            session=session,
+            actor=actor,
+            user_message=message,
+            request_context=request_context,
+            log_memory_context=True,
+        ),
         household_id=session.household_id,
         conversation_history=conversation_history,
+        request_context=request_context,
+        timeout_ms_override=timeout_ms_override,
+        honor_timeout_override=honor_timeout_override,
     )
     return ConversationOrchestratorResult(
         intent=intent,
@@ -190,10 +411,12 @@ def _run_non_qa_chat(
         suggestions=[],
         memory_candidate_payloads=[],
         config_suggestion=None,
+        action_payloads=[],
         ai_trace_id=None,
-        ai_provider_code=result.provider or None,
+        ai_provider_code=getattr(result, "provider", None) or None,
         effective_agent_id=session.active_agent_id,
         effective_agent_name=None,
+        intent_detection=detection,
     )
 
 
@@ -204,61 +427,66 @@ def _run_config_extraction(
     message: str,
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
-    _ = conversation_history
-    variables = _build_free_chat_variables(db, session=session, actor=actor, user_message=message)
-    result = invoke_llm(
+    _ = actor
+    variables = _build_free_chat_variables(
+        db,
+        session=session,
+        actor=actor,
+        user_message=message,
+        request_context=request_context,
+        log_memory_context=False,
+    )
+    current_config = _build_current_config_snapshot(db, session=session, actor=actor, user_message=message)
+    user_evidence = _build_user_only_conversation_excerpt(conversation_history, message)
+    extraction_result = invoke_llm(
         db,
         task_type="config_extraction",
         variables={
             "agent_context": variables["agent_context"],
+            "current_config": _render_config_draft(current_config),
+            "conversation_excerpt": user_evidence,
             "user_message": message,
         },
         household_id=session.household_id,
+        conversation_history=conversation_history,
+        request_context=request_context,
     )
-    parsed = result.data
-    if parsed is None:
-        return ConversationOrchestratorResult(
-            intent=ConversationIntent.CONFIG_EXTRACTION,
-            text="我还没有从这轮表达里整理出明确的 Agent 配置建议。你可以更具体地告诉我想改名字、说话风格或性格标签。",
-            degraded=False,
-            facts=[],
-            suggestions=["修改名字", "调整说话风格", "补充性格标签"],
-            memory_candidate_payloads=[],
-            config_suggestion=None,
-            ai_trace_id=None,
-            ai_provider_code=result.provider or None,
-            effective_agent_id=session.active_agent_id,
-            effective_agent_name=None,
-        )
-
-    suggestion = {
-        "display_name": getattr(parsed, "display_name", None),
-        "speaking_style": getattr(parsed, "speaking_style", None),
-        "personality_traits": getattr(parsed, "personality_traits", []),
-    }
-    lines = ["我已经把这轮表达整理成 Agent 配置建议："]
-    if suggestion["display_name"]:
-        lines.append(f"- 名称建议：{suggestion['display_name']}")
-    if suggestion["speaking_style"]:
-        lines.append(f"- 说话风格：{suggestion['speaking_style']}")
-    if suggestion["personality_traits"]:
-        lines.append(f"- 性格标签：{'、'.join(suggestion['personality_traits'])}")
-    if len(lines) == 1:
-        lines.append("- 当前没有足够明确的配置项")
-    lines.append("如果你认可，我后续可以继续把它整理成正式配置建议。")
+    parsed = extraction_result.data
+    suggestion = _normalize_config_suggestion(
+        suggestion=_retain_config_values_with_user_evidence(
+            suggestion=_build_config_suggestion(parsed),
+            user_evidence=user_evidence,
+        ),
+        current_config=current_config,
+    )
+    text = _build_config_dialogue_reply(message=message, suggestion=suggestion)
+    facts = (
+        [{"type": "config_suggestion", "label": "Agent 配置建议", "source": "conversation_orchestrator", "extra": suggestion}]
+        if any(suggestion.values())
+        else []
+    )
+    suggestions = (
+        ["继续补充配置要求", "确认配置建议"]
+        if any(suggestion.values())
+        else ["修改名字", "调整说话风格", "补充性格标签"]
+    )
     return ConversationOrchestratorResult(
         intent=ConversationIntent.CONFIG_EXTRACTION,
-        text="\n".join(lines),
+        text=text,
         degraded=False,
-        facts=[{"type": "config_suggestion", "label": "Agent 配置建议", "source": "conversation_orchestrator", "extra": suggestion}],
-        suggestions=["去 AI 配置", "继续补充配置要求"],
+        facts=facts,
+        suggestions=suggestions,
         memory_candidate_payloads=[],
-        config_suggestion=suggestion,
+        config_suggestion=suggestion if any(suggestion.values()) else None,
+        action_payloads=[],
         ai_trace_id=None,
-        ai_provider_code=result.provider or None,
+        ai_provider_code=getattr(extraction_result, "provider", None) or None,
         effective_agent_id=session.active_agent_id,
         effective_agent_name=None,
+        intent_detection=detection,
     )
 
 
@@ -269,32 +497,37 @@ def _run_memory_extraction(
     message: str,
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
-    conversation = "\n".join([*(f"{item['role']}：{item['content']}" for item in conversation_history[-4:]), f"用户：{message}"])
+    _ = actor
     result = invoke_llm(
         db,
         task_type="memory_extraction",
         variables={
-            "conversation": conversation,
+            "conversation": _build_conversation_excerpt(conversation_history, message),
             "member_context": _build_member_context(db, household_id=session.household_id),
         },
         household_id=session.household_id,
         conversation_history=conversation_history,
+        request_context=request_context,
     )
     parsed = result.data
     if parsed is None or not parsed.memories:
         return ConversationOrchestratorResult(
             intent=ConversationIntent.MEMORY_EXTRACTION,
-            text="我暂时没有从这轮内容里提取到值得长期保存的记忆。",
+            text="我没有从这轮话里整理出足够稳的长期记忆。你可以直接告诉我“记住什么”，别让我猜。",
             degraded=False,
             facts=[],
-            suggestions=["换一种说法", "明确告诉我要记住什么"],
+            suggestions=["明确告诉我要记住什么", "换一种更直接的说法"],
             memory_candidate_payloads=[],
             config_suggestion=None,
+            action_payloads=[],
             ai_trace_id=None,
-            ai_provider_code=result.provider or None,
+            ai_provider_code=getattr(result, "provider", None) or None,
             effective_agent_id=session.active_agent_id,
             effective_agent_name=None,
+            intent_detection=detection,
         )
 
     candidates: list[dict] = []
@@ -315,20 +548,97 @@ def _run_memory_extraction(
         )
     return ConversationOrchestratorResult(
         intent=ConversationIntent.MEMORY_EXTRACTION,
-        text="我已经从这轮内容里整理出记忆候选，右侧可以直接确认写入。",
+        text="我已经整理出记忆候选了。它们现在只是候选，不会自己落库。",
         degraded=False,
         facts=[],
         suggestions=["确认写入记忆", "忽略这次提取"],
         memory_candidate_payloads=candidates,
         config_suggestion=None,
+        action_payloads=[],
         ai_trace_id=None,
-        ai_provider_code=result.provider or None,
+        ai_provider_code=getattr(result, "provider", None) or None,
         effective_agent_id=session.active_agent_id,
         effective_agent_name=None,
+        intent_detection=detection,
     )
 
 
-def _from_family_qa_result(intent: ConversationIntent, result: FamilyQaQueryResponse) -> ConversationOrchestratorResult:
+def _run_reminder_extraction(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    conversation_history: list[dict[str, str]],
+    detection: ConversationIntentDetection,
+    request_context: dict | None = None,
+) -> ConversationOrchestratorResult:
+    result = invoke_llm(
+        db,
+        task_type="reminder_extraction",
+        variables={
+            "current_time": utc_now_iso(),
+            "conversation_excerpt": _build_conversation_excerpt(conversation_history, message),
+            "user_message": message,
+        },
+        household_id=session.household_id,
+        request_context=request_context,
+    )
+    parsed = result.data
+    if not isinstance(parsed, ReminderExtractionOutput) or not parsed.should_create or not parsed.title or not parsed.trigger_at:
+        return ConversationOrchestratorResult(
+            intent=ConversationIntent.REMINDER_EXTRACTION,
+            text="我理解你像是在创建提醒，但这轮信息还不够完整。请直接告诉我提醒内容和具体时间，比如“明天早上 8 点提醒我带钥匙”。",
+            degraded=False,
+            facts=[],
+            suggestions=["补充提醒时间", "补充提醒内容"],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=getattr(result, "provider", None) or None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+            intent_detection=detection,
+        )
+
+    reminder_payload = {
+        "action_type": "reminder_create",
+        "title": parsed.title.strip(),
+        "description": (parsed.description or "").strip() or None,
+        "trigger_at": parsed.trigger_at,
+        "schedule_kind": "once",
+    }
+    text_lines = [
+        "我已经把这轮话整理成提醒动作：",
+        f"- 提醒内容：{reminder_payload['title']}",
+        f"- 触发时间：{reminder_payload['trigger_at']}",
+        "接下来是否执行，仍然交给策略层处理，不会因为识别到了就偷偷建提醒。",
+    ]
+    if reminder_payload["description"]:
+        text_lines.insert(2, f"- 说明：{reminder_payload['description']}")
+    return ConversationOrchestratorResult(
+        intent=ConversationIntent.REMINDER_EXTRACTION,
+        text="\n".join(text_lines),
+        degraded=False,
+        facts=[{"type": "reminder_draft", "label": "提醒草稿", "source": "conversation_orchestrator", "extra": reminder_payload}],
+        suggestions=["确认提醒", "修改提醒时间"],
+        memory_candidate_payloads=[],
+        config_suggestion=None,
+        action_payloads=[reminder_payload],
+        ai_trace_id=None,
+        ai_provider_code=getattr(result, "provider", None) or None,
+        effective_agent_id=session.active_agent_id,
+        effective_agent_name=None,
+        intent_detection=detection,
+    )
+
+
+def _from_family_qa_result(
+    intent: ConversationIntent,
+    result: FamilyQaQueryResponse,
+    *,
+    detection: ConversationIntentDetection,
+) -> ConversationOrchestratorResult:
     return ConversationOrchestratorResult(
         intent=intent,
         text=result.answer,
@@ -337,10 +647,12 @@ def _from_family_qa_result(intent: ConversationIntent, result: FamilyQaQueryResp
         suggestions=result.suggestions,
         memory_candidate_payloads=[],
         config_suggestion=None,
+        action_payloads=[],
         ai_trace_id=result.ai_trace_id,
         ai_provider_code=result.ai_provider_code,
         effective_agent_id=result.effective_agent_id,
         effective_agent_name=result.effective_agent_name,
+        intent_detection=detection,
     )
 
 
@@ -350,6 +662,8 @@ def _build_free_chat_variables(
     session: ConversationSession,
     actor: ActorContext,
     user_message: str,
+    request_context: dict | None = None,
+    log_memory_context: bool = False,
 ) -> dict[str, str]:
     agent_context = build_agent_runtime_context(
         db,
@@ -369,6 +683,15 @@ def _build_free_chat_variables(
     identity = agent_context.get("identity", {}) if isinstance(agent_context, dict) else {}
     agent = agent_context.get("agent", {}) if isinstance(agent_context, dict) else {}
     memory_highlights = memory_bundle.hot_summary.preference_highlights[:3] or memory_bundle.hot_summary.recent_event_highlights[:3]
+    memory_context_text = f"当前长期记忆摘要：{'；'.join(memory_highlights) if memory_highlights else '暂无明显长期记忆摘要。'}"
+    if log_memory_context:
+        _log_memory_context_usage(
+            request_context=request_context,
+            user_message=user_message,
+            memory_bundle=memory_bundle,
+            memory_highlights=memory_highlights,
+            memory_context_text=memory_context_text,
+        )
     return {
         "user_message": user_message,
         "agent_context": (
@@ -376,7 +699,7 @@ def _build_free_chat_variables(
             f"角色定位：{identity.get('role_summary') or '家庭 AI 管家'}。\n"
             f"说话风格：{identity.get('speaking_style') or '自然亲切'}。"
         ),
-        "memory_context": f"当前长期记忆摘要：{'；'.join(memory_highlights) if memory_highlights else '暂无明显长期记忆摘要。'}",
+        "memory_context": memory_context_text,
         "household_context": (
             f"当前家庭概况：活跃成员 {overview.active_member.name if overview.active_member else '暂无'}；"
             f"家庭模式 {overview.home_mode}；"
@@ -385,23 +708,433 @@ def _build_free_chat_variables(
     }
 
 
-def _looks_like_memory_intent(message: str) -> bool:
-    keywords = ["记住", "记下来", "记一下", "写入记忆", "帮我记住"]
-    return any(keyword in message for keyword in keywords)
+def _build_intent_detection_variables(
+    *,
+    session: ConversationSession,
+    message: str,
+    conversation_history: list[dict[str, str]],
+) -> dict[str, str]:
+    return {
+        "session_mode": session.session_mode,
+        "conversation_excerpt": _build_conversation_excerpt(conversation_history, message),
+        "user_message": message,
+    }
 
 
-def _looks_like_config_intent(message: str) -> bool:
-    keywords = ["改名字", "换名字", "你叫", "你应该叫", "说话风格", "性格", "人格", "人设", "以后你就叫"]
-    return any(keyword in message for keyword in keywords)
+def _build_conversation_excerpt(
+    conversation_history: list[dict[str, str]],
+    latest_user_message: str,
+) -> str:
+    excerpt_lines: list[str] = []
+    for item in conversation_history[-INTENT_HISTORY_LIMIT:]:
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if not role or not content:
+            continue
+        excerpt_lines.append(f"{_render_history_role(role)}：{content}")
+    excerpt_lines.append(f"用户：{latest_user_message.strip()}")
+    return "\n".join(excerpt_lines) if excerpt_lines else f"用户：{latest_user_message.strip()}"
 
 
-def _looks_like_structured_qa(message: str) -> bool:
-    keywords = [
-        "谁在家", "现在家里", "家庭状态", "设备", "空调", "灯", "窗帘", "门锁",
-        "提醒", "场景", "最近提醒", "最近场景", "在哪个房间", "状态", "在家吗",
+def _render_history_role(role: str) -> str:
+    if role == "assistant":
+        return "助手"
+    if role == "system":
+        return "系统"
+    return "用户"
+
+
+def _build_member_context(db: Session, *, household_id: str) -> str:
+    members, _ = member_service.list_members(db, household_id=household_id, page=1, page_size=100, status_value="active")
+    if not members:
+        return "当前家庭还没有有效成员。"
+    return "\n".join(f"- {(member.nickname or member.name)}（{member.role}）" for member in members)
+
+
+def _build_config_suggestion(parsed: object) -> dict:
+    if parsed is None:
+        return {
+            "display_name": None,
+            "speaking_style": None,
+            "personality_traits": [],
+        }
+    return {
+        "display_name": getattr(parsed, "display_name", None),
+        "speaking_style": getattr(parsed, "speaking_style", None),
+        "personality_traits": getattr(parsed, "personality_traits", []),
+    }
+
+
+def _normalize_config_suggestion(*, suggestion: dict, current_config: dict) -> dict:
+    next_display_name = str(suggestion.get("display_name") or "").strip()
+    current_display_name = str(current_config.get("display_name") or "").strip()
+    if not next_display_name or next_display_name == current_display_name:
+        next_display_name = None
+
+    next_speaking_style = str(suggestion.get("speaking_style") or "").strip()
+    current_speaking_style = str(current_config.get("speaking_style") or "").strip()
+    if not next_speaking_style or next_speaking_style == current_speaking_style:
+        next_speaking_style = None
+
+    current_traits = {
+        str(item).strip()
+        for item in (current_config.get("personality_traits") or [])
+        if str(item).strip()
+    }
+    next_traits = [
+        str(item).strip()
+        for item in (suggestion.get("personality_traits") or [])
+        if str(item).strip()
     ]
-    if any(keyword in message for keyword in keywords):
-        return True
-    if message.endswith("吗") and ("家" in message or "提醒" in message or "设备" in message):
-        return True
-    return False
+    next_traits = [item for item in next_traits if item not in current_traits]
+
+    return {
+        "display_name": next_display_name,
+        "speaking_style": next_speaking_style,
+        "personality_traits": next_traits,
+    }
+
+
+def _retain_config_values_with_user_evidence(*, suggestion: dict, user_evidence: str) -> dict:
+    normalized_evidence = user_evidence.strip().lower()
+
+    next_display_name = str(suggestion.get("display_name") or "").strip()
+    if next_display_name and next_display_name.lower() not in normalized_evidence:
+        next_display_name = None
+
+    next_speaking_style = str(suggestion.get("speaking_style") or "").strip()
+    if next_speaking_style and next_speaking_style.lower() not in normalized_evidence:
+        next_speaking_style = None
+
+    next_traits = [
+        str(item).strip()
+        for item in (suggestion.get("personality_traits") or [])
+        if str(item).strip() and str(item).strip().lower() in normalized_evidence
+    ]
+
+    return {
+        "display_name": next_display_name,
+        "speaking_style": next_speaking_style,
+        "personality_traits": next_traits,
+    }
+
+
+def _render_config_draft(suggestion: dict) -> str:
+    lines: list[str] = []
+    display_name = str(suggestion.get("display_name") or "").strip()
+    speaking_style = str(suggestion.get("speaking_style") or "").strip()
+    personality_traits = suggestion.get("personality_traits") if isinstance(suggestion.get("personality_traits"), list) else []
+    if display_name:
+        lines.append(f"- 名字草稿：{display_name}")
+    if speaking_style:
+        lines.append(f"- 说话风格草稿：{speaking_style}")
+    cleaned_traits = [str(item).strip() for item in personality_traits if str(item).strip()]
+    if cleaned_traits:
+        lines.append(f"- 性格标签草稿：{'、'.join(cleaned_traits)}")
+    return "\n".join(lines) if lines else "当前还没有明确配置草稿。"
+
+
+def _build_current_config_snapshot(
+    db: Session,
+    *,
+    session: ConversationSession,
+    actor: ActorContext,
+    user_message: str,
+) -> dict:
+    variables = _build_free_chat_variables(db, session=session, actor=actor, user_message=user_message)
+    agent_context = build_agent_runtime_context(
+        db,
+        household_id=session.household_id,
+        agent_id=session.active_agent_id,
+        requester_member_id=session.requester_member_id,
+    )
+    identity = agent_context.get("identity", {}) if isinstance(agent_context, dict) else {}
+    agent = agent_context.get("agent", {}) if isinstance(agent_context, dict) else {}
+    _ = variables
+    return {
+        "display_name": agent.get("name"),
+        "speaking_style": identity.get("speaking_style"),
+        "personality_traits": identity.get("personality_traits") if isinstance(identity.get("personality_traits"), list) else [],
+    }
+
+
+def _build_user_only_conversation_excerpt(
+    conversation_history: list[dict[str, str]],
+    latest_user_message: str,
+) -> str:
+    excerpt_lines: list[str] = []
+    for item in conversation_history[-INTENT_HISTORY_LIMIT:]:
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if role != "user" or not content:
+            continue
+        excerpt_lines.append(f"用户：{content}")
+    excerpt_lines.append(f"用户：{latest_user_message.strip()}")
+    return "\n".join(excerpt_lines)
+
+
+def _build_config_dialogue_reply(*, message: str, suggestion: dict) -> str:
+    display_name = str(suggestion.get("display_name") or "").strip()
+    speaking_style = str(suggestion.get("speaking_style") or "").strip()
+    personality_traits = [str(item).strip() for item in (suggestion.get("personality_traits") or []) if str(item).strip()]
+
+    if display_name and speaking_style and personality_traits:
+        return (
+            f"好，那我以后就叫{display_name}。"
+            f"说话风格我会调整成“{speaking_style}”，性格上更偏{'、'.join(personality_traits)}。"
+            "你还想补充别的设定吗？"
+        )
+    if display_name and speaking_style:
+        return f"好，那我以后就叫{display_name}。说话风格我会往“{speaking_style}”调整。你还想再补几个性格标签吗？"
+    if display_name and personality_traits:
+        return f"好，那我以后就叫{display_name}。性格上我会更偏{'、'.join(personality_traits)}。你还想顺手调整一下说话风格吗？"
+    if display_name:
+        return f"好，那我以后就叫{display_name}。你还想顺手调整一下我说话的风格，或者补几个性格标签吗？"
+    if speaking_style and personality_traits:
+        return f"可以，我会把说话风格调整成“{speaking_style}”，性格上更偏{'、'.join(personality_traits)}。你要不要也顺手给我换个名字？"
+    if speaking_style:
+        return f"可以，我会把说话风格往“{speaking_style}”调整。你要不要也顺手给我换个名字，或者补几个性格标签？"
+    if personality_traits:
+        return f"好，我会更偏{'、'.join(personality_traits)}这种感觉。你还想顺手改名字，或者调整一下说话风格吗？"
+
+    lowered_message = message.strip().lower()
+    if any(keyword in lowered_message for keyword in ("改名", "改个名", "名字", "起名", "叫你")):
+        return "当然可以，你想给我起什么新名字？也可以顺手告诉我想换成什么说话风格。"
+    if any(keyword in lowered_message for keyword in ("风格", "语气", "说话")):
+        return "可以，你想让我说话更偏什么感觉？比如温柔一点、直接一点，还是更活泼一点？"
+    if any(keyword in lowered_message for keyword in ("性格", "人设", "特点")):
+        return "好，你希望我更偏什么性格？比如稳重一点、幽默一点，还是更贴心一点？"
+    return "可以，我们慢慢来。你想先改名字、说话风格，还是性格感觉？"
+
+
+def _normalize_intent_detection(
+    parsed: ConversationIntentDetectionOutput,
+) -> ConversationIntentDetection:
+    primary_intent = _parse_intent_label(parsed.primary_intent)
+    secondary_intents = _normalize_secondary_intents(primary_intent, parsed.secondary_intents)
+    confidence = max(0.0, min(float(parsed.confidence), 1.0))
+    reason = parsed.reason.strip() or "模型没有给出明确原因。"
+    candidate_actions = list(parsed.candidate_actions)
+    if primary_intent in {
+        ConversationIntentLabel.CONFIG_CHANGE,
+        ConversationIntentLabel.MEMORY_WRITE,
+        ConversationIntentLabel.REMINDER_CREATE,
+    } and not candidate_actions:
+        candidate_actions = [
+            ConversationIntentCandidateActionOutput(
+                action_type=primary_intent.value,
+                confidence=confidence,
+                reason=reason,
+            )
+        ]
+
+    route_intent = _map_intent_label_to_route(primary_intent)
+    if primary_intent != ConversationIntentLabel.FREE_CHAT and confidence < INTENT_FALLBACK_THRESHOLD:
+        route_intent = ConversationIntent.FREE_CHAT
+        reason = f"{reason} 当前置信度只有 {confidence:.2f}，不够稳，先按 free_chat 回落。"
+
+    return ConversationIntentDetection(
+        primary_intent=primary_intent,
+        secondary_intents=secondary_intents,
+        confidence=confidence,
+        reason=reason,
+        candidate_actions=candidate_actions,
+        route_intent=route_intent,
+        guardrail_rule=None,
+    )
+
+
+def _parse_intent_label(raw_value: str) -> ConversationIntentLabel:
+    try:
+        return ConversationIntentLabel(raw_value)
+    except ValueError:
+        return ConversationIntentLabel.FREE_CHAT
+
+
+def _normalize_secondary_intents(
+    primary_intent: ConversationIntentLabel,
+    items: list[str],
+) -> list[ConversationIntentLabel]:
+    normalized: list[ConversationIntentLabel] = []
+    for item in items:
+        intent = _parse_intent_label(item)
+        if intent == primary_intent or intent in normalized:
+            continue
+        normalized.append(intent)
+    return normalized
+
+
+def _build_guardrail_intent_detection(
+    *,
+    primary_intent: ConversationIntentLabel,
+    route_intent: ConversationIntent,
+    reason: str,
+    guardrail_rule: str,
+) -> ConversationIntentDetection:
+    candidate_actions: list[ConversationIntentCandidateActionOutput] = []
+    if primary_intent in {
+        ConversationIntentLabel.CONFIG_CHANGE,
+        ConversationIntentLabel.MEMORY_WRITE,
+        ConversationIntentLabel.REMINDER_CREATE,
+    }:
+        candidate_actions.append(
+            ConversationIntentCandidateActionOutput(
+                action_type=primary_intent.value,
+                confidence=1.0,
+                reason=reason,
+            )
+        )
+    return ConversationIntentDetection(
+        primary_intent=primary_intent,
+        secondary_intents=[],
+        confidence=1.0,
+        reason=reason,
+        candidate_actions=candidate_actions,
+        route_intent=route_intent,
+        guardrail_rule=guardrail_rule,
+    )
+
+
+def _build_fallback_intent_detection(reason: str) -> ConversationIntentDetection:
+    return ConversationIntentDetection(
+        primary_intent=ConversationIntentLabel.FREE_CHAT,
+        secondary_intents=[],
+        confidence=0.0,
+        reason=reason,
+        candidate_actions=[],
+        route_intent=ConversationIntent.FREE_CHAT,
+        guardrail_rule="fallback.free_chat",
+    )
+
+
+def _build_default_intent_detection(route_intent: ConversationIntent) -> ConversationIntentDetection:
+    primary_intent = {
+        ConversationIntent.FREE_CHAT: ConversationIntentLabel.FREE_CHAT,
+        ConversationIntent.STRUCTURED_QA: ConversationIntentLabel.STRUCTURED_QA,
+        ConversationIntent.CONFIG_EXTRACTION: ConversationIntentLabel.CONFIG_CHANGE,
+        ConversationIntent.MEMORY_EXTRACTION: ConversationIntentLabel.MEMORY_WRITE,
+        ConversationIntent.REMINDER_EXTRACTION: ConversationIntentLabel.REMINDER_CREATE,
+    }[route_intent]
+    return ConversationIntentDetection(
+        primary_intent=primary_intent,
+        secondary_intents=[],
+        confidence=1.0,
+        reason="这是当前编排结果对应的默认意图映射。",
+        candidate_actions=[],
+        route_intent=route_intent,
+        guardrail_rule="route.default_mapping",
+    )
+
+
+def _map_intent_label_to_route(intent: ConversationIntentLabel) -> ConversationIntent:
+    mapping = {
+        ConversationIntentLabel.FREE_CHAT: ConversationIntent.FREE_CHAT,
+        ConversationIntentLabel.STRUCTURED_QA: ConversationIntent.STRUCTURED_QA,
+        ConversationIntentLabel.CONFIG_CHANGE: ConversationIntent.CONFIG_EXTRACTION,
+        ConversationIntentLabel.MEMORY_WRITE: ConversationIntent.MEMORY_EXTRACTION,
+        ConversationIntentLabel.REMINDER_CREATE: ConversationIntent.REMINDER_EXTRACTION,
+    }
+    return mapping[intent]
+
+
+def _log_intent_detection_result(
+    *,
+    request_context: dict | None,
+    detection: ConversationIntentDetection,
+) -> None:
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="intent_detection.completed",
+        message="AI 意图识别完成。",
+        payload=detection.to_payload(),
+    )
+
+
+def _log_route_selection(
+    *,
+    request_context: dict | None,
+    detection: ConversationIntentDetection,
+) -> None:
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="orchestrator.route.selected",
+        message="编排层已选择主路由。",
+        payload={
+            "primary_intent": detection.primary_intent.value,
+            "route_intent": detection.route_intent.value,
+            "confidence": detection.confidence,
+            "guardrail_rule": detection.guardrail_rule,
+        },
+    )
+
+
+def _log_memory_context_usage(
+    *,
+    request_context: dict | None,
+    user_message: str,
+    memory_bundle,
+    memory_highlights: list[str],
+    memory_context_text: str,
+) -> None:
+    top_memories = [
+        {
+            "memory_id": item.memory_id,
+            "title": item.title,
+            "memory_type": item.memory_type,
+            "summary": item.summary,
+            "updated_at": item.updated_at,
+        }
+        for item in memory_bundle.hot_summary.top_memories
+    ]
+    query_hits = [
+        {
+            "memory_id": hit.card.id,
+            "title": hit.card.title,
+            "memory_type": hit.card.memory_type,
+            "score": hit.score,
+            "matched_terms": hit.matched_terms,
+            "summary": hit.card.summary,
+        }
+        for hit in memory_bundle.query_result.items
+    ]
+    highlight_source = "preference_highlights" if memory_bundle.hot_summary.preference_highlights[:3] else (
+        "recent_event_highlights" if memory_bundle.hot_summary.recent_event_highlights[:3] else "none"
+    )
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="memory_context.read",
+        message="free_chat 已读取长期记忆上下文。",
+        payload={
+            "question": user_message,
+            "capability": memory_bundle.capability,
+            "total_visible_cards": memory_bundle.hot_summary.total_visible_cards,
+            "top_memories": top_memories,
+            "preference_highlights": memory_bundle.hot_summary.preference_highlights[:3],
+            "recent_event_highlights": memory_bundle.hot_summary.recent_event_highlights[:3],
+            "query_result_total": memory_bundle.query_result.total,
+            "query_hits": query_hits,
+            "injected_highlight_source": highlight_source,
+            "injected_highlights": memory_highlights,
+            "injected_memory_context": memory_context_text,
+        },
+    )
+
+
+def _log_orchestrator_debug_event(
+    *,
+    request_context: dict | None,
+    stage: str,
+    message: str,
+    payload: dict | None = None,
+) -> None:
+    context = request_context if isinstance(request_context, dict) else {}
+    event_payload = {
+        "session_id": str(context.get("session_id") or "-"),
+        "request_id": str(context.get("request_id") or "-"),
+        "stage": stage,
+        "source": "orchestrator",
+        "level": "info",
+        "message": message,
+        "payload": payload or {},
+    }
+    get_conversation_debug_logger().info(dump_conversation_debug_event(event_payload))

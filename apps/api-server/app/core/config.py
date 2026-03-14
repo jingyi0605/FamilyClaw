@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     auth_session_cookie_name: str = "familyclaw_session"
     auth_session_ttl_hours: int = 24 * 7
     auth_legacy_header_enabled: bool = True
+    conversation_debug_log_enabled: bool = False
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_household_username: str = "user"

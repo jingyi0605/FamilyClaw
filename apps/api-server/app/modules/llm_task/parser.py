@@ -114,7 +114,19 @@ def extract_json(text: str) -> dict[str, Any] | list[Any] | None:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        return None
+        pass
+
+    # 4. 尝试从脏文本里提取第一个合法 JSON 片段
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "{[":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(text[index:])
+            return parsed
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def parse_to_model(text: str, model_class: type[T]) -> T | None:

@@ -7,6 +7,8 @@ from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
 from app.modules.conversation.schemas import (
+    ConversationActionExecutionRead,
+    ConversationDebugLogListRead,
     ConversationMemoryCandidateActionRead,
     ConversationSessionCreate,
     ConversationSessionDetailRead,
@@ -16,12 +18,16 @@ from app.modules.conversation.schemas import (
 )
 from app.modules.conversation.service import (
     ConversationNotFoundError,
+    confirm_conversation_action,
     confirm_memory_candidate,
     create_conversation_session,
     create_conversation_turn,
+    dismiss_conversation_action,
     dismiss_memory_candidate,
     get_conversation_session_detail,
+    list_conversation_debug_logs,
     list_conversation_sessions,
+    undo_conversation_action,
 )
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -87,6 +93,26 @@ def get_conversation_session_detail_endpoint(
         result = get_conversation_session_detail(db, session_id=session_id, actor=actor)
         ensure_actor_can_access_household(actor, result.household_id)
         return result
+    except ConversationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation session not found") from exc
+
+
+@router.get("/sessions/{session_id}/debug-logs", response_model=ConversationDebugLogListRead)
+def list_conversation_debug_logs_endpoint(
+    session_id: str,
+    request_id: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> ConversationDebugLogListRead:
+    try:
+        return list_conversation_debug_logs(
+            db,
+            session_id=session_id,
+            actor=actor,
+            request_id=request_id,
+            limit=limit,
+        )
     except ConversationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation session not found") from exc
 
@@ -171,6 +197,84 @@ def dismiss_memory_candidate_endpoint(
         target_id=result.candidate.id,
         result="success",
         details=None,
+    )
+    try:
+        db.commit()
+        return result
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.post("/actions/{action_id}/confirm", response_model=ConversationActionExecutionRead)
+def confirm_conversation_action_endpoint(
+    action_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> ConversationActionExecutionRead:
+    result = confirm_conversation_action(db, action_id=action_id, actor=actor)
+    session_detail = get_conversation_session_detail(db, session_id=result.action.session_id, actor=actor)
+    write_audit_log(
+        db,
+        household_id=session_detail.household_id,
+        actor=actor,
+        action="conversation.action.confirm",
+        target_type="conversation_action",
+        target_id=result.action.id,
+        result=result.action.status,
+        details={"action_name": result.action.action_name},
+    )
+    try:
+        db.commit()
+        return result
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.post("/actions/{action_id}/dismiss", response_model=ConversationActionExecutionRead)
+def dismiss_conversation_action_endpoint(
+    action_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> ConversationActionExecutionRead:
+    result = dismiss_conversation_action(db, action_id=action_id, actor=actor)
+    session_detail = get_conversation_session_detail(db, session_id=result.action.session_id, actor=actor)
+    write_audit_log(
+        db,
+        household_id=session_detail.household_id,
+        actor=actor,
+        action="conversation.action.dismiss",
+        target_type="conversation_action",
+        target_id=result.action.id,
+        result=result.action.status,
+        details={"action_name": result.action.action_name},
+    )
+    try:
+        db.commit()
+        return result
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.post("/actions/{action_id}/undo", response_model=ConversationActionExecutionRead)
+def undo_conversation_action_endpoint(
+    action_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> ConversationActionExecutionRead:
+    result = undo_conversation_action(db, action_id=action_id, actor=actor)
+    session_detail = get_conversation_session_detail(db, session_id=result.action.session_id, actor=actor)
+    write_audit_log(
+        db,
+        household_id=session_detail.household_id,
+        actor=actor,
+        action="conversation.action.undo",
+        target_type="conversation_action",
+        target_id=result.action.id,
+        result=result.action.status,
+        details={"action_name": result.action.action_name},
     )
     try:
         db.commit()
