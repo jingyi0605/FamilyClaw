@@ -15,6 +15,7 @@ import type {
   ContextOverviewRead,
   ConversationActionExecutionResponse,
   ConversationMemoryCandidateActionResponse,
+  ConversationProposalExecutionResponse,
   ConversationSessionDetail,
   ConversationSessionListResponse,
   ConversationTurnResponse,
@@ -637,6 +638,18 @@ export const api = {
   dismissConversationAction(actionId: string) {
     return request<ConversationActionExecutionResponse>(
       `/conversations/actions/${encodeURIComponent(actionId)}/dismiss`,
+      { method: 'POST' },
+    );
+  },
+  confirmConversationProposal(proposalItemId: string) {
+    return request<ConversationProposalExecutionResponse>(
+      `/conversations/proposal-items/${encodeURIComponent(proposalItemId)}/confirm`,
+      { method: 'POST' },
+    );
+  },
+  dismissConversationProposal(proposalItemId: string) {
+    return request<ConversationProposalExecutionResponse>(
+      `/conversations/proposal-items/${encodeURIComponent(proposalItemId)}/dismiss`,
       { method: 'POST' },
     );
   },

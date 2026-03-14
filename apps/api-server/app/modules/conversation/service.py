@@ -162,39 +162,12 @@ def confirm_conversation_proposal(
     if item.status != "pending_confirmation":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="conversation proposal item is not waiting for confirmation")
 
-    payload = load_json(item.payload_json) or {}
-    affected_target_id: str | None = None
-    if item.proposal_kind == "memory_write":
-        memory_card = create_manual_memory_card(
-            db,
-            payload=MemoryCardManualCreate(
-                household_id=session.household_id,
-                memory_type=str(payload.get("memory_type") or payload.get("type") or "fact"),
-                title=item.title,
-                summary=item.summary or item.title,
-                content=payload if isinstance(payload, dict) else {},
-                status="active",
-                visibility="family",
-                importance=3,
-                confidence=item.confidence,
-                subject_member_id=session.requester_member_id,
-                source_event_id=None,
-                dedupe_key=item.dedupe_key or f"proposal:{item.id}",
-                effective_at=None,
-                last_observed_at=None,
-                related_members=[],
-                reason="confirmed from conversation proposal",
-            ),
-            actor=actor,
-        )
-        affected_target_id = memory_card.id
-    elif item.proposal_kind == "config_apply":
-        affected_target_id = _apply_config_proposal_item(db, session=session, payload=payload)
-    elif item.proposal_kind == "reminder_create":
-        affected_target_id = _apply_reminder_proposal_item(db, session=session, payload=payload)
-    else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported conversation proposal kind")
-
+    affected_target_id = _execute_proposal_item(
+        db,
+        item=item,
+        session=session,
+        actor=actor,
+    )
     item.status = "completed"
     item.updated_at = utc_now_iso()
     _refresh_proposal_batch_status(db, batch_id=batch.id)
@@ -254,6 +227,45 @@ def dismiss_conversation_proposal(
         item=_to_proposal_item_read(item),
         affected_target_id=None,
     )
+
+
+def _execute_proposal_item(
+    db: Session,
+    *,
+    item: ConversationProposalItem,
+    session: ConversationSession,
+    actor: ActorContext,
+) -> str | None:
+    payload = load_json(item.payload_json) or {}
+    if item.proposal_kind == "memory_write":
+        memory_card = create_manual_memory_card(
+            db,
+            payload=MemoryCardManualCreate(
+                household_id=session.household_id,
+                memory_type=str(payload.get("memory_type") or payload.get("type") or "fact"),
+                title=item.title,
+                summary=item.summary or item.title,
+                content=payload if isinstance(payload, dict) else {},
+                status="active",
+                visibility="family",
+                importance=3,
+                confidence=item.confidence,
+                subject_member_id=session.requester_member_id,
+                source_event_id=None,
+                dedupe_key=item.dedupe_key or f"proposal:{item.id}",
+                effective_at=None,
+                last_observed_at=None,
+                related_members=[],
+                reason="applied from conversation proposal",
+            ),
+            actor=actor,
+        )
+        return memory_card.id
+    if item.proposal_kind == "config_apply":
+        return _apply_config_proposal_item(db, session=session, payload=payload)
+    if item.proposal_kind == "reminder_create":
+        return _apply_reminder_proposal_item(db, session=session, payload=payload)
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported conversation proposal kind")
 
 
 def get_conversation_session_snapshot(
@@ -359,6 +371,7 @@ def create_conversation_turn(
             user_message=user_message,
             assistant_message=assistant_message,
             result=result,
+            actor=actor,
         )
         if proposal_pipeline_result is None and _result_has_actionable_proposals(result):
             proposal_pipeline_result = _persist_legacy_result_as_proposal_batch(
@@ -368,6 +381,7 @@ def create_conversation_turn(
                 user_message=user_message,
                 assistant_message=assistant_message,
                 result=result,
+                actor=actor,
             )
         _append_debug_log(
             db,
@@ -502,6 +516,7 @@ async def acreate_conversation_turn(
             user_message=user_message,
             assistant_message=assistant_message,
             result=result,
+            actor=actor,
         )
         if proposal_pipeline_result is None and _result_has_actionable_proposals(result):
             proposal_pipeline_result = _persist_legacy_result_as_proposal_batch(
@@ -511,6 +526,7 @@ async def acreate_conversation_turn(
                 user_message=user_message,
                 assistant_message=assistant_message,
                 result=result,
+                actor=actor,
             )
         _append_debug_log(
             db,
@@ -1597,6 +1613,7 @@ def _run_proposal_pipeline_for_turn(
     user_message: ConversationMessage,
     assistant_message: ConversationMessage,
     result: ConversationOrchestratorResult,
+    actor: ActorContext,
 ) -> ProposalPipelineResult | None:
     if result.intent not in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA}:
         return None
@@ -1650,8 +1667,28 @@ def _run_proposal_pipeline_for_turn(
             "failure_count": len(pipeline_result.failures),
             "proposal_kinds": [item.proposal_kind for item in pipeline_result.drafts],
             "write_enabled": settings.conversation_proposal_write_enabled,
+            "analyzer_failures": [
+                {
+                    "analyzer_name": failure.analyzer_name,
+                    "error_message": failure.error_message,
+                }
+                for failure in pipeline_result.failures
+            ],
+            "extraction_output": (
+                pipeline_result.extraction_output.model_dump(mode="json")
+                if pipeline_result.extraction_output is not None
+                else None
+            ),
         },
     )
+    if pipeline_result.batch_id is not None:
+        _apply_policy_to_proposal_batch(
+            db,
+            session=session,
+            batch_id=pipeline_result.batch_id,
+            request_id=request_id,
+            actor=actor,
+        )
     return pipeline_result
 
 
@@ -1690,6 +1727,7 @@ def _persist_legacy_result_as_proposal_batch(
     user_message: ConversationMessage,
     assistant_message: ConversationMessage,
     result: ConversationOrchestratorResult,
+    actor: ActorContext,
 ) -> ProposalPipelineResult | None:
     drafts: list[ProposalDraft] = []
     for item in result.memory_candidate_payloads:
@@ -1768,6 +1806,13 @@ def _persist_legacy_result_as_proposal_batch(
         turn_context=turn_context,
         drafts=drafts,
     )
+    _apply_policy_to_proposal_batch(
+        db,
+        session=session,
+        batch_id=batch_id,
+        request_id=request_id,
+        actor=actor,
+    )
     return ProposalPipelineResult(
         batch_id=batch_id,
         item_ids=item_ids,
@@ -1775,6 +1820,92 @@ def _persist_legacy_result_as_proposal_batch(
         failures=[],
         extraction_output=None,
     )
+
+
+def _apply_policy_to_proposal_batch(
+    db: Session,
+    *,
+    session: ConversationSession,
+    batch_id: str,
+    request_id: str,
+    actor: ActorContext,
+) -> None:
+    batch = repository.get_proposal_batch(db, batch_id)
+    if batch is None:
+        return
+    policy = _resolve_autonomous_action_policy(db, session=session)
+    items = list(repository.list_proposal_items(db, batch_id=batch_id))
+    for item in items:
+        policy_category = _resolve_proposal_policy_category(policy, proposal_kind=item.proposal_kind)
+        item.policy_category = policy_category
+        if policy_category == "ignore":
+            item.status = "ignored"
+            item.updated_at = utc_now_iso()
+            continue
+        if policy_category == "ask":
+            item.status = "pending_confirmation"
+            item.updated_at = utc_now_iso()
+            continue
+        try:
+            affected_target_id = _execute_proposal_item(
+                db,
+                item=item,
+                session=session,
+                actor=actor,
+            )
+            item.status = "completed"
+            item.updated_at = utc_now_iso()
+            _append_debug_log(
+                db,
+                session=session,
+                request_id=request_id,
+                stage="proposal.item.executed",
+                source="proposal",
+                message="提案项已按策略自动执行。",
+                payload={
+                    "proposal_item_id": item.id,
+                    "proposal_kind": item.proposal_kind,
+                    "policy_category": policy_category,
+                    "affected_target_id": affected_target_id,
+                },
+            )
+        except HTTPException as exc:
+            item.status = "failed"
+            item.updated_at = utc_now_iso()
+            _append_debug_log(
+                db,
+                session=session,
+                request_id=request_id,
+                stage="proposal.item.execution_failed",
+                source="proposal",
+                level="error",
+                message="提案项自动执行失败。",
+                payload={
+                    "proposal_item_id": item.id,
+                    "proposal_kind": item.proposal_kind,
+                    "policy_category": policy_category,
+                    "error_detail": exc.detail,
+                },
+            )
+    _refresh_proposal_batch_status(db, batch_id=batch_id)
+    db.flush()
+
+
+def _resolve_proposal_policy_category(
+    policy: AgentAutonomousActionPolicy,
+    *,
+    proposal_kind: str,
+) -> str:
+    action_category = _resolve_action_category_for_proposal_kind(proposal_kind)
+    return _resolve_policy_mode(policy, action_category=action_category)
+
+
+def _resolve_action_category_for_proposal_kind(proposal_kind: str) -> str:
+    if proposal_kind == "memory_write":
+        return "memory"
+    if proposal_kind == "config_apply":
+        return "config"
+    return "action"
 
 
 def _apply_config_proposal_item(
@@ -2134,6 +2265,7 @@ async def run_conversation_realtime_turn(
             user_message=user_message_row,
             assistant_message=assistant_message_row,
             result=result,
+            actor=actor,
         )
         _append_debug_log(
             db,

@@ -12,7 +12,7 @@ ConversationCandidateStatus = Literal["pending_review", "confirmed", "dismissed"
 ConversationActionCategory = Literal["memory", "config", "action"]
 ConversationActionPolicyMode = Literal["ask", "notify", "auto"]
 ConversationActionStatus = Literal["pending_confirmation", "completed", "failed", "dismissed", "undone", "undo_failed"]
-ConversationProposalPolicyCategory = Literal["ask", "auto", "ignore"]
+ConversationProposalPolicyCategory = Literal["ask", "notify", "auto", "ignore"]
 ConversationProposalStatus = Literal[
     "pending_policy",
     "pending_confirmation",

@@ -51,6 +51,7 @@ from app.modules.ai_gateway.provider_runtime import build_template_fallback_outp
 from app.modules.memory import repository as memory_repository
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
+from app.modules.reminder.service import list_tasks as list_reminder_tasks
 
 
 class _FakeLlmResult:
@@ -119,6 +120,69 @@ class ConversationFoundationTests(unittest.TestCase):
         self.engine.dispose()
         settings.database_url = self._previous_database_url
         self._tempdir.cleanup()
+
+    def _persist_mock_proposal_result(
+        self,
+        *,
+        session_id: str,
+        request_id: str,
+        evidence_message_id: str,
+        proposal_kind: str,
+        payload: dict,
+        title: str,
+        summary: str,
+        dedupe_key: str,
+        confidence: float = 0.93,
+    ) -> ProposalPipelineResult:
+        batch = ConversationProposalBatch(
+            id=new_uuid(),
+            session_id=session_id,
+            request_id=request_id,
+            source_message_ids_json=dump_json([evidence_message_id]) or "[]",
+            source_roles_json=dump_json(["user"]) or "[]",
+            lane_json='{"lane":"free_chat"}',
+            status="pending_confirmation",
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        conversation_repository.add_proposal_batch(self.db, batch)
+        item = ConversationProposalItem(
+            id=new_uuid(),
+            batch_id=batch.id,
+            proposal_kind=proposal_kind,
+            policy_category="ask",
+            status="pending_confirmation",
+            title=title,
+            summary=summary,
+            evidence_message_ids_json=dump_json([evidence_message_id]) or "[]",
+            evidence_roles_json=dump_json(["user"]) or "[]",
+            dedupe_key=dedupe_key,
+            confidence=confidence,
+            payload_json=dump_json(payload) or "{}",
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        conversation_repository.add_proposal_item(self.db, item)
+        self.db.flush()
+        return ProposalPipelineResult(
+            batch_id=batch.id,
+            item_ids=[item.id],
+            drafts=[
+                ProposalDraft(
+                    proposal_kind=proposal_kind,
+                    policy_category="ask",
+                    title=title,
+                    summary=summary,
+                    evidence_message_ids=[evidence_message_id],
+                    evidence_roles=["user"],
+                    dedupe_key=dedupe_key,
+                    confidence=confidence,
+                    payload=payload,
+                )
+            ],
+            failures=[],
+            extraction_output=None,
+        )
 
     def test_conversation_storage_supports_session_message_and_candidate(self) -> None:
         session = create_conversation_session(
@@ -599,6 +663,230 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual(1, len(result.session.proposal_batches[0].items))
         self.assertEqual("memory_write", result.session.proposal_batches[0].items[0].proposal_kind)
         self.assertEqual("pending_confirmation", result.session.proposal_batches[0].items[0].status)
+
+    @patch("app.modules.conversation.service.ProposalPipeline.run")
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_notify_config_proposal_executes_and_keeps_completed_record(
+        self,
+        run_orchestrated_turn_mock,
+        proposal_run_mock,
+    ) -> None:
+        upsert_agent_runtime_policy(
+            self.db,
+            household_id=self.household.id,
+            agent_id=self.agent.id,
+            payload=AgentRuntimePolicyUpsert(
+                conversation_enabled=True,
+                default_entry=True,
+                routing_tags=["qa"],
+                memory_scope=None,
+                autonomous_action_policy={"memory": "ask", "config": "notify", "action": "ask"},
+            ),
+        )
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.FREE_CHAT,
+            text="名字我记下了。",
+            degraded=False,
+            facts=[],
+            suggestions=[],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code="mock-provider",
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
+        )
+
+        def _persist(*args, **kwargs):
+            turn_context = kwargs["turn_context"]
+            return self._persist_mock_proposal_result(
+                session_id=kwargs["session"].id,
+                request_id=kwargs["request_id"],
+                evidence_message_id=turn_context.user_messages[0].message_id,
+                proposal_kind="config_apply",
+                payload={"display_name": "泡泡"},
+                title="应用 Agent 配置建议",
+                summary="用户想把助手名字改成泡泡。",
+                dedupe_key="config:test:bubble",
+            )
+
+        proposal_run_mock.side_effect = _persist
+
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(household_id=self.household.id, active_agent_id=self.agent.id),
+            actor=self.actor,
+        )
+
+        turn = create_conversation_turn(
+            self.db,
+            session_id=session.id,
+            payload=ConversationTurnCreate(message="叫泡泡怎么样"),
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        self.assertEqual(1, len(turn.session.proposal_batches))
+        item = turn.session.proposal_batches[0].items[0]
+        self.assertEqual("config_apply", item.proposal_kind)
+        self.assertEqual("notify", item.policy_category)
+        self.assertEqual("completed", item.status)
+        self.assertEqual("泡泡", get_conversation_session_detail(self.db, session_id=session.id, actor=self.actor).active_agent_name)
+
+    @patch("app.modules.conversation.service.ProposalPipeline.run")
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_auto_memory_proposal_executes_and_keeps_completed_record(
+        self,
+        run_orchestrated_turn_mock,
+        proposal_run_mock,
+    ) -> None:
+        upsert_agent_runtime_policy(
+            self.db,
+            household_id=self.household.id,
+            agent_id=self.agent.id,
+            payload=AgentRuntimePolicyUpsert(
+                conversation_enabled=True,
+                default_entry=True,
+                routing_tags=["qa"],
+                memory_scope=None,
+                autonomous_action_policy={"memory": "auto", "config": "ask", "action": "ask"},
+            ),
+        )
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.FREE_CHAT,
+            text="这件事我记下了。",
+            degraded=False,
+            facts=[],
+            suggestions=[],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code="mock-provider",
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
+        )
+
+        def _persist(*args, **kwargs):
+            turn_context = kwargs["turn_context"]
+            return self._persist_mock_proposal_result(
+                session_id=kwargs["session"].id,
+                request_id=kwargs["request_id"],
+                evidence_message_id=turn_context.user_messages[0].message_id,
+                proposal_kind="memory_write",
+                payload={"memory_type": "preference", "summary": "用户不吃香菜"},
+                title="不吃香菜",
+                summary="用户不吃香菜",
+                dedupe_key="memory:test:diet",
+            )
+
+        proposal_run_mock.side_effect = _persist
+
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(household_id=self.household.id, active_agent_id=self.agent.id),
+            actor=self.actor,
+        )
+
+        turn = create_conversation_turn(
+            self.db,
+            session_id=session.id,
+            payload=ConversationTurnCreate(message="记住，我不吃香菜"),
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        cards, total = memory_repository.list_memory_cards(
+            self.db,
+            household_id=self.household.id,
+            page=1,
+            page_size=20,
+        )
+        self.assertEqual(1, len(turn.session.proposal_batches))
+        item = turn.session.proposal_batches[0].items[0]
+        self.assertEqual("memory_write", item.proposal_kind)
+        self.assertEqual("auto", item.policy_category)
+        self.assertEqual("completed", item.status)
+        self.assertEqual(1, total)
+        self.assertEqual("不吃香菜", cards[0].title)
+
+    @patch("app.modules.conversation.service.ProposalPipeline.run")
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_notify_reminder_proposal_executes_and_keeps_completed_record(
+        self,
+        run_orchestrated_turn_mock,
+        proposal_run_mock,
+    ) -> None:
+        upsert_agent_runtime_policy(
+            self.db,
+            household_id=self.household.id,
+            agent_id=self.agent.id,
+            payload=AgentRuntimePolicyUpsert(
+                conversation_enabled=True,
+                default_entry=True,
+                routing_tags=["qa"],
+                memory_scope=None,
+                autonomous_action_policy={"memory": "ask", "config": "ask", "action": "notify"},
+            ),
+        )
+        run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
+            intent=ConversationIntent.FREE_CHAT,
+            text="提醒我已经安排好了。",
+            degraded=False,
+            facts=[],
+            suggestions=[],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code="mock-provider",
+            effective_agent_id=self.agent.id,
+            effective_agent_name="笨笨",
+        )
+
+        def _persist(*args, **kwargs):
+            turn_context = kwargs["turn_context"]
+            return self._persist_mock_proposal_result(
+                session_id=kwargs["session"].id,
+                request_id=kwargs["request_id"],
+                evidence_message_id=turn_context.user_messages[0].message_id,
+                proposal_kind="reminder_create",
+                payload={
+                    "action_type": "reminder_create",
+                    "title": "开会",
+                    "trigger_at": "2026-03-15T08:00:00+08:00",
+                    "description": "提醒我参加晨会",
+                },
+                title="创建提醒：开会",
+                summary="提醒我明天早上开会。",
+                dedupe_key="reminder:test:meeting",
+            )
+
+        proposal_run_mock.side_effect = _persist
+
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(household_id=self.household.id, active_agent_id=self.agent.id),
+            actor=self.actor,
+        )
+
+        turn = create_conversation_turn(
+            self.db,
+            session_id=session.id,
+            payload=ConversationTurnCreate(message="提醒我明天早上八点开会"),
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        tasks = list_reminder_tasks(self.db, household_id=self.household.id)
+        self.assertEqual(1, len(turn.session.proposal_batches))
+        item = turn.session.proposal_batches[0].items[0]
+        self.assertEqual("reminder_create", item.proposal_kind)
+        self.assertEqual("notify", item.policy_category)
+        self.assertEqual("completed", item.status)
+        self.assertEqual(1, len(tasks))
+        self.assertEqual("开会", tasks[0].title)
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_detect_conversation_intent_routes_story_to_free_chat(self, invoke_llm_mock) -> None:
@@ -1596,7 +1884,7 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("memory_write", result.session.proposal_batches[0].items[0].proposal_kind)
 
     @patch("app.modules.conversation.service._run_orchestrated_turn")
-    def test_confirm_config_proposal_applies_agent_update(self, run_orchestrated_turn_mock) -> None:
+    def test_legacy_notify_config_proposal_applies_agent_update_without_confirmation(self, run_orchestrated_turn_mock) -> None:
         upsert_agent_runtime_policy(
             self.db,
             household_id=self.household.id,
@@ -1640,10 +1928,8 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual(1, len(turn.session.proposal_batches))
         item = turn.session.proposal_batches[0].items[0]
         self.assertEqual("config_apply", item.proposal_kind)
-        self.assertEqual("pending_confirmation", item.status)
-        execution = confirm_conversation_proposal(self.db, proposal_item_id=item.id, actor=self.actor)
-        self.db.commit()
-        self.assertEqual("completed", execution.item.status)
+        self.assertEqual("notify", item.policy_category)
+        self.assertEqual("completed", item.status)
         self.assertEqual("阿福", get_conversation_session_detail(self.db, session_id=session.id, actor=self.actor).active_agent_name)
 
     @patch("app.modules.conversation.service._run_orchestrated_turn")

@@ -6,7 +6,14 @@ import { useI18n } from '../i18n';
 import { api } from '../lib/api';
 import { createConversationRealtimeClient, newRealtimeRequestId, type ConversationRealtimeClient } from '../lib/conversationRealtime';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel, isConversationAgent, pickDefaultConversationAgent } from '../lib/agents';
-import type { AgentSummary, ConversationActionRecord, ConversationMessage, ConversationSession, ConversationSessionDetail } from '../lib/types';
+import type {
+  AgentSummary,
+  ConversationActionRecord,
+  ConversationMessage,
+  ConversationProposalItem,
+  ConversationSession,
+  ConversationSessionDetail,
+} from '../lib/types';
 import { useHouseholdContext } from '../state/household';
 
 function formatRelativeTime(value: string) {
@@ -101,6 +108,23 @@ function buildActionResultText(action: ConversationActionRecord) {
   return typeof error === 'string' && error ? error : getActionStatusText(action);
 }
 
+function getProposalIcon(item: ConversationProposalItem) {
+  if (item.proposal_kind === 'reminder_create') return '🔔';
+  if (item.proposal_kind === 'config_apply') return '⚙️';
+  return '🧠';
+}
+
+function getProposalStatusText(item: ConversationProposalItem) {
+  if (item.status === 'pending_confirmation') return '等待你确认';
+  if (item.status === 'completed' && item.proposal_kind === 'config_apply') return '配置已经应用';
+  if (item.status === 'completed' && item.proposal_kind === 'memory_write') return '记忆已经写入';
+  if (item.status === 'completed' && item.proposal_kind === 'reminder_create') return '提醒已经创建';
+  if (item.status === 'dismissed') return '这条建议已忽略';
+  if (item.status === 'ignored') return '这条建议已忽略';
+  if (item.status === 'failed') return '执行失败';
+  return '建议已生成';
+}
+
 export function ConversationPageV2() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -137,6 +161,7 @@ export function ConversationPageV2() {
     [activeSessionDetail],
   );
   const actionRecords = useMemo(() => activeSessionDetail?.action_records ?? [], [activeSessionDetail]);
+  const proposalBatches = useMemo(() => activeSessionDetail?.proposal_batches ?? [], [activeSessionDetail]);
   const actionsByMessageId = useMemo(() => {
     const grouped = new Map<string, ConversationActionRecord[]>();
     for (const item of actionRecords) {
@@ -147,9 +172,22 @@ export function ConversationPageV2() {
     }
     return grouped;
   }, [actionRecords]);
+  const proposalsByRequestId = useMemo(() => {
+    const grouped = new Map<string, ConversationProposalItem[]>();
+    for (const batch of proposalBatches) {
+      if (!batch.request_id) continue;
+      const current = grouped.get(batch.request_id) ?? [];
+      current.push(...batch.items);
+      grouped.set(batch.request_id, current);
+    }
+    return grouped;
+  }, [proposalBatches]);
   const pendingActionCount = useMemo(
-    () => actionRecords.filter(item => item.status === 'pending_confirmation').length,
-    [actionRecords],
+    () => (
+      actionRecords.filter(item => item.status === 'pending_confirmation').length
+      + proposalBatches.flatMap(batch => batch.items).filter(item => item.status === 'pending_confirmation').length
+    ),
+    [actionRecords, proposalBatches],
   );
   const recentActionRecords = useMemo(() => actionRecords.slice(-5).reverse(), [actionRecords]);
 
@@ -463,6 +501,28 @@ export function ConversationPageV2() {
     }
   }
 
+  async function handleConversationProposal(
+    proposalItemId: string,
+    actionType: 'confirm' | 'dismiss',
+    successText: string,
+  ) {
+    try {
+      setActionBusyId(proposalItemId);
+      if (actionType === 'confirm') {
+        await api.confirmConversationProposal(proposalItemId);
+      } else {
+        await api.dismissConversationProposal(proposalItemId);
+      }
+      await syncActiveSessionDetail();
+      setStatus(successText);
+      setError('');
+    } catch (proposalError) {
+      setError(proposalError instanceof Error ? proposalError.message : '处理建议失败');
+    } finally {
+      setActionBusyId('');
+    }
+  }
+
   function renderAskActionCard(action: ConversationActionRecord) {
     return (
       <div key={action.id} className="message__action-card message__action-card--ask">
@@ -517,6 +577,49 @@ export function ConversationPageV2() {
     );
   }
 
+  function renderAskProposalCard(item: ConversationProposalItem) {
+    return (
+      <div key={item.id} className="message__action-card message__action-card--ask">
+        <div className="message__action-header">
+          <span className="message__action-icon">{getProposalIcon(item)}</span>
+          <strong>{item.title}</strong>
+        </div>
+        {item.summary && <p className="message__action-text">{item.summary}</p>}
+        <div className="message__action-meta">AI 整理出一条可执行建议，当前设置是先问你。</div>
+        <div className="message__actions">
+          <button
+            className="msg-action-btn"
+            disabled={actionBusyId === item.id}
+            onClick={() => void handleConversationProposal(item.id, 'confirm', '已按你的确认应用这条建议。')}
+          >
+            确认应用
+          </button>
+          <button
+            className="msg-action-btn"
+            disabled={actionBusyId === item.id}
+            onClick={() => void handleConversationProposal(item.id, 'dismiss', '已忽略这条建议。')}
+          >
+            先不改
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderCompletedProposalCard(item: ConversationProposalItem) {
+    const toneClass = item.policy_category === 'auto' ? 'message__action-card--auto' : 'message__action-card--notify';
+    return (
+      <div key={item.id} className={`message__action-card ${toneClass}`}>
+        <div className="message__action-header">
+          <span className="message__action-icon">{getProposalIcon(item)}</span>
+          <strong>{item.title}</strong>
+        </div>
+        {item.summary && <p className="message__action-text">{item.summary}</p>}
+        <div className="message__action-meta">{getProposalStatusText(item)}</div>
+      </div>
+    );
+  }
+
   function renderAutoActionGroup(messageId: string, actions: ConversationActionRecord[]) {
     const expanded = expandedAutoMessageId === messageId;
     return (
@@ -567,15 +670,20 @@ export function ConversationPageV2() {
   function renderMessageActions(message: ConversationMessage) {
     if (message.role !== 'assistant' || message.status === 'pending') return null;
     const messageActions = actionsByMessageId.get(message.id) ?? [];
-    if (messageActions.length === 0) return null;
+    const messageProposals = message.request_id ? (proposalsByRequestId.get(message.request_id) ?? []) : [];
     const askActions = messageActions.filter(item => item.policy_mode === 'ask' && item.status === 'pending_confirmation');
     const notifyActions = messageActions.filter(item => item.policy_mode === 'notify');
     const autoActions = messageActions.filter(item => item.policy_mode === 'auto');
+    const askProposals = messageProposals.filter(item => item.policy_category === 'ask' && item.status === 'pending_confirmation');
+    const completedProposals = messageProposals.filter(item => item.status !== 'pending_confirmation');
+    if (messageActions.length === 0 && messageProposals.length === 0) return null;
     return (
       <div className="message__action-cards">
         {askActions.map(renderAskActionCard)}
         {notifyActions.map(renderNotifyActionCard)}
         {autoActions.length > 0 && renderAutoActionGroup(message.id, autoActions)}
+        {askProposals.map(renderAskProposalCard)}
+        {completedProposals.map(renderCompletedProposalCard)}
       </div>
     );
   }

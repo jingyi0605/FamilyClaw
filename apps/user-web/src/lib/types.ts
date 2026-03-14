@@ -534,6 +534,8 @@ export type ConversationCandidateStatus = 'pending_review' | 'confirmed' | 'dism
 export type ConversationActionCategory = 'memory' | 'config' | 'action';
 export type ConversationActionPolicyMode = 'ask' | 'notify' | 'auto';
 export type ConversationActionStatus = 'pending_confirmation' | 'completed' | 'failed' | 'dismissed' | 'undone' | 'undo_failed';
+export type ConversationProposalPolicyCategory = 'ask' | 'notify' | 'auto' | 'ignore';
+export type ConversationProposalStatus = 'pending_policy' | 'pending_confirmation' | 'completed' | 'dismissed' | 'ignored' | 'failed';
 
 export type ConversationMessage = {
   id: string;
@@ -593,6 +595,36 @@ export type ConversationActionRecord = {
   updated_at: string;
 };
 
+export type ConversationProposalItem = {
+  id: string;
+  batch_id: string;
+  proposal_kind: string;
+  policy_category: ConversationProposalPolicyCategory;
+  status: ConversationProposalStatus;
+  title: string;
+  summary: string | null;
+  evidence_message_ids: string[];
+  evidence_roles: string[];
+  dedupe_key: string | null;
+  confidence: number;
+  payload: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConversationProposalBatch = {
+  id: string;
+  session_id: string;
+  request_id: string | null;
+  source_message_ids: string[];
+  source_roles: string[];
+  lane: Record<string, unknown>;
+  status: ConversationProposalStatus | string;
+  created_at: string;
+  updated_at: string;
+  items: ConversationProposalItem[];
+};
+
 export type ConversationSession = {
   id: string;
   household_id: string;
@@ -614,6 +646,7 @@ export type ConversationSessionDetail = ConversationSession & {
   messages: ConversationMessage[];
   memory_candidates: ConversationMemoryCandidate[];
   action_records: ConversationActionRecord[];
+  proposal_batches: ConversationProposalBatch[];
 };
 
 export type ConversationSessionListResponse = {
@@ -639,6 +672,11 @@ export type ConversationMemoryCandidateActionResponse = {
 
 export type ConversationActionExecutionResponse = {
   action: ConversationActionRecord;
+};
+
+export type ConversationProposalExecutionResponse = {
+  item: ConversationProposalItem;
+  affected_target_id: string | null;
 };
 
 export type AgentAutonomousActionPolicy = {

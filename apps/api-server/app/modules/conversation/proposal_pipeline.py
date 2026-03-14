@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from sqlalchemy.orm import Session
 
-from app.db.utils import dump_json, new_uuid, utc_now_iso
+from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
+from app.modules.agent import repository as agent_repository
 from app.modules.conversation import repository
 from app.modules.conversation.models import ConversationMessage, ConversationProposalBatch, ConversationProposalItem, ConversationSession
 from app.modules.conversation.proposal_analyzers import ProposalAnalyzerFailure, ProposalAnalyzerRegistry, ProposalDraft
@@ -49,6 +50,10 @@ class TurnProposalContext:
         resolved_roles: list[str] = []
         for message_id in evidence_message_ids:
             evidence = evidence_by_id.get(message_id)
+            if evidence is None:
+                normalized_id = _normalize_turn_message_id_alias(message_id, evidence_by_id)
+                if normalized_id is not None:
+                    evidence = evidence_by_id.get(normalized_id)
             if evidence is None or evidence.kind not in allowed_kinds:
                 continue
             resolved_ids.append(evidence.message_id)
@@ -56,6 +61,12 @@ class TurnProposalContext:
         if require_non_assistant and resolved_ids and all(role == "assistant" for role in resolved_roles):
             return [], []
         return resolved_ids, resolved_roles
+
+    def latest_user_evidence(self) -> TurnProposalEvidence | None:
+        user_messages = self.user_messages
+        if not user_messages:
+            return None
+        return user_messages[-1]
 
 
 @dataclass(frozen=True)
@@ -122,6 +133,7 @@ class ProposalPipeline:
     ) -> ProposalPipelineResult:
         extraction_output = self.extractor(db, turn_context, session.household_id)
         drafts, failures = self.registry.run(turn_context, extraction_output)
+        drafts = _filter_noop_config_drafts(db, session=session, drafts=drafts)
         if not drafts or not persist:
             return ProposalPipelineResult(
                 batch_id=None,
@@ -210,6 +222,21 @@ def extract_proposal_batch(
     return result.data
 
 
+def _normalize_turn_message_id_alias(message_id: str, evidence_by_id: dict[str, TurnProposalEvidence]) -> str | None:
+    normalized_message_id = str(message_id or "").strip()
+    if not normalized_message_id:
+        return None
+    if normalized_message_id in evidence_by_id:
+        return normalized_message_id
+    for prefix in ("user_", "assistant_", "message_", "user_message:", "assistant_message:"):
+        if not normalized_message_id.startswith(prefix):
+            continue
+        candidate_id = normalized_message_id[len(prefix) :].strip()
+        if candidate_id in evidence_by_id:
+            return candidate_id
+    return None
+
+
 def persist_proposal_batch(
     db: Session,
     *,
@@ -266,7 +293,7 @@ def _render_turn_messages(turn_messages: list[TurnProposalEvidence]) -> str:
 def _resolve_item_status(policy_category: str) -> str:
     if policy_category == "ignore":
         return "ignored"
-    if policy_category == "auto":
+    if policy_category in {"notify", "auto"}:
         return "completed"
     return "pending_confirmation"
 
@@ -280,3 +307,50 @@ def _resolve_batch_status(drafts: list[ProposalDraft]) -> str:
     if "pending_confirmation" in statuses:
         return "pending_confirmation"
     return "pending_policy"
+
+
+def _filter_noop_config_drafts(
+    db: Session,
+    *,
+    session: ConversationSession,
+    drafts: list[ProposalDraft],
+) -> list[ProposalDraft]:
+    if not session.active_agent_id:
+        return drafts
+    agent = agent_repository.get_agent_by_household_and_id(
+        db,
+        household_id=session.household_id,
+        agent_id=session.active_agent_id,
+    )
+    if agent is None:
+        return drafts
+    soul = agent_repository.get_active_soul_profile(db, agent_id=agent.id)
+    current_speaking_style = str(getattr(soul, "speaking_style", "") or "").strip()
+    current_personality_traits = (
+        [str(item).strip() for item in (load_json(getattr(soul, "personality_traits_json", None)) or []) if str(item).strip()]
+        if soul is not None
+        else []
+    )
+    filtered: list[ProposalDraft] = []
+    for draft in drafts:
+        if draft.proposal_kind != "config_apply":
+            filtered.append(draft)
+            continue
+        payload = dict(draft.payload)
+        next_display_name = str(payload.get("display_name") or "").strip()
+        if next_display_name and next_display_name == agent.display_name:
+            payload.pop("display_name", None)
+        next_speaking_style = str(payload.get("speaking_style") or "").strip()
+        if next_speaking_style and next_speaking_style == current_speaking_style:
+            payload.pop("speaking_style", None)
+        next_personality_traits = [
+            str(item).strip()
+            for item in (payload.get("personality_traits") or [])
+            if str(item).strip()
+        ] if isinstance(payload.get("personality_traits"), list) else []
+        if next_personality_traits and next_personality_traits == current_personality_traits:
+            payload.pop("personality_traits", None)
+        if not any(payload.get(key) for key in ("display_name", "speaking_style", "personality_traits")):
+            continue
+        filtered.append(replace(draft, payload=payload))
+    return filtered
