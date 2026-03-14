@@ -7,7 +7,7 @@ from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
 from app.modules.device_action.schemas import DeviceActionExecuteRequest, DeviceActionExecuteResponse
-from app.modules.device_action.service import execute_device_action
+from app.modules.device_action.service import aexecute_device_action, execute_device_action
 from app.modules.ha_integration.client import HomeAssistantClientError
 
 router = APIRouter(prefix="/device-actions", tags=["device-actions"])
@@ -42,14 +42,14 @@ def _write_device_action_audit_best_effort(
 
 
 @router.post("/execute", response_model=DeviceActionExecuteResponse, status_code=status.HTTP_200_OK)
-def execute_device_action_endpoint(
+async def execute_device_action_endpoint(
     payload: DeviceActionExecuteRequest,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> DeviceActionExecuteResponse:
     ensure_actor_can_access_household(actor, payload.household_id)
     try:
-        response, audit_context = execute_device_action(db, payload=payload)
+        response, audit_context = await aexecute_device_action(db, payload=payload)
         _write_device_action_audit_best_effort(
             db,
             household_id=payload.household_id,

@@ -21,7 +21,7 @@ from app.modules.agent.schemas import (
 )
 from app.modules.agent.service import create_agent
 from app.modules.ai_gateway.service import resolve_capability_route
-from app.modules.llm_task import invoke_llm, stream_llm
+from app.modules.llm_task import ainvoke_llm, invoke_llm, stream_llm
 from app.modules.llm_task.output_models import ButlerBootstrapOutput
 from app.modules.member import service as member_service
 from app.modules.realtime.connection_manager import RealtimeConnectionManager
@@ -182,7 +182,7 @@ async def run_butler_bootstrap_realtime_turn(
 
     final_text = ""
     try:
-        for event in stream_llm(
+        async for event in stream_llm(
             db,
             task_type="butler_bootstrap",
             variables={
@@ -209,7 +209,7 @@ async def run_butler_bootstrap_realtime_turn(
                 final_text = event.result.text.strip()
 
         next_draft = draft
-        state_patch = _extract_bootstrap_state_patch(
+        state_patch = await _aextract_bootstrap_state_patch(
             db,
             household_id=household_id,
             draft=draft,
@@ -325,6 +325,74 @@ def advance_butler_bootstrap_session(
     db.flush()
 
     result = invoke_llm(
+        db,
+        task_type="butler_bootstrap",
+        variables={
+            "collected_info": _format_collected_info(draft),
+            "user_message": message,
+            "user_context": _build_user_context(db, household_id),
+        },
+        household_id=household_id,
+        conversation_history=transcript,
+    )
+
+    next_draft = draft
+    if isinstance(result.data, ButlerBootstrapOutput):
+        next_draft = _merge_extracted_data(draft, result.data)
+
+    assistant_message = _append_bootstrap_message(
+        db,
+        session_id=session.id,
+        request_id=request_id,
+        role="assistant",
+        content=result.text,
+    )
+    request_row.status = "succeeded"
+    request_row.assistant_message_id = assistant_message.id
+    request_row.finished_at = utc_now_iso()
+
+    session_read = _build_next_session(session_id=session_id, draft=next_draft, assistant_message=result.text)
+    _save_session_state(db, session=session, session_read=session_read, transcript=transcript)
+    return session_read
+
+
+async def aadvance_butler_bootstrap_session(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+    payload: ButlerBootstrapMessageCreate,
+) -> ButlerBootstrapSessionRead:
+    session = _get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message 不能为空")
+
+    draft = _load_draft(session, household_id=household_id)
+    transcript = _load_transcript(db, session)
+    request_id = new_uuid()
+    request_started_at = utc_now_iso()
+    user_message = _append_bootstrap_message(
+        db,
+        session_id=session.id,
+        request_id=request_id,
+        role="user",
+        content=message,
+        created_at=request_started_at,
+    )
+    request_row = repository.add_bootstrap_request(
+        db,
+        row=_build_bootstrap_request(
+            request_id=request_id,
+            session_id=session.id,
+            user_message_id=user_message.id,
+            started_at=request_started_at,
+        ),
+    )
+    session.current_request_id = request_id
+    db.flush()
+
+    result = await ainvoke_llm(
         db,
         task_type="butler_bootstrap",
         variables={
@@ -762,6 +830,34 @@ def _extract_bootstrap_state_patch(
 ) -> ButlerBootstrapOutput | None:
     try:
         result = invoke_llm(
+            db,
+            task_type="butler_bootstrap_extract",
+            variables={
+                "collected_info": _format_collected_info(draft),
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+            },
+            household_id=household_id,
+        )
+    except Exception as exc:
+        logger.warning("bootstrap structured extraction failed: %s", exc)
+        return None
+
+    if isinstance(result.data, ButlerBootstrapOutput):
+        return result.data
+    return None
+
+
+async def _aextract_bootstrap_state_patch(
+    db: Session,
+    *,
+    household_id: str,
+    draft: ButlerBootstrapDraft,
+    user_message: str,
+    assistant_message: str,
+) -> ButlerBootstrapOutput | None:
+    try:
+        result = await ainvoke_llm(
             db,
             task_type="butler_bootstrap_extract",
             variables={

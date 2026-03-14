@@ -16,7 +16,7 @@ from app.modules.ai_gateway.schemas import (
     AiProviderProfileRead,
     AiProviderProfileUpdate,
 )
-from app.modules.ai_gateway.gateway_service import invoke_capability
+from app.modules.ai_gateway.gateway_service import ainvoke_capability, invoke_capability
 from app.modules.ai_gateway.service import (
     AiGatewayConfigurationError,
     AiGatewayNotFoundError,
@@ -170,13 +170,13 @@ def list_ai_call_logs_endpoint(
 
 
 @router.post("/invoke-preview", response_model=AiGatewayInvokeResponse)
-def invoke_ai_preview_endpoint(
+async def invoke_ai_preview_endpoint(
     payload: AiGatewayInvokeRequest,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> AiGatewayInvokeResponse:
     try:
-        result = invoke_capability(db, payload)
+        result = await ainvoke_capability(db, payload)
         _write_household_scoped_audit(
             db,
             household_id=payload.household_id,

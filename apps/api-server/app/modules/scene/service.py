@@ -4,11 +4,11 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
-from app.modules.ai_gateway.gateway_service import invoke_capability
+from app.modules.ai_gateway.gateway_service import ainvoke_capability, invoke_capability
 from app.modules.ai_gateway.schemas import AiGatewayInvokeRequest
 from app.modules.context.service import get_context_overview
 from app.modules.device_action.schemas import DeviceActionExecuteRequest
-from app.modules.device_action.service import execute_device_action
+from app.modules.device_action.service import aexecute_device_action, execute_device_action
 from app.modules.household.models import Household
 from app.modules.memory.schemas import EventRecordCreate
 from app.modules.memory.service import ingest_event_record_best_effort
@@ -258,6 +258,56 @@ def preview_template(
     )
 
 
+async def apreview_template(
+    db: Session,
+    *,
+    household_id: str,
+    template_code: str,
+    payload: ScenePreviewRequest,
+) -> ScenePreviewResponse:
+    template = _get_template_by_code_or_404(db, household_id=household_id, template_code=template_code)
+    context_overview = get_context_overview(db, household_id)
+    reminder_overview = build_reminder_overview(db, household_id=household_id)
+    can_start, conflict_reason, trigger_key, _lock_key = can_start_scene_execution(
+        db,
+        template=template,
+        trigger_source=payload.trigger_source,
+        trigger_payload=payload.trigger_payload,
+    )
+
+    matched_conditions = _evaluate_conditions(template, context_overview)
+    blocked_guards = _evaluate_guards(template, context_overview, payload.confirm_high_risk)
+    if not can_start and conflict_reason is not None:
+        blocked_guards.append(conflict_reason)
+
+    preview_steps = _build_preview_steps(
+        template=template,
+        context_household_id=household_id,
+        reminder_overview_count=reminder_overview.pending_runs,
+        confirm_high_risk=payload.confirm_high_risk,
+        blocked=bool(blocked_guards),
+    )
+    explanation, degraded = await _abuild_scene_explanation(
+        db,
+        household_id=household_id,
+        template=template,
+        trigger_key=trigger_key,
+        blocked_guards=blocked_guards,
+        step_count=len(preview_steps),
+    )
+    return ScenePreviewResponse(
+        household_id=household_id,
+        template=template,
+        trigger_key=trigger_key,
+        matched_conditions=matched_conditions,
+        blocked_guards=blocked_guards,
+        requires_confirmation=any(step.status == "blocked" for step in preview_steps),
+        steps=preview_steps,
+        explanation=explanation,
+        degraded=degraded,
+    )
+
+
 def trigger_template(
     db: Session,
     *,
@@ -317,7 +367,89 @@ def trigger_template(
                     summary={"blocked_guards": blocked_guards, "template_code": template.template_code},
                     occurred_at=row.finished_at,
                 )
+    return get_execution_detail(db, execution.id)
+
+
+async def atrigger_template(
+    db: Session,
+    *,
+    household_id: str,
+    template_code: str,
+    payload: SceneTriggerRequest,
+) -> SceneExecutionDetailRead:
+    preview = await apreview_template(
+        db,
+        household_id=household_id,
+        template_code=template_code,
+        payload=ScenePreviewRequest.model_validate(payload.model_dump(mode="json")),
+    )
+    template = preview.template
+    can_start, conflict_reason, trigger_key, lock_key = can_start_scene_execution(
+        db,
+        template=template,
+        trigger_source=payload.trigger_source,
+        trigger_payload=payload.trigger_payload,
+    )
+    if not can_start:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict_reason or "scene conflict")
+
+    with scene_execution_lock(lock_key) as acquired:
+        if not acquired:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="scene execution lock busy")
+        execution = create_execution(
+            db,
+            SceneExecutionCreate(
+                template_id=template.id,
+                household_id=household_id,
+                trigger_key=trigger_key,
+                trigger_source=payload.trigger_source,
+                started_at=utc_now_iso(),
+                status="running",
+                guard_result={"blocked_guards": preview.blocked_guards},
+                conflict_result={},
+                context_snapshot={"trigger_payload": payload.trigger_payload},
+                summary={"template_code": template.template_code},
+            ),
+        )
+        step_rows: list[SceneExecutionStepRead] = []
+        blocked_guards = list(preview.blocked_guards)
+        if blocked_guards:
+            row = repository.get_execution(db, execution.id)
+            if row is not None:
+                row.status = "blocked"
+                row.finished_at = utc_now_iso()
+                row.summary_json = dump_json({"blocked_guards": blocked_guards, "template_code": template.template_code})
+                db.flush()
+                _write_scene_memory_event(db, execution_id=execution.id, household_id=household_id, template=template, final_status="blocked", summary={"blocked_guards": blocked_guards, "template_code": template.template_code}, occurred_at=row.finished_at or utc_now_iso())
             return get_execution_detail(db, execution.id)
+
+        final_status = "success"
+        summary: dict[str, object] = {"template_code": template.template_code, "step_results": []}
+        for step_index, action in enumerate(template.actions):
+            step_result = await _aexecute_action_step(
+                db,
+                household_id=household_id,
+                template=template,
+                execution_id=execution.id,
+                action=action,
+                step_index=step_index,
+                confirm_high_risk=payload.confirm_high_risk,
+            )
+            step_rows.append(step_result)
+            summary["step_results"].append({"step_index": step_result.step_index, "step_type": step_result.step_type, "status": step_result.status, "target_ref": step_result.target_ref})
+            if step_result.status in {"failed", "blocked"}:
+                final_status = "partial" if final_status == "success" else final_status
+                if step_result.status == "blocked":
+                    final_status = "blocked"
+
+        row = repository.get_execution(db, execution.id)
+        if row is not None:
+            row.status = final_status
+            row.finished_at = utc_now_iso()
+            row.summary_json = dump_json(summary)
+            db.flush()
+            _write_scene_memory_event(db, execution_id=execution.id, household_id=household_id, template=template, final_status=final_status, summary=summary, occurred_at=row.finished_at or utc_now_iso())
+        return get_execution_detail(db, execution.id)
 
         final_status = "success"
         summary: dict[str, object] = {"template_code": template.template_code, "step_results": []}
@@ -581,6 +713,42 @@ def _execute_action_step(
     )
 
 
+async def _aexecute_action_step(
+    db: Session,
+    *,
+    household_id: str,
+    template: SceneTemplateRead,
+    execution_id: str,
+    action: dict[str, object],
+    step_index: int,
+    confirm_high_risk: bool,
+) -> SceneExecutionStepRead:
+    step_type = str(action.get("type") or "context_update")
+    target_ref = str(action.get("target_ref") or "")
+    request_payload = deepcopy(action)
+    started_at = utc_now_iso()
+    if step_type == "device_action":
+        device_id = str(action.get("device_id") or "")
+        if not device_id:
+            return create_execution_step(db, SceneExecutionStepCreate(execution_id=execution_id, step_index=step_index, step_type="device_action", target_ref=target_ref or "unknown-device", request=request_payload, result={"error": "缺少 device_id"}, status="failed", started_at=started_at, finished_at=utc_now_iso()))
+        try:
+            response, _audit_context = await aexecute_device_action(
+                db,
+                payload=DeviceActionExecuteRequest(
+                    household_id=household_id,
+                    device_id=device_id,
+                    action=str(action.get("action") or "turn_on"),
+                    params=action.get("params") if isinstance(action.get("params"), dict) else {},
+                    reason=f"scene.{template.template_code}",
+                    confirm_high_risk=confirm_high_risk,
+                ),
+            )
+            return create_execution_step(db, SceneExecutionStepCreate(execution_id=execution_id, step_index=step_index, step_type="device_action", target_ref=target_ref or device_id, request=request_payload, result=response.model_dump(mode="json"), status="success", started_at=started_at, finished_at=utc_now_iso()))
+        except HTTPException as exc:
+            return create_execution_step(db, SceneExecutionStepCreate(execution_id=execution_id, step_index=step_index, step_type="device_action", target_ref=target_ref or device_id, request=request_payload, result={"error": exc.detail}, status="blocked" if exc.status_code == status.HTTP_403_FORBIDDEN else "failed", started_at=started_at, finished_at=utc_now_iso()))
+    return _execute_action_step(db, household_id=household_id, template=template, execution_id=execution_id, action=action, step_index=step_index, confirm_high_risk=confirm_high_risk)
+
+
 def _evaluate_conditions(template: SceneTemplateRead, context_overview) -> list[str]:
     matched: list[str] = []
     for item in template.conditions:
@@ -673,6 +841,37 @@ def _build_scene_explanation(
 ) -> tuple[str | None, bool]:
     try:
         response = invoke_capability(
+            db,
+            AiGatewayInvokeRequest(
+                capability="scene_explanation",
+                household_id=household_id,
+                payload={
+                    "scene_name": template.name,
+                    "template_code": template.template_code,
+                    "trigger_key": trigger_key,
+                    "blocked_guards": blocked_guards,
+                    "step_count": step_count,
+                },
+            ),
+        )
+        return str(response.normalized_output.get("text") or ""), response.degraded
+    except HTTPException:
+        if blocked_guards:
+            return f"{template.name} 当前未执行，原因是：{'；'.join(blocked_guards)}。", True
+        return f"{template.name} 将按 {step_count} 个步骤执行。", True
+
+
+async def _abuild_scene_explanation(
+    db: Session,
+    *,
+    household_id: str,
+    template: SceneTemplateRead,
+    trigger_key: str,
+    blocked_guards: list[str],
+    step_count: int,
+) -> tuple[str | None, bool]:
+    try:
+        response = await ainvoke_capability(
             db,
             AiGatewayInvokeRequest(
                 capability="scene_explanation",

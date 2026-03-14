@@ -11,3 +11,4 @@ apps/api-server/data/*.db-*
 apps/api-server/data/*.sqlite3
 .augment-rag/
 apps/api-server/data/logs
+apps/api-server/data/models/embeddings/descriptor_cache

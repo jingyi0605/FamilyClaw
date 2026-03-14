@@ -6,6 +6,7 @@ from app.api.dependencies import ActorContext, ensure_actor_can_access_household
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.agent.bootstrap_service import (
+    aadvance_butler_bootstrap_session,
     advance_butler_bootstrap_session,
     confirm_butler_bootstrap_session,
     get_latest_butler_bootstrap_session,
@@ -32,6 +33,7 @@ from app.modules.agent.schemas import (
 )
 from app.modules.agent.service import (
     AgentNotFoundError,
+    arun_agent_plugin_memory_checkpoint,
     build_agent_memory_insight,
     create_agent,
     get_agent_detail,
@@ -65,6 +67,9 @@ from app.modules.ai_gateway.service import (
 from app.modules.audit.service import write_audit_log
 from app.modules.plugin import AgentPluginInvokeRequest, AgentPluginInvokeResult, invoke_agent_plugin
 from app.modules.plugin import (
+    aconfirm_agent_action_plugin,
+    ainvoke_agent_action_plugin,
+    ainvoke_agent_plugin,
     AgentActionPluginInvokeRequest,
     AgentActionPluginInvokeResult,
     PluginMountCreate,
@@ -290,7 +295,7 @@ def restart_butler_bootstrap_session_endpoint(
 
 
 @router.post("/{household_id}/butler-bootstrap/sessions/{session_id}/messages", response_model=ButlerBootstrapSessionRead)
-def append_butler_bootstrap_message_endpoint(
+async def append_butler_bootstrap_message_endpoint(
     household_id: str,
     session_id: str,
     payload: ButlerBootstrapMessageCreate,
@@ -299,7 +304,7 @@ def append_butler_bootstrap_message_endpoint(
 ) -> ButlerBootstrapSessionRead:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        result = advance_butler_bootstrap_session(
+        result = await aadvance_butler_bootstrap_session(
             db,
             household_id=household_id,
             session_id=session_id,
@@ -622,7 +627,7 @@ def delete_household_plugin_mount_endpoint(
 
 
 @router.post("/{household_id}/agents/{agent_id}/plugin-invocations", response_model=AgentPluginInvokeResult)
-def invoke_agent_plugin_endpoint(
+async def invoke_agent_plugin_endpoint(
     household_id: str,
     agent_id: str,
     payload: AgentPluginInvokeRequest,
@@ -631,7 +636,7 @@ def invoke_agent_plugin_endpoint(
 ) -> AgentPluginInvokeResult:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        result = invoke_agent_plugin(
+        result = await ainvoke_agent_plugin(
             db,
             household_id=household_id,
             agent_id=agent_id,
@@ -667,7 +672,7 @@ def get_agent_memory_insight_endpoint(
 
 
 @router.post("/{household_id}/agents/{agent_id}/plugin-memory-checkpoint", response_model=AgentPluginMemoryCheckpointRead)
-def run_agent_plugin_memory_checkpoint_endpoint(
+async def run_agent_plugin_memory_checkpoint_endpoint(
     household_id: str,
     agent_id: str,
     payload: AgentPluginMemoryCheckpointRequest,
@@ -676,7 +681,7 @@ def run_agent_plugin_memory_checkpoint_endpoint(
 ) -> AgentPluginMemoryCheckpointRead:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        result = run_agent_plugin_memory_checkpoint(
+        result = await arun_agent_plugin_memory_checkpoint(
             db,
             household_id=household_id,
             agent_id=agent_id,
@@ -693,7 +698,7 @@ def run_agent_plugin_memory_checkpoint_endpoint(
 
 
 @router.post("/{household_id}/agents/{agent_id}/action-plugin-invocations", response_model=AgentActionPluginInvokeResult)
-def invoke_agent_action_plugin_endpoint(
+async def invoke_agent_action_plugin_endpoint(
     household_id: str,
     agent_id: str,
     payload: AgentActionPluginInvokeRequest,
@@ -702,7 +707,7 @@ def invoke_agent_action_plugin_endpoint(
 ) -> AgentActionPluginInvokeResult:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        result = invoke_agent_action_plugin(
+        result = await ainvoke_agent_action_plugin(
             db,
             household_id=household_id,
             agent_id=agent_id,
@@ -720,7 +725,7 @@ def invoke_agent_action_plugin_endpoint(
 
 
 @router.post("/{household_id}/agents/{agent_id}/action-plugin-confirmations/{confirmation_request_id}/confirm", response_model=AgentActionPluginInvokeResult)
-def confirm_agent_action_plugin_endpoint(
+async def confirm_agent_action_plugin_endpoint(
     household_id: str,
     agent_id: str,
     confirmation_request_id: str,
@@ -729,7 +734,7 @@ def confirm_agent_action_plugin_endpoint(
 ) -> AgentActionPluginInvokeResult:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        result = confirm_agent_action_plugin(
+        result = await aconfirm_agent_action_plugin(
             db,
             household_id=household_id,
             agent_id=agent_id,

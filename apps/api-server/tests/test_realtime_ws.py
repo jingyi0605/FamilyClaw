@@ -1,5 +1,6 @@
 import asyncio
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any, cast
@@ -8,6 +9,7 @@ from unittest.mock import patch
 from alembic import command
 from alembic.config import Config
 from fastapi import HTTPException, WebSocketDisconnect
+import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.datastructures import Headers, QueryParams
@@ -69,6 +71,11 @@ class _BrokenWebSocket(_FakeWebSocket):
 
 
 class RealtimeWsTests(unittest.TestCase):
+    @staticmethod
+    async def _async_iter_events(events: list[object]):
+        for event in events:
+            yield event
+
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
@@ -250,7 +257,7 @@ class RealtimeWsTests(unittest.TestCase):
                 patch.object(
                     bootstrap_service_module,
                     "stream_llm",
-                    return_value=iter([
+                    return_value=self._async_iter_events([
                         LlmStreamEvent("chunk", content="你好，我先记下这个名字。"),
                         LlmStreamEvent(
                             "done",
@@ -263,7 +270,7 @@ class RealtimeWsTests(unittest.TestCase):
                 ), \
                 patch.object(
                     bootstrap_service_module,
-                    "invoke_llm",
+                    "ainvoke_llm",
                     return_value=LlmResult(
                         raw_text='{"display_name":"阿福","speaking_style":"温和直接","personality_traits":["细心","稳重"],"is_complete":true}',
                         display_text="",
@@ -369,7 +376,7 @@ class RealtimeWsTests(unittest.TestCase):
             def __init__(self):
                 self.data = None
 
-        def _fake_stream_orchestrated_turn(_db, **kwargs):
+        async def _fake_stream_orchestrated_turn(_db, **kwargs):
             _ = kwargs
             yield ("chunk", "你好，")
             yield ("chunk", "我是笨笨。")
@@ -394,7 +401,7 @@ class RealtimeWsTests(unittest.TestCase):
             side_effect=_fake_stream_orchestrated_turn,
         ), patch.object(
             conversation_service_module,
-            "invoke_llm",
+            "ainvoke_llm",
             return_value=_FakeMemoryResult(),
         ):
             asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
@@ -441,7 +448,7 @@ class RealtimeWsTests(unittest.TestCase):
             def __init__(self):
                 self.data = None
 
-        def _fake_stream_orchestrated_turn(_db, **kwargs):
+        async def _fake_stream_orchestrated_turn(_db, **kwargs):
             _ = kwargs
             yield ("chunk", "你好，")
             yield ("chunk", "我是笨笨。")
@@ -466,7 +473,7 @@ class RealtimeWsTests(unittest.TestCase):
             side_effect=_fake_stream_orchestrated_turn,
         ), patch.object(
             conversation_service_module,
-            "invoke_llm",
+            "ainvoke_llm",
             return_value=_FakeMemoryResult(),
         ):
             asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
@@ -496,7 +503,7 @@ class RealtimeWsTests(unittest.TestCase):
         from app.modules.conversation import service as conversation_service_module
         from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
 
-        def _fake_stream_orchestrated_turn(_db, **kwargs):
+        async def _fake_stream_orchestrated_turn(_db, **kwargs):
             _ = kwargs
             yield ("chunk", "很久很久以前，")
             yield ("chunk", "火星边缘漂着一座旧空间站。")
@@ -512,6 +519,80 @@ class RealtimeWsTests(unittest.TestCase):
         final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
         self.assertEqual("failed", final_snapshot["messages"][1]["status"])
         self.assertIn("很久很久以前", final_snapshot["messages"][1]["content"])
+
+    def test_conversation_websocket_stream_does_not_block_other_http_requests(self) -> None:
+        from app.main import app
+        from app.modules.conversation import service as conversation_service_module
+        from app.modules.conversation.orchestrator import ConversationIntent, ConversationOrchestratorResult
+
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[
+                {
+                    "type": "user.message",
+                    "session_id": self.conversation_session_id,
+                    "request_id": "conversation-request-concurrency",
+                    "payload": {"text": "说点什么"},
+                }
+            ],
+        )
+
+        async def _fake_stream_orchestrated_turn(_db, **kwargs):
+            _ = kwargs
+            await asyncio.sleep(0.08)
+            yield ("chunk", "第一段")
+            await asyncio.sleep(0.08)
+            yield ("done", ConversationOrchestratorResult(
+                intent=ConversationIntent.FREE_CHAT,
+                text="第一段最终回复",
+                degraded=False,
+                facts=[],
+                suggestions=[],
+                memory_candidate_payloads=[],
+                config_suggestion=None,
+                action_payloads=[],
+                ai_trace_id="trace-concurrency",
+                ai_provider_code="mock-provider",
+                effective_agent_id=None,
+                effective_agent_name="笨笨",
+            ))
+
+        async def _run_scenario() -> tuple[float, float, int]:
+            transport = httpx.ASGITransport(app=app)
+            request_finished_at = 0.0
+            websocket_finished_at = 0.0
+
+            async def _run_websocket() -> None:
+                nonlocal websocket_finished_at
+                await self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket))
+                websocket_finished_at = time.perf_counter()
+
+            async def _run_http_request() -> int:
+                nonlocal request_finished_at
+                await asyncio.sleep(0.02)
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    response = await client.get("/")
+                request_finished_at = time.perf_counter()
+                return response.status_code
+
+            websocket_task = asyncio.create_task(_run_websocket())
+            status_code = await _run_http_request()
+            await websocket_task
+            return request_finished_at, websocket_finished_at, status_code
+
+        with patch.object(
+            conversation_service_module,
+            "stream_orchestrated_turn",
+            side_effect=_fake_stream_orchestrated_turn,
+        ):
+            request_finished_at, websocket_finished_at, status_code = asyncio.run(_run_scenario())
+
+        self.assertEqual(200, status_code)
+        self.assertGreater(websocket_finished_at, 0)
+        self.assertGreater(request_finished_at, 0)
+        self.assertLess(request_finished_at, websocket_finished_at)
 
 
 if __name__ == "__main__":

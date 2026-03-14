@@ -31,6 +31,10 @@ from app.modules.ha_integration.schemas import (
     HomeAssistantSyncResponse,
 )
 from app.modules.ha_integration.service import (
+    async_list_home_assistant_device_candidates,
+    async_list_home_assistant_room_candidates,
+    async_sync_home_assistant_devices,
+    async_sync_home_assistant_rooms,
     get_home_assistant_config_view,
     list_home_assistant_device_candidates,
     list_home_assistant_room_candidates,
@@ -102,14 +106,14 @@ def update_device_endpoint(
 
 
 @router.post("/sync/ha", response_model=HomeAssistantSyncResponse, status_code=status.HTTP_200_OK)
-def sync_home_assistant_devices_endpoint(
+async def sync_home_assistant_devices_endpoint(
     payload: HomeAssistantSyncRequest,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> HomeAssistantSyncResponse:
     ensure_actor_can_access_household(actor, payload.household_id)
     try:
-        summary = sync_home_assistant_devices(
+        summary = await async_sync_home_assistant_devices(
             db,
             household_id=payload.household_id,
             external_device_ids=payload.external_device_ids,
@@ -185,14 +189,14 @@ def sync_home_assistant_devices_endpoint(
 
 
 @router.get("/ha-candidates/{household_id}", response_model=HomeAssistantDeviceCandidatesResponse)
-def list_home_assistant_device_candidates_endpoint(
+async def list_home_assistant_device_candidates_endpoint(
     household_id: str,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_bound_member_actor),
 ) -> HomeAssistantDeviceCandidatesResponse:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        items = list_home_assistant_device_candidates(db, household_id=household_id)
+        items = await async_list_home_assistant_device_candidates(db, household_id=household_id)
     except HomeAssistantClientError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
@@ -259,14 +263,14 @@ def upsert_home_assistant_config_endpoint(
 
 
 @router.post("/rooms/sync/ha", response_model=HomeAssistantRoomSyncResponse, status_code=status.HTTP_200_OK)
-def sync_home_assistant_rooms_endpoint(
+async def sync_home_assistant_rooms_endpoint(
     payload: HomeAssistantRoomSyncRequest,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> HomeAssistantRoomSyncResponse:
     ensure_actor_can_access_household(actor, payload.household_id)
     try:
-        summary = sync_home_assistant_rooms(
+        summary = await async_sync_home_assistant_rooms(
             db,
             household_id=payload.household_id,
             room_names=payload.room_names,
@@ -304,14 +308,14 @@ def sync_home_assistant_rooms_endpoint(
 
 
 @router.get("/rooms/ha-candidates/{household_id}", response_model=HomeAssistantRoomCandidatesResponse)
-def list_home_assistant_room_candidates_endpoint(
+async def list_home_assistant_room_candidates_endpoint(
     household_id: str,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_bound_member_actor),
 ) -> HomeAssistantRoomCandidatesResponse:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        items = list_home_assistant_room_candidates(db, household_id=household_id)
+        items = await async_list_home_assistant_room_candidates(db, household_id=household_id)
     except HomeAssistantClientError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

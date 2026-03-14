@@ -11,7 +11,7 @@ from app.modules.device.schemas import DeviceRead
 from app.modules.device.service import get_device_or_404
 from app.modules.device_action.schemas import DeviceActionExecuteRequest, DeviceActionExecuteResponse
 from app.modules.ha_integration.client import HomeAssistantClient, HomeAssistantClientError
-from app.modules.ha_integration.service import execute_home_assistant_device_action
+from app.modules.ha_integration.service import async_execute_home_assistant_device_action, execute_home_assistant_device_action
 
 HIGH_RISK_ACTIONS: dict[str, set[str]] = {
     "lock": {"unlock"},
@@ -91,6 +91,57 @@ def execute_device_action(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+    response = DeviceActionExecuteResponse(
+        household_id=payload.household_id,
+        device=DeviceRead.model_validate(device),
+        action=payload.action,
+        platform=execution.platform,
+        service_domain=execution.service_domain,
+        service_name=execution.service_name,
+        entity_id=execution.entity_id,
+        params=execution.params,
+        result="success",
+        executed_at=utc_now_iso(),
+    )
+    audit_context = DeviceActionAuditContext(
+        details={
+            "reason": payload.reason,
+            "confirm_high_risk": payload.confirm_high_risk,
+            "platform": execution.platform,
+            "service_domain": execution.service_domain,
+            "service_name": execution.service_name,
+            "entity_id": execution.entity_id,
+            "params": execution.params,
+            "response_payload": execution.response_payload,
+        }
+    )
+    return response, audit_context
+
+
+async def aexecute_device_action(
+    db: Session,
+    *,
+    payload: DeviceActionExecuteRequest,
+) -> tuple[DeviceActionExecuteResponse, DeviceActionAuditContext]:
+    device = get_device_or_404(db, payload.device_id)
+    _ensure_device_belongs_to_household(device, payload.household_id)
+    _ensure_device_controllable(device)
+    _ensure_action_supported_for_device(device, payload.action)
+    _ensure_high_risk_action_confirmed(payload, device)
+
+    try:
+        execution = await async_execute_home_assistant_device_action(
+            db,
+            household_id=payload.household_id,
+            device=device,
+            action=payload.action,
+            params=payload.params,
+        )
+    except HomeAssistantClientError:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     response = DeviceActionExecuteResponse(
         household_id=payload.household_id,

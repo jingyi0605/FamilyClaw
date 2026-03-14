@@ -17,6 +17,8 @@ from app.modules.scene.schemas import (
     SceneTriggerRequest,
 )
 from app.modules.scene.service import (
+    apreview_template,
+    atrigger_template,
     get_execution_detail,
     list_builtin_scene_templates,
     list_executions,
@@ -82,18 +84,18 @@ def upsert_scene_template_endpoint(
 
 
 @router.post("/templates/{template_code}/preview", response_model=ScenePreviewResponse)
-def preview_scene_template_endpoint(
+async def preview_scene_template_endpoint(
     template_code: str,
     payload: ScenePreviewRequest,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_bound_member_actor),
 ) -> ScenePreviewResponse:
     ensure_actor_can_access_household(actor, payload.household_id)
-    return preview_template(db, household_id=payload.household_id, template_code=template_code, payload=payload)
+    return await apreview_template(db, household_id=payload.household_id, template_code=template_code, payload=payload)
 
 
 @router.post("/templates/{template_code}/trigger", response_model=SceneExecutionDetailRead)
-def trigger_scene_template_endpoint(
+async def trigger_scene_template_endpoint(
     template_code: str,
     payload: SceneTriggerRequest,
     db: Session = Depends(get_db),
@@ -101,7 +103,7 @@ def trigger_scene_template_endpoint(
 ) -> SceneExecutionDetailRead:
     ensure_actor_can_access_household(actor, payload.household_id)
     try:
-        result = trigger_template(db, household_id=payload.household_id, template_code=template_code, payload=payload)
+        result = await atrigger_template(db, household_id=payload.household_id, template_code=template_code, payload=payload)
         write_audit_log(
             db,
             household_id=payload.household_id,
