@@ -96,6 +96,8 @@ class PluginJob(Base):
     request_payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     payload_summary_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_task_definition_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    source_task_run_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     current_attempt: Mapped[int] = mapped_column(nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(nullable=False, default=1)
     last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)

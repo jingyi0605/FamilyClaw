@@ -113,6 +113,8 @@ class ContextOverviewDeviceSummary(BaseModel):
     offline: int = Field(ge=0)
     inactive: int = Field(ge=0)
     controllable: int = Field(ge=0)
+    controllable_active: int = Field(ge=0)
+    controllable_offline: int = Field(ge=0)
 
 
 class ContextOverviewInsight(BaseModel):

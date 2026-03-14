@@ -3,11 +3,12 @@
 ## Document Metadata
 
 - Purpose: serve as the English entry point for plugin developer documentation, organized in reading order.
-- Current version: v1.1
+- Current version: v1.2
 - Related documents: `docs/开发者文档/插件开发/README.md`, `docs/开发者文档/插件开发/zh-CN/README.md`
 - Change log:
   - `2026-03-13`: created the English entry.
   - `2026-03-13`: switched to numbered reading order and added document metadata.
+  - `2026-03-14`: added the scheduled-task API and OpenAPI guide.
 
 This directory stores the English plugin developer documentation.
 
@@ -30,6 +31,7 @@ Keep one boundary in mind:
 - `07-plugin-testing-and-in-project-validation.md`
 - `08-plugin-registry-pr-submission.md`
 - `09-development-check-review.md`
+- `10-scheduled-task-api-and-openapi-guide.md`
 
 ## Maintenance rules
 

@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     plugin_job_default_retry_delay_seconds: int = 5
     plugin_job_default_timeout_seconds: int = 60
     plugin_job_running_stale_after_seconds: int = 120
+    scheduler_worker_enabled: bool = True
+    scheduler_worker_poll_interval_seconds: float = 1.0
+    scheduler_worker_batch_size: int = 100
+    scheduler_definition_failure_threshold: int = 3
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_household_username: str = "user"

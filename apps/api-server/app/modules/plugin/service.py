@@ -125,6 +125,7 @@ def list_registered_plugins(
                 entrypoints=manifest.entrypoints,
                 capabilities=manifest.capabilities,
                 locales=manifest.locales,
+                schedule_templates=manifest.schedule_templates,
             )
             for manifest_path, manifest in manifest_entries
         ]
@@ -157,6 +158,7 @@ def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest
             "entrypoints": manifest.entrypoints.model_dump(mode="json"),
             "capabilities": manifest.capabilities.model_dump(mode="json"),
             "locales": [item.model_dump(mode="json") for item in manifest.locales],
+            "schedule_templates": [item.model_dump(mode="json") for item in manifest.schedule_templates],
             "source_type": mount.source_type,
             "execution_backend": mount.execution_backend,
             "runner_config": _build_runner_config_from_mount(mount).model_dump(mode="json"),
@@ -180,6 +182,7 @@ def _to_plugin_mount_read(row: PluginMount, *, manifest: PluginManifest | None =
             "entrypoints": current_manifest.entrypoints.model_dump(mode="json"),
             "capabilities": current_manifest.capabilities.model_dump(mode="json"),
             "locales": [item.model_dump(mode="json") for item in current_manifest.locales],
+            "schedule_templates": [item.model_dump(mode="json") for item in current_manifest.schedule_templates],
             "source_type": row.source_type,
             "execution_backend": row.execution_backend,
             "manifest_path": row.manifest_path,

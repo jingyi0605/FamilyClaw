@@ -590,6 +590,8 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
         offline=sum(1 for device in devices if device.status == "offline"),
         inactive=sum(1 for device in devices if device.status == "inactive"),
         controllable=sum(1 for device in devices if bool(device.controllable)),
+        controllable_active=sum(1 for device in devices if bool(device.controllable) and device.status == "active"),
+        controllable_offline=sum(1 for device in devices if bool(device.controllable) and device.status == "offline"),
     )
 
     children_home = [item for item in overview_member_states if item.role == "child" and item.presence == "home"]
@@ -689,3 +691,7 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
         degraded=degraded,
         generated_at=utc_now_iso(),
     )
+
+
+def build_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
+    return get_context_overview(db, household_id)

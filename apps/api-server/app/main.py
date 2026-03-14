@@ -10,6 +10,7 @@ from app.core.logging import setup_logging
 from app.db.session import SessionLocal
 from app.modules.account.service import ensure_bootstrap_admin_account, ensure_pending_household_bootstrap_accounts
 from app.modules.plugin.job_worker import PluginJobWorker
+from app.modules.scheduler.worker import ScheduledTaskWorker
 
 setup_logging(
     settings.log_level,
@@ -17,6 +18,7 @@ setup_logging(
 )
 logger = logging.getLogger(__name__)
 plugin_job_worker = PluginJobWorker()
+scheduler_worker = ScheduledTaskWorker()
 
 
 @asynccontextmanager
@@ -30,9 +32,13 @@ async def lifespan(_: FastAPI):
         db.close()
     if settings.plugin_job_worker_enabled:
         await plugin_job_worker.start()
+    if settings.scheduler_worker_enabled:
+        await scheduler_worker.start()
     yield
     if settings.plugin_job_worker_enabled:
         await plugin_job_worker.stop()
+    if settings.scheduler_worker_enabled:
+        await scheduler_worker.stop()
     logger.info("Stopping %s", settings.app_name)
 
 

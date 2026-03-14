@@ -3,7 +3,7 @@
 ## Document Metadata
 
 - Purpose: explain how a plugin actually integrates with FamilyClaw, including invocation, input/output, sync flow, and current API entries.
-- Current version: v1.3
+- Current version: v1.4
 - Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `apps/api-server/app/modules/plugin/service.py`, `apps/api-server/app/modules/plugin/agent_bridge.py`
 - Change log:
   - `2026-03-13`: added the integration guide to cover invocation flow, APIs, inputs/outputs, and sync paths.
@@ -11,6 +11,7 @@
   - `2026-03-13`: added plugin function signature rules, a full `connector` return example, an Observation field table, and a complete sync request/response example.
   - `2026-03-13`: added the `connector records` raw-record field table.
   - `2026-03-14`: added `locale-pack` integration boundaries.
+  - `2026-03-14`: added scheduled-task integration boundaries and `plugin_job` source tracing.
 
 This document answers the core question: how does a plugin actually integrate with FamilyClaw?
 
@@ -104,6 +105,29 @@ Relevant code:
 - permission check: `apps/api-server/app/modules/plugin/agent_bridge.py:223`
 - high-risk confirmation: `apps/api-server/app/modules/plugin/agent_bridge.py:282`
 
+### 2.4 Scheduled Task Trigger Path
+
+This is the new formal route. Do not mix the order up:
+
+1. create a task definition in the scheduled-task system
+2. when it becomes due, the scheduler worker creates a `scheduled_task_run`
+3. the scheduler dispatcher converts that run into a standard `plugin_job`
+4. the existing `plugin_job worker` still executes the plugin later
+5. queries can see both the `scheduled_task_run` and the linked `plugin_job`
+
+Relevant code:
+
+- scheduler main loop: `apps/api-server/app/modules/scheduler/worker.py`
+- run dispatch: `apps/api-server/app/modules/scheduler/dispatchers.py`
+- plugin job enqueue: `apps/api-server/app/modules/plugin/service.py`
+
+The boundary must stay explicit:
+
+- a plugin does not register its own timers just because `manifest` contains `schedule`
+- `schedule` only means “this plugin may be called by the scheduled-task system”
+- timing, ownership, permissions, and idempotent windows are all owned by the scheduled-task system
+- plugin execution itself still reuses `plugin_job`; it does not create a second private background-task path
+
 ## 3. How The System Calls A Plugin
 
 One exception must be stated first: not every plugin is executed.
@@ -154,6 +178,12 @@ If you are building a locale-pack plugin, you can skip the whole execution secti
 2. translation resource files really exist
 3. the frontend locale registry can recognize and load them
 
+If you want a plugin to be usable by scheduled tasks, it must also pass 3 more gates:
+
+1. `manifest.triggers` must explicitly include `schedule`
+2. the plugin must be enabled for the current household or mount state
+3. the final scheduled-task creation still goes through backend validation again
+
 ## 4. What Input A Plugin Receives
 
 The unified runtime entry passes a `dict payload` into the plugin function.
@@ -181,12 +211,29 @@ What you can depend on today is:
 - the caller-provided `payload`
 - your own plugin logic and configuration
 
+If the invocation comes from a scheduled task, the `payload` also carries source-tracing fields:
+
+- `scheduled_task_definition_id`
+- `scheduled_task_run_id`
+- `owner_scope`
+- `owner_member_id`
+- `scheduled_for`
+
+These fields exist for tracing and idempotency support. They are not there so the plugin can mutate scheduler state directly.
+
 Simple, but clear.
 
 What the caller should depend on is now split into two layers:
 
 - task fields like `job_id`, `job_status`, and `queued`
 - the later execution result obtained through job queries, notifications, or responses
+
+If the source is a scheduled task, the `plugin_job` also stores:
+
+- `source_task_definition_id`
+- `source_task_run_id`
+
+That way a plugin background job can always be traced back to the scheduled-task definition and run that created it.
 
 ## 4.1 Plugin Function Signature Rules
 

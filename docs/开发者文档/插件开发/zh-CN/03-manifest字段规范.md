@@ -3,13 +3,14 @@
 ## 文档元数据
 
 - 文档目的：明确 `manifest.json` 的字段定义、硬约束、推荐写法和当前实现边界，避免开发者靠猜。
-- 当前版本：v1.2
+- 当前版本：v1.3
 - 关联文档：`docs/开发者文档/插件开发/zh-CN/01-插件开发总览.md`、`docs/开发者文档/插件开发/zh-CN/02-插件开发环境与本地调试.md`、`docs/开发者文档/插件开发/zh-CN/04-插件目录结构规范.md`、`apps/api-server/app/modules/plugin/schemas.py`
 - 修改记录：
   - `2026-03-13`：创建首版 manifest 字段规范。
   - `2026-03-13`：调整为按阅读顺序编号，并补充文档元数据。
   - `2026-03-14`：新增 `locale-pack` 类型和 `locales` 字段说明。
   - `2026-03-14`：补充地区上下文读取声明和地区 provider 运行字段。
+  - `2026-03-14`：补充计划触发资格和 `schedule_templates` 字段规则。
 
 这份文档就是把 `manifest.json` 说透，不让开发者靠猜。
 
@@ -152,6 +153,56 @@
 - 第一版建议值：`manual`、`schedule`、`agent`
 
 这里先写可控触发，不要发明一堆系统还没支持的自动触发语义。
+
+这里把计划任务边界直接说死：
+
+- 只有 `triggers` 里明确写了 `schedule`，这个插件才允许被计划任务系统引用
+- 没写 `schedule` 的插件，就算你手动填进计划任务目标里，后端也会拒绝
+- 插件作者不能靠 `manifest` 自己往系统里偷偷注册定时任务；正式入口还是计划任务系统和 `plugin_job`
+- 家庭或挂载层把插件禁用后，这个插件也不会再被新的计划任务分发链路接受
+
+说白了：`schedule` 是“有资格被计划任务调用”，不是“插件自己接管调度器”。
+
+### `schedule_templates`
+
+- 选填
+- 类型：`object[]`
+- 用途：给计划任务管理页或后续对话草稿提供推荐模板，不是直接创建任务
+
+每一项当前支持这些字段：
+
+- `code`：模板编码，插件内唯一
+- `name`：模板展示名
+- `description`：给人看的说明
+- `default_definition`：默认任务定义片段，比如推荐的 `trigger_type`、`schedule_type`、`schedule_expr`
+- `enabled_by_default`：默认是否建议启用
+
+最小示例：
+
+```json
+{
+  "triggers": ["manual", "schedule"],
+  "schedule_templates": [
+    {
+      "code": "daily-check",
+      "name": "每日巡检",
+      "description": "每天固定跑一次基础同步",
+      "default_definition": {
+        "trigger_type": "schedule",
+        "schedule_type": "daily",
+        "schedule_expr": "09:00"
+      },
+      "enabled_by_default": false
+    }
+  ]
+}
+```
+
+硬规则也别含糊：
+
+- 只要声明了 `schedule_templates`，`triggers` 就必须包含 `schedule`
+- `schedule_templates` 只是推荐入口，不会自动给任何家庭建任务
+- 模板里写的默认值只是建议，真正入库时还要再走计划任务 service 的权限、归属和目标校验
 
 ### `entrypoints`
 
@@ -341,8 +392,10 @@
 5. Agent 统一入口当前只允许 `connector` 和 `agent-skill`。
 6. `action` 插件还要额外过权限检查；高风险动作还要人工确认。
 7. `locale-pack` 至少要声明一个 `locales` 项，而且 `resource` 必须是插件目录内的相对路径。
-7. 如果插件要读家庭地区上下文，必须显式声明 `capabilities.context_reads.household_region_context=true`。
-8. 如果插件要作为地区 provider 运行，必须显式声明 `types=["region-provider"]` 和完整的 `capabilities.region_provider`。
+8. 如果插件要被计划任务系统引用，`triggers` 里必须显式包含 `schedule`。
+9. 如果声明了 `schedule_templates`，`triggers` 里也必须包含 `schedule`。
+10. 如果插件要读家庭地区上下文，必须显式声明 `capabilities.context_reads.household_region_context=true`。
+11. 如果插件要作为地区 provider 运行，必须显式声明 `types=["region-provider"]` 和完整的 `capabilities.region_provider`。
 
 ## 5. 第一版先不要写进 manifest 的东西
 
@@ -366,7 +419,9 @@
 5. `risk_level` 是否和插件真实风险匹配？
 6. 如果是 `action`，是否已经明确风险和权限边界？
 7. 如果是 `locale-pack`，是否已经提供 `locales/*.json` 这类真实资源文件，并写清回退语言？
-8. 有没有偷偷依赖远程安装、远程执行、沙箱、签名平台？
+8. 如果要给计划任务系统用，`triggers` 里是不是已经明确写了 `schedule`？
+9. 如果声明了 `schedule_templates`，是不是确认它们只是模板，不会误导别人以为插件会自动建任务？
+10. 有没有偷偷依赖远程安装、远程执行、沙箱、签名平台？
 
 如果你声明的 locale id 跟现有内置语言重复，也要先想清楚：你大概率不会生效。
 

@@ -3,12 +3,13 @@
 ## Document Metadata
 
 - Purpose: define `manifest.json` fields, hard constraints, recommended usage, and current implementation boundaries so developers do not need to guess.
-- Current version: v1.2
+- Current version: v1.3
 - Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `apps/api-server/app/modules/plugin/schemas.py`
 - Change log:
   - `2026-03-13`: created the first manifest specification.
   - `2026-03-13`: renamed by reading order and added document metadata.
   - `2026-03-14`: added `locale-pack` and `locales` field rules.
+  - `2026-03-14`: added schedule eligibility rules and `schedule_templates` field rules.
 
 This document explains `manifest.json` clearly so developers do not need to guess.
 
@@ -104,6 +105,12 @@ Keep the boundary clear:
 - it does not create execution jobs
 - it only registers locale metadata and translation resources such as Traditional Chinese UI text
 
+Scheduled-task integration adds one more boundary:
+
+- declaring a normal executable type is still not enough
+- if the plugin should be callable by scheduled tasks, `triggers` must explicitly include `schedule`
+- otherwise the scheduler rejects it as a target
+
 ### `permissions`
 
 - Required
@@ -139,6 +146,106 @@ Current behavior boundaries:
 - Recommended values for version one: `manual`, `schedule`, `agent`
 
 Keep triggers controlled. Do not invent automatic trigger semantics the system does not support yet.
+
+The schedule boundary must stay explicit:
+
+- only plugins that explicitly include `schedule` in `triggers` may be referenced by the scheduled-task system
+- if `schedule` is missing, the backend rejects that plugin as a scheduled-task target
+- plugin authors cannot use `manifest` to secretly register timers by themselves; the formal entry still goes through scheduled tasks and `plugin_job`
+- if the plugin is disabled at the registry or household mount layer, new scheduled-task dispatches must stop using it
+
+In plain words: `schedule` means "this plugin is allowed to be called by scheduled tasks", not "this plugin owns the scheduler".
+
+### `schedule_templates`
+
+- Optional
+- Type: `object[]`
+- Purpose: provide recommended templates for scheduled-task setup UIs or later conversation drafts; it does not create tasks by itself
+
+Each item currently supports these fields:
+
+- `code`: template code, unique inside the plugin
+- `name`: display name
+- `description`: human-readable explanation
+- `default_definition`: default task-definition fragment such as `trigger_type`, `schedule_type`, or `schedule_expr`
+- `enabled_by_default`: whether the template should be suggested as enabled by default
+
+Minimum example:
+
+```json
+{
+  "triggers": ["manual", "schedule"],
+  "schedule_templates": [
+    {
+      "code": "daily-check",
+      "name": "Daily Check",
+      "description": "Run one basic sync every morning",
+      "default_definition": {
+        "trigger_type": "schedule",
+        "schedule_type": "daily",
+        "schedule_expr": "09:00"
+      },
+      "enabled_by_default": false
+    }
+  ]
+}
+```
+
+Hard rules:
+
+- once `schedule_templates` is declared, `triggers` must include `schedule`
+- `schedule_templates` is only a recommendation surface; it never auto-creates tasks for any household
+- template defaults are only suggestions; the final stored task still goes through scheduled-task validation for ownership, permissions, and target checks
+
+The schedule boundary must stay explicit:
+
+- only plugins that explicitly include `schedule` in `triggers` may be referenced by the scheduled-task system
+- if `schedule` is missing, the backend rejects that plugin as a scheduled-task target
+- plugin authors cannot use `manifest` to secretly register timers by themselves; the formal entry still goes through scheduled tasks and `plugin_job`
+- if the plugin is disabled at the registry or household mount layer, new scheduled-task dispatches must stop using it
+
+In plain words: `schedule` means "this plugin is allowed to be called by scheduled tasks", not "this plugin owns the scheduler".
+
+### `schedule_templates`
+
+- Optional
+- Type: `object[]`
+- Purpose: provide recommended templates for scheduled-task setup UIs or later conversation drafts; it does not create tasks by itself
+
+Each item currently supports these fields:
+
+- `code`: template code, unique inside the plugin
+- `name`: display name
+- `description`: human-readable explanation
+- `default_definition`: default task-definition fragment such as `trigger_type`, `schedule_type`, or `schedule_expr`
+- `enabled_by_default`: whether the template should be suggested as enabled by default
+
+Minimum example:
+
+```json
+{
+  "triggers": ["manual", "schedule"],
+  "schedule_templates": [
+    {
+      "code": "daily-check",
+      "name": "Daily Check",
+      "description": "Run one basic sync every morning",
+      "default_definition": {
+        "trigger_type": "schedule",
+        "schedule_type": "daily",
+        "schedule_expr": "09:00"
+      },
+      "enabled_by_default": false
+    }
+  ]
+}
+```
+
+Hard rules:
+
+- once `schedule_templates` is declared, `triggers` must include `schedule`
+- `schedule_templates` is only a recommendation surface; it never auto-creates tasks for any household
+- template defaults are only suggestions; the final stored task still goes through scheduled-task validation for ownership, permissions, and target checks
 
 ### `entrypoints`
 
@@ -259,6 +366,8 @@ These are not suggestions. Breaking them will cause real problems:
 5. The unified Agent entry currently allows only `connector` and `agent-skill`.
 6. `action` plugins also go through permission checks, and high-risk actions require manual confirmation.
 7. `locale-pack` must declare at least one `locales` item, and each `resource` must stay inside the plugin directory.
+8. If a plugin should be usable by scheduled tasks, `triggers` must explicitly include `schedule`.
+9. If `schedule_templates` is declared, `triggers` must also include `schedule`.
 
 ## 5. Fields That Should Not Go Into Manifest Yet
 
@@ -281,7 +390,9 @@ In short: keep the runtime declaration clear. Do not stuff future open-platform 
 5. Does `risk_level` match the actual plugin risk?
 6. If this is an `action` plugin, are risk and permission boundaries clearly declared?
 7. If this is a `locale-pack`, did I provide real `locales/*.json` files and a clear fallback locale?
-8. Am I secretly depending on remote install, remote execution, sandboxing, or a signing platform?
+8. If this plugin should be used by scheduled tasks, did I explicitly declare `schedule` in `triggers`?
+9. If I declared `schedule_templates`, did I keep them as templates instead of pretending they auto-create tasks?
+10. Am I secretly depending on remote install, remote execution, sandboxing, or a signing platform?
 
 If the locale id already exists as a built-in locale, assume your third-party pack will probably not win.
 
