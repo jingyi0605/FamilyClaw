@@ -205,25 +205,80 @@
   - 对应需求：需求 5、需求 6
   - 对应设计：`design.md` §5.2、§6.1、§7.2
 
-- [ ] 3.3 明确配置提取边界并复用现有 bootstrap 提取逻辑
-  - 状态：未开始
-  - 这一步到底做什么：把“哪些聊天能提配置，哪些不能”写死到实现里，别让普通闲聊乱改 Agent 配置。
-  - 做完以后能看到什么结果：初始化向导继续可用，普通聊天不再有隐形配置副作用。
+- [x] 3.3 用 AI 意图识别替换关键词主路由，并收口配置/记忆/提醒边界
+  - 状态：已完成（2026-03-13）
+  - 这一步到底做什么：把聊天主路由从关键词 `if/else` 改成 AI 意图识别，先判断这轮更像闲聊、家庭问答、改配置、写记忆还是建提醒，再进入对应提取链路。
+  - 做完以后能看到什么结果：`你叫什么` 这类普通对话回到正常聊天；`以后你就叫阿福` 这种明确配置请求会走配置提取；低置信度不会乱闯动作链路。
   - 这一步依赖什么：2.1
   - 开始前先看：
-    - `design.md` §5.1
-    - `apps/api-server/app/modules/agent/bootstrap_service.py`
+    - `design.md` §4.1、§5.1、§5.2、§5.4
+    - `apps/api-server/app/modules/conversation/orchestrator.py`
+    - `apps/api-server/app/modules/llm_task/definitions.py`
   - 主要改哪些文件：
+    - `apps/api-server/app/modules/conversation/orchestrator.py`
     - `apps/api-server/app/modules/conversation/service.py`
-    - `apps/api-server/app/modules/agent/bootstrap_service.py`
-    - `apps/user-web/src/pages/ConversationPage.tsx`
-  - 这一步明确不做什么：不把普通聊天直接做成 AI 配置页面。
+    - `apps/api-server/app/modules/llm_task/definitions.py`
+    - `apps/api-server/app/modules/llm_task/output_models.py`
+    - `apps/api-server/tests/test_conversation_foundation.py`
+  - 这一步明确不做什么：不把 AI 识别结果直接等同于执行；不靠继续堆关键词补丁假装修好了。
   - 怎么验证是不是真的做完了：
-    1. bootstrap 提取链路不受影响
-    2. 普通聊天不会自动覆盖 Agent 配置
-    3. 显式配置模式时才允许生成配置建议
+    1. `你叫什么` 走正常聊天，不再误入配置提取
+    2. `以后你就叫阿福` 走配置意图，并生成配置建议而不是直接执行
+    3. 普通闲聊不会误入配置、记忆、提醒动作链路
+    4. 低置信度判断会回落到 `free_chat`
+    5. `python -m unittest tests.test_conversation_foundation`
+    6. `python -m unittest tests.test_realtime_ws`
   - 对应需求：需求 5、需求 7
-  - 对应设计：`design.md` §5.1、§9.3、§10
+  - 对应设计：`design.md` §4.1、§5.1、§5.2、§5.4、§10
+
+- [x] 3.4 增加 AI 自发动作策略层和动作执行留痕
+  - 状态：已完成（2026-03-13）
+  - 这一步到底做什么：在 orchestrator 后面补一层真正的策略判断，不再让 AI 识别到动作后直接拍脑袋执行。
+  - 做完以后能看到什么结果：同一类动作现在会按 `ask / notify / auto` 三档分别处理；动作记录、执行结果、撤回信息、来源消息都会落库。
+  - 这一步依赖什么：1.1、3.1、3.2
+  - 开始前先看：
+    - `apps/api-server/app/modules/conversation/orchestrator.py`
+    - `apps/api-server/app/modules/conversation/service.py`
+    - `apps/api-server/app/modules/agent/schemas.py`
+    - `apps/api-server/migrations/20260311-数据库迁移规范.md`
+  - 主要改哪些文件：
+    - `apps/api-server/app/modules/conversation/`
+    - `apps/api-server/app/modules/agent/`
+    - `apps/api-server/migrations/versions/`
+  - 这一步明确不做什么：先不把场景触发、设备控制一口气全自动接完。
+  - 怎么验证是不是真的做完了：
+    1. 记忆、配置、提醒动作都能按策略生成待确认、已执行通知或自动留痕
+    2. 动作记录能追溯到会话、消息、意图和策略
+    3. `python -m unittest tests.test_conversation_foundation`
+    4. `python -m unittest tests.test_realtime_ws`
+  - 对应需求：需求 1、需求 3、需求 5、需求 8
+  - 对应设计：`design.md` §5、§6、§9
+
+- [x] 3.5 增加环境变量控制的会话调试日志，不把技术细节硬塞前端
+  - 状态：已完成（2026-03-13）
+  - 这一步到底做什么：通过环境变量统一控制会话调试日志是否开启，并在后端按阶段记录每轮流程日志，方便排查 AI 意图识别、主路由和策略层到底怎么走的。
+  - 做完以后能看到什么结果：普通聊天页面保持干净；需要排障时，改 `.env` 并重启后端，就能单独查看某个会话、某个 `request_id` 的完整处理链路。
+  - 这一步依赖什么：3.3、3.4
+  - 开始前先看：
+    - `apps/api-server/app/modules/conversation/service.py`
+    - `apps/api-server/app/modules/conversation/orchestrator.py`
+    - `apps/api-server/migrations/20260311-数据库迁移规范.md`
+  - 主要改哪些文件：
+    - `apps/api-server/app/modules/conversation/models.py`
+    - `apps/api-server/app/modules/conversation/repository.py`
+    - `apps/api-server/app/modules/conversation/service.py`
+    - `apps/api-server/app/api/v1/endpoints/conversations.py`
+    - `apps/api-server/migrations/versions/`
+    - `apps/api-server/tests/test_conversation_foundation.py`
+  - 这一步明确不做什么：不把调试字段默认展示到主聊天页；不再做会话级开关接口；不做一整套复杂后台。
+  - 怎么验证是不是真的做完了：
+    1. `.env` 里的 `FAMILYCLAW_CONVERSATION_DEBUG_LOG_ENABLED` 可控制日志是否落库
+    2. 调试开启后，一轮聊天能看到 `turn.received / orchestrator.completed / action.policy.applied / turn.completed|failed`
+    3. 可按 `request_id` 查看单轮日志，且 `provider_runtime` 文件日志能看到 `request_id / first_content_ms / total_ms`
+    4. `python -m unittest tests.test_conversation_foundation`
+    5. `python -m unittest tests.test_realtime_ws`
+  - 对应需求：需求 3、需求 5、需求 8
+  - 对应设计：`design.md` §6.3、§8.2
 
 ---
 
@@ -271,6 +326,29 @@
     3. 多账号切换不串会话
   - 对应需求：需求 1、需求 6、需求 7
   - 对应设计：`design.md` §7.3、§9.1
+
+- [x] 4.3 聊天页接入 ask / notify / auto 三种动作展示
+  - 状态：已完成（2026-03-13）
+  - 这一步到底做什么：把普通回复、AI 识别出的动作、动作执行反馈拆开显示，别再把动作信息塞进一坨文本里。
+  - 做完以后能看到什么结果：`ask` 会显示确认卡片，`notify` 会显示已执行通知和撤回入口，`auto` 只显示动作图标，点开再看细节。
+  - 这一步依赖什么：3.4、4.1
+  - 开始前先看：
+    - `apps/user-web/src/pages/ConversationPageV2.tsx`
+    - `apps/user-web/src/lib/types.ts`
+    - `apps/user-web/src/lib/api.ts`
+    - `apps/user-web/src/components/AgentConfigPanel.tsx`
+  - 主要改哪些文件：
+    - `apps/user-web/src/pages/ConversationPageV2.tsx`
+    - `apps/user-web/src/styles.css`
+    - `apps/user-web/src/lib/`
+    - `apps/admin-web/src/pages/AiConfigPage.tsx`
+  - 这一步明确不做什么：先不把动作详情做成复杂时间线编辑器。
+  - 怎么验证是不是真的做完了：
+    1. `cd apps/user-web && npm.cmd run build`
+    2. `cd apps/admin-web && npm.cmd run build`
+    3. 聊天气泡下能区分普通回复、动作卡片和动作反馈
+  - 对应需求：需求 2、需求 3、需求 6
+  - 对应设计：`design.md` §7、§9、§10
 
 ---
 
