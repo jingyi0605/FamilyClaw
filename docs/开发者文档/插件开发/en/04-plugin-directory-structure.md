@@ -3,11 +3,12 @@
 ## Document Metadata
 
 - Purpose: define how a plugin directory should be organized, where each entrypoint file should live, and what the minimum maintainable layout looks like.
-- Current version: v1.1
+- Current version: v1.2
 - Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`
 - Change log:
   - `2026-03-13`: created the first plugin directory structure specification.
   - `2026-03-13`: renamed by reading order and added document metadata.
+  - `2026-03-14`: added a `locale-pack` directory example.
 
 This document answers one question only: how should a plugin directory be laid out?
 
@@ -112,6 +113,13 @@ They do not need to be exactly identical because Python modules usually use unde
 - recommended function name: `run`
 - exposes controlled capabilities only, not Agent flow overrides
 
+### `locales/`
+
+- stores translation resource files for `locale-pack` plugins
+- recommend one file per locale, such as `locales/zh-TW.json`
+- keep data as plain key-value translations, not executable code
+- every `manifest.locales[].resource` must point to a real file here
+
 ### `README.md`
 
 It should at least explain:
@@ -172,7 +180,29 @@ If an action is high risk, such as a door lock, the directory structure does not
 
 Do not invent a special directory hierarchy just for high-risk actions. That would only create junk complexity.
 
-## 7. Directory Content That Is Not Recommended Yet
+## 7. How To Lay Out Locale-Pack Plugins
+
+`locale-pack` is not an executable plugin. It does not need `plugin/connector.py` or other runtime entry files.
+
+The minimum workable layout is:
+
+```text
+locale_zh_tw_pack/
+  manifest.json
+  README.md
+  locales/
+    zh-TW.json
+```
+
+What actually matters is simple:
+
+- `manifest.json` declares `types: ["locale-pack"]`
+- the translation resource file really exists
+- `manifest.locales[].resource` and the real file path match exactly
+
+If one plugin provides multiple locales, keep it as one plugin directory and add more files under `locales/`.
+
+## 8. Directory Content That Is Not Recommended Yet
 
 Do not add these in version one unless the Spec explicitly expands scope later:
 

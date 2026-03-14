@@ -2,12 +2,14 @@
  * App 路由配置
  * ============================================================ */
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { useEffect } from 'react';
 import { useI18n } from './i18n';
 import { AppLayout } from './layouts/AppLayout';
 import { SetupGuard } from './layouts/SetupGuard';
 import { HouseholdProvider } from './state/household';
 import { SetupProvider } from './state/setup';
 import { useAuthContext } from './state/auth';
+import { api } from './lib/api';
 import { HomePage } from './pages/HomePage';
 import { FamilyLayout, FamilyOverview, FamilyRooms, FamilyMembers, FamilyRelationships } from './pages/FamilyPage';
 import { AssistantPage } from './pages/AssistantPage';
@@ -23,10 +25,54 @@ import {
   SettingsIntegrations,
 } from './pages/SettingsPage';
 import { LoginPage } from './pages/LoginPage';
+import { useHouseholdContext } from './state/household';
+
+function HouseholdLocaleSync() {
+  const { currentHouseholdId } = useHouseholdContext();
+  const { replacePluginLocales } = useI18n();
+
+  useEffect(() => {
+    if (!currentHouseholdId) {
+      replacePluginLocales([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    void api.listHouseholdLocales(currentHouseholdId)
+      .then(response => {
+        if (cancelled) return;
+        replacePluginLocales(
+          response.items.map(item => ({
+            id: item.locale_id,
+            label: item.label,
+            nativeLabel: item.native_label,
+            fallback: item.fallback ?? undefined,
+            messages: item.messages,
+            source: 'plugin' as const,
+            sourceType: item.source_type,
+            pluginId: item.plugin_id,
+            overriddenPluginIds: item.overridden_plugin_ids,
+          })),
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        replacePluginLocales([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentHouseholdId, replacePluginLocales]);
+
+  return null;
+}
 
 function AuthenticatedUserApp() {
   return (
     <HouseholdProvider>
+      <HouseholdLocaleSync />
       <SetupProvider>
         <Routes>
           <Route

@@ -32,6 +32,17 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(["connector", "memory-ingestor"], manifest.types)
         self.assertEqual("app.plugins.builtin.health_basic.ingestor.transform", manifest.entrypoints.memory_ingestor)
 
+    def test_load_locale_pack_manifest_without_entrypoints(self) -> None:
+        manifest = load_plugin_manifest(
+            self.builtin_root / "locale_zh_tw_pack" / "manifest.json"
+        )
+
+        self.assertEqual("locale-zh-tw", manifest.id)
+        self.assertEqual(["locale-pack"], manifest.types)
+        self.assertEqual(1, len(manifest.locales))
+        self.assertEqual("zh-TW", manifest.locales[0].id)
+        self.assertIsNone(manifest.entrypoints.connector)
+
     def test_reject_manifest_missing_required_field(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             manifest_path = Path(tempdir) / "manifest.json"
@@ -162,15 +173,20 @@ class PluginManifestTests(unittest.TestCase):
         manifests = discover_plugin_manifests(self.builtin_root)
 
         manifest_ids = {item.id for item in manifests}
-        self.assertEqual(2, len(manifests))
+        self.assertGreaterEqual(len(manifests), 2)
         self.assertIn("homeassistant-device-sync", manifest_ids)
         self.assertIn("health-basic-reader", manifest_ids)
+        self.assertIn("locale-zh-tw", manifest_ids)
 
     def test_list_registered_plugins_defaults_to_enabled(self) -> None:
         snapshot = list_registered_plugins(self.builtin_root)
 
-        self.assertEqual(2, len(snapshot.items))
+        self.assertGreaterEqual(len(snapshot.items), 2)
         self.assertTrue(all(item.enabled for item in snapshot.items))
+        locale_pack = next(item for item in snapshot.items if item.id == "locale-zh-tw")
+        self.assertEqual(["locale-pack"], locale_pack.types)
+        self.assertEqual("zh-TW", locale_pack.locales[0].id)
+
     def test_disable_and_enable_plugin_persists_state(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             state_file = Path(tempdir) / "plugin_registry_state.json"
@@ -518,6 +534,30 @@ class PluginManifestTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual("plugin_execution_failed", result.error_code)
         self.assertIn("已禁用", result.error_message or "")
+
+    def test_reject_locale_pack_manifest_without_locales(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-locale-pack",
+                        "name": "坏语言包",
+                        "version": "0.1.0",
+                        "types": ["locale-pack"],
+                        "permissions": [],
+                        "risk_level": "low",
+                        "triggers": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("至少要声明一个 locale", str(context.exception))
 
     def test_execute_plugin_returns_failure_when_handler_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

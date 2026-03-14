@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 PluginType = Literal["connector", "memory-ingestor", "action", "agent-skill", "region-provider"]
-PluginManifestType = Literal["connector", "memory-ingestor", "action", "agent-skill", "region-provider"]
+PluginManifestType = Literal["connector", "memory-ingestor", "action", "agent-skill", "locale-pack", "region-provider"]
 RiskLevel = Literal["low", "medium", "high"]
 PluginSourceType = Literal["builtin", "official", "third_party"]
 PluginExecutionBackend = Literal["in_process", "subprocess_runner"]
@@ -99,6 +100,38 @@ class PluginManifestCapabilities(BaseModel):
     region_provider: PluginManifestRegionProviderSpec | None = None
 
 
+class PluginManifestLocaleSpec(BaseModel):
+    id: str = Field(min_length=1, max_length=32)
+    label: str = Field(min_length=1, max_length=100)
+    native_label: str = Field(min_length=1, max_length=100)
+    resource: str = Field(min_length=1, max_length=255)
+    fallback: str | None = Field(default=None, min_length=1, max_length=32)
+
+    @field_validator("id", "label", "native_label", "fallback")
+    @classmethod
+    def validate_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+    @field_validator("resource")
+    @classmethod
+    def validate_resource(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("resource 不能为空")
+
+        resource_path = Path(normalized)
+        if resource_path.is_absolute():
+            raise ValueError("resource 必须是插件目录内的相对路径")
+        if ".." in resource_path.parts:
+            raise ValueError("resource 不能跳出插件目录")
+        return normalized.replace("\\", "/")
+
+
 class PluginManifest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=100)
@@ -107,8 +140,9 @@ class PluginManifest(BaseModel):
     permissions: list[str] = Field(default_factory=list)
     risk_level: RiskLevel = "low"
     triggers: list[str] = Field(default_factory=list)
-    entrypoints: PluginManifestEntrypoints
+    entrypoints: PluginManifestEntrypoints = Field(default_factory=PluginManifestEntrypoints)
     capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
+    locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -150,6 +184,16 @@ class PluginManifest(BaseModel):
     def validate_triggers(cls, value: list[str]) -> list[str]:
         return _normalize_text_list(value, field_name="triggers")
 
+    @field_validator("locales")
+    @classmethod
+    def validate_locales(cls, value: list[PluginManifestLocaleSpec]) -> list[PluginManifestLocaleSpec]:
+        seen: set[str] = set()
+        for item in value:
+            if item.id in seen:
+                raise ValueError(f"locales 里不能有重复 locale id: {item.id}")
+            seen.add(item.id)
+        return value
+
     @model_validator(mode="before")
     @classmethod
     def normalize_entrypoint_keys(cls, data: Any) -> Any:
@@ -171,12 +215,18 @@ class PluginManifest(BaseModel):
     def validate_required_entrypoints(self) -> "PluginManifest":
         missing_keys: list[str] = []
         for plugin_type in self.types:
+            if plugin_type == "locale-pack":
+                continue
             entrypoint_key = ENTRYPOINT_KEY_BY_TYPE[plugin_type]
             if getattr(self.entrypoints, entrypoint_key) is None:
                 missing_keys.append(entrypoint_key)
         if missing_keys:
             missing_text = ", ".join(missing_keys)
             raise ValueError(f"entrypoints 缺少类型对应入口: {missing_text}")
+        if "locale-pack" in self.types and not self.locales:
+            raise ValueError("locale-pack 插件至少要声明一个 locale")
+        if "locale-pack" not in self.types and self.locales:
+            raise ValueError("只有 locale-pack 插件才能声明 locales")
         self._validate_region_provider_capability()
         return self
 
@@ -230,6 +280,7 @@ class PluginRegistryItem(BaseModel):
     manifest_path: str
     entrypoints: PluginManifestEntrypoints
     capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
+    locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
     source_type: PluginSourceType = "builtin"
     execution_backend: PluginExecutionBackend | None = None
     runner_config: PluginRunnerConfig | None = None
@@ -237,6 +288,22 @@ class PluginRegistryItem(BaseModel):
 
 class PluginRegistrySnapshot(BaseModel):
     items: list[PluginRegistryItem] = Field(default_factory=list)
+
+
+class PluginLocaleRead(BaseModel):
+    plugin_id: str
+    locale_id: str
+    label: str
+    native_label: str
+    fallback: str | None = None
+    source_type: PluginSourceType
+    messages: dict[str, str] = Field(default_factory=dict)
+    overridden_plugin_ids: list[str] = Field(default_factory=list)
+
+
+class PluginLocaleListRead(BaseModel):
+    household_id: str
+    items: list[PluginLocaleRead] = Field(default_factory=list)
 
 
 class PluginMountBase(BaseModel):
@@ -278,6 +345,7 @@ class PluginMountRead(BaseModel):
     triggers: list[str]
     entrypoints: PluginManifestEntrypoints
     capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
+    locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
     source_type: Literal["official", "third_party"]
     execution_backend: Literal["subprocess_runner"] = "subprocess_runner"
     manifest_path: str

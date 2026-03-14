@@ -72,6 +72,7 @@ from app.modules.plugin import (
     ainvoke_agent_plugin,
     AgentActionPluginInvokeRequest,
     AgentActionPluginInvokeResult,
+    PluginLocaleListRead,
     PluginMountCreate,
     PluginMountRead,
     PluginMountUpdate,
@@ -79,6 +80,7 @@ from app.modules.plugin import (
     confirm_agent_action_plugin,
     delete_plugin_mount,
     invoke_agent_action_plugin,
+    list_registered_plugin_locales_for_household,
     list_plugin_mounts,
     list_registered_plugins_for_household,
     register_plugin_mount,
@@ -524,6 +526,16 @@ def list_household_plugins_endpoint(
 ) -> PluginRegistrySnapshot:
     ensure_actor_can_access_household(actor, household_id)
     return list_registered_plugins_for_household(db, household_id=household_id)
+
+
+@router.get("/{household_id}/locales", response_model=PluginLocaleListRead)
+def list_household_plugin_locales_endpoint(
+    household_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> PluginLocaleListRead:
+    ensure_actor_can_access_household(actor, household_id)
+    return list_registered_plugin_locales_for_household(db, household_id=household_id)
 
 
 @router.get("/{household_id}/plugin-mounts", response_model=list[PluginMountRead])

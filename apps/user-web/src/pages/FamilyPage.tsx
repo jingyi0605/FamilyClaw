@@ -4,7 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { DEFAULT_REGION_COUNTRY, DEFAULT_REGION_PROVIDER, RegionSelector, type RegionSelectionFormValue } from '../components/RegionSelector';
-import { useI18n } from '../i18n';
+import { formatLocaleOptionLabel, getLocaleLabel, listLocaleDefinitions, useI18n } from '../i18n';
 import { PageHeader, Card, Section } from '../components/base';
 import { useHouseholdContext } from '../state/household';
 import { api } from '../lib/api';
@@ -45,11 +45,7 @@ type FamilyWorkspaceValue = {
 const FamilyWorkspaceContext = createContext<FamilyWorkspaceValue | null>(null);
 
 function formatLocale(locale: string | null | undefined) {
-  switch (locale) {
-    case 'zh-CN': return '中文';
-    case 'en-US': return 'English';
-    default: return locale ?? '-';
-  }
+  return getLocaleLabel(locale);
 }
 
 function formatFamilyRegion(household: Household | null | undefined) {
@@ -636,8 +632,9 @@ export function FamilyOverview() {
                 value={editForm.locale}
                 onChange={event => setEditForm(current => ({ ...current, locale: event.target.value }))}
               >
-                <option value="zh-CN">中文</option>
-                <option value="en-US">English</option>
+                {listLocaleDefinitions().map(localeOption => (
+                  <option key={localeOption.id} value={localeOption.id}>{formatLocaleOptionLabel(localeOption)}</option>
+                ))}
               </select>
             </div>
           </div>

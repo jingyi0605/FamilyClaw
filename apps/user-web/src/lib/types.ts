@@ -12,6 +12,22 @@ export type Household = {
   updated_at: string;
 };
 
+export type PluginLocale = {
+  plugin_id: string;
+  locale_id: string;
+  label: string;
+  native_label: string;
+  fallback: string | null;
+  source_type: 'builtin' | 'official' | 'third_party';
+  messages: Record<string, string>;
+  overridden_plugin_ids: string[];
+};
+
+export type PluginLocaleListResponse = {
+  household_id: string;
+  items: PluginLocale[];
+};
+
 export type RegionSelection = {
   provider_code: string;
   country_code: string;

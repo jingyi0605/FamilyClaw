@@ -1,2 +1,14 @@
-export { I18nProvider, useI18n, type LocaleId } from './I18nProvider';
-export type { MessageKey, LocaleMessages } from './zh-CN';
+export { I18nProvider, useI18n } from './I18nProvider';
+export {
+  getLocaleDefinition,
+  getLocaleLabel,
+  formatLocaleOptionLabel,
+  getLocaleSourceLabel,
+  isRegisteredLocale,
+  listLocaleDefinitions,
+  registerLocaleDefinitions,
+  resolveSupportedLocale,
+  type LocaleDefinition,
+  type LocaleId,
+} from './localeRegistry';
+export type { CompleteLocaleMessages, MessageKey, LocaleMessages } from './zh-CN';

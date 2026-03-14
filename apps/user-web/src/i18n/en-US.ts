@@ -1,9 +1,9 @@
 /* ============================================================
  * 国际化 - 英文语言包
  * ============================================================ */
-import type { LocaleMessages } from './zh-CN';
+import type { CompleteLocaleMessages } from './zh-CN';
 
-const enUS: LocaleMessages = {
+const enUS = {
   /* 导航 */
   'nav.home': 'Home',
   'nav.family': 'Family',
@@ -170,6 +170,14 @@ const enUS: LocaleMessages = {
   'settings.language.dateFormat': 'Date Format',
   'settings.language.timeFormat': 'Time Format',
   'settings.language.timezone': 'Timezone',
+  'settings.language.localeCatalog': 'Available Locale Sources',
+  'settings.language.sourceBuiltin': 'Built-in',
+  'settings.language.sourceOfficial': 'Official Plugin',
+  'settings.language.sourceThirdParty': 'Third-party Plugin',
+  'settings.language.pluginId': 'Plugin ID',
+  'settings.language.fallback': 'Fallback Locale',
+  'settings.language.overrides': 'Overrides Plugins',
+  'settings.language.none': 'None',
 
   /* 设置 - 通知 */
   'settings.notifications.method': 'Notification Method',
@@ -223,6 +231,6 @@ const enUS: LocaleMessages = {
   'common.more': 'More',
   'common.viewAll': 'View All',
   'common.comingSoon': 'Coming Soon',
-};
+} satisfies CompleteLocaleMessages;
 
 export default enUS;

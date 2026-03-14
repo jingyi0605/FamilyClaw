@@ -31,6 +31,8 @@ from app.modules.plugin.schemas import (
     PluginExecutionResult,
     PluginJobCreate,
     PluginJobRead,
+    PluginLocaleListRead,
+    PluginLocaleRead,
     PluginMountCreate,
     PluginMountRead,
     PluginMountUpdate,
@@ -48,6 +50,13 @@ BUILTIN_PLUGIN_ROOT = BASE_DIR / "app" / "plugins" / "builtin"
 REGISTRY_STATE_PATH = BASE_DIR / "data" / "plugin_registry_state.json"
 PLUGIN_EXECUTOR_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="plugin-worker")
 PLUGIN_SYSTEM_CONTEXT_KEY = "_system_context"
+LOCALE_SOURCE_PRIORITY: dict[PluginSourceType, int] = {
+    "builtin": 3,
+    "official": 2,
+    "third_party": 1,
+}
+
+
 @dataclass(slots=True)
 class PluginExecutionContext:
     root_dir: str | Path | None
@@ -115,6 +124,7 @@ def list_registered_plugins(
                 manifest_path=str(manifest_path),
                 entrypoints=manifest.entrypoints,
                 capabilities=manifest.capabilities,
+                locales=manifest.locales,
             )
             for manifest_path, manifest in manifest_entries
         ]
@@ -146,6 +156,7 @@ def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest
             "manifest_path": mount.manifest_path,
             "entrypoints": manifest.entrypoints.model_dump(mode="json"),
             "capabilities": manifest.capabilities.model_dump(mode="json"),
+            "locales": [item.model_dump(mode="json") for item in manifest.locales],
             "source_type": mount.source_type,
             "execution_backend": mount.execution_backend,
             "runner_config": _build_runner_config_from_mount(mount).model_dump(mode="json"),
@@ -168,6 +179,7 @@ def _to_plugin_mount_read(row: PluginMount, *, manifest: PluginManifest | None =
             "triggers": current_manifest.triggers,
             "entrypoints": current_manifest.entrypoints.model_dump(mode="json"),
             "capabilities": current_manifest.capabilities.model_dump(mode="json"),
+            "locales": [item.model_dump(mode="json") for item in current_manifest.locales],
             "source_type": row.source_type,
             "execution_backend": row.execution_backend,
             "manifest_path": row.manifest_path,
@@ -248,6 +260,77 @@ def list_registered_plugins_for_household(
 def list_plugin_mounts(db: Session, *, household_id: str) -> list[PluginMountRead]:
     get_household_or_404(db, household_id)
     return [_to_plugin_mount_read(row) for row in repository.list_plugin_mounts(db, household_id=household_id)]
+
+
+def list_registered_plugin_locales_for_household(
+    db: Session,
+    *,
+    household_id: str,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> PluginLocaleListRead:
+    snapshot = list_registered_plugins_for_household(
+        db,
+        household_id=household_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
+    items_by_locale_id: dict[str, PluginLocaleRead] = {}
+
+    for plugin in snapshot.items:
+        if not plugin.enabled or "locale-pack" not in plugin.types:
+            continue
+
+        manifest_dir = Path(plugin.manifest_path).resolve().parent
+        for locale_spec in plugin.locales:
+            resource_path = (manifest_dir / locale_spec.resource).resolve()
+            try:
+                if not resource_path.exists() or not resource_path.is_file():
+                    raise PluginManifestValidationError(f"语言资源文件不存在: {resource_path}")
+                raw_payload = json.loads(resource_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise PluginManifestValidationError(f"语言资源 JSON 解析失败: {resource_path}: {exc.msg}") from exc
+
+            if not isinstance(raw_payload, dict):
+                raise PluginManifestValidationError(f"语言资源顶层必须是对象: {resource_path}")
+
+            messages: dict[str, str] = {}
+            for key, value in raw_payload.items():
+                if not isinstance(key, str) or not isinstance(value, str):
+                    raise PluginManifestValidationError(f"语言资源必须是字符串 key-value: {resource_path}")
+                messages[key] = value
+
+            candidate = PluginLocaleRead(
+                plugin_id=plugin.id,
+                locale_id=locale_spec.id,
+                label=locale_spec.label,
+                native_label=locale_spec.native_label,
+                fallback=locale_spec.fallback,
+                source_type=plugin.source_type,
+                messages=messages,
+            )
+
+            existing = items_by_locale_id.get(candidate.locale_id)
+            if existing is None:
+                items_by_locale_id[candidate.locale_id] = candidate
+                continue
+
+            existing_priority = LOCALE_SOURCE_PRIORITY[existing.source_type]
+            candidate_priority = LOCALE_SOURCE_PRIORITY[candidate.source_type]
+            if candidate_priority > existing_priority or (
+                candidate_priority == existing_priority and candidate.plugin_id < existing.plugin_id
+            ):
+                candidate.overridden_plugin_ids = [
+                    *existing.overridden_plugin_ids,
+                    existing.plugin_id,
+                ]
+                items_by_locale_id[candidate.locale_id] = candidate
+            else:
+                existing.overridden_plugin_ids.append(candidate.plugin_id)
+
+    items = list(items_by_locale_id.values())
+    items.sort(key=lambda item: (item.locale_id, -LOCALE_SOURCE_PRIORITY[item.source_type], item.plugin_id))
+    return PluginLocaleListRead(household_id=household_id, items=items)
 
 
 def register_plugin_mount(

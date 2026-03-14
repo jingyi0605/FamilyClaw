@@ -168,6 +168,14 @@ const zhCN = {
   'settings.language.dateFormat': '日期格式',
   'settings.language.timeFormat': '时间格式',
   'settings.language.timezone': '时区',
+  'settings.language.localeCatalog': '可用语言来源',
+  'settings.language.sourceBuiltin': '内置',
+  'settings.language.sourceOfficial': '官方插件',
+  'settings.language.sourceThirdParty': '第三方插件',
+  'settings.language.pluginId': '插件 ID',
+  'settings.language.fallback': '回退语言',
+  'settings.language.overrides': '覆盖了这些插件',
+  'settings.language.none': '无',
 
   /* 设置 - 通知 */
   'settings.notifications.method': '通知方式',
@@ -221,8 +229,10 @@ const zhCN = {
   'common.more': '更多',
   'common.viewAll': '查看全部',
   'common.comingSoon': '即将推出',
-};
+} as const;
 
 export type MessageKey = keyof typeof zhCN;
-export type LocaleMessages = Record<MessageKey, string>;
-export default zhCN as LocaleMessages;
+export type CompleteLocaleMessages = Record<MessageKey, string>;
+export type LocaleMessages = Partial<CompleteLocaleMessages>;
+
+export default zhCN satisfies CompleteLocaleMessages;

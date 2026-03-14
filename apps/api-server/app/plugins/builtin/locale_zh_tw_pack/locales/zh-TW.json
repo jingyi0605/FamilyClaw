@@ -1,0 +1,15 @@
+{
+  "nav.home": "首頁",
+  "nav.family": "家庭",
+  "nav.assistant": "對話",
+  "nav.memories": "記憶",
+  "nav.settings": "設定",
+  "home.welcome": "歡迎回來",
+  "home.greeting": "今天有什麼可以幫到你的？",
+  "family.language": "預設語言",
+  "settings.language": "語言與地區",
+  "settings.language.interfaceLang": "介面語言",
+  "common.save": "儲存",
+  "common.cancel": "取消",
+  "common.confirm": "確認"
+}

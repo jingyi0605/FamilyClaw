@@ -3,7 +3,7 @@
  * ============================================================ */
 import { useEffect, useMemo, useState } from 'react';
 import { Outlet, useMatch, Navigate } from 'react-router-dom';
-import { useI18n } from '../i18n';
+import { formatLocaleOptionLabel, getLocaleSourceLabel, useI18n } from '../i18n';
 import { useTheme, themeList, type ThemeId } from '../theme';
 import { PageHeader, Card, Section, ToggleSwitch } from '../components/base';
 import { SettingsNav } from '../components/SettingsNav';
@@ -255,7 +255,18 @@ export function LegacySettingsAi() {
 
 /* ---- 语言与地区 ---- */
 export function SettingsLanguage() {
-  const { t, locale, setLocale } = useI18n();
+  const { t, locale, setLocale, locales } = useI18n();
+
+  function renderLocaleSource(localeItem: typeof locales[number]) {
+    switch (getLocaleSourceLabel(localeItem)) {
+      case 'builtin':
+        return t('settings.language.sourceBuiltin');
+      case 'official':
+        return t('settings.language.sourceOfficial');
+      default:
+        return t('settings.language.sourceThirdParty');
+    }
+  }
 
   return (
     <div className="settings-page">
@@ -263,9 +274,10 @@ export function SettingsLanguage() {
         <div className="settings-form">
           <div className="form-group">
             <label>{t('settings.language.interfaceLang')}</label>
-            <select className="form-select" value={locale} onChange={e => setLocale(e.target.value as 'zh-CN' | 'en-US')}>
-              <option value="zh-CN">中文（简体）</option>
-              <option value="en-US">English</option>
+            <select className="form-select" value={locale} onChange={e => setLocale(e.target.value)}>
+              {locales.map(item => (
+                <option key={item.id} value={item.id}>{formatLocaleOptionLabel(item)}</option>
+              ))}
             </select>
           </div>
           <div className="form-group">
@@ -284,6 +296,19 @@ export function SettingsLanguage() {
               <option>12 小时制</option>
             </select>
             <div className="form-help">时间格式当前跟随系统默认规则展示，暂不支持单独保存。</div>
+          </div>
+          <div className="form-group">
+            <label>{t('settings.language.localeCatalog')}</label>
+            <div className="settings-note">
+              <span>🧩</span> 语言是否可选、谁覆盖谁，当前都以家庭语言接口返回的结果为准。
+            </div>
+            <div className="settings-note">
+              {locales.map(item => (
+                <div key={item.id}>
+                  {formatLocaleOptionLabel(item)} / {renderLocaleSource(item)} / {t('settings.language.pluginId')}: {item.pluginId ?? t('settings.language.none')} / {t('settings.language.fallback')}: {item.fallback ?? t('settings.language.none')} / {t('settings.language.overrides')}: {item.overriddenPluginIds?.join(', ') || t('settings.language.none')}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </Section>

@@ -3,11 +3,12 @@
 ## Document Metadata
 
 - Purpose: define `manifest.json` fields, hard constraints, recommended usage, and current implementation boundaries so developers do not need to guess.
-- Current version: v1.1
+- Current version: v1.2
 - Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `apps/api-server/app/modules/plugin/schemas.py`
 - Change log:
   - `2026-03-13`: created the first manifest specification.
   - `2026-03-13`: renamed by reading order and added document metadata.
+  - `2026-03-14`: added `locale-pack` and `locales` field rules.
 
 This document explains `manifest.json` clearly so developers do not need to guess.
 
@@ -88,13 +89,20 @@ Invalid examples:
 
 - Required
 - Type: `string[]`
-- Rule: at least one value; no duplicates; only these 4 values are allowed:
+- Rule: at least one value; no duplicates; only these 5 values are allowed:
   - `connector`
   - `memory-ingestor`
   - `action`
   - `agent-skill`
+  - `locale-pack`
 
-Do not add a new type. The repository does not support it.
+The first 4 are executable plugin types. `locale-pack` is for language-pack plugins.
+
+Keep the boundary clear:
+
+- `locale-pack` does not run in workers
+- it does not create execution jobs
+- it only registers locale metadata and translation resources such as Traditional Chinese UI text
 
 ### `permissions`
 
@@ -134,10 +142,10 @@ Keep triggers controlled. Do not invent automatic trigger semantics the system d
 
 ### `entrypoints`
 
-- Required
+- Required for executable plugins; pure `locale-pack` plugins may use an empty object
 - Type: `object`
 - Rule: each value must use the `module_path.function_name` format and be really importable
-- Rule: every declared type in `types` must have a matching entrypoint here
+- Rule: every declared executable type in `types` must have a matching entrypoint here
 
 Supported keys:
 
@@ -168,6 +176,48 @@ Invalid example:
 
 The first one is missing a function name. The second one is also missing a function name.
 
+### `locales`
+
+- Only for `locale-pack` plugins
+- Type: `object[]`
+- Rule: if `locale-pack` is declared, at least one locale item must exist
+
+Each item should include at least:
+
+- `id`: locale id such as `zh-TW`
+- `label`: generic display label such as `Traditional Chinese`
+- `native_label`: user-facing native label such as `繁體中文`
+- `resource`: relative resource path such as `locales/zh-TW.json`
+- `fallback`: optional fallback locale such as `zh-CN`
+
+Minimum example:
+
+```json
+{
+  "types": ["locale-pack"],
+  "entrypoints": {},
+  "locales": [
+    {
+      "id": "zh-TW",
+      "label": "Traditional Chinese",
+      "native_label": "繁體中文",
+      "resource": "locales/zh-TW.json",
+      "fallback": "zh-CN"
+    }
+  ]
+}
+```
+
+The conflict rule must also stay explicit:
+
+- if multiple locale-pack plugins declare the same `locale id` in one household
+- the system does not expose all of them to the frontend at once
+- only one wins, with priority: `builtin > official > third_party`
+- if the source level is the same, the smaller `plugin_id` in lexical order wins
+- suppressed plugins are still visible through the API field `overridden_plugin_ids`
+
+In plain words: a third-party plugin should not expect to override the built-in `zh-TW` locale. If you really need a different pack, use a different locale id or change the built-in pack on purpose.
+
 ### `description`
 
 - Optional, but strongly recommended
@@ -196,6 +246,7 @@ Version one does not freeze the structure yet, but maintainers must be reachable
 | `memory-ingestor` | `ingestor.py` | `transform` | Convert raw records into normalized memory |
 | `action` | `executor.py` | `run` | Execute actions |
 | `agent-skill` | `skill.py` | `run` | Expose controlled capabilities to the Agent |
+| `locale-pack` | `locales/*.json` | none | Register UI locales and translation resources |
 
 ## 4. Hard Constraints Tied To The Current Implementation
 
@@ -203,10 +254,11 @@ These are not suggestions. Breaking them will cause real problems:
 
 1. `id` values must be unique. The plugin registry rejects duplicates.
 2. The `manifest.json` top level must be an object, not an array.
-3. Every `entrypoints` target must resolve to a callable function.
-4. Every type in `types` must have a matching entrypoint.
+3. Every executable `entrypoints` target must resolve to a callable function.
+4. Every executable type in `types` must have a matching entrypoint; `locale-pack` does not need a Python entrypoint.
 5. The unified Agent entry currently allows only `connector` and `agent-skill`.
 6. `action` plugins also go through permission checks, and high-risk actions require manual confirmation.
+7. `locale-pack` must declare at least one `locales` item, and each `resource` must stay inside the plugin directory.
 
 ## 5. Fields That Should Not Go Into Manifest Yet
 
@@ -223,11 +275,14 @@ In short: keep the runtime declaration clear. Do not stuff future open-platform 
 ## 6. Pre-Submission Self-Check
 
 1. Does `id` follow the character rules?
-2. Does `types` use only the 4 supported values?
-3. Can every entrypoint really be imported?
+2. Does `types` use only the 5 supported values?
+3. If this is executable, can every entrypoint really be imported?
 4. Are `permissions` minimized instead of bloated?
 5. Does `risk_level` match the actual plugin risk?
 6. If this is an `action` plugin, are risk and permission boundaries clearly declared?
-7. Am I secretly depending on remote install, remote execution, sandboxing, or a signing platform?
+7. If this is a `locale-pack`, did I provide real `locales/*.json` files and a clear fallback locale?
+8. Am I secretly depending on remote install, remote execution, sandboxing, or a signing platform?
+
+If the locale id already exists as a built-in locale, assume your third-party pack will probably not win.
 
 If all of these pass, then prepare the registry submission material.

@@ -3,13 +3,14 @@
 ## Document Metadata
 
 - Purpose: explain how a plugin actually integrates with FamilyClaw, including invocation, input/output, sync flow, and current API entries.
-- Current version: v1.2
+- Current version: v1.3
 - Related documents: `docs/开发者文档/插件开发/en/01-plugin-development-overview.md`, `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `apps/api-server/app/modules/plugin/service.py`, `apps/api-server/app/modules/plugin/agent_bridge.py`
 - Change log:
   - `2026-03-13`: added the integration guide to cover invocation flow, APIs, inputs/outputs, and sync paths.
   - `2026-03-13`: renamed by reading order and added document metadata.
   - `2026-03-13`: added plugin function signature rules, a full `connector` return example, an Observation field table, and a complete sync request/response example.
   - `2026-03-13`: added the `connector records` raw-record field table.
+  - `2026-03-14`: added `locale-pack` integration boundaries.
 
 This document answers the core question: how does a plugin actually integrate with FamilyClaw?
 
@@ -105,6 +106,12 @@ Relevant code:
 
 ## 3. How The System Calls A Plugin
 
+One exception must be stated first: not every plugin is executed.
+
+- `connector` / `memory-ingestor` / `action` / `agent-skill` are executable types
+- `locale-pack` does not enter workers and does not import Python entrypoints
+- it is read by the registry so frontend or config APIs can expose available locales and resource paths
+
 The system does not hardcode file names. It uses `entrypoints` from `manifest.json`.
 
 Example:
@@ -140,6 +147,12 @@ Do not confuse that with public runtime semantics:
 
 - a callable entrypoint does not mean the system will synchronously finish the plugin before returning to the caller
 - the public path now persists a `plugin_job` first
+
+If you are building a locale-pack plugin, you can skip the whole execution section above. What matters instead is:
+
+1. `manifest.locales` is complete
+2. translation resource files really exist
+3. the frontend locale registry can recognize and load them
 
 ## 4. What Input A Plugin Receives
 

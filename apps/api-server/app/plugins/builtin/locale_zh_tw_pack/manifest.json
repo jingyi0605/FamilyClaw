@@ -1,0 +1,19 @@
+{
+  "id": "locale-zh-tw",
+  "name": "繁体中文语言包",
+  "version": "0.1.0",
+  "types": ["locale-pack"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {},
+  "locales": [
+    {
+      "id": "zh-TW",
+      "label": "Traditional Chinese",
+      "native_label": "繁體中文",
+      "resource": "locales/zh-TW.json",
+      "fallback": "zh-CN"
+    }
+  ]
+}

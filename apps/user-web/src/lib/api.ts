@@ -38,6 +38,7 @@ import type {
   MemberRelationship,
   Member,
   PaginatedResponse,
+  PluginLocaleListResponse,
   ReminderTask,
   ReminderOverviewRead,
   Room,
@@ -261,6 +262,9 @@ export const api = {
   },
   listHouseholdAiRoutes(householdId: string) {
     return request<AiCapabilityRoute[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-routes`);
+  },
+  listHouseholdLocales(householdId: string) {
+    return request<PluginLocaleListResponse>(`/ai-config/${encodeURIComponent(householdId)}/locales`);
   },
   upsertHouseholdAiRoute(householdId: string, capability: string, payload: AiCapabilityRouteUpsertPayload) {
     return request<AiCapabilityRoute>(

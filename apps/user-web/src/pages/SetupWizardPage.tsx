@@ -12,6 +12,7 @@ import { useSetupContext } from '../state/setup';
 import { themeList, type ThemeId } from '../theme/tokens';
 import { useTheme } from '../theme';
 import { pinyin } from 'pinyin-pro';
+import { resolveSupportedLocale } from '../i18n';
 
 const STEP_ORDER: HouseholdSetupStepCode[] = [
   'family_profile',
@@ -37,7 +38,7 @@ function getDefaultTimezone() {
 }
 
 function getDefaultLocale() {
-  return typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'zh-CN';
+  return resolveSupportedLocale(typeof navigator !== 'undefined' ? navigator.language : 'zh-CN');
 }
 
 function calculatePasswordStrength(password: string): { score: number; label: string; classSuffix: string } {
