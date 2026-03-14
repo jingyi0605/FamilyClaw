@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Menu, MessageSquarePlus } from 'lucide-react';
+import { Bot, Menu, MessageSquarePlus, History, Info } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { EmptyState } from '../components/base';
 import { useI18n } from '../i18n';
@@ -112,6 +112,7 @@ export function ConversationPageV2() {
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -606,57 +607,162 @@ export function ConversationPageV2() {
 
   return (
     <div className="page page--assistant">
-      {isSidebarOpen && <div className="assistant-sidebar-overlay" onClick={() => setIsSidebarOpen(false)} />}
-
-      <div className={`assistant-sidebar ${isSidebarOpen ? 'is-open' : ''}`}>
-        <div className="assistant-sidebar__header">
-          <h2>{t('nav.assistant')}</h2>
-          <button className="btn btn--icon btn--ghost p-sm" onClick={() => void handleNewChat()}>
-            <MessageSquarePlus size={20} />
+      {/* 上下文弹出面板 */}
+      {contextPanelOpen && <div className="assistant-panel-overlay" onClick={() => setContextPanelOpen(false)} />}
+      <div className={`assistant-panel assistant-panel--right ${contextPanelOpen ? 'is-open' : ''}`}>
+        <div className="assistant-panel__header">
+          <h3>会话详情</h3>
+          <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(false)}>
+            ✕
           </button>
         </div>
-        <div className="assistant-sidebar__search">
-          <div className="assistant-sidebar__search-note">
-            会话已经落服务端。切换 Agent 会自动开新对话，避免上下文串线。
-          </div>
-        </div>
-        <div className="assistant-sidebar__list">
-          {loading ? (
-            <div className="context-memory-item">
-              <span>⏳</span> 正在加载会话
+        <div className="assistant-panel__content">
+          <div className="context-section">
+            <h4 className="context-section__title">{t('assistant.context')}</h4>
+            <div className="context-item">
+              <span className="context-item__label">{t('assistant.currentFamily')}</span>
+              <span className="context-item__value">{currentHousehold?.name ?? '-'}</span>
             </div>
-          ) : (
-            sessions.map(session => (
-              <div
-                key={session.id}
-                className={`session-item ${activeSessionId === session.id ? 'session-item--active' : ''}`}
-                onClick={() => {
-                  setActiveSessionId(session.id);
-                  setIsSidebarOpen(false);
-                }}
-              >
-                <div className="session-item__content">
-                  <span className="session-item__title">{session.title}</span>
-                  <span className="session-item__preview">{session.latest_message_preview ?? '等待你的第一条消息'}</span>
-                  {session.active_agent_name && <span className="session-item__agent">{session.active_agent_name}</span>}
+            <div className="context-item">
+              <span className="context-item__label">{t('assistant.currentAgent')}</span>
+              <span className="context-item__value">{selectedAgent ? `${selectedAgent.display_name} · ${getAgentStatusLabel(selectedAgent.status)}` : '-'}</span>
+            </div>
+            <div className="context-item">
+              <span className="context-item__label">待确认动作</span>
+              <span className="context-item__value">{pendingActionCount} 条</span>
+            </div>
+          </div>
+
+          <div className="context-section">
+            <h4 className="context-section__title">{t('assistant.recentMemories')}</h4>
+            <div className="context-memory-list">
+              {recentFacts.length > 0 ? (
+                recentFacts.map(item => (
+                  <div key={`${item.type}-${item.label}`} className="context-memory-item">
+                    <span>🧠</span> {item.label}
+                  </div>
+                ))
+              ) : (
+                suggestions.slice(0, 3).map(question => (
+                  <div key={question} className="context-memory-item">
+                    <span>💡</span> {question}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="context-section">
+            <h4 className="context-section__title">最近动作</h4>
+            <div className="context-memory-list">
+              {recentActionRecords.length > 0 ? (
+                recentActionRecords.map(action => (
+                  <div key={action.id} className="context-memory-item context-memory-item--block">
+                    <div><span>{getActionIcon(action)}</span> {action.title}</div>
+                    <div className="context-memory-item__sub">{buildActionResultText(action)}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="context-memory-item">
+                  <span>🪶</span> 当前还没有 AI 动作
                 </div>
-                <span className="session-item__time">{formatRelativeTime(session.last_message_at)}</span>
-              </div>
-            ))
-          )}
+              )}
+            </div>
+          </div>
+
+          <div className="context-section">
+            <h4 className="context-section__title">{t('assistant.quickActions')}</h4>
+            <div className="context-actions">
+              {suggestions.slice(0, 3).map(question => (
+                <button key={question} className="context-action-btn" onClick={() => { setContextPanelOpen(false); void submitQuestion(question); }}>
+                  {question}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
+      {/* 主聊天区域 */}
       <div className="assistant-main">
+        {/* PC 顶部工具栏 */}
+        <div className="assistant-toolbar">
+          <div className="assistant-toolbar__history-wrapper">
+            <button className="assistant-toolbar__btn" onClick={() => setIsSidebarOpen(prev => !prev)} title="历史会话">
+              <History size={18} />
+              <span>历史</span>
+            </button>
+          </div>
+          <div className="assistant-toolbar__title">{activeSessionDetail?.title || t('nav.assistant')}</div>
+          {/* 右侧按钮组 */}
+          <div className="assistant-toolbar__actions">
+            <button className="assistant-toolbar__btn" onClick={() => void handleNewChat()} title="新对话">
+              <MessageSquarePlus size={18} />
+              <span>新建</span>
+            </button>
+            <button className="assistant-toolbar__btn" onClick={() => setContextPanelOpen(true)} title="会话详情">
+              <Info size={18} />
+              <span>详情</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 移动端顶部栏 */}
         <div className="assistant-mobile-header">
-          <button className="btn btn--icon btn--ghost p-sm assistant-menu-btn" onClick={() => setIsSidebarOpen(true)}>
+          <button className="btn btn--icon btn--ghost p-sm assistant-menu-btn" onClick={() => setIsSidebarOpen(prev => !prev)}>
             <Menu size={24} />
           </button>
           <div className="assistant-mobile-title">{activeSessionDetail?.title || t('nav.assistant')}</div>
-          <button className="btn btn--icon btn--ghost p-sm" onClick={() => void handleNewChat()}>
+          <button className="btn btn--icon btn--ghost p-sm" onClick={() => void handleNewChat()} title="新对话">
             <MessageSquarePlus size={20} />
           </button>
+          <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(true)}>
+            <Info size={20} />
+          </button>
         </div>
+
+        {/* 统一的会话历史气泡框 - PC/移动端共用 */}
+        {isSidebarOpen && (
+          <>
+            <div className="assistant-popover-overlay" onClick={() => setIsSidebarOpen(false)} />
+            <div className="assistant-popover">
+              <div className="assistant-popover__header">
+                <span>历史会话</span>
+                <button className="btn btn--icon btn--ghost p-xs" onClick={() => void handleNewChat()} title="新对话">
+                  <MessageSquarePlus size={16} />
+                </button>
+              </div>
+              <div className="assistant-popover__content">
+                {loading ? (
+                  <div className="context-memory-item">
+                    <span>⏳</span> 正在加载会话
+                  </div>
+                ) : sessions.length === 0 ? (
+                  <div className="context-memory-item">
+                    <span>📝</span> 暂无历史会话
+                  </div>
+                ) : (
+                  sessions.map(session => (
+                    <div
+                      key={session.id}
+                      className={`session-item session-item--compact ${activeSessionId === session.id ? 'session-item--active' : ''}`}
+                      onClick={() => {
+                        setActiveSessionId(session.id);
+                        setIsSidebarOpen(false);
+                      }}
+                    >
+                      <div className="session-item__content">
+                        <span className="session-item__title">{session.title}</span>
+                        <span className="session-item__preview">{session.latest_message_preview ?? '等待你的第一条消息'}</span>
+                      </div>
+                      <span className="session-item__time">{formatRelativeTime(session.last_message_at)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        )}
 
         <div className="conversation-agent-banner">
           <div className="conversation-agent-banner__main">
@@ -774,72 +880,6 @@ export function ConversationPageV2() {
             action={<button className="btn btn--primary" onClick={() => void handleNewChat()}>{t('assistant.newChat')}</button>}
           />
         )}
-      </div>
-
-      <div className="assistant-context">
-        <div className="context-section">
-          <h3 className="context-section__title">{t('assistant.context')}</h3>
-          <div className="context-item">
-            <span className="context-item__label">{t('assistant.currentFamily')}</span>
-            <span className="context-item__value">{currentHousehold?.name ?? '-'}</span>
-          </div>
-          <div className="context-item">
-            <span className="context-item__label">{t('assistant.currentAgent')}</span>
-            <span className="context-item__value">{selectedAgent ? `${selectedAgent.display_name} · ${getAgentStatusLabel(selectedAgent.status)}` : '-'}</span>
-          </div>
-          <div className="context-item">
-            <span className="context-item__label">待确认动作</span>
-            <span className="context-item__value">{pendingActionCount} 条</span>
-          </div>
-        </div>
-
-        <div className="context-section">
-          <h3 className="context-section__title">{t('assistant.recentMemories')}</h3>
-          <div className="context-memory-list">
-            {recentFacts.length > 0 ? (
-              recentFacts.map(item => (
-                <div key={`${item.type}-${item.label}`} className="context-memory-item">
-                  <span>🧠</span> {item.label}
-                </div>
-              ))
-            ) : (
-              suggestions.slice(0, 3).map(question => (
-                <div key={question} className="context-memory-item">
-                  <span>💡</span> {question}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="context-section">
-          <h3 className="context-section__title">最近动作</h3>
-          <div className="context-memory-list">
-            {recentActionRecords.length > 0 ? (
-              recentActionRecords.map(action => (
-                <div key={action.id} className="context-memory-item context-memory-item--block">
-                  <div><span>{getActionIcon(action)}</span> {action.title}</div>
-                  <div className="context-memory-item__sub">{buildActionResultText(action)}</div>
-                </div>
-              ))
-            ) : (
-              <div className="context-memory-item">
-                <span>🪶</span> 当前还没有 AI 动作
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="context-section">
-          <h3 className="context-section__title">{t('assistant.quickActions')}</h3>
-          <div className="context-actions">
-            {suggestions.slice(0, 3).map(question => (
-              <button key={question} className="context-action-btn" onClick={() => void submitQuestion(question)}>
-                {question}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );
