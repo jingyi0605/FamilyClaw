@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
-from app.modules.household.service import get_household_or_404
+# NOTE: get_household_or_404 延迟导入，避免循环依赖
 from app.modules.member.models import Member
 from app.modules.memory import repository
 from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember, MemoryCardRevision
@@ -362,6 +362,7 @@ def _upsert_memory_card(
     revision_action: str,
     forbid_existing: bool = False,
 ) -> MemoryCardRead:
+    from app.modules.household.service import get_household_or_404
     household_id = candidate["household_id"]
     get_household_or_404(db, household_id)
 
@@ -506,6 +507,7 @@ def _upsert_memory_card(
 
 
 def ingest_event_record(db: Session, payload: EventRecordCreate) -> tuple[EventRecord, bool]:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, payload.household_id)
 
     if payload.subject_member_id is not None:
@@ -583,6 +585,7 @@ def list_event_records(
     page_size: int,
     processing_status: str | None = None,
 ) -> tuple[list[EventRecordRead], int]:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     rows, total = repository.list_event_records(
         db,
@@ -700,6 +703,7 @@ def list_memory_cards(
     page_size: int,
     memory_type: str | None = None,
 ) -> tuple[list[MemoryCardRead], int]:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     rows, total = repository.list_memory_cards(
         db,
@@ -724,6 +728,7 @@ def list_memory_card_revisions(
 
 
 def get_memory_debug_overview(db: Session, *, household_id: str) -> MemoryDebugOverviewRead:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     event_counts = repository.count_event_records_by_status(db, household_id=household_id)
     card_counts = repository.count_memory_cards_by_status(db, household_id=household_id)

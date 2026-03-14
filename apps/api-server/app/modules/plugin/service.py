@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.config import BASE_DIR
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.audit.service import write_audit_log
-from app.modules.household.service import get_household_or_404
+# NOTE: get_household_or_404 延迟导入，避免循环依赖 (household → region → plugin → household)
 from app.modules.memory.service import upsert_plugin_observation_memory
 from app.modules.region.plugin_runtime import get_runtime_region_provider_spec, sync_household_plugin_region_providers
 from app.modules.region.service import resolve_household_region_context
@@ -258,6 +258,7 @@ def list_registered_plugins_for_household(
 
 
 def list_plugin_mounts(db: Session, *, household_id: str) -> list[PluginMountRead]:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     return [_to_plugin_mount_read(row) for row in repository.list_plugin_mounts(db, household_id=household_id)]
 
@@ -339,6 +340,7 @@ def register_plugin_mount(
     household_id: str,
     payload: PluginMountCreate,
 ) -> PluginMountRead:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     manifest_path = _resolve_manifest_path(payload.plugin_root, payload.manifest_path)
     manifest = load_plugin_manifest(manifest_path)
@@ -378,6 +380,7 @@ def update_plugin_mount(
     plugin_id: str,
     payload: PluginMountUpdate,
 ) -> PluginMountRead:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     row = repository.get_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
     if row is None:
@@ -407,6 +410,7 @@ def update_plugin_mount(
 
 
 def delete_plugin_mount(db: Session, *, household_id: str, plugin_id: str) -> None:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     row = repository.get_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
     if row is None:
@@ -514,7 +518,10 @@ def enqueue_household_plugin_job(
     idempotency_key: str | None = None,
     payload_summary: dict[str, object] | None = None,
     max_attempts: int | None = None,
+    source_task_definition_id: str | None = None,
+    source_task_run_id: str | None = None,
 ) -> PluginJobRead:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     registry = list_registered_plugins_for_household(db, household_id=household_id)
     plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
@@ -524,6 +531,8 @@ def enqueue_household_plugin_job(
         raise PluginExecutionError(f"插件已禁用: {request.plugin_id}")
     if request.plugin_type not in plugin.types:
         raise PluginExecutionError(f"插件 {request.plugin_id} 没有声明 {request.plugin_type} 能力")
+    if request.trigger == "schedule" and "schedule" not in plugin.triggers:
+        raise PluginExecutionError(f"插件 {request.plugin_id} 不支持计划触发")
 
     return create_plugin_job(
         db,
@@ -535,6 +544,8 @@ def enqueue_household_plugin_job(
             request_payload=request.payload,
             payload_summary=payload_summary,
             idempotency_key=idempotency_key,
+            source_task_definition_id=source_task_definition_id,
+            source_task_run_id=source_task_run_id,
             max_attempts=max_attempts or (1 if request.plugin_type == "action" else max(settings.plugin_job_default_max_attempts, 1)),
         ),
     )
@@ -752,6 +763,7 @@ def save_plugin_raw_records(
     execution_result: PluginExecutionResult,
     raw_records: list[dict],
 ) -> list[PluginRawRecordRead]:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     saved_rows: list[PluginRawRecordRead] = []
 
@@ -814,6 +826,7 @@ def ingest_plugin_raw_records_to_memory(
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
 ) -> list[dict]:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     context = resolve_plugin_execution_context(
         db,
@@ -901,6 +914,7 @@ def run_plugin_sync_pipeline(
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
 ) -> PluginSyncPipelineResult:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     context = resolve_plugin_execution_context(
         db,
@@ -1018,6 +1032,7 @@ async def arun_plugin_sync_pipeline(
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
 ) -> PluginSyncPipelineResult:
+    from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
     context = resolve_plugin_execution_context(
         db,
