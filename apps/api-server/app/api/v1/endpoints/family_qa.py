@@ -11,13 +11,13 @@ from app.modules.family_qa.schemas import (
     FamilyQaQueryResponse,
     FamilyQaSuggestionsResponse,
 )
-from app.modules.family_qa.service import list_family_qa_suggestions, query_family_qa
+from app.modules.family_qa.service import aquery_family_qa, list_family_qa_suggestions, query_family_qa
 
 router = APIRouter(prefix="/family-qa", tags=["family-qa"])
 
 
 @router.post("/query", response_model=FamilyQaQueryResponse)
-def query_family_qa_endpoint(
+async def query_family_qa_endpoint(
     payload: FamilyQaQueryRequest,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_bound_member_actor),
@@ -25,7 +25,7 @@ def query_family_qa_endpoint(
     ensure_actor_can_access_household(actor, payload.household_id)
     payload = _normalize_query_payload(payload, actor)
     try:
-        result = query_family_qa(db, payload, actor)
+        result = await aquery_family_qa(db, payload, actor)
         if payload.requester_member_id is not None:
             write_audit_log(
                 db,

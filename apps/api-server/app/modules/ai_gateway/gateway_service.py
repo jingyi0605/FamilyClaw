@@ -285,6 +285,170 @@ def invoke_capability(
     )
 
 
+async def ainvoke_capability(
+    db: Session,
+    payload: AiGatewayInvokeRequest,
+) -> AiGatewayInvokeResponse:
+    plan = build_invocation_plan(
+        db,
+        capability=payload.capability,
+        household_id=payload.household_id,
+        requester_member_id=payload.requester_member_id,
+        timeout_ms_override=payload.timeout_ms_override,
+    )
+    prepared_payload = prepare_payload_for_invocation(plan, payload.payload)
+    attempts: list[AiGatewayAttemptResult] = []
+
+    if prepared_payload.blocked_reason and not plan.template_fallback_enabled:
+        _write_template_log(
+            db,
+            plan=plan,
+            masked_fields=prepared_payload.masked_fields,
+            status="blocked",
+            error_code="policy_blocked",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=prepared_payload.blocked_reason,
+        )
+
+    for index, candidate in enumerate(_iter_plan_candidates(plan)):
+        provider_row = repository.get_provider_profile(db, candidate.provider_profile_id)
+        if provider_row is None or not provider_row.enabled:
+            attempts.append(
+                _write_attempt_log(
+                    db,
+                    plan=plan,
+                    candidate=candidate,
+                    masked_fields=prepared_payload.masked_fields,
+                    status="failed",
+                    latency_ms=0,
+                    error_code="provider_missing",
+                    fallback_used=index > 0,
+                )
+            )
+            continue
+
+        if prepared_payload.blocked_reason and candidate.privacy_level != "local_only":
+            attempts.append(
+                _write_attempt_log(
+                    db,
+                    plan=plan,
+                    candidate=candidate,
+                    masked_fields=prepared_payload.masked_fields,
+                    status="blocked",
+                    latency_ms=0,
+                    error_code="policy_blocked",
+                    fallback_used=index > 0,
+                )
+            )
+            continue
+
+        adapter = get_provider_adapter(provider_row.transport_type)
+        if adapter is None:
+            attempts.append(
+                _write_attempt_log(
+                    db,
+                    plan=plan,
+                    candidate=candidate,
+                    masked_fields=prepared_payload.masked_fields,
+                    status="failed",
+                    latency_ms=0,
+                    error_code="adapter_unavailable",
+                    fallback_used=index > 0,
+                )
+            )
+            continue
+
+        try:
+            result = await adapter.ainvoke(
+                capability=plan.capability,
+                provider_profile=provider_row,
+                payload=prepared_payload.payload,
+                timeout_ms=plan.timeout_ms,
+                honor_timeout_override=payload.honor_timeout_override,
+            )
+        except ProviderRuntimeError as exc:
+            attempts.append(
+                _write_attempt_log(
+                    db,
+                    plan=plan,
+                    candidate=candidate,
+                    masked_fields=prepared_payload.masked_fields,
+                    status=_map_error_code_to_status(exc.error_code),
+                    latency_ms=0,
+                    error_code=exc.error_code,
+                    fallback_used=index > 0,
+                )
+            )
+            continue
+
+        attempt_status = "fallback_success" if index > 0 else "success"
+        attempts.append(
+            _write_attempt_log(
+                db,
+                plan=plan,
+                candidate=candidate,
+                masked_fields=prepared_payload.masked_fields,
+                status=attempt_status,
+                latency_ms=result.latency_ms,
+                error_code=None,
+                fallback_used=index > 0,
+                model_name=result.model_name,
+                usage={"transport_type": provider_row.transport_type},
+            )
+        )
+        return AiGatewayInvokeResponse(
+            capability=plan.capability,
+            household_id=plan.household_id,
+            requester_member_id=plan.requester_member_id,
+            trace_id=plan.trace_id,
+            status="success",
+            degraded=index > 0,
+            provider_code=result.provider_code,
+            model_name=result.model_name,
+            finish_reason=result.finish_reason,
+            normalized_output=result.normalized_output,
+            raw_response_ref=result.raw_response_ref,
+            attempts=attempts,
+        )
+
+    if not plan.template_fallback_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="当前能力没有可用供应商，且未配置模板降级",
+        )
+
+    template_output = build_template_fallback_output(
+        capability=plan.capability,
+        payload=prepared_payload.payload,
+    )
+    attempts.append(
+        _write_template_log(
+            db,
+            plan=plan,
+            masked_fields=prepared_payload.masked_fields,
+            status="fallback_success",
+            error_code=None,
+        )
+    )
+    return AiGatewayInvokeResponse(
+        capability=plan.capability,
+        household_id=plan.household_id,
+        requester_member_id=plan.requester_member_id,
+        trace_id=plan.trace_id,
+        status="success",
+        degraded=True,
+        provider_code="template",
+        model_name="template-fallback",
+        finish_reason="template_fallback",
+        normalized_output=template_output,
+        raw_response_ref="template://fallback",
+        blocked_reason=prepared_payload.blocked_reason,
+        attempts=attempts,
+    )
+
+
 def _build_runtime_default_plan(
     db: Session,
     *,

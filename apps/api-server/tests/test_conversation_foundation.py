@@ -1000,6 +1000,93 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("我现在叫笨笨，你想给我起新名字也可以。", result.text)
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_with_lane_takeover_routes_config_change_to_free_chat(self, invoke_llm_mock) -> None:
+        previous_value = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = True
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            invoke_llm_mock.side_effect = [
+                _FakeLlmResult(
+                    data=ConversationIntentDetectionOutput(
+                        primary_intent="config_change",
+                        secondary_intents=[],
+                        confidence=0.95,
+                        reason="用户明确想给助手改名。",
+                        candidate_actions=[],
+                    )
+                ),
+                _FakeLlmResult(text="好的，我们先按聊天继续。你想让我改成什么名字？"),
+            ]
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="以后你就叫阿福",
+                actor=self.actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_value
+
+        self.assertEqual(ConversationIntent.FREE_CHAT, result.intent)
+        self.assertEqual("free_chat", result.lane_selection.lane.value)
+        self.assertIsNone(result.config_suggestion)
+        self.assertEqual("好的，我们先按聊天继续。你想让我改成什么名字？", result.text)
+
+    @patch("app.modules.conversation.orchestrator.query_family_qa")
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_with_lane_takeover_keeps_structured_qa_in_realtime_query(self, invoke_llm_mock, query_family_qa_mock) -> None:
+        previous_value = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = True
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            invoke_llm_mock.return_value = _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="structured_qa",
+                    secondary_intents=[],
+                    confidence=0.95,
+                    reason="用户在查家庭状态。",
+                    candidate_actions=[],
+                )
+            )
+            query_family_qa_mock.return_value = SimpleNamespace(
+                answer="现在家里有人。",
+                degraded=False,
+                ai_degraded=False,
+                facts=[],
+                suggestions=[],
+                ai_trace_id=None,
+                ai_provider_code="qa-mock",
+                effective_agent_id=self.agent.id,
+                effective_agent_name=self.agent.display_name,
+            )
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="现在家里有人吗",
+                actor=self.actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_value
+
+        self.assertEqual(ConversationIntent.STRUCTURED_QA, result.intent)
+        self.assertEqual("realtime_query", result.lane_selection.lane.value)
+
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
     @patch("app.modules.conversation.service._run_orchestrated_turn")
     def test_create_conversation_turn_routes_config_intent_without_family_qa(self, run_orchestrated_turn_mock, invoke_llm_mock) -> None:
         _ = invoke_llm_mock

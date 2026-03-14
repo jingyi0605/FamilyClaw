@@ -1,17 +1,17 @@
 """LLM 任务统一调用"""
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.modules.ai_gateway import repository as ai_gateway_repo
-from app.modules.ai_gateway.gateway_service import invoke_capability
+from app.modules.ai_gateway.gateway_service import ainvoke_capability, invoke_capability
 from app.modules.ai_gateway.provider_runtime import stream_provider_invoke
-from app.modules.ai_gateway.schemas import AiGatewayInvokeRequest
+from app.modules.ai_gateway.schemas import AiCapability, AiGatewayInvokeRequest
 from app.modules.ai_gateway.service import resolve_capability_route
 from app.modules.llm_task.definitions import get_task
 from app.modules.llm_task.parser import parse_to_model, strip_structured_output
@@ -139,7 +139,48 @@ def invoke_llm(
     return result
 
 
-def stream_llm(
+async def ainvoke_llm(
+    db: Session,
+    task_type: str,
+    variables: dict[str, Any],
+    *,
+    household_id: str | None = None,
+    conversation_history: list[dict] | None = None,
+    request_context: dict[str, Any] | None = None,
+    timeout_ms_override: int | None = None,
+    honor_timeout_override: bool = False,
+) -> LlmResult:
+    task = get_task(task_type)
+    messages = task.build_messages(variables, conversation_history)
+
+    response = await ainvoke_capability(
+        db,
+        AiGatewayInvokeRequest(
+            capability=task.capability,
+            household_id=household_id,
+            payload={
+                "task_type": task_type,
+                "messages": messages,
+                "temperature": task.temperature,
+                "max_tokens": task.max_tokens,
+                "request_context": request_context or {},
+            },
+            timeout_ms_override=timeout_ms_override,
+            honor_timeout_override=honor_timeout_override,
+        ),
+    )
+
+    raw_text = str(response.normalized_output.get("text", "") or "")
+    return _build_result(
+        raw_text=raw_text,
+        provider=response.provider_code,
+        latency_ms=response.attempts[-1].latency_ms or 0 if response.attempts else 0,
+        output_model=task.output_model,
+        task_type=task_type,
+    )
+
+
+async def stream_llm(
     db: Session,
     task_type: str,
     variables: dict[str, Any],
@@ -147,7 +188,7 @@ def stream_llm(
     household_id: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
     request_context: dict[str, Any] | None = None,
-) -> Generator[LlmStreamEvent, None, None]:
+) -> AsyncGenerator[LlmStreamEvent, None]:
     """流式调用 LLM 任务。"""
     task = get_task(task_type)
     messages = task.build_messages(variables, conversation_history)
@@ -162,7 +203,7 @@ def stream_llm(
     sent_display_length = 0
     last_parsed_dump: dict[str, Any] | list[Any] | None = None
 
-    for chunk in stream_provider_invoke(
+    async for chunk in stream_provider_invoke(
         provider_profile=provider_profile,
         payload={
             "messages": messages,
@@ -172,7 +213,7 @@ def stream_llm(
         },
         timeout_ms=timeout_ms,
     ):
-        full_text += chunk
+        full_text += cast(str, chunk)
 
         display_text = strip_structured_output(full_text)
         if len(display_text) > sent_display_length:
@@ -229,10 +270,10 @@ def _build_result(
 def _resolve_stream_provider(
     db: Session,
     *,
-    capability: str,
+    capability: AiCapability,
     household_id: str | None,
 ):
-    route = resolve_capability_route(db, capability=capability, household_id=household_id)
+    route = resolve_capability_route(db, capability=cast(AiCapability, capability), household_id=household_id)
     if route is None or not route.enabled:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="当前能力路由不可用")
     if not route.primary_provider_profile_id:

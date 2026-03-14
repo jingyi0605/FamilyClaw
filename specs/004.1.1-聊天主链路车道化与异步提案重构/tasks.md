@@ -191,8 +191,8 @@
 
 ## 阶段 2：把顶层意图树收成三车道
 
-- [ ] 2.1 用车道选择器替换不断膨胀的业务意图树
-  - 状态：TODO
+- [x] 2.1 用车道选择器替换不断膨胀的业务意图树
+  - 状态：DONE
   - 这一步到底做什么：把顶层判断从“memory_write/config_change/reminder_create”改成“fast_action/realtime_query/free_chat”。
   - 做完以后能看到什么：主编排器更短、更稳，未来能力扩展不再先改枚举。
   - 先依赖什么：1.5

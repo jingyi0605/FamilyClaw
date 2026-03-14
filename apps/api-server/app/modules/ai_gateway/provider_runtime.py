@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+import asyncio
 import json
 import logging
 import os
 import socket
 from time import perf_counter
 from urllib import error, request
+
+import httpx
 
 from app.core.config import settings
 from app.db.utils import load_json
@@ -96,6 +99,44 @@ class ProviderAdapter:
             capability=capability,
             provider_profile=provider_profile,
             payload=payload,
+        )
+
+    async def ainvoke(
+        self,
+        *,
+        capability: AiCapability,
+        provider_profile: AiProviderProfile,
+        payload: Mapping[str, object],
+        timeout_ms: int | None = None,
+        honor_timeout_override: bool = False,
+    ) -> ProviderInvokeResult:
+        extra_config = load_json(provider_profile.extra_config_json) or {}
+        api_family = str(getattr(provider_profile, "api_family", "") or "").strip().lower()
+        if _should_fail(
+            extra_config=extra_config,
+            payload=payload,
+            capability=capability,
+            provider_code=provider_profile.provider_code,
+        ):
+            error_code = str(extra_config.get("simulate_error_code") or "provider_failed")
+            raise ProviderRuntimeError(error_code, f"{provider_profile.provider_code} simulated failure")
+
+        if api_family == "openai_chat_completions" or self.transport_type in {"openai_compatible", "local_gateway"}:
+            return await _ainvoke_openai_compatible(
+                capability=capability,
+                provider_profile=provider_profile,
+                payload=payload,
+                timeout_ms=timeout_ms,
+                honor_timeout_override=honor_timeout_override,
+            )
+
+        return await asyncio.to_thread(
+            self.invoke,
+            capability=capability,
+            provider_profile=provider_profile,
+            payload=payload,
+            timeout_ms=timeout_ms,
+            honor_timeout_override=honor_timeout_override,
         )
 
 
@@ -325,13 +366,160 @@ def _invoke_openai_compatible(
     )
 
 
-def _stream_openai_compatible(
+async def _ainvoke_openai_compatible(
+    *,
+    capability: AiCapability,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None,
+    honor_timeout_override: bool = False,
+) -> ProviderInvokeResult:
+    started_at = perf_counter()
+    logger = logging.getLogger(__name__)
+    extra_config = load_json(provider_profile.extra_config_json) or {}
+    model_name = _resolve_model_name(provider_profile)
+    request_context = _read_request_context(payload)
+    api_key = _resolve_provider_secret(provider_profile, extra_config)
+    endpoint = _resolve_chat_endpoint(provider_profile, extra_config)
+    if not endpoint:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缺少可用的接口地址")
+
+    messages = _build_messages(capability=capability, payload=payload)
+    request_body: dict[str, object] = {
+        "model": model_name,
+        "messages": messages,
+        "temperature": extra_config.get("temperature", 0.2),
+        "stream": False,
+    }
+    if "max_tokens" in extra_config:
+        request_body["max_tokens"] = extra_config["max_tokens"]
+    else:
+        request_body["max_tokens"] = _default_max_tokens_for_capability(capability)
+    if isinstance(extra_config.get("default_request_body"), dict):
+        request_body = {
+            **extra_config["default_request_body"],
+            **request_body,
+        }
+
+    _apply_provider_specific_defaults(
+        request_body=request_body,
+        provider_profile=provider_profile,
+        model_name=model_name,
+        capability=capability,
+    )
+
+    request_headers = {"Content-Type": "application/json"}
+    if api_key:
+        request_headers["Authorization"] = f"Bearer {api_key}"
+    custom_headers = extra_config.get("headers")
+    if isinstance(custom_headers, dict):
+        request_headers.update({str(key): str(value) for key, value in custom_headers.items()})
+
+    _apply_provider_specific_headers(
+        request_headers=request_headers,
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+    )
+
+    effective_timeout_ms = _resolve_effective_timeout_ms(
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+        requested_timeout_ms=timeout_ms,
+        honor_requested_timeout=honor_timeout_override,
+    )
+    try:
+        logger.info(
+            "[AsyncInvoke] Calling provider=%s model=%s timeout_ms=%s request_id=%s trace_id=%s session_id=%s channel=%s endpoint=%s",
+            provider_profile.provider_code,
+            model_name,
+            effective_timeout_ms,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            request_context.channel,
+            endpoint,
+        )
+        async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout_ms / 1000)) as client:
+            response = await client.post(endpoint, json=request_body, headers=request_headers)
+        response.raise_for_status()
+        response_text = response.text
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        logger.exception(
+            "[AsyncInvoke] HTTPError provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s detail=%s",
+            provider_profile.provider_code,
+            model_name,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            exc.response.status_code,
+            detail[:300],
+        )
+        raise ProviderRuntimeError(_map_http_status_to_error_code(exc.response.status_code), detail or str(exc)) from exc
+    except httpx.TimeoutException as exc:
+        logger.exception(
+            "[AsyncInvoke] timeout provider=%s model=%s request_id=%s trace_id=%s session_id=%s timeout_ms=%s",
+            provider_profile.provider_code,
+            model_name,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            effective_timeout_ms,
+        )
+        raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+    except httpx.RequestError as exc:
+        logger.exception(
+            "[AsyncInvoke] RequestError provider=%s model=%s request_id=%s trace_id=%s session_id=%s reason=%s",
+            provider_profile.provider_code,
+            model_name,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            str(exc),
+        )
+        raise ProviderRuntimeError("provider_failed", str(exc)) from exc
+
+    try:
+        response_json = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        raise ProviderRuntimeError("validation_error", "provider returned invalid json") from exc
+
+    normalized_text = _extract_response_text(response_json)
+    latency_ms = max(int((perf_counter() - started_at) * 1000), 1)
+    response_model_name = str(response_json.get("model") or model_name)
+    finish_reason = _extract_finish_reason(response_json)
+    logger.info(
+        "[AsyncInvoke] Completed provider=%s model=%s request_id=%s trace_id=%s session_id=%s total_ms=%s finish_reason=%s chars=%s",
+        provider_profile.provider_code,
+        response_model_name,
+        request_context.request_id,
+        request_context.trace_id,
+        request_context.session_id,
+        latency_ms,
+        finish_reason,
+        len(normalized_text),
+    )
+    return ProviderInvokeResult(
+        provider_code=provider_profile.provider_code,
+        model_name=response_model_name,
+        latency_ms=latency_ms,
+        finish_reason=finish_reason,
+        normalized_output={
+            "text": normalized_text,
+            "provider_code": provider_profile.provider_code,
+            "model_name": response_model_name,
+        },
+        raw_response_ref=f"http://{provider_profile.provider_code}/chat-completions",
+    )
+
+
+async def _stream_openai_compatible(
     *,
     provider_profile: AiProviderProfile,
     payload: Mapping[str, object],
     timeout_ms: int | None,
     honor_timeout_override: bool = False,
-):
+)-> AsyncIterator[str]:
     """流式调用 OpenAI 兼容 API，生成器模式"""
     logger = logging.getLogger(__name__)
 
@@ -406,98 +594,102 @@ def _stream_openai_compatible(
         effective_timeout_ms,
     )
 
-    raw_request = request.Request(
-        endpoint,
-        data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
-        headers=request_headers,
-        method="POST",
-    )
-
     try:
-        with request.urlopen(raw_request, timeout=effective_timeout_ms / 1000) as response:
-            connected_ms = max(int((perf_counter() - started_at) * 1000), 1)
-            logger.info(
-                "[Stream] Connected provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s connected_ms=%s",
-                provider_profile.provider_code,
-                model_name,
-                request_context.request_id,
-                request_context.trace_id,
-                request_context.session_id,
-                getattr(response, "status", "unknown"),
-                connected_ms,
-            )
-            buffer = ""
-            chunk_count = 0
-            yielded_char_count = 0
-            first_chunk_logged = False
-            first_content_ms: int | None = None
-            for chunk in response:
-                chunk_count += 1
-                chunk_text = chunk.decode("utf-8")
-                buffer += chunk_text
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if line == "data: [DONE]":
-                        total_ms = max(int((perf_counter() - started_at) * 1000), 1)
-                        logger.info(
-                            "[Stream] Done provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunks=%s chars=%s first_content_ms=%s total_ms=%s",
-                            provider_profile.provider_code,
-                            model_name,
-                            request_context.request_id,
-                            request_context.trace_id,
-                            request_context.session_id,
-                            chunk_count,
-                            yielded_char_count,
-                            first_content_ms,
-                            total_ms,
-                        )
-                        return
-                    if line.startswith("data: "):
-                        data_str = line[6:]
+        async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout_ms / 1000)) as client:
+            async with client.stream(
+                "POST",
+                endpoint,
+                json=request_body,
+                headers=request_headers,
+            ) as response:
+                if response.is_error:
+                    detail = (await response.aread()).decode("utf-8", errors="ignore")
+                    logger.exception(
+                        "[Stream] HTTPError provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s detail=%s",
+                        provider_profile.provider_code,
+                        model_name,
+                        request_context.request_id,
+                        request_context.trace_id,
+                        request_context.session_id,
+                        response.status_code,
+                        detail[:300],
+                    )
+                    raise ProviderRuntimeError(_map_http_status_to_error_code(response.status_code), detail or response.reason_phrase)
+
+                connected_ms = max(int((perf_counter() - started_at) * 1000), 1)
+                logger.info(
+                    "[Stream] Connected provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s connected_ms=%s",
+                    provider_profile.provider_code,
+                    model_name,
+                    request_context.request_id,
+                    request_context.trace_id,
+                    request_context.session_id,
+                    response.status_code,
+                    connected_ms,
+                )
+                buffer = ""
+                chunk_count = 0
+                yielded_char_count = 0
+                first_chunk_logged = False
+                first_content_ms: int | None = None
+                async for chunk in response.aiter_text():
+                    chunk_count += 1
+                    buffer += chunk
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line == "data: [DONE]":
+                            total_ms = max(int((perf_counter() - started_at) * 1000), 1)
+                            logger.info(
+                                "[Stream] Done provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunks=%s chars=%s first_content_ms=%s total_ms=%s",
+                                provider_profile.provider_code,
+                                model_name,
+                                request_context.request_id,
+                                request_context.trace_id,
+                                request_context.session_id,
+                                chunk_count,
+                                yielded_char_count,
+                                first_content_ms,
+                                total_ms,
+                            )
+                            return
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if not data_str:
+                            continue
                         try:
                             data = json.loads(data_str)
-                            choices = data.get("choices", [])
-                            if choices and isinstance(choices, list) and len(choices) > 0:
-                                delta = choices[0].get("delta", {})
-                                content = delta.get("content", "")
-                                if content:
-                                    yielded_char_count += len(content)
-                                    if not first_chunk_logged:
-                                        first_chunk_logged = True
-                                        first_content_ms = max(int((perf_counter() - started_at) * 1000), 1)
-                                        logger.info(
-                                            "[Stream] First content chunk provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunk_index=%s first_content_ms=%s preview=%s",
-                                            provider_profile.provider_code,
-                                            model_name,
-                                            request_context.request_id,
-                                            request_context.trace_id,
-                                            request_context.session_id,
-                                            chunk_count,
-                                            first_content_ms,
-                                            content[:80],
-                                        )
-                                    yield content
                         except json.JSONDecodeError:
                             continue
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="ignore")
+                        choices = data.get("choices", [])
+                        if not choices or not isinstance(choices, list):
+                            continue
+                        delta = choices[0].get("delta", {}) if isinstance(choices[0], dict) else {}
+                        content = delta.get("content", "") if isinstance(delta, dict) else ""
+                        if not content:
+                            continue
+                        yielded_char_count += len(content)
+                        if not first_chunk_logged:
+                            first_chunk_logged = True
+                            first_content_ms = max(int((perf_counter() - started_at) * 1000), 1)
+                            logger.info(
+                                "[Stream] First content chunk provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunk_index=%s first_content_ms=%s preview=%s",
+                                provider_profile.provider_code,
+                                model_name,
+                                request_context.request_id,
+                                request_context.trace_id,
+                                request_context.session_id,
+                                chunk_count,
+                                first_content_ms,
+                                content[:80],
+                            )
+                        yield str(content)
+    except httpx.TimeoutException as exc:
         logger.exception(
-            "[Stream] HTTPError provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s detail=%s",
-            provider_profile.provider_code,
-            model_name,
-            request_context.request_id,
-            request_context.trace_id,
-            request_context.session_id,
-            exc.code,
-            detail[:300],
-        )
-        raise ProviderRuntimeError(_map_http_status_to_error_code(exc.code), detail or str(exc)) from exc
-    except socket.timeout as exc:
-        logger.exception(
-            "[Stream] socket.timeout provider=%s model=%s request_id=%s trace_id=%s session_id=%s timeout_ms=%s",
+            "[Stream] timeout provider=%s model=%s request_id=%s trace_id=%s session_id=%s timeout_ms=%s",
             provider_profile.provider_code,
             model_name,
             request_context.request_id,
@@ -506,18 +698,7 @@ def _stream_openai_compatible(
             effective_timeout_ms,
         )
         raise ProviderRuntimeError("timeout", "provider request timeout") from exc
-    except error.URLError as exc:
-        if isinstance(exc.reason, TimeoutError | socket.timeout):
-            logger.exception(
-                "[Stream] URLError timeout provider=%s model=%s request_id=%s trace_id=%s session_id=%s timeout_ms=%s",
-                provider_profile.provider_code,
-                model_name,
-                request_context.request_id,
-                request_context.trace_id,
-                request_context.session_id,
-                effective_timeout_ms,
-            )
-            raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+    except httpx.RequestError as exc:
         logger.exception(
             "[Stream] URLError provider=%s model=%s request_id=%s trace_id=%s session_id=%s reason=%s",
             provider_profile.provider_code,
@@ -525,41 +706,35 @@ def _stream_openai_compatible(
             request_context.request_id,
             request_context.trace_id,
             request_context.session_id,
-            exc.reason,
+            str(exc),
         )
-        raise ProviderRuntimeError("provider_failed", str(exc.reason)) from exc
+        raise ProviderRuntimeError("provider_failed", str(exc)) from exc
 
 
-def stream_provider_invoke(
+async def stream_provider_invoke(
     *,
     provider_profile: AiProviderProfile,
     payload: Mapping[str, object],
     timeout_ms: int | None = None,
     honor_timeout_override: bool = False,
-):
+) -> AsyncIterator[str]:
     """流式调用供应商 API"""
     api_family = str(getattr(provider_profile, "api_family", "") or "").strip().lower()
     transport_type = str(getattr(provider_profile, "transport_type", "") or "").strip().lower()
 
     if api_family == "openai_chat_completions" or transport_type in {"openai_compatible", "local_gateway"}:
-        yield from _stream_openai_compatible(
+        async for chunk in _stream_openai_compatible(
             provider_profile=provider_profile,
             payload=payload,
             timeout_ms=timeout_ms,
             honor_timeout_override=honor_timeout_override,
-        )
+        ):
+            yield chunk
     else:
-        # 不支持流式的 API，降级为普通调用后一次性返回
-        from app.modules.ai_gateway.provider_runtime import ProviderAdapter
-        adapter = ProviderAdapter(transport_type=transport_type)
-        result = adapter.invoke(
-            capability="qa_generation",
-            provider_profile=provider_profile,
-            payload=payload,
-            timeout_ms=timeout_ms,
-            honor_timeout_override=honor_timeout_override,
+        raise ProviderRuntimeError(
+            "stream_not_supported",
+            f"{provider_profile.provider_code} 不支持流式调用，不能用于实时对话",
         )
-        yield result.normalized_output.get("text", "")
 
 
 def _invoke_simulated(

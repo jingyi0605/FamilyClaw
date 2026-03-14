@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
 from app.modules.ai_gateway import repository as ai_gateway_repository
-from app.modules.ai_gateway.gateway_service import build_invocation_plan, invoke_capability, prepare_payload_for_invocation
+from app.modules.ai_gateway.gateway_service import ainvoke_capability, build_invocation_plan, invoke_capability, prepare_payload_for_invocation
 from app.modules.ai_gateway.provider_runtime import stream_provider_invoke
 from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
 from app.modules.agent.service import build_agent_runtime_context, resolve_effective_agent
@@ -122,7 +122,45 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
     return result
 
 
-def stream_family_qa(
+async def aquery_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorContext) -> FamilyQaQueryResponse:
+    prepared = _prepare_family_qa_turn(db, payload, actor)
+    ai_trace_id: str | None = None
+    ai_provider_code: str | None = None
+    ai_degraded = False
+    degraded = False
+    answer_text = prepared.answer_text
+
+    try:
+        ai_response = await ainvoke_capability(
+            db,
+            AiGatewayInvokeRequest(
+                capability="qa_generation",
+                household_id=payload.household_id,
+                requester_member_id=payload.requester_member_id,
+                payload=_build_qa_generation_payload(prepared),
+            ),
+        )
+        answer_text = str(ai_response.normalized_output.get("text") or answer_text)
+        ai_trace_id = ai_response.trace_id
+        ai_provider_code = ai_response.provider_code
+        ai_degraded = ai_response.degraded
+        degraded = ai_response.degraded
+    except HTTPException:
+        degraded = True
+
+    result = _build_family_qa_response(
+        prepared,
+        answer_text=answer_text,
+        ai_trace_id=ai_trace_id,
+        ai_provider_code=ai_provider_code,
+        ai_degraded=ai_degraded,
+        degraded=degraded,
+    )
+    _persist_family_qa_result(db, prepared=prepared, result=result)
+    return result
+
+
+async def stream_family_qa(
     db: Session,
     payload: FamilyQaQueryRequest,
     actor: ActorContext,
@@ -147,7 +185,7 @@ def stream_family_qa(
 
     if provider_profile is None or not provider_profile.enabled or prepared_payload.blocked_reason:
         degraded = True
-        response = invoke_capability(
+        response = await ainvoke_capability(
             db,
             AiGatewayInvokeRequest(
                 capability="qa_generation",
@@ -174,7 +212,7 @@ def stream_family_qa(
     provider_code = provider_profile.provider_code
     trace_id = plan.trace_id
     try:
-        for chunk in stream_provider_invoke(
+        async for chunk in stream_provider_invoke(
             provider_profile=provider_profile,
             payload=prepared_payload.payload,
             timeout_ms=plan.timeout_ms,
@@ -198,7 +236,7 @@ def stream_family_qa(
         yield ("done", result)
         return
     except ProviderRuntimeError:
-        response = invoke_capability(
+        response = await ainvoke_capability(
             db,
             AiGatewayInvokeRequest(
                 capability="qa_generation",

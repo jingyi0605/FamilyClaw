@@ -18,6 +18,7 @@ from app.modules.conversation.schemas import (
 )
 from app.modules.conversation.service import (
     ConversationNotFoundError,
+    acreate_conversation_turn,
     confirm_conversation_action,
     confirm_memory_candidate,
     create_conversation_session,
@@ -118,14 +119,14 @@ def list_conversation_debug_logs_endpoint(
 
 
 @router.post("/sessions/{session_id}/turns", response_model=ConversationTurnRead)
-def create_conversation_turn_endpoint(
+async def create_conversation_turn_endpoint(
     session_id: str,
     payload: ConversationTurnCreate,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_bound_member_actor),
 ) -> ConversationTurnRead:
     try:
-        result = create_conversation_turn(db, session_id=session_id, payload=payload, actor=actor)
+        result = await acreate_conversation_turn(db, session_id=session_id, payload=payload, actor=actor)
         write_audit_log(
             db,
             household_id=result.session.household_id,

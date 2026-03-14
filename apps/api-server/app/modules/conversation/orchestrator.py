@@ -427,6 +427,20 @@ def _run_non_realtime_lane(
     lane_selection: ConversationLaneSelection,
     request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
+    if settings.conversation_lane_takeover_enabled:
+        return _attach_lane_selection(
+            _run_non_qa_chat(
+                db,
+                intent=ConversationIntent.FREE_CHAT,
+                session=session,
+                message=message,
+                actor=actor,
+                conversation_history=conversation_history,
+                detection=detection,
+                request_context=request_context,
+            ),
+            lane_selection=lane_selection,
+        )
     intent = detection.route_intent
     if intent == ConversationIntent.CONFIG_EXTRACTION:
         return _attach_lane_selection(
@@ -492,6 +506,20 @@ async def _stream_non_realtime_lane(
     lane_selection: ConversationLaneSelection,
     request_context: dict | None = None,
 ):
+    if settings.conversation_lane_takeover_enabled:
+        async for event_type, event_payload in _stream_non_qa_chat(
+            db,
+            intent=ConversationIntent.FREE_CHAT,
+            session=session,
+            message=message,
+            actor=actor,
+            conversation_history=conversation_history,
+            detection=detection,
+            lane_selection=lane_selection,
+            request_context=request_context,
+        ):
+            yield event_type, event_payload
+        return
     intent = detection.route_intent
     if intent == ConversationIntent.CONFIG_EXTRACTION:
         yield "done", _attach_lane_selection(
