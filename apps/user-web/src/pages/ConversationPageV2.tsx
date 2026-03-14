@@ -13,6 +13,7 @@ import type {
   ConversationProposalItem,
   ConversationSession,
   ConversationSessionDetail,
+  ScheduledTaskConversationProposalPayload,
 } from '../lib/types';
 import { useHouseholdContext } from '../state/household';
 
@@ -109,12 +110,22 @@ function buildActionResultText(action: ConversationActionRecord) {
 }
 
 function getProposalIcon(item: ConversationProposalItem) {
+  if (item.proposal_kind === 'scheduled_task_create') return '🗓️';
+  if (item.proposal_kind === 'scheduled_task_update') return '🛠️';
+  if (item.proposal_kind === 'scheduled_task_pause') return '⏸️';
+  if (item.proposal_kind === 'scheduled_task_resume') return '▶️';
+  if (item.proposal_kind === 'scheduled_task_delete') return '🗑️';
   if (item.proposal_kind === 'reminder_create') return '🔔';
   if (item.proposal_kind === 'config_apply') return '⚙️';
   return '🧠';
 }
 
 function getProposalStatusText(item: ConversationProposalItem) {
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_create') return '计划任务已经创建';
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_update') return '计划任务已经更新';
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_pause') return '计划任务已经暂停';
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_resume') return '计划任务已经恢复';
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_delete') return '计划任务已经删除';
   if (item.status === 'pending_confirmation') return '等待你确认';
   if (item.status === 'completed' && item.proposal_kind === 'config_apply') return '配置已经应用';
   if (item.status === 'completed' && item.proposal_kind === 'memory_write') return '记忆已经写入';
@@ -123,6 +134,46 @@ function getProposalStatusText(item: ConversationProposalItem) {
   if (item.status === 'ignored') return '这条建议已忽略';
   if (item.status === 'failed') return '执行失败';
   return '建议已生成';
+}
+
+function getProposalPrimaryActionText(item: ConversationProposalItem) {
+  if (item.proposal_kind === 'scheduled_task_create') return '确认创建';
+  if (item.proposal_kind === 'scheduled_task_update') return '确认更新';
+  if (item.proposal_kind === 'scheduled_task_pause') return '确认暂停';
+  if (item.proposal_kind === 'scheduled_task_resume') return '确认恢复';
+  if (item.proposal_kind === 'scheduled_task_delete') return '确认删除';
+  return '确认应用';
+}
+
+function getProposalDismissText(item: ConversationProposalItem) {
+  if (item.proposal_kind === 'scheduled_task_create') return '先不创建';
+  if (item.proposal_kind.startsWith('scheduled_task_')) return '先不处理';
+  return '先不改';
+}
+
+function getProposalMetaText(item: ConversationProposalItem) {
+  if (item.proposal_kind.startsWith('scheduled_task_')) {
+    return item.status === 'pending_confirmation' ? 'AI 已经整理出一条计划任务，等你确认后才会正式创建。' : getProposalStatusText(item);
+  }
+  return item.status === 'pending_confirmation' ? 'AI 整理出一条可执行建议，当前设置是先问你。' : getProposalStatusText(item);
+}
+
+function parseScheduledTaskProposalPayload(item: ConversationProposalItem): ScheduledTaskConversationProposalPayload | null {
+  if (item.proposal_kind !== 'scheduled_task_create') return null;
+  const payload = item.payload;
+  if (!payload || typeof payload !== 'object') return null;
+  return {
+    draft_id: typeof payload.draft_id === 'string' ? payload.draft_id : '',
+    intent_summary: typeof payload.intent_summary === 'string' ? payload.intent_summary : item.summary ?? item.title,
+    missing_fields: Array.isArray(payload.missing_fields) ? payload.missing_fields.filter(value => typeof value === 'string') : [],
+    missing_field_labels: Array.isArray(payload.missing_field_labels) ? payload.missing_field_labels.filter(value => typeof value === 'string') : [],
+    draft_payload: payload.draft_payload && typeof payload.draft_payload === 'object' ? payload.draft_payload as Record<string, unknown> : {},
+    can_confirm: Boolean(payload.can_confirm),
+    owner_summary: typeof payload.owner_summary === 'string' ? payload.owner_summary : null,
+    schedule_summary: typeof payload.schedule_summary === 'string' ? payload.schedule_summary : null,
+    target_summary: typeof payload.target_summary === 'string' ? payload.target_summary : null,
+    confirm_block_reason: typeof payload.confirm_block_reason === 'string' ? payload.confirm_block_reason : null,
+  };
 }
 
 export function ConversationPageV2() {
@@ -181,6 +232,17 @@ export function ConversationPageV2() {
       grouped.set(batch.request_id, current);
     }
     return grouped;
+  }, [proposalBatches]);
+  const latestScheduledProposalIds = useMemo(() => {
+    const latest = new Map<string, string>();
+    for (const batch of proposalBatches) {
+      for (const item of batch.items) {
+        const payload = parseScheduledTaskProposalPayload(item);
+        if (!payload?.draft_id) continue;
+        latest.set(payload.draft_id, item.id);
+      }
+    }
+    return latest;
   }, [proposalBatches]);
   const pendingActionCount = useMemo(
     () => (
@@ -578,28 +640,50 @@ export function ConversationPageV2() {
   }
 
   function renderAskProposalCard(item: ConversationProposalItem) {
+    const scheduledPayload = parseScheduledTaskProposalPayload(item);
+    if (scheduledPayload && latestScheduledProposalIds.get(scheduledPayload.draft_id) !== item.id) {
+      return null;
+    }
     return (
-      <div key={item.id} className="message__action-card message__action-card--ask">
+      <div key={item.id} className={`message__action-card message__action-card--ask ${item.proposal_kind === 'scheduled_task_create' ? 'message__proposal-card--scheduled' : ''}`}>
         <div className="message__action-header">
           <span className="message__action-icon">{getProposalIcon(item)}</span>
           <strong>{item.title}</strong>
         </div>
         {item.summary && <p className="message__action-text">{item.summary}</p>}
-        <div className="message__action-meta">AI 整理出一条可执行建议，当前设置是先问你。</div>
+        {scheduledPayload ? (
+          <div className="message__proposal-body">
+            <div className="message__proposal-summary">{scheduledPayload.intent_summary}</div>
+            <div className="message__proposal-chips">
+              {scheduledPayload.schedule_summary ? <span className="message__proposal-chip">{scheduledPayload.schedule_summary}</span> : null}
+              {scheduledPayload.owner_summary ? <span className="message__proposal-chip">{scheduledPayload.owner_summary}</span> : null}
+              {scheduledPayload.target_summary ? <span className="message__proposal-chip">{scheduledPayload.target_summary}</span> : null}
+            </div>
+            {scheduledPayload.missing_field_labels.length > 0 ? (
+              <div className="message__proposal-warning">
+                还缺：{scheduledPayload.missing_field_labels.join('、')}
+              </div>
+            ) : null}
+            {!scheduledPayload.can_confirm && scheduledPayload.confirm_block_reason ? (
+              <div className="message__proposal-hint">{scheduledPayload.confirm_block_reason}</div>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="message__action-meta">{getProposalMetaText(item)}</div>
         <div className="message__actions">
           <button
             className="msg-action-btn"
-            disabled={actionBusyId === item.id}
-            onClick={() => void handleConversationProposal(item.id, 'confirm', '已按你的确认应用这条建议。')}
+            disabled={actionBusyId === item.id || Boolean(scheduledPayload && !scheduledPayload.can_confirm)}
+            onClick={() => void handleConversationProposal(item.id, 'confirm', item.proposal_kind === 'scheduled_task_create' ? '已按你的确认创建这条计划任务。' : '已按你的确认应用这条建议。')}
           >
-            确认应用
+            {getProposalPrimaryActionText(item)}
           </button>
           <button
             className="msg-action-btn"
             disabled={actionBusyId === item.id}
-            onClick={() => void handleConversationProposal(item.id, 'dismiss', '已忽略这条建议。')}
+            onClick={() => void handleConversationProposal(item.id, 'dismiss', item.proposal_kind === 'scheduled_task_create' ? '已忽略这条计划任务提案。' : '已忽略这条建议。')}
           >
-            先不改
+            {getProposalDismissText(item)}
           </button>
         </div>
       </div>
@@ -608,14 +692,28 @@ export function ConversationPageV2() {
 
   function renderCompletedProposalCard(item: ConversationProposalItem) {
     const toneClass = item.policy_category === 'auto' ? 'message__action-card--auto' : 'message__action-card--notify';
+    const scheduledPayload = parseScheduledTaskProposalPayload(item);
+    if (scheduledPayload && latestScheduledProposalIds.get(scheduledPayload.draft_id) !== item.id) {
+      return null;
+    }
     return (
-      <div key={item.id} className={`message__action-card ${toneClass}`}>
+      <div key={item.id} className={`message__action-card ${toneClass} ${item.proposal_kind === 'scheduled_task_create' ? 'message__proposal-card--scheduled' : ''}`}>
         <div className="message__action-header">
           <span className="message__action-icon">{getProposalIcon(item)}</span>
           <strong>{item.title}</strong>
         </div>
         {item.summary && <p className="message__action-text">{item.summary}</p>}
-        <div className="message__action-meta">{getProposalStatusText(item)}</div>
+        {scheduledPayload ? (
+          <div className="message__proposal-body">
+            <div className="message__proposal-summary">{scheduledPayload.intent_summary}</div>
+            <div className="message__proposal-chips">
+              {scheduledPayload.schedule_summary ? <span className="message__proposal-chip">{scheduledPayload.schedule_summary}</span> : null}
+              {scheduledPayload.owner_summary ? <span className="message__proposal-chip">{scheduledPayload.owner_summary}</span> : null}
+              {scheduledPayload.target_summary ? <span className="message__proposal-chip">{scheduledPayload.target_summary}</span> : null}
+            </div>
+          </div>
+        ) : null}
+        <div className="message__action-meta">{getProposalMetaText(item)}</div>
       </div>
     );
   }

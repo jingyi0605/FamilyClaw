@@ -129,6 +129,7 @@ def update_task_definition(
     for field_name in [
         "name",
         "description",
+        "trigger_type",
         "schedule_type",
         "schedule_expr",
         "heartbeat_interval_seconds",
@@ -150,6 +151,7 @@ def update_task_definition(
         row.payload_template_json = dump_json(data["payload_template"])
 
     _ensure_target_is_valid(row.enabled, row.target_ref_id)
+    _validate_definition_snapshot(row)
     _validate_target_dependency(
         db,
         household_id=row.household_id,
@@ -185,6 +187,19 @@ def set_task_enabled(
 ) -> ScheduledTaskDefinitionRead:
     update = ScheduledTaskDefinitionUpdate(enabled=enabled, status="active" if enabled else "paused")
     return update_task_definition(db, actor=actor, task_id=task_id, payload=update, now_iso=now_iso)
+
+
+def delete_task_definition(
+    db: Session,
+    *,
+    actor: AuthenticatedActor,
+    task_id: str,
+) -> None:
+    row = _get_task_or_404(db, task_id)
+    _ensure_actor_can_access_household(actor, row.household_id)
+    _ensure_can_manage_task(actor, row)
+    db.delete(row)
+    db.flush()
 
 
 def list_task_definitions(
@@ -327,7 +342,12 @@ def process_due_schedule_tick(
         )
         definition.last_run_at = scheduled_for
         definition.last_result = "queued"
-        definition.next_run_at = calculate_next_run_at(definition, reference_now=_parse_iso_datetime(scheduled_for))
+        if definition.schedule_type == "once":
+            definition.next_run_at = None
+            definition.enabled = False
+            definition.status = "paused"
+        else:
+            definition.next_run_at = calculate_next_run_at(definition, reference_now=_parse_iso_datetime(scheduled_for))
         definition.updated_at = utc_now_iso()
         db.add(definition)
         created_runs.append(run)
@@ -453,6 +473,8 @@ def calculate_next_run_at(definition: ScheduledTaskDefinition | ScheduledTaskDef
         return _calculate_next_interval_run(definition.schedule_expr or "", reference_now=reference_now)
     if definition.schedule_type == "cron":
         return _calculate_next_cron_run(definition.schedule_expr or "", timezone_name=timezone_name, reference_now=reference_now)
+    if definition.schedule_type == "once":
+        return _calculate_next_once_run(definition.schedule_expr or "", timezone_name=timezone_name, reference_now=reference_now)
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported schedule type")
 
 
@@ -515,6 +537,18 @@ def _calculate_next_cron_run(schedule_expr: str, *, timezone_name: str, referenc
             return _to_utc_iso(candidate)
         candidate = candidate + timedelta(minutes=1)
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="cron schedule cannot find next run time")
+
+
+def _calculate_next_once_run(schedule_expr: str, *, timezone_name: str, reference_now: datetime) -> str:
+    try:
+        naive = datetime.fromisoformat(schedule_expr.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="once schedule must use YYYY-MM-DDTHH:MM") from exc
+    zone = _get_zoneinfo(timezone_name)
+    local_value = naive.replace(tzinfo=zone)
+    if local_value.astimezone(timezone.utc) <= reference_now.astimezone(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="once schedule must be in the future")
+    return _to_utc_iso(local_value)
 
 
 def _expand_cron_field(field: str, minimum: int, maximum: int) -> set[int]:
@@ -652,8 +686,36 @@ def _validate_target_dependency(db: Session, *, household_id: str, target_type: 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scheduled task plugin target not found")
     if not plugin.enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scheduled task plugin target is disabled")
+    if plugin.risk_level == "high":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scheduled task plugin target is high risk and cannot be scheduled by default")
     if "schedule" not in plugin.triggers:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scheduled task plugin target does not support schedule trigger")
+
+
+def _validate_definition_snapshot(row: ScheduledTaskDefinition) -> None:
+    ScheduledTaskDefinitionCreate.model_validate(
+        {
+            "household_id": row.household_id,
+            "owner_scope": row.owner_scope,
+            "owner_member_id": row.owner_member_id,
+            "code": row.code,
+            "name": row.name,
+            "description": row.description,
+            "trigger_type": row.trigger_type,
+            "schedule_type": row.schedule_type,
+            "schedule_expr": row.schedule_expr,
+            "heartbeat_interval_seconds": row.heartbeat_interval_seconds,
+            "timezone": row.timezone,
+            "target_type": row.target_type,
+            "target_ref_id": row.target_ref_id,
+            "rule_type": row.rule_type or "none",
+            "rule_config": load_json(row.rule_config_json) or {},
+            "payload_template": load_json(row.payload_template_json) or {},
+            "cooldown_seconds": row.cooldown_seconds,
+            "quiet_hours_policy": row.quiet_hours_policy,
+            "enabled": row.enabled,
+        }
+    )
 
 
 def _can_view_task(actor: AuthenticatedActor, row: ScheduledTaskDefinition) -> bool:

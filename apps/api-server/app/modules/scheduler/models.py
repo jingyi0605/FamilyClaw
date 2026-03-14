@@ -21,6 +21,10 @@ class ScheduledTaskDefinition(Base):
             "AND heartbeat_interval_seconds IS NOT NULL)",
             name="ck_scheduled_task_definitions_trigger_fields",
         ),
+        CheckConstraint(
+            "schedule_type IS NULL OR schedule_type IN ('daily', 'interval', 'cron', 'once')",
+            name="ck_scheduled_task_definitions_schedule_type",
+        ),
         Index(
             "idx_scheduled_task_definitions_schedule_due",
             "enabled",

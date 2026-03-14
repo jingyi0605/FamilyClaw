@@ -21,6 +21,7 @@ from app.modules.scheduler.schemas import (
 from app.modules.scheduler.draft_service import confirm_draft_from_conversation, create_draft_from_conversation
 from app.modules.scheduler.service import (
     create_task_definition,
+    delete_task_definition,
     get_task_definition_read_or_404,
     list_task_definitions,
     list_task_runs,
@@ -67,6 +68,31 @@ def create_scheduled_task_endpoint(
         )
         db.commit()
         return result
+    except HTTPException:
+        db.rollback()
+        raise
+
+
+@router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_scheduled_task_endpoint(
+    task_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> None:
+    try:
+        task = get_task_definition_read_or_404(db, actor=_to_authenticated_actor(actor), task_id=task_id)
+        delete_task_definition(db, actor=_to_authenticated_actor(actor), task_id=task_id)
+        write_audit_log(
+            db,
+            household_id=task.household_id,
+            actor=actor,
+            action="scheduled_task.delete",
+            target_type="scheduled_task_definition",
+            target_id=task_id,
+            result="success",
+            details={"task_id": task_id},
+        )
+        db.commit()
     except HTTPException:
         db.rollback()
         raise

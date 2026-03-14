@@ -11,6 +11,7 @@ from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.agent import repository as agent_repository
 from app.modules.agent.schemas import AgentAutonomousActionPolicy, AgentSoulProfileUpsert, AgentUpdate
 from app.modules.agent.service import AgentNotFoundError, resolve_effective_agent, update_agent, upsert_agent_soul
+from app.modules.account.service import AuthenticatedActor
 from app.modules.audit.service import write_audit_log
 from app.modules.conversation import repository
 from app.modules.conversation.models import (
@@ -65,6 +66,10 @@ from app.modules.reminder.service import create_task as create_reminder_task
 from app.modules.reminder.service import delete_task as delete_reminder_task
 from app.modules.realtime.connection_manager import RealtimeConnectionManager
 from app.modules.realtime.schemas import build_bootstrap_realtime_event
+from app.modules.scheduler.draft_service import confirm_draft_from_conversation
+from app.modules.scheduler.schemas import ScheduledTaskDraftConfirmRequest
+from app.modules.scheduler.service import delete_task_definition, set_task_enabled, update_task_definition
+from app.modules.scheduler.schemas import ScheduledTaskDefinitionUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +270,10 @@ def _execute_proposal_item(
         return _apply_config_proposal_item(db, session=session, payload=payload)
     if item.proposal_kind == "reminder_create":
         return _apply_reminder_proposal_item(db, session=session, payload=payload)
+    if item.proposal_kind == "scheduled_task_create":
+        return _apply_scheduled_task_proposal_item(db, payload=payload, actor=actor)
+    if item.proposal_kind in {"scheduled_task_update", "scheduled_task_pause", "scheduled_task_resume", "scheduled_task_delete"}:
+        return _apply_scheduled_task_operation_proposal_item(db, proposal_kind=item.proposal_kind, payload=payload, actor=actor)
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported conversation proposal kind")
 
 
@@ -1574,7 +1583,8 @@ def _append_debug_log(
 def _build_orchestrator_debug_payload(result: ConversationOrchestratorResult) -> dict:
     detection_payload = result.intent_detection.to_payload() if result.intent_detection is not None else {}
     return {
-        "route_intent": result.intent.value,
+        "final_result_intent": result.intent.value,
+        "detected_route_intent": result.intent_detection.route_intent.value if result.intent_detection is not None else None,
         "lane_selection": result.lane_selection.to_payload() if result.lane_selection is not None else None,
         "intent_detection": detection_payload,
         "facts_count": len(result.facts),
@@ -1621,8 +1631,10 @@ def _run_proposal_pipeline_for_turn(
         return None
 
     turn_context = build_turn_proposal_context(
+        db=db,
         session=session,
         request_id=request_id,
+        authenticated_actor=_to_authenticated_actor(actor),
         user_message=user_message,
         assistant_message=assistant_message,
         conversation_history_excerpt=_build_recent_conversation_history(
@@ -1791,8 +1803,10 @@ def _persist_legacy_result_as_proposal_batch(
     if not drafts:
         return None
     turn_context = build_turn_proposal_context(
+        db=db,
         session=session,
         request_id=request_id,
+        authenticated_actor=_to_authenticated_actor(actor),
         user_message=user_message,
         assistant_message=assistant_message,
         conversation_history_excerpt=[],
@@ -1985,6 +1999,71 @@ def _apply_reminder_proposal_item(
         ),
     )
     return task.id
+
+
+def _apply_scheduled_task_proposal_item(
+    db: Session,
+    *,
+    payload: dict,
+    actor: ActorContext,
+) -> str:
+    draft_id = str(payload.get("draft_id") or "").strip()
+    if not draft_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="计划任务提案缺少草稿标识，暂时不能确认。")
+    _, task_id = confirm_draft_from_conversation(
+        db,
+        actor=_to_authenticated_actor(actor),
+        draft_id=draft_id,
+        payload=ScheduledTaskDraftConfirmRequest(),
+    )
+    return task_id
+
+
+def _apply_scheduled_task_operation_proposal_item(
+    db: Session,
+    *,
+    proposal_kind: str,
+    payload: dict,
+    actor: ActorContext,
+) -> str:
+    task_id = str(payload.get("task_id") or "").strip()
+    if not task_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="计划任务操作提案缺少任务标识。")
+    authenticated_actor = _to_authenticated_actor(actor)
+    if proposal_kind == "scheduled_task_pause":
+        set_task_enabled(db, actor=authenticated_actor, task_id=task_id, enabled=False)
+        return task_id
+    if proposal_kind == "scheduled_task_resume":
+        set_task_enabled(db, actor=authenticated_actor, task_id=task_id, enabled=True)
+        return task_id
+    if proposal_kind == "scheduled_task_delete":
+        delete_task_definition(db, actor=authenticated_actor, task_id=task_id)
+        return task_id
+    if proposal_kind == "scheduled_task_update":
+        update_payload = payload.get("update_payload")
+        if not isinstance(update_payload, dict) or not update_payload:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="计划任务更新提案缺少有效变更内容。")
+        update_task_definition(
+            db,
+            actor=authenticated_actor,
+            task_id=task_id,
+            payload=ScheduledTaskDefinitionUpdate.model_validate(update_payload),
+        )
+        return task_id
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported scheduled task proposal kind")
+
+
+def _to_authenticated_actor(actor: ActorContext) -> AuthenticatedActor:
+    return AuthenticatedActor(
+        account_id=actor.account_id or "",
+        username=actor.username or "",
+        account_type=actor.account_type,
+        account_status=actor.account_status,
+        household_id=actor.household_id,
+        member_id=actor.member_id,
+        member_role=actor.member_role,
+        must_change_password=actor.must_change_password,
+    )
 
 
 def _count_request_memory_candidates(

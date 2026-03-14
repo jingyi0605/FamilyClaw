@@ -612,6 +612,19 @@ export type ConversationProposalItem = {
   updated_at: string;
 };
 
+export type ScheduledTaskConversationProposalPayload = {
+  draft_id: string;
+  intent_summary: string;
+  missing_fields: string[];
+  missing_field_labels: string[];
+  draft_payload: Record<string, unknown>;
+  can_confirm: boolean;
+  owner_summary: string | null;
+  schedule_summary: string | null;
+  target_summary: string | null;
+  confirm_block_reason: string | null;
+};
+
 export type ConversationProposalBatch = {
   id: string;
   session_id: string;
@@ -859,7 +872,7 @@ export type MemoryCardRevision = {
 
 export type OwnerScope = 'household' | 'member';
 export type TriggerType = 'schedule' | 'heartbeat';
-export type ScheduleType = 'daily' | 'interval' | 'cron';
+export type ScheduleType = 'daily' | 'interval' | 'cron' | 'once';
 export type TargetType = 'plugin_job' | 'agent_reminder' | 'system_notice';
 export type RuleType = 'none' | 'context_insight' | 'presence' | 'device_summary';
 export type TaskStatus = 'active' | 'paused' | 'error' | 'invalid_dependency';
@@ -961,4 +974,137 @@ export type ScheduledTaskRun = {
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
+};
+
+/* ============================================================
+ * 通讯通道类型定义
+ * ============================================================ */
+
+export type ChannelAccountStatus = 'draft' | 'active' | 'degraded' | 'disabled';
+export type ChannelConnectionMode = 'webhook' | 'polling' | 'websocket';
+export type ChannelBindingStatus = 'active' | 'disabled';
+export type ChannelInboundEventStatus = 'received' | 'matched' | 'dispatched' | 'ignored' | 'failed';
+export type ChannelDeliveryStatus = 'pending' | 'sent' | 'failed' | 'skipped';
+export type ChannelDeliveryType = 'reply' | 'notice' | 'error';
+
+export type ChannelAccountRead = {
+  id: string;
+  household_id: string;
+  plugin_id: string;
+  platform_code: string;
+  account_code: string;
+  display_name: string;
+  connection_mode: ChannelConnectionMode;
+  config: Record<string, unknown>;
+  status: ChannelAccountStatus;
+  last_probe_status: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  last_inbound_at: string | null;
+  last_outbound_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChannelAccountCreate = {
+  plugin_id: string;
+  account_code: string;
+  display_name: string;
+  connection_mode: ChannelConnectionMode;
+  config?: Record<string, unknown>;
+  status?: ChannelAccountStatus;
+};
+
+export type ChannelAccountUpdate = {
+  display_name?: string;
+  connection_mode?: ChannelConnectionMode;
+  config?: Record<string, unknown>;
+  status?: ChannelAccountStatus;
+};
+
+export type MemberChannelBindingRead = {
+  id: string;
+  household_id: string;
+  member_id: string;
+  channel_account_id: string;
+  platform_code: string;
+  external_user_id: string;
+  external_chat_id: string | null;
+  display_hint: string | null;
+  binding_status: ChannelBindingStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MemberChannelBindingCreate = {
+  channel_account_id: string;
+  member_id: string;
+  external_user_id: string;
+  external_chat_id?: string | null;
+  display_hint?: string | null;
+  binding_status?: ChannelBindingStatus;
+};
+
+export type MemberChannelBindingUpdate = {
+  external_user_id?: string;
+  external_chat_id?: string | null;
+  display_hint?: string | null;
+  binding_status?: ChannelBindingStatus;
+};
+
+export type ChannelDeliveryFailureSummaryRead = {
+  channel_account_id: string;
+  platform_code: string;
+  recent_failure_count: number;
+  last_delivery_id: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  last_failed_at: string | null;
+};
+
+export type ChannelDeliveryRead = {
+  id: string;
+  household_id: string;
+  channel_account_id: string;
+  platform_code: string;
+  conversation_session_id: string | null;
+  assistant_message_id: string | null;
+  external_conversation_key: string;
+  delivery_type: ChannelDeliveryType;
+  request_payload: Record<string, unknown>;
+  provider_message_ref: string | null;
+  status: ChannelDeliveryStatus;
+  attempt_count: number;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChannelInboundEventRead = {
+  id: string;
+  household_id: string;
+  channel_account_id: string;
+  platform_code: string;
+  external_event_id: string;
+  event_type: string;
+  external_user_id: string | null;
+  external_conversation_key: string | null;
+  normalized_payload: Record<string, unknown>;
+  status: ChannelInboundEventStatus;
+  conversation_session_id: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  received_at: string;
+  processed_at: string | null;
+};
+
+export type ChannelAccountStatusRead = {
+  account: ChannelAccountRead;
+  recent_failure_summary: ChannelDeliveryFailureSummaryRead;
+  latest_delivery: ChannelDeliveryRead | null;
+  latest_inbound_event: ChannelInboundEventRead | null;
+  latest_failed_inbound_event: ChannelInboundEventRead | null;
+  recent_delivery_count: number;
+  recent_inbound_count: number;
 };

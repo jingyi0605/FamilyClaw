@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 
 OwnerScope = Literal["household", "member"]
 TriggerType = Literal["schedule", "heartbeat"]
-ScheduleType = Literal["daily", "interval", "cron"]
+ScheduleType = Literal["daily", "interval", "cron", "once"]
 TargetType = Literal["plugin_job", "agent_reminder", "system_notice"]
 RuleType = Literal["none", "context_insight", "presence", "device_summary"]
 TaskStatus = Literal["active", "paused", "error", "invalid_dependency"]
@@ -63,6 +63,7 @@ class ScheduledTaskDefinitionUpdate(BaseModel):
     owner_member_id: str | None = Field(default=None, min_length=1)
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=255)
+    trigger_type: TriggerType | None = None
     schedule_type: ScheduleType | None = None
     schedule_expr: str | None = Field(default=None, min_length=1, max_length=128)
     heartbeat_interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
@@ -179,6 +180,11 @@ class ScheduledTaskDraftRead(BaseModel):
     owner_member_id: str | None = None
     intent_summary: str
     missing_fields: list[str] = Field(default_factory=list)
+    missing_field_labels: list[str] = Field(default_factory=list)
     draft_payload: dict[str, Any] = Field(default_factory=dict)
     status: Literal["drafting", "awaiting_confirm", "confirmed", "cancelled"]
     can_confirm: bool = False
+    owner_summary: str | None = None
+    schedule_summary: str | None = None
+    target_summary: str | None = None
+    confirm_block_reason: str | None = None

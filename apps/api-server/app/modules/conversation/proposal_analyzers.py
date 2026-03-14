@@ -1,7 +1,21 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from app.db.utils import load_json
+from app.modules.conversation import repository as conversation_repository
 from app.modules.llm_task.output_models import ProposalBatchExtractionOutput
+from app.modules.scheduler.draft_service import (
+    build_partial_update_payload_from_text,
+    build_conversation_proposal_payload,
+    build_conversation_proposal_summary,
+    build_conversation_proposal_title,
+    create_draft_from_conversation,
+    looks_like_scheduled_task_followup,
+    looks_like_scheduled_task_intent,
+    preview_draft_from_conversation,
+)
+from app.modules.scheduler.service import list_task_definitions
+from app.modules.scheduler.schemas import ScheduledTaskDefinitionRead, ScheduledTaskDraftFromConversationRequest
 
 if TYPE_CHECKING:
     from app.modules.conversation.proposal_pipeline import TurnProposalContext
@@ -41,11 +55,14 @@ class ProposalAnalyzerFailure:
 
 class ProposalAnalyzerRegistry:
     def __init__(self, analyzers: list[ProposalAnalyzer] | None = None) -> None:
-        self._analyzers = analyzers or [
+        default_analyzers: list[ProposalAnalyzer] = [
             MemoryProposalAnalyzer(),
             ConfigProposalAnalyzer(),
+            ScheduledTaskProposalAnalyzer(),
+            ScheduledTaskOperationProposalAnalyzer(),
             ReminderProposalAnalyzer(),
         ]
+        self._analyzers = analyzers or default_analyzers
 
     def list_analyzers(self) -> list[ProposalAnalyzer]:
         return list(self._analyzers)
@@ -216,6 +233,180 @@ class ReminderProposalAnalyzer:
                 )
             )
         return drafts
+
+
+class ScheduledTaskProposalAnalyzer:
+    name = "scheduled_task_proposal_analyzer"
+    proposal_kind = "scheduled_task_create"
+    default_policy_category = "ask"
+
+    def supports(self, turn_context: "TurnProposalContext") -> bool:
+        return bool(turn_context.user_messages and turn_context.db is not None and turn_context.authenticated_actor is not None)
+
+    def analyze(
+        self,
+        turn_context: "TurnProposalContext",
+        extraction_output: ProposalBatchExtractionOutput,
+    ) -> list[ProposalDraft]:
+        _ = extraction_output
+        latest_user_evidence = turn_context.latest_user_evidence()
+        if latest_user_evidence is None:
+            return []
+        assert turn_context.db is not None
+        assert turn_context.authenticated_actor is not None
+        db = turn_context.db
+        authenticated_actor = turn_context.authenticated_actor
+        message_text = latest_user_evidence.content.strip()
+        if ScheduledTaskOperationProposalAnalyzer._detect_operation(message_text) is not None:
+            return []
+        pending_draft_id = _find_latest_pending_scheduled_task_draft_id(turn_context)
+        if not looks_like_scheduled_task_intent(message_text) and not (pending_draft_id and looks_like_scheduled_task_followup(message_text)):
+            return []
+        request = ScheduledTaskDraftFromConversationRequest(
+            household_id=turn_context.household_id,
+            text=message_text,
+            draft_id=pending_draft_id,
+        )
+        if turn_context.persist_enabled:
+            draft = create_draft_from_conversation(
+                db,
+                actor=authenticated_actor,
+                payload=request,
+            )
+        else:
+            draft = preview_draft_from_conversation(
+                db,
+                actor=authenticated_actor,
+                payload=request,
+            )
+        payload = build_conversation_proposal_payload(draft)
+        return [
+            ProposalDraft(
+                proposal_kind=self.proposal_kind,
+                policy_category=self.default_policy_category,
+                title=build_conversation_proposal_title(draft),
+                summary=build_conversation_proposal_summary(draft),
+                evidence_message_ids=[latest_user_evidence.message_id],
+                evidence_roles=[latest_user_evidence.role],
+                dedupe_key=_build_dedupe_key(self.proposal_kind, [latest_user_evidence.message_id], draft.intent_summary),
+                confidence=0.92,
+                payload=payload,
+            )
+        ]
+
+
+class ScheduledTaskOperationProposalAnalyzer:
+    name = "scheduled_task_operation_proposal_analyzer"
+    default_policy_category = "ask"
+
+    def supports(self, turn_context: "TurnProposalContext") -> bool:
+        return bool(turn_context.user_messages and turn_context.db is not None and turn_context.authenticated_actor is not None)
+
+    def analyze(
+        self,
+        turn_context: "TurnProposalContext",
+        extraction_output: ProposalBatchExtractionOutput,
+    ) -> list[ProposalDraft]:
+        _ = extraction_output
+        latest_user_evidence = turn_context.latest_user_evidence()
+        if latest_user_evidence is None:
+            return []
+        assert turn_context.db is not None
+        assert turn_context.authenticated_actor is not None
+        message_text = latest_user_evidence.content.strip()
+        operation = self._detect_operation(message_text)
+        if operation is None:
+            return []
+        tasks = list_task_definitions(
+            turn_context.db,
+            actor=turn_context.authenticated_actor,
+            household_id=turn_context.household_id,
+        )
+        target_task = self._match_task(message_text, tasks)
+        if target_task is None:
+            return []
+        proposal_kind = f"scheduled_task_{operation}"
+        payload: dict[str, object] = {
+            "task_id": target_task.id,
+            "task_name": target_task.name,
+            "intent_summary": self._build_summary(operation, target_task.name),
+            "can_confirm": True,
+        }
+        summary = self._build_summary(operation, target_task.name)
+        if operation == "update":
+            update_payload = build_partial_update_payload_from_text(
+                turn_context.db,
+                actor=turn_context.authenticated_actor,
+                household_id=turn_context.household_id,
+                text=message_text,
+            )
+            if not update_payload:
+                return []
+            payload["update_payload"] = update_payload
+            payload["can_confirm"] = True
+            summary = f"更新计划任务“{target_task.name}”"
+        return [
+            ProposalDraft(
+                proposal_kind=proposal_kind,
+                policy_category=self.default_policy_category,
+                title=summary,
+                summary=summary,
+                evidence_message_ids=[latest_user_evidence.message_id],
+                evidence_roles=[latest_user_evidence.role],
+                dedupe_key=_build_dedupe_key(proposal_kind, [latest_user_evidence.message_id], summary),
+                confidence=0.88,
+                payload=payload,
+            )
+        ]
+
+    @staticmethod
+    def _detect_operation(text: str) -> str | None:
+        if any(keyword in text for keyword in ("暂停", "停用", "先停")):
+            return "pause"
+        if any(keyword in text for keyword in ("恢复", "启用", "继续执行", "重新开启")):
+            return "resume"
+        if any(keyword in text for keyword in ("删除", "删掉", "移除")):
+            return "delete"
+        if any(keyword in text for keyword in ("改成", "改为", "换成", "调整", "修改")):
+            return "update"
+        return None
+
+    @staticmethod
+    def _match_task(text: str, tasks: list[ScheduledTaskDefinitionRead]) -> ScheduledTaskDefinitionRead | None:
+        sorted_tasks = sorted(tasks, key=lambda item: len(getattr(item, "name", "")), reverse=True)
+        for task in sorted_tasks:
+            name = str(getattr(task, "name", "")).strip()
+            if name and name in text:
+                return task
+        if len(tasks) == 1 and any(keyword in text for keyword in ("这个任务", "这个计划任务", "这条计划任务")):
+            return tasks[0]
+        return None
+
+    @staticmethod
+    def _build_summary(operation: str, task_name: str) -> str:
+        mapping = {
+            "pause": f"暂停计划任务：{task_name}",
+            "resume": f"恢复计划任务：{task_name}",
+            "delete": f"删除计划任务：{task_name}",
+            "update": f"更新计划任务：{task_name}",
+        }
+        return mapping.get(operation, task_name)
+
+
+def _find_latest_pending_scheduled_task_draft_id(turn_context: "TurnProposalContext") -> str | None:
+    if turn_context.db is None:
+        return None
+    batches = list(conversation_repository.list_proposal_batches(turn_context.db, session_id=turn_context.session_id))
+    for batch in reversed(batches):
+        items = list(conversation_repository.list_proposal_items(turn_context.db, batch_id=batch.id))
+        for item in reversed(items):
+            if item.proposal_kind != "scheduled_task_create" or item.status != "pending_confirmation":
+                continue
+            payload = load_json(item.payload_json) or {}
+            draft_id = str(payload.get("draft_id") or "").strip() if isinstance(payload, dict) else ""
+            if draft_id:
+                return draft_id
+    return None
 
 
 def _build_title_from_summary(summary: str | None, *, prefix: str) -> str:

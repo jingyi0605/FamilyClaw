@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import app.db.models  # noqa: F401
 from app.api.dependencies import ActorContext
+from app.modules.account.schemas import HouseholdAccountCreateRequest
+from app.modules.account.service import AuthenticatedActor
+from app.modules.account.service import create_household_account_with_binding
 from app.core.config import settings
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.agent.schemas import AgentCreate
@@ -40,6 +43,8 @@ from app.modules.llm_task.definitions import get_task
 from app.modules.llm_task.output_models import ProposalBatchExtractionOutput, ProposalExtractionItemOutput
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
+from app.modules.scheduler.schemas import ScheduledTaskDefinitionCreate
+from app.modules.scheduler.service import create_task_definition
 
 
 class _FailingAnalyzer:
@@ -118,16 +123,26 @@ class ConversationProposalPipelineTests(unittest.TestCase):
                 default_entry=True,
             ),
         )
+        self.account, _ = create_household_account_with_binding(
+            self.db,
+            HouseholdAccountCreateRequest(
+                household_id=self.household.id,
+                member_id=self.member.id,
+                username="owner",
+                password="owner123",
+                must_change_password=False,
+            ),
+        )
         self.db.commit()
 
         self.actor = ActorContext(
             role="admin",
             actor_type="member",
             actor_id=self.member.id,
-            account_id="account-1",
+            account_id=self.account.id,
             account_type="household",
             account_status="active",
-            username="owner",
+            username=self.account.username,
             household_id=self.household.id,
             member_id=self.member.id,
             member_role="admin",
@@ -322,6 +337,60 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         self.assertEqual("memory_write", drafts[0].proposal_kind)
         self.assertEqual([context.turn_messages[0].message_id], drafts[0].evidence_message_ids)
         self.assertEqual(["user"], drafts[0].evidence_roles)
+
+    def test_once_schedule_intent_creates_scheduled_task_proposal(self) -> None:
+        context = self._build_context(user_text="明天上午10点提醒我开会", assistant_text="我来整理成一次性计划任务。")
+
+        result = ProposalPipeline(extractor=lambda db, turn_context, household_id: ProposalBatchExtractionOutput()).run(
+            self.db,
+            session=self._build_session(),
+            request_id="req-once",
+            turn_context=context,
+            persist=False,
+        )
+
+        self.assertEqual("scheduled_task_create", result.drafts[0].proposal_kind)
+        self.assertEqual("once", result.drafts[0].payload["draft_payload"]["schedule_type"])
+
+    def test_pause_intent_creates_scheduled_task_pause_proposal(self) -> None:
+        actor = AuthenticatedActor(
+            account_id=self.actor.account_id or "account-1",
+            username=self.actor.username or "owner",
+            account_type=self.actor.account_type,
+            account_status=self.actor.account_status,
+            household_id=self.actor.household_id,
+            member_id=self.actor.member_id,
+            member_role=self.actor.member_role,
+            must_change_password=False,
+        )
+        task = create_task_definition(
+            self.db,
+            actor=actor,
+            payload=ScheduledTaskDefinitionCreate(
+                household_id=self.household.id,
+                owner_scope="member",
+                owner_member_id=self.member.id,
+                code="take-medicine",
+                name="吃药提醒",
+                trigger_type="schedule",
+                schedule_type="daily",
+                schedule_expr="21:00",
+                target_type="agent_reminder",
+                target_ref_id=self.agent.id,
+            ),
+        )
+        context = self._build_context(user_text="把吃药提醒暂停", assistant_text="好的，我先给你确认。")
+
+        result = ProposalPipeline(extractor=lambda db, turn_context, household_id: ProposalBatchExtractionOutput()).run(
+            self.db,
+            session=self._build_session(),
+            request_id="req-pause",
+            turn_context=context,
+            persist=False,
+        )
+
+        self.assertEqual("scheduled_task_pause", result.drafts[0].proposal_kind)
+        self.assertEqual(task.id, result.drafts[0].payload["task_id"])
 
     def test_config_proposal_analyzer_falls_back_to_latest_user_message_when_evidence_invalid(self) -> None:
         context = self._build_context(user_text="call you bubble", assistant_text="ok")
@@ -576,13 +645,41 @@ class ConversationProposalPipelineTests(unittest.TestCase):
             updated_at=now,
         )
         return build_turn_proposal_context(
+            db=self.db,
             session=session,
             request_id="req-test",
+            authenticated_actor=AuthenticatedActor(
+                account_id=self.actor.account_id or "account-1",
+                username=self.actor.username or "owner",
+                account_type=self.actor.account_type,
+                account_status=self.actor.account_status,
+                household_id=self.actor.household_id,
+                member_id=self.actor.member_id,
+                member_role=self.actor.member_role,
+                must_change_password=False,
+            ),
             user_message=user_message,
             assistant_message=assistant_message,
             conversation_history_excerpt=[],
             lane_result={"lane": "free_chat", "target_kind": "none"},
             main_reply_summary=assistant_text,
+        )
+
+    def _build_session(self, *, now: str | None = None) -> ConversationSession:
+        session_now = now or utc_now_iso()
+        return ConversationSession(
+            id=new_uuid(),
+            household_id=self.household.id,
+            requester_member_id=self.member.id,
+            session_mode="family_chat",
+            active_agent_id=self.agent.id,
+            current_request_id="req-test",
+            last_event_seq=0,
+            title="测试对话",
+            status="active",
+            last_message_at=session_now,
+            created_at=session_now,
+            updated_at=session_now,
         )
 
 
