@@ -22,12 +22,14 @@ from app.modules.household.schemas import (
     HouseholdUpdate,
 )
 from app.modules.household.service import (
+    build_household_read,
     create_household,
     get_household_or_404,
     get_household_setup_status,
     list_households,
     update_household,
 )
+from app.modules.region.service import RegionServiceError, raise_region_http_error
 
 router = APIRouter(prefix="/households", tags=["households"])
 
@@ -38,7 +40,11 @@ def create_household_endpoint(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> HouseholdRead:
-    household = create_household(db, payload)
+    try:
+        household = create_household(db, payload)
+    except RegionServiceError as exc:
+        db.rollback()
+        raise raise_region_http_error(exc) from exc
     db.flush()
     write_audit_log(
         db,
@@ -57,7 +63,7 @@ def create_household_endpoint(
         raise translate_integrity_error(exc) from exc
 
     db.refresh(household)
-    return HouseholdRead.model_validate(household)
+    return build_household_read(db, household)
 
 
 @router.get("", response_model=HouseholdListResponse)
@@ -84,7 +90,7 @@ def list_households_endpoint(
             households = []
         total = len(households)
     return HouseholdListResponse(
-        items=[HouseholdRead.model_validate(household) for household in households],
+        items=[build_household_read(db, household) for household in households],
         page=page,
         page_size=page_size,
         total=total,
@@ -99,7 +105,7 @@ def get_household_endpoint(
 ) -> HouseholdRead:
     ensure_actor_can_access_household(actor, household_id)
     household = get_household_or_404(db, household_id)
-    return HouseholdRead.model_validate(household)
+    return build_household_read(db, household)
 
 
 @router.get("/{household_id}/setup-status", response_model=HouseholdSetupStatusRead)
@@ -120,7 +126,11 @@ def update_household_endpoint(
     actor: ActorContext = Depends(require_admin_actor),
 ) -> HouseholdRead:
     household = get_household_or_404(db, household_id)
-    household, changed_fields = update_household(db, household, payload)
+    try:
+        household, changed_fields = update_household(db, household, payload)
+    except RegionServiceError as exc:
+        db.rollback()
+        raise raise_region_http_error(exc) from exc
     if changed_fields:
         write_audit_log(
             db,
@@ -139,4 +149,4 @@ def update_household_endpoint(
         raise translate_integrity_error(exc) from exc
 
     db.refresh(household)
-    return HouseholdRead.model_validate(household)
+    return build_household_read(db, household)

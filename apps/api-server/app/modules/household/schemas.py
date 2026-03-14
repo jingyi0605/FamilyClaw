@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.modules.region.schemas import HouseholdRegionRead, RegionSelection
+
 HouseholdSetupLifecycleStatus = Literal["pending", "in_progress", "completed", "blocked"]
 HouseholdSetupStepCode = Literal[
     "family_profile",
@@ -17,6 +19,7 @@ class HouseholdCreate(BaseModel):
     city: str | None = Field(default=None, max_length=100)
     timezone: str = Field(min_length=1, max_length=64)
     locale: str = Field(min_length=1, max_length=32)
+    region_selection: RegionSelection | None = None
 
 
 class HouseholdRead(BaseModel):
@@ -28,6 +31,7 @@ class HouseholdRead(BaseModel):
     timezone: str
     locale: str
     status: str
+    region: HouseholdRegionRead
     created_at: str
     updated_at: str
 
@@ -37,6 +41,7 @@ class HouseholdUpdate(BaseModel):
     city: str | None = Field(default=None, max_length=100)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     locale: str | None = Field(default=None, min_length=1, max_length=32)
+    region_selection: RegionSelection | None = None
 
 
 class HouseholdListResponse(BaseModel):

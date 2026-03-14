@@ -9,11 +9,13 @@ from app.modules.ai_gateway.models import AiCapabilityRoute
 from app.modules.household.models import Household
 from app.modules.household.schemas import (
     HouseholdCreate,
+    HouseholdRead,
     HouseholdSetupStatusRead,
     HouseholdSetupStepCode,
     HouseholdUpdate,
 )
 from app.modules.member.models import Member
+from app.modules.region.service import get_household_region_context, has_household_region_binding, upsert_household_region
 
 SETUP_REQUIRED_STEPS: tuple[HouseholdSetupStepCode, ...] = (
     "family_profile",
@@ -40,6 +42,13 @@ def create_household(db: Session, payload: HouseholdCreate) -> Household:
     )
     db.add(household)
     db.flush()
+    if payload.region_selection is not None:
+        upsert_household_region(
+            db,
+            household=household,
+            selection=payload.region_selection,
+            source="create",
+        )
     return household
 
 
@@ -80,7 +89,11 @@ def get_household_setup_status(db: Session, household_id: str) -> HouseholdSetup
     household = get_household_or_404(db, household_id)
     is_new_household = household.setup_status == "pending"
 
-    family_profile_completed = _is_family_profile_completed(household)
+    family_profile_completed = _is_family_profile_completed(
+        db,
+        household,
+        require_formal_region=is_new_household,
+    )
     first_member_completed, member_updated_at = _get_first_member_status(db, household_id)
     provider_setup_completed, provider_updated_at = _get_provider_setup_status(
         db,
@@ -140,11 +153,23 @@ def get_household_setup_status(db: Session, household_id: str) -> HouseholdSetup
     )
 
 
-def _is_family_profile_completed(household: Household) -> bool:
-    return all(
+def _is_family_profile_completed(
+    db: Session,
+    household: Household,
+    *,
+    require_formal_region: bool,
+) -> bool:
+    has_basic_profile = all(
         isinstance(value, str) and value.strip()
-        for value in [household.name, household.city, household.timezone, household.locale]
+        for value in [household.name, household.timezone, household.locale]
     )
+    if not has_basic_profile:
+        return False
+    if require_formal_region:
+        return has_household_region_binding(db, household.id)
+    if has_household_region_binding(db, household.id):
+        return True
+    return isinstance(household.city, str) and household.city.strip() != ""
 
 
 def update_household(db: Session, household: Household, payload: HouseholdUpdate) -> tuple[Household, dict]:
@@ -153,17 +178,47 @@ def update_household(db: Session, household: Household, payload: HouseholdUpdate
         return household, {}
 
     normalized_data = dict(update_data)
+    region_selection = normalized_data.pop("region_selection", None)
+    has_region_binding = has_household_region_binding(db, household.id)
     if "city" in normalized_data:
         city = normalized_data["city"]
-        normalized_data["city"] = city.strip() if isinstance(city, str) and city.strip() else None
+        normalized_city = city.strip() if isinstance(city, str) and city.strip() else None
+        if has_region_binding and region_selection is None:
+            normalized_data.pop("city")
+        else:
+            normalized_data["city"] = normalized_city
 
-    changed_fields: dict[str, str | None] = {}
+    changed_fields: dict[str, object] = {}
     for field_name, field_value in normalized_data.items():
         setattr(household, field_name, field_value)
         changed_fields[field_name] = field_value
 
+    if payload.region_selection is not None:
+        binding = upsert_household_region(
+            db,
+            household=household,
+            selection=payload.region_selection,
+            source="update",
+        )
+        changed_fields["region_selection"] = binding.region_code
+        changed_fields["city"] = household.city
+
     db.add(household)
     return household, changed_fields
+
+
+def build_household_read(db: Session, household: Household) -> HouseholdRead:
+    return HouseholdRead(
+        id=household.id,
+        name=household.name,
+        city=household.city,
+        timezone=household.timezone,
+        locale=household.locale,
+        status=household.status,
+        region=get_household_region_context(db, household.id),
+        created_at=household.created_at,
+        updated_at=household.updated_at,
+    )
 
 
 def _get_first_member_status(db: Session, household_id: str) -> tuple[bool, str | None]:

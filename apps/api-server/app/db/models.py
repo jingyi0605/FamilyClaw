@@ -36,6 +36,7 @@ from app.modules.plugin.models import (
 )
 from app.modules.presence.models import MemberPresenceState, PresenceEvent
 from app.modules.reminder.models import ReminderAckEvent, ReminderDeliveryAttempt, ReminderRun, ReminderTask
+from app.modules.region.models import HouseholdRegionBinding, RegionNode
 from app.modules.relationship.models import MemberRelationship
 from app.modules.scene.models import SceneExecution, SceneExecutionStep, SceneTemplate
 from app.modules.room.models import Room
@@ -87,6 +88,8 @@ __all__ = [
     "ReminderDeliveryAttempt",
     "ReminderRun",
     "ReminderTask",
+    "RegionNode",
+    "HouseholdRegionBinding",
     "Room",
     "SceneExecution",
     "SceneExecutionStep",

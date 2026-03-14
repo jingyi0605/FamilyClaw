@@ -20,6 +20,7 @@ from app.api.v1.endpoints.memories import router as memories_router
 from app.api.v1.endpoints.reminders import router as reminders_router
 from app.api.v1.endpoints.reminders import run_router as reminder_runs_router
 from app.api.v1.endpoints.realtime import router as realtime_router
+from app.api.v1.endpoints.regions import router as regions_router
 from app.api.v1.endpoints.rooms import router as rooms_router
 from app.api.v1.endpoints.scenes import router as scenes_router
 
@@ -44,5 +45,6 @@ router.include_router(memories_router)
 router.include_router(reminders_router)
 router.include_router(reminder_runs_router)
 router.include_router(realtime_router)
+router.include_router(regions_router)
 router.include_router(rooms_router)
 router.include_router(scenes_router)

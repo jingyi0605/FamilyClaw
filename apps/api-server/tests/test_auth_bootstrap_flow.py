@@ -24,6 +24,8 @@ from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household, get_household_setup_status
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
+from app.modules.region.schemas import RegionCatalogImportItem, RegionSelection
+from app.modules.region.service import import_region_catalog
 from app.modules.room.service import create_room
 
 
@@ -47,6 +49,40 @@ class AuthBootstrapFlowTests(unittest.TestCase):
         self.engine = create_engine(f"sqlite:///{db_path}", future=True)
         self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
         self.db: Session = self.SessionLocal()
+        import_region_catalog(
+            self.db,
+            items=[
+                RegionCatalogImportItem(
+                    region_code="110000",
+                    parent_region_code=None,
+                    admin_level="province",
+                    name="北京市",
+                    full_name="北京市",
+                    path_codes=["110000"],
+                    path_names=["北京市"],
+                ),
+                RegionCatalogImportItem(
+                    region_code="110100",
+                    parent_region_code="110000",
+                    admin_level="city",
+                    name="北京市",
+                    full_name="北京市 / 北京市",
+                    path_codes=["110000", "110100"],
+                    path_names=["北京市", "北京市"],
+                ),
+                RegionCatalogImportItem(
+                    region_code="110105",
+                    parent_region_code="110100",
+                    admin_level="district",
+                    name="朝阳区",
+                    full_name="北京市 / 北京市 / 朝阳区",
+                    path_codes=["110000", "110100", "110105"],
+                    path_names=["北京市", "北京市", "朝阳区"],
+                ),
+            ],
+            source_version="test-v1",
+        )
+        self.db.commit()
 
     def tearDown(self) -> None:
         self.db.close()
@@ -72,7 +108,16 @@ class AuthBootstrapFlowTests(unittest.TestCase):
 
         household = create_household(
             self.db,
-            HouseholdCreate(name="Test Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+            HouseholdCreate(
+                name="Test Home",
+                timezone="Asia/Shanghai",
+                locale="zh-CN",
+                region_selection=RegionSelection(
+                    provider_code="builtin.cn-mainland",
+                    country_code="CN",
+                    region_code="110105",
+                ),
+            ),
         )
         self.db.commit()
 
@@ -185,7 +230,16 @@ class AuthBootstrapFlowTests(unittest.TestCase):
         ensure_pending_household_bootstrap_accounts(self.db)
         household = create_household(
             self.db,
-            HouseholdCreate(name="Test Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+            HouseholdCreate(
+                name="Test Home",
+                timezone="Asia/Shanghai",
+                locale="zh-CN",
+                region_selection=RegionSelection(
+                    provider_code="builtin.cn-mainland",
+                    country_code="CN",
+                    region_code="110105",
+                ),
+            ),
         )
         self.db.commit()
 
