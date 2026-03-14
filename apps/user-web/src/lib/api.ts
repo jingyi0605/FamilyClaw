@@ -27,6 +27,8 @@ import type {
   HomeAssistantRoomSyncResponse,
   HomeAssistantSyncResponse,
   Household,
+  RegionNode,
+  RegionSelection,
   HouseholdSetupStatus,
   LoginResponse,
   MemoryCard,
@@ -65,6 +67,12 @@ function resolveErrorMessage(payload: unknown, fallbackMessage: string): string 
     const detail = (payload as { detail?: unknown }).detail;
     if (typeof detail === 'string' && detail.trim()) {
       return detail;
+    }
+    if (detail && typeof detail === 'object' && 'detail' in detail) {
+      const nestedDetail = (detail as { detail?: unknown }).detail;
+      if (typeof nestedDetail === 'string' && nestedDetail.trim()) {
+        return nestedDetail;
+      }
     }
   }
 
@@ -169,7 +177,7 @@ export const api = {
   listHouseholds() {
     return request<PaginatedResponse<Household>>('/households?page_size=100');
   },
-  createHousehold(payload: Pick<Household, 'name' | 'city' | 'timezone' | 'locale'>) {
+  createHousehold(payload: Pick<Household, 'name' | 'timezone' | 'locale'> & { city?: string | null; region_selection?: RegionSelection | null }) {
     return request<Household>('/households', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -178,11 +186,39 @@ export const api = {
   getHousehold(householdId: string) {
     return request<Household>(`/households/${encodeURIComponent(householdId)}`);
   },
-  updateHousehold(householdId: string, payload: Partial<Pick<Household, 'name' | 'city' | 'timezone' | 'locale'>>) {
+  updateHousehold(householdId: string, payload: Partial<Pick<Household, 'name' | 'city' | 'timezone' | 'locale'> & { region_selection: RegionSelection | null }>) {
     return request<Household>(`/households/${encodeURIComponent(householdId)}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
+  },
+  listRegionCatalog(params: {
+    provider_code: string;
+    country_code: string;
+    admin_level?: 'province' | 'city' | 'district';
+    parent_region_code?: string;
+  }) {
+    const search = new URLSearchParams();
+    search.set('provider_code', params.provider_code);
+    search.set('country_code', params.country_code);
+    if (params.admin_level) search.set('admin_level', params.admin_level);
+    if (params.parent_region_code) search.set('parent_region_code', params.parent_region_code);
+    return request<RegionNode[]>(`/regions/catalog?${search.toString()}`);
+  },
+  searchRegions(params: {
+    provider_code: string;
+    country_code: string;
+    keyword: string;
+    admin_level?: 'province' | 'city' | 'district';
+    parent_region_code?: string;
+  }) {
+    const search = new URLSearchParams();
+    search.set('provider_code', params.provider_code);
+    search.set('country_code', params.country_code);
+    search.set('keyword', params.keyword);
+    if (params.admin_level) search.set('admin_level', params.admin_level);
+    if (params.parent_region_code) search.set('parent_region_code', params.parent_region_code);
+    return request<RegionNode[]>(`/regions/search?${search.toString()}`);
   },
   getHouseholdSetupStatus(householdId: string) {
     return request<HouseholdSetupStatus>(`/households/${encodeURIComponent(householdId)}/setup-status`);

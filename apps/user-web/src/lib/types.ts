@@ -7,8 +7,47 @@ export type Household = {
   timezone: string;
   locale: string;
   status: string;
+  region: HouseholdRegion;
   created_at: string;
   updated_at: string;
+};
+
+export type RegionSelection = {
+  provider_code: string;
+  country_code: string;
+  region_code: string;
+};
+
+export type RegionNode = {
+  provider_code: string;
+  country_code: string;
+  region_code: string;
+  parent_region_code: string | null;
+  admin_level: 'province' | 'city' | 'district';
+  name: string;
+  full_name: string;
+  path_codes: string[];
+  path_names: string[];
+  timezone: string | null;
+  source_version: string | null;
+};
+
+export type HouseholdRegionNodeRef = {
+  code: string;
+  name: string;
+};
+
+export type HouseholdRegion = {
+  status: 'configured' | 'unconfigured' | 'provider_unavailable';
+  provider_code: string | null;
+  country_code: string | null;
+  region_code: string | null;
+  admin_level: 'province' | 'city' | 'district' | null;
+  province: HouseholdRegionNodeRef | null;
+  city: HouseholdRegionNodeRef | null;
+  district: HouseholdRegionNodeRef | null;
+  display_name: string | null;
+  timezone: string | null;
 };
 
 export type HouseholdSetupStepCode =

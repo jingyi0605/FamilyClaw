@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Card, EmptyState, PageHeader } from '../components/base';
 import { SimpleAiProviderSetup } from '../components/SimpleAiProviderSetup';
 import { ButlerBootstrapConversation } from '../components/ButlerBootstrapConversation';
+import { DEFAULT_REGION_COUNTRY, DEFAULT_REGION_PROVIDER, RegionSelector, type RegionSelectionFormValue } from '../components/RegionSelector';
 import { WelcomeStep } from '../components/WelcomeStep';
 import { api } from '../lib/api';
 import type { HouseholdSetupStepCode, Member } from '../lib/types';
@@ -67,7 +68,12 @@ export function SetupWizardPage() {
   const { setupStatus, setupStatusLoading, refreshSetupStatus } = useSetupContext();
   const { themeId, setTheme } = useTheme();
 
-  const [familyForm, setFamilyForm] = useState({ name: '', city: '', timezone: getDefaultTimezone(), locale: getDefaultLocale() });
+  const [familyForm, setFamilyForm] = useState({
+    name: '',
+    timezone: getDefaultTimezone(),
+    locale: getDefaultLocale(),
+    region: { countryCode: DEFAULT_REGION_COUNTRY, provinceCode: '', cityCode: '', districtCode: '' } as RegionSelectionFormValue,
+  });
   const [memberForm, setMemberForm] = useState({
     name: '',
     nickname: '',
@@ -100,11 +106,24 @@ export function SetupWizardPage() {
   useEffect(() => {
     setFamilyForm({
       name: currentHousehold?.name ?? '',
-      city: currentHousehold?.city ?? '',
       timezone: currentHousehold?.timezone ?? getDefaultTimezone(),
       locale: currentHousehold?.locale ?? getDefaultLocale(),
+      region: {
+        countryCode: currentHousehold?.region?.country_code ?? DEFAULT_REGION_COUNTRY,
+        provinceCode: currentHousehold?.region?.province?.code ?? '',
+        cityCode: currentHousehold?.region?.city?.code ?? '',
+        districtCode: currentHousehold?.region?.district?.code ?? '',
+      },
     });
-  }, [currentHousehold?.name, currentHousehold?.city, currentHousehold?.timezone, currentHousehold?.locale, currentHouseholdId]);
+  }, [
+    currentHousehold?.name,
+    currentHousehold?.timezone,
+    currentHousehold?.locale,
+    currentHousehold?.region?.province?.code,
+    currentHousehold?.region?.city?.code,
+    currentHousehold?.region?.district?.code,
+    currentHouseholdId,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,9 +230,13 @@ export function SetupWizardPage() {
         }
         const created = await api.createHousehold({
           name: familyForm.name.trim(),
-          city: familyForm.city.trim(),
           timezone: familyForm.timezone.trim(),
           locale: familyForm.locale.trim(),
+          region_selection: {
+            provider_code: DEFAULT_REGION_PROVIDER,
+            country_code: familyForm.region.countryCode,
+            region_code: familyForm.region.districtCode,
+          },
         });
         await refreshHouseholds();
         await refreshCurrentHousehold(created.id);
@@ -224,9 +247,13 @@ export function SetupWizardPage() {
 
       await api.updateHousehold(currentHouseholdId, {
         name: familyForm.name.trim(),
-        city: familyForm.city.trim(),
         timezone: familyForm.timezone.trim(),
         locale: familyForm.locale.trim(),
+        region_selection: {
+          provider_code: DEFAULT_REGION_PROVIDER,
+          country_code: familyForm.region.countryCode,
+          region_code: familyForm.region.districtCode,
+        },
       });
       await refreshCurrentHousehold(currentHouseholdId);
       await refreshHouseholds();
@@ -363,15 +390,15 @@ export function SetupWizardPage() {
               <label htmlFor="setup-family-name">主家庭名称</label>
               <input id="setup-family-name" className="form-input" placeholder="例如：观澜园 / 张家大院" value={familyForm.name} onChange={event => setFamilyForm(current => ({ ...current, name: event.target.value }))} required autoFocus />
             </div>
-            <div className="form-group">
-              <label htmlFor="setup-family-city">所在城市</label>
-              <input id="setup-family-city" className="form-input" placeholder="例如：北京" value={familyForm.city} onChange={event => setFamilyForm(current => ({ ...current, city: event.target.value }))} required />
-            </div>
+            <RegionSelector value={familyForm.region} onChange={region => setFamilyForm(current => ({ ...current, region }))} disabled={familySubmitting} />
+            {currentHousehold?.region?.status === 'unconfigured' && currentHousehold?.city && (
+              <div className="form-hint">当前家庭之前保存的是“{currentHousehold.city}”，请重新选择完整地区信息。</div>
+            )}
             
             {familyError && <div className="form-error">{familyError}</div>}
             
             <div className="setup-form-actions" style={{ justifyContent: 'center', marginTop: '2rem' }}>
-              <button type="submit" className="btn btn--primary btn--large" disabled={familySubmitting || !familyForm.name.trim() || !familyForm.city.trim()}>
+              <button type="submit" className="btn btn--primary btn--large" disabled={familySubmitting || !familyForm.name.trim() || !familyForm.region.districtCode}>
                 {familySubmitting ? '保存中…' : (backendIndex > 0 ? '保存修改并下一步' : '下一步')}
               </button>
             </div>

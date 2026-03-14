@@ -20,6 +20,7 @@ export interface HouseholdSummary {
   timezone?: string;
   locale?: string;
   status?: string;
+  region?: Household['region'];
 }
 
 interface HouseholdContextValue {
@@ -51,6 +52,7 @@ function toHouseholdSummary(household: Household): HouseholdSummary {
     timezone: household.timezone,
     locale: household.locale,
     status: household.status,
+    region: household.region,
   };
 }
 

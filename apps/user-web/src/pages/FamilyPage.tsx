@@ -1,8 +1,9 @@
 /* ============================================================
  * 家庭页 - 包含概览/房间/成员/关系四个子路由
  * ============================================================ */
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { DEFAULT_REGION_COUNTRY, DEFAULT_REGION_PROVIDER, RegionSelector, type RegionSelectionFormValue } from '../components/RegionSelector';
 import { useI18n } from '../i18n';
 import { PageHeader, Card, Section } from '../components/base';
 import { useHouseholdContext } from '../state/household';
@@ -49,6 +50,15 @@ function formatLocale(locale: string | null | undefined) {
     case 'en-US': return 'English';
     default: return locale ?? '-';
   }
+}
+
+function formatFamilyRegion(household: Household | null | undefined) {
+  if (!household) return '-';
+  return household.region?.display_name ?? household.city ?? '-';
+}
+
+function getRegionLevelValue(value: { name: string } | null | undefined) {
+  return value?.name ?? '未知';
 }
 
 function formatHomeMode(mode: ContextOverviewRead['home_mode'] | undefined) {
@@ -448,8 +458,17 @@ export function FamilyLayout() {
 /* ---- 家庭概览 ---- */
 export function FamilyOverview() {
   const { t } = useI18n();
-  const { currentHousehold } = useHouseholdContext();
-  const { household, overview, loading } = useFamilyWorkspace();
+  const { currentHousehold, currentHouseholdId, refreshCurrentHousehold, refreshHouseholds } = useHouseholdContext();
+  const { household, overview, loading, refreshWorkspace } = useFamilyWorkspace();
+  const [editForm, setEditForm] = useState({
+    name: '',
+    timezone: 'Asia/Shanghai',
+    locale: 'zh-CN',
+    region: { countryCode: DEFAULT_REGION_COUNTRY, provinceCode: '', cityCode: '', districtCode: '' } as RegionSelectionFormValue,
+  });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saveStatus, setSaveStatus] = useState('');
 
   const serviceSummary = [
     overview?.voice_fast_path_enabled ? '语音快通道' : null,
@@ -457,6 +476,64 @@ export function FamilyOverview() {
     overview?.child_protection_enabled ? '儿童保护' : null,
     overview?.elder_care_watch_enabled ? '长辈关怀' : null,
   ].filter(Boolean).join(' · ');
+  const regionCountryText = household?.region?.country_code === 'CN' ? '中国' : '未知';
+  const regionStatusText = household?.region?.status === 'configured'
+    ? '已设置完成'
+    : household?.region?.status === 'provider_unavailable'
+      ? '暂时无法读取'
+      : '待完善';
+
+  useEffect(() => {
+    setEditForm({
+      name: household?.name ?? currentHousehold?.name ?? '',
+      timezone: household?.timezone ?? currentHousehold?.timezone ?? 'Asia/Shanghai',
+      locale: household?.locale ?? currentHousehold?.locale ?? 'zh-CN',
+      region: {
+        countryCode: household?.region?.country_code ?? DEFAULT_REGION_COUNTRY,
+        provinceCode: household?.region?.province?.code ?? '',
+        cityCode: household?.region?.city?.code ?? '',
+        districtCode: household?.region?.district?.code ?? '',
+      },
+    });
+  }, [
+    currentHousehold?.locale,
+    currentHousehold?.name,
+    currentHousehold?.timezone,
+    household?.locale,
+    household?.name,
+    household?.timezone,
+    household?.region?.province?.code,
+    household?.region?.city?.code,
+    household?.region?.district?.code,
+  ]);
+
+  async function handleHouseholdSave(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!currentHouseholdId) return;
+    setSaving(true);
+    setSaveError('');
+    setSaveStatus('');
+    try {
+      await api.updateHousehold(currentHouseholdId, {
+        name: editForm.name.trim(),
+        timezone: editForm.timezone.trim(),
+        locale: editForm.locale.trim(),
+        region_selection: {
+          provider_code: DEFAULT_REGION_PROVIDER,
+          country_code: editForm.region.countryCode,
+          region_code: editForm.region.districtCode,
+        },
+      });
+      await refreshCurrentHousehold(currentHouseholdId);
+      await refreshHouseholds();
+      await refreshWorkspace();
+      setSaveStatus('家庭资料已更新。');
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : '保存家庭资料失败');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="family-overview">
@@ -482,10 +559,101 @@ export function FamilyOverview() {
           <div className="overview-card__value">{formatPrivacyMode(overview?.privacy_mode)}</div>
         </Card>
         <Card className="overview-card">
+          <div className="overview-card__label">所在地区</div>
+          <div className="overview-card__value">{formatFamilyRegion(household)}</div>
+        </Card>
+        <Card className="overview-card">
           <div className="overview-card__label">{t('family.services')}</div>
           <div className="overview-card__value">{serviceSummary || (loading ? '加载中...' : '暂无服务摘要')}</div>
         </Card>
       </div>
+      <Card style={{ marginTop: '1.5rem' }}>
+        <Section title="地区结构">
+          <p style={{ margin: '0 0 1rem', color: 'var(--text-secondary)' }}>这里会显示您当前选择的国家、省、市和区县。</p>
+          <div className="overview-grid">
+            <Card className="overview-card">
+              <div className="overview-card__label">国家 / 地区</div>
+              <div className="overview-card__value">{regionCountryText}</div>
+            </Card>
+            <Card className="overview-card">
+              <div className="overview-card__label">省级</div>
+              <div className="overview-card__value">{getRegionLevelValue(household?.region?.province)}</div>
+            </Card>
+            <Card className="overview-card">
+              <div className="overview-card__label">市级</div>
+              <div className="overview-card__value">{getRegionLevelValue(household?.region?.city)}</div>
+            </Card>
+            <Card className="overview-card">
+              <div className="overview-card__label">区县</div>
+              <div className="overview-card__value">{getRegionLevelValue(household?.region?.district)}</div>
+            </Card>
+            <Card className="overview-card">
+              <div className="overview-card__label">绑定状态</div>
+              <div className="overview-card__value">{regionStatusText}</div>
+            </Card>
+          </div>
+          {household?.region?.status !== 'configured' && household?.city && (
+            <div className="form-hint" style={{ marginTop: '0.75rem' }}>
+              当前显示的“{household.city}”是之前保存的信息，请在下方重新选择完整地区。
+            </div>
+          )}
+        </Section>
+      </Card>
+      <Card style={{ marginTop: '1.5rem' }}>
+        <div className="setup-wizard-header" style={{ marginBottom: '1rem' }}>
+          <h2 style={{ marginBottom: '0.5rem' }}>家庭资料</h2>
+          <p>您可以在这里更新家庭名称、时区、语言和所在地区。</p>
+        </div>
+        <form className="settings-form" onSubmit={handleHouseholdSave}>
+          <div className="setup-form-grid">
+            <div className="form-group">
+              <label htmlFor="family-overview-name">家庭名称</label>
+              <input
+                id="family-overview-name"
+                className="form-input"
+                value={editForm.name}
+                onChange={event => setEditForm(current => ({ ...current, name: event.target.value }))}
+                required
+              />
+            </div>
+          </div>
+          <div className="setup-form-grid">
+            <div className="form-group">
+              <label htmlFor="family-overview-timezone">时区</label>
+              <input
+                id="family-overview-timezone"
+                className="form-input"
+                value={editForm.timezone}
+                onChange={event => setEditForm(current => ({ ...current, timezone: event.target.value }))}
+                required
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="family-overview-locale">默认语言</label>
+              <select
+                id="family-overview-locale"
+                className="form-select"
+                value={editForm.locale}
+                onChange={event => setEditForm(current => ({ ...current, locale: event.target.value }))}
+              >
+                <option value="zh-CN">中文</option>
+                <option value="en-US">English</option>
+              </select>
+            </div>
+          </div>
+          <RegionSelector value={editForm.region} onChange={region => setEditForm(current => ({ ...current, region }))} disabled={saving} />
+          {household?.region?.status === 'unconfigured' && household?.city && (
+            <div className="form-hint">当前家庭之前保存的是“{household.city}”，请在这里重新选择完整地区。</div>
+          )}
+          {saveError && <div className="form-error">{saveError}</div>}
+          {saveStatus && <div className="form-hint">{saveStatus}</div>}
+          <div className="setup-form-actions">
+            <button type="submit" className="btn btn--primary" disabled={saving || !editForm.name.trim() || !editForm.region.districtCode}>
+              {saving ? '保存中…' : '保存家庭资料'}
+            </button>
+          </div>
+        </form>
+      </Card>
     </div>
   );
 }
