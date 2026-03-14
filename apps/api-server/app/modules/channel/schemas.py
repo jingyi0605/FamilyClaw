@@ -185,6 +185,20 @@ class ChannelGatewayWebhookAck(BaseModel):
     provider_message_ref: str | None = None
 
 
+class ChannelGatewayHttpResponse(BaseModel):
+    status_code: int = Field(default=200, ge=100, le=599)
+    headers: dict[str, str] = Field(default_factory=dict)
+    body_json: dict[str, Any] | list[Any] | None = None
+    body_text: str | None = None
+    media_type: str | None = Field(default=None, max_length=100)
+    defer_processing: bool = False
+
+
+class ChannelGatewayHandleResult(BaseModel):
+    ack: ChannelGatewayWebhookAck
+    http_response: ChannelGatewayHttpResponse | None = None
+
+
 class ChannelInboundMessage(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     chat_type: ChannelInboundChatType
@@ -229,3 +243,24 @@ class ChannelDeliveryFailureSummaryRead(BaseModel):
     last_error_code: str | None = None
     last_error_message: str | None = None
     last_failed_at: str | None = None
+
+
+class ChannelAccountStatusRead(BaseModel):
+    account: ChannelAccountRead
+    recent_failure_summary: ChannelDeliveryFailureSummaryRead
+    latest_delivery: ChannelDeliveryRead | None = None
+    latest_inbound_event: ChannelInboundEventRead | None = None
+    latest_failed_inbound_event: ChannelInboundEventRead | None = None
+    recent_delivery_count: int = Field(default=0, ge=0)
+    recent_inbound_count: int = Field(default=0, ge=0)
+
+
+class ChannelInboundProcessingRead(BaseModel):
+    processing_status: str
+    member_id: str | None = None
+    conversation_session_id: str | None = None
+    assistant_message_id: str | None = None
+    reply_text: str | None = None
+    delivery_id: str | None = None
+    delivery_status: str | None = None
+    provider_message_ref: str | None = None

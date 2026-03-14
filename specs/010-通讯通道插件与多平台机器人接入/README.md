@@ -67,3 +67,27 @@
 - `design.md`：说明通道插件协议、数据模型、回调入口、会话映射、管理端边界怎么设计
 - `tasks.md`：说明按什么顺序落地，先做底层协议，再接平台，再补管理端和观测
 - `docs/README.md`：给后续补平台接入说明、回调样例、联调清单留位置
+
+## 当前阶段边界
+
+到 `3.4` 为止，五个平台的落地边界已经明确：
+
+- `Telegram`
+  - 已完成：webhook 文本入站、成员绑定、复用 `conversation` 主链、文本原路回发、基础 probe
+  - 明确没做：卡片、富媒体、复杂按钮、多消息排版器
+- `Discord`
+  - 已完成：interaction webhook 文本命令闭环、defer + followup 回发、签名校验、基础 probe
+  - 明确没做：普通频道消息通过 Gateway/WebSocket 直接入站
+- `飞书`
+  - 已完成：明文 challenge、`encrypt` 加密回调解包、文本入站、文本回发、基础 probe
+  - 明确没做：复杂卡片、文档类能力、群组高级事件
+- `钉钉`
+  - 已完成：统一 HTTP gateway 可消费的文本事件、`sessionWebhook` 原路回发、配置级 probe
+  - 明确没做：常驻 `stream/websocket` 运行时
+- `企业微信`
+  - `wecom-app`
+    - 已完成：回调握手、加密 XML 解包、文本入站、文本回发、凭证 probe
+    - 明确没做：复杂群聊、菜单、审批事件
+  - `wecom-bot`
+    - 已完成：出站推送兼容边界、配置级 probe
+    - 明确没做：双向用户消息入站

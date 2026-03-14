@@ -280,10 +280,11 @@
 
 ## 阶段 3：按两批把平台插件真正落地
 
-- [ ] 3.1 第一批平台：`Telegram`、`Discord`、`飞书`
-  - 状态：TODO
-  - 这一步到底做什么：基于 OpenClaw 官方实现思路，把三套主流平台先接通
-  - 做完你能看到什么：至少三个平台能真正完成文本对话往返
+- [x] 3.1 第一批平台：`Telegram`、`Discord`、`飞书`
+    - 状态：DONE
+    - 完成说明：已把 `Telegram`、`Discord`、`飞书` 作为 builtin channel plugin 正式落地，分别补齐 `manifest.json` 和 `channel` 入口，并接到现有统一 gateway、成员绑定解析、`conversation` 主链、出站投递记录上。三个平台的差异都收在各自插件目录内，没有把平台判断散落到全局。额外补了一次很窄的 gateway 扩展：插件现在可以声明自定义 HTTP 响应，专门处理 `Discord interaction defer` 和 `飞书 challenge` 这类平台协议要求，但消息处理主链还是复用现有 `channel -> conversation -> delivery`，没有旁路重写聊天系统。
+    - 这一步到底做什么：基于 OpenClaw 官方实现思路，把三套主流平台先接通
+    - 做完你能看到什么：至少三个平台能真正完成文本对话往返
   - 先依赖什么：2.5
   - 开始前先看：
     - `requirements.md` 需求 7
@@ -300,14 +301,21 @@
   - 怎么算完成：
     1. 三个平台都能文本收发
     2. 三个平台都能完成成员绑定后的原路回复
-  - 怎么验证：
-    - 平台模拟测试
-    - 端到端联调清单
-  - 对应需求：`requirements.md` 需求 2、3、4、5、7
-  - 对应设计：`design.md` 1.4、2.3、3.3、8.1
+    - 怎么验证：
+      - 平台模拟测试
+      - 端到端联调清单
+    - 已验证：
+      - `python -m unittest tests.test_builtin_channel_plugins tests.test_channel_gateway_builtin_deferred tests.test_plugin_manifest tests.test_channel_gateway_api tests.test_channel_delivery_service`
+    - 说明：
+      - `Telegram` 第一版支持 webhook 文本消息与文本回发，支持按 `chat_id + thread` 还原回复目标
+      - `Discord` 第一版按 interaction webhook 接入文本命令，先回 defer，再走现有主链并用 followup 完成回发；普通频道消息如果也要直接进主链，需要补一层长期运行的 Gateway/WebSocket 入站能力，这不是再加几行 webhook 解析能解决的
+      - `飞书` 第一版现已同时支持明文 webhook challenge、`encrypt` 加密回调解包、文本消息标准化和文本回发
+    - 对应需求：`requirements.md` 需求 2、3、4、5、7
+    - 对应设计：`design.md` 1.4、2.3、3.3、8.1
 
-- [ ] 3.2 第二批平台：`钉钉`、`企业微信`
-  - 状态：TODO
+- [x] 3.2 第二批平台：`钉钉`、`企业微信`
+  - 状态：DONE
+  - 完成说明：已新增 builtin `channel_dingtalk`、`channel_wecom_app`、`channel_wecom_bot` 三个插件目录，并补齐各自 `manifest.json` 与 `channel` 入口。`钉钉` 第一版已能把原始回调标准化成现有入站事件，并复用消息里的 `sessionWebhook` 做文本原路回发；`企业微信自建应用` 已支持回调握手、加密 XML 解包、文本入站标准化和通过应用凭证发文本消息；`企业微信群机器人` 则明确收成“只支持出站推送、不支持用户消息直接入站”的兼容边界，没有再把一堆平台特例污染进核心主链。
   - 这一步到底做什么：基于 `openclaw-china` 的实现思路，把中国常用企业通讯平台接上
   - 做完你能看到什么：国内常用平台也能按同一协议进入系统
   - 先依赖什么：3.1
@@ -328,11 +336,18 @@
   - 怎么验证：
     - 平台适配测试
     - 联调清单
+  - 已验证：
+    - `python -m unittest tests.test_builtin_channel_plugins tests.test_channel_gateway_wecom_handshake tests.test_channel_gateway_builtin_deferred tests.test_plugin_manifest tests.test_channel_gateway_api tests.test_channel_delivery_service`
+  - 说明：
+    - `钉钉` 当前落地的是统一 HTTP gateway 可消费的文本事件与 `sessionWebhook` 原路回发闭环；如果后面要补真正常驻的 `stream/websocket` 运行时，需要单独扩一层通道长连接运行时，不是本任务里顺手多写几行代码就能带过去
+    - `企业微信自建应用` 当前按 callback URL + `token / encodingAESKey / corp_id / corp_secret / agent_id` 跑文本主链，先保证文本往返闭环，不提前追复杂群聊与菜单事件
+    - `企业微信群机器人` 当前明确只做出站推送兼容边界，后续如果要把它做成完整双向对话，需要重新设计入站来源，不在这一步硬拼
   - 对应需求：`requirements.md` 需求 2、3、4、5、7
   - 对应设计：`design.md` 1.4、2.3、8.2
 
-- [ ] 3.3 建平台账号探测、状态汇总和失败摘要接口
-  - 状态：TODO
+- [x] 3.3 建平台账号探测、状态汇总和失败摘要接口
+  - 状态：DONE
+  - 完成说明：已新增正式 `channel_accounts` API，把平台账号列表、创建、更新、探测、单账号状态、最近投递和最近入站事件全部挂到 `ai-config/{household_id}` 下，并复用现有 `channel` 服务和 `delivery / inbound` 记录，不再让管理端自己拼数据。探测逻辑也统一收口到 `status_service`，由它调 `channel` 插件的 `probe` 动作并把结果回写到 `channel_plugin_accounts.last_probe_status / status / last_error_*`。目前 builtin 平台都已经补了 `probe`：`Telegram / Discord / 飞书 / 企业微信自建应用` 做真实凭证校验，`钉钉 / 企业微信群机器人` 先按当前接入模式做配置级探测，不硬凑不存在的主动探测协议。
   - 这一步到底做什么：把平台账号状态、最近失败、最近投递结果收口成管理端可直接消费的 API
   - 做完你能看到什么：管理员不需要翻数据库就能看出哪一平台在坏
   - 先依赖什么：3.2
@@ -352,11 +367,18 @@
   - 怎么验证：
     - API 测试
     - 管理端联调
+  - 已验证：
+    - `python -m unittest tests.test_channel_accounts_api tests.test_builtin_channel_plugins tests.test_channel_gateway_wecom_handshake tests.test_channel_gateway_builtin_deferred tests.test_plugin_manifest tests.test_channel_gateway_api tests.test_channel_delivery_service`
+  - 说明：
+    - 已落地接口包括：账号列表、创建、更新、`probe`、单账号状态、投递列表、入站事件列表
+    - 接口路径全部挂在 `ai-config/{household_id}` 风格下，没有再开一套孤立管理路径
+    - 当前还没有复杂报表，只提供管理端足够消费的状态摘要和最近失败信息
   - 对应需求：`requirements.md` 需求 2、6
   - 对应设计：`design.md` 2.3.5、3.3.1、5.3
 
-- [ ] 3.4 阶段检查：五个平台的落地边界是不是清楚了
-  - 状态：TODO
+- [x] 3.4 阶段检查：五个平台的落地边界是不是清楚了
+  - 状态：DONE
+  - 完成说明：已把五个平台当前的已落地边界、明确延期项和主要风险统一收口到 Spec 文档里，不再靠口头默认。`README.md` 现在直接说明当前阶段边界，`design.md` 已把平台落地边界和延期风险写成正式章节，`docs/20260314-五个平台落地边界与延期项.md` 则单独用人话把五个平台“现在做到哪、故意没做什么、后面怎么补”写清楚。这样后面继续做管理端或继续深挖平台能力时，不会再把“暂未实现”误当成“默认已经支持”。
   - 这一步到底做什么：检查第一批和第二批平台的主链、差异点和延期项是不是已经写清楚
   - 做完你能看到什么：不会再出现“先把钉钉临时糊一下，后面再说”的脏路子
   - 先依赖什么：3.1、3.2、3.3
@@ -372,6 +394,12 @@
   - 怎么验证：
     - 人工走查
     - 分平台联调记录
+  - 已验证：
+    - 已人工走查五个平台插件目录、`tasks.md`、`README.md`、`design.md` 和边界说明文档
+    - 已确认五个平台都能对照出“已落地 / 明确没做 / 后续怎么补”
+  - 说明：
+    - `Discord` 普通频道消息直连主链、`钉钉` 常驻流式接入、`wecom-bot` 双向入站 都被明确收成延期项，不再模糊处理
+    - 富媒体、卡片、审批和复杂群事件统一列为后续扩展，不继续污染当前文本主链交付范围
   - 对应需求：`requirements.md` 需求 7
   - 对应设计：`design.md` 1.4、2.3、8.1、8.2
 

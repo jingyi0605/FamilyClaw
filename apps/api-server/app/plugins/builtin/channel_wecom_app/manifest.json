@@ -1,0 +1,26 @@
+{
+  "id": "channel-wecom-app",
+  "name": "企业微信自建应用通道",
+  "version": "0.1.0",
+  "types": ["channel"],
+  "permissions": [
+    "channel.receive",
+    "channel.send"
+  ],
+  "risk_level": "low",
+  "triggers": ["manual"],
+  "entrypoints": {
+    "channel": "app.plugins.builtin.channel_wecom_app.channel.handle"
+  },
+  "capabilities": {
+    "channel": {
+      "platform_code": "wecom-app",
+      "inbound_modes": ["webhook"],
+      "delivery_modes": ["reply", "push"],
+      "supports_member_binding": true,
+      "supports_group_chat": false,
+      "supports_threading": false,
+      "reserved": false
+    }
+  }
+}

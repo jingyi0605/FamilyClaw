@@ -354,6 +354,12 @@ class PluginManifestTests(unittest.TestCase):
         self.assertIn("homeassistant-device-sync", manifest_ids)
         self.assertIn("health-basic-reader", manifest_ids)
         self.assertIn("locale-zh-tw", manifest_ids)
+        self.assertIn("channel-telegram", manifest_ids)
+        self.assertIn("channel-discord", manifest_ids)
+        self.assertIn("channel-feishu", manifest_ids)
+        self.assertIn("channel-dingtalk", manifest_ids)
+        self.assertIn("channel-wecom-app", manifest_ids)
+        self.assertIn("channel-wecom-bot", manifest_ids)
 
     def test_list_registered_plugins_defaults_to_enabled(self) -> None:
         snapshot = list_registered_plugins(self.builtin_root)

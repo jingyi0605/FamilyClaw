@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints.accounts import router as accounts_router
+from app.api.v1.endpoints.channel_accounts import router as channel_accounts_router
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.ai_config import router as ai_config_router
 from app.api.v1.endpoints.ai_admin import router as ai_admin_router
@@ -31,6 +32,7 @@ from app.api.v1.endpoints.scheduled_tasks import draft_router as scheduled_task_
 
 router = APIRouter()
 router.include_router(accounts_router)
+router.include_router(channel_accounts_router)
 router.include_router(auth_router)
 router.include_router(ai_config_router)
 router.include_router(ai_admin_router)

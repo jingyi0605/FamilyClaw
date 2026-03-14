@@ -1,0 +1,26 @@
+{
+  "id": "channel-feishu",
+  "name": "飞书通讯通道",
+  "version": "0.1.0",
+  "types": ["channel"],
+  "permissions": [
+    "channel.receive",
+    "channel.send"
+  ],
+  "risk_level": "low",
+  "triggers": ["manual"],
+  "entrypoints": {
+    "channel": "app.plugins.builtin.channel_feishu.channel.handle"
+  },
+  "capabilities": {
+    "channel": {
+      "platform_code": "feishu",
+      "inbound_modes": ["webhook"],
+      "delivery_modes": ["reply", "push"],
+      "supports_member_binding": true,
+      "supports_group_chat": true,
+      "supports_threading": true,
+      "reserved": false
+    }
+  }
+}

@@ -36,6 +36,7 @@ def send_reply(
     delivery_type: str = "reply",
     conversation_session_id: str | None = None,
     assistant_message_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> ChannelDeliveryDispatchRead:
     account = get_channel_account_or_404(db, household_id=household_id, account_id=channel_account_id)
     now = utc_now_iso()
@@ -49,7 +50,13 @@ def send_reply(
         assistant_message_id=assistant_message_id,
         external_conversation_key=external_conversation_key,
         delivery_type=delivery_type,
-        request_payload_json=dump_json({"text": text}) or "{}",
+        request_payload_json=dump_json(
+            {
+                "text": text,
+                "metadata": metadata if isinstance(metadata, dict) else {},
+            }
+        )
+        or "{}",
         provider_message_ref=None,
         status="pending",
         attempt_count=0,
@@ -74,9 +81,15 @@ def retry_delivery(
         raise ChannelDeliveryServiceError("channel delivery not found")
     payload = load_json(delivery.request_payload_json)
     text = payload.get("text") if isinstance(payload, dict) else None
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
     if not isinstance(text, str) or not text.strip():
         raise ChannelDeliveryServiceError("channel delivery payload does not contain text")
-    return _dispatch_delivery(db, delivery=delivery, text=text)
+    return _dispatch_delivery(
+        db,
+        delivery=delivery,
+        text=text,
+        metadata=metadata if isinstance(metadata, dict) else {},
+    )
 
 
 def _dispatch_delivery(
@@ -84,6 +97,7 @@ def _dispatch_delivery(
     *,
     delivery: ChannelDelivery,
     text: str,
+    metadata: dict[str, Any] | None = None,
 ) -> ChannelDeliveryDispatchRead:
     account = get_channel_account_or_404(db, household_id=delivery.household_id, account_id=delivery.channel_account_id)
     delivery.attempt_count += 1
@@ -127,6 +141,7 @@ def _dispatch_delivery(
                     "conversation_session_id": delivery.conversation_session_id,
                     "assistant_message_id": delivery.assistant_message_id,
                     "text": text,
+                    "metadata": metadata if isinstance(metadata, dict) else {},
                 },
             },
             trigger="channel-delivery",
@@ -186,4 +201,3 @@ def _to_channel_delivery_read(row: ChannelDelivery) -> ChannelDeliveryRead:
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
-

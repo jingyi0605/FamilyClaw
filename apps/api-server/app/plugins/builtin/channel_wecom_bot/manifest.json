@@ -1,0 +1,25 @@
+{
+  "id": "channel-wecom-bot",
+  "name": "企业微信群机器人通道",
+  "version": "0.1.0",
+  "types": ["channel"],
+  "permissions": [
+    "channel.send"
+  ],
+  "risk_level": "low",
+  "triggers": ["manual"],
+  "entrypoints": {
+    "channel": "app.plugins.builtin.channel_wecom_bot.channel.handle"
+  },
+  "capabilities": {
+    "channel": {
+      "platform_code": "wecom-bot",
+      "inbound_modes": ["webhook"],
+      "delivery_modes": ["push"],
+      "supports_member_binding": false,
+      "supports_group_chat": true,
+      "supports_threading": false,
+      "reserved": false
+    }
+  }
+}
