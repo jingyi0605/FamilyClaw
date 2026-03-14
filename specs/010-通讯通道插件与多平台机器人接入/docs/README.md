@@ -1,0 +1,29 @@
+# 010 补充文档目录
+
+这个目录是给 `010-通讯通道插件与多平台机器人接入` 后续补联调资料用的。
+
+这里的文档不应该重复 `requirements.md`、`design.md`、`tasks.md` 已经讲清楚的正文，而是补那些“真正开工时会反复查”的东西。
+
+## 推荐后续补充
+
+- `平台回调样例.md`
+  - 放 `Telegram`、`Discord`、`飞书`、`钉钉`、`企业微信` 的回调示例
+- `平台配置字段说明.md`
+  - 放每个平台账号创建时需要的字段、格式、注意事项
+- `成员绑定联调清单.md`
+  - 放成员绑定、冲突校验、解绑、停用的联调步骤
+- `外部会话映射验收清单.md`
+  - 放“同一会话复用”“重复事件幂等”“未绑定策略”的验收步骤
+- `平台联调记录.md`
+  - 记录每个平台第一轮联调时遇到的问题和最终决策
+
+## 参考资料
+
+- OpenClaw 官方渠道文档：[https://docs.openclaw.ai/channels](https://docs.openclaw.ai/channels)
+- OpenClaw 中国扩展仓库：[https://github.com/BytePioneer-AI/openclaw-china](https://github.com/BytePioneer-AI/openclaw-china)
+
+## 使用原则
+
+- 写人话，不写黑话
+- 先写“怎么接、怎么查、怎么验”，再写术语
+- 每份补充文档都要让接手的人第一眼知道该看什么、怎么验证
