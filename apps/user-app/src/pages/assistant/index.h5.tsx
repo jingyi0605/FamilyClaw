@@ -4,7 +4,6 @@ import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealti
 import { Bot, History, Info, Menu, MessageSquarePlus } from 'lucide-react';
 import { assistantApi } from './assistant.api';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel, isConversationAgent, pickDefaultConversationAgent } from './assistant.agents';
-import { createAssistantTranslator, normalizeAssistantLocale } from './assistant.copy';
 import type {
   AgentSummary,
   ConversationActionRecord,
@@ -14,7 +13,7 @@ import type {
   ConversationSessionDetail,
   ScheduledTaskConversationProposalPayload,
 } from './assistant.types';
-import { useHouseholdContext, useI18n } from '../../runtime';
+import { GuardedPage, useAuthContext, useHouseholdContext, useI18n, useSetupContext, useTheme } from '../../runtime';
 import './index.h5.scss';
 
 type EmptyStateProps = {
@@ -217,9 +216,12 @@ async function goToPage(url: string) {
   await Taro.navigateTo({ url }).catch(() => undefined);
 }
 
-export default function AssistantPageH5() {
+function AssistantPageContent() {
+  const { actor } = useAuthContext();
+  const { setupStatus } = useSetupContext();
   const { currentHouseholdId, currentHousehold } = useHouseholdContext();
-  const { locale } = useI18n();
+  const { t, locale } = useI18n();
+  const { themeId } = useTheme();
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState('');
   const [activeSessionDetail, setActiveSessionDetail] = useState<ConversationSessionDetail | null>(null);
@@ -240,8 +242,6 @@ export default function AssistantPageH5() {
   const pendingSyncTimerRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
-  const localeId = useMemo(() => normalizeAssistantLocale(locale), [locale]);
-  const t = useMemo(() => createAssistantTranslator(localeId), [localeId]);
 
   const conversationAgents = useMemo(() => agents.filter(isConversationAgent), [agents]);
   const defaultAgent = useMemo(() => pickDefaultConversationAgent(agents), [agents]);
@@ -306,6 +306,11 @@ export default function AssistantPageH5() {
   useEffect(() => {
     sendingRef.current = sending;
   }, [sending]);
+
+  useEffect(() => {
+    setIsSidebarOpen(false);
+    setContextPanelOpen(false);
+  }, [actor?.authenticated, currentHouseholdId, locale, setupStatus?.is_required, themeId]);
 
   useEffect(() => {
     const container = messagesContainerRef.current;
@@ -1121,7 +1126,6 @@ export default function AssistantPageH5() {
                   icon="💬"
                   title={t('assistant.welcome')}
                   description={t('assistant.welcomeHint')}
-                  className="assistant-empty-state"
                 />
               )}
             </div>
@@ -1157,7 +1161,7 @@ export default function AssistantPageH5() {
             </div>
 
             {error || status ? (
-              <div style={{ marginTop: '0.75rem', padding: '0 1rem 1rem', color: error ? 'var(--color-danger)' : 'var(--text-secondary)' }}>
+              <div className="text-text-secondary" style={{ marginTop: '0.75rem' }}>
                 {error || status}
               </div>
             ) : null}
@@ -1172,5 +1176,13 @@ export default function AssistantPageH5() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function AssistantPageH5() {
+  return (
+    <GuardedPage mode="protected" path="/pages/assistant/index">
+      <AssistantPageContent />
+    </GuardedPage>
   );
 }
