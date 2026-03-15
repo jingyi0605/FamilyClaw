@@ -22,6 +22,8 @@ from app.modules.voiceprint.provider import (
 )
 from app.modules.voiceprint.models import MemberVoiceprintProfile, MemberVoiceprintSample, VoiceprintEnrollment
 from app.modules.voiceprint.schemas import (
+    HouseholdVoiceprintMemberSummaryRead,
+    HouseholdVoiceprintSummaryRead,
     MemberVoiceprintDeleteResponse,
     MemberVoiceprintDetailRead,
     MemberVoiceprintProfileRead,
@@ -266,6 +268,184 @@ def get_member_voiceprint_detail(db: Session, *, member_id: str) -> MemberVoicep
         samples=[MemberVoiceprintSampleRead.model_validate(sample) for sample in samples],
         pending_enrollments=[VoiceprintEnrollmentRead.model_validate(item) for item in pending_enrollments],
         recent_identification_status=None,
+    )
+
+
+def get_household_voiceprint_summary(
+    db: Session,
+    *,
+    household_id: str,
+    terminal_id: str,
+) -> HouseholdVoiceprintSummaryRead:
+    terminal = _get_terminal_or_404(db, terminal_id)
+    if terminal.household_id != household_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="terminal must belong to the same household")
+
+    members = list(
+        db.scalars(
+            select(Member)
+            .where(Member.household_id == household_id)
+            .order_by(Member.created_at.asc(), Member.id.asc())
+        ).all()
+    )
+    member_ids = [member.id for member in members]
+    if not member_ids:
+        return HouseholdVoiceprintSummaryRead(
+            household_id=household_id,
+            terminal_id=terminal_id,
+            voiceprint_identity_enabled=bool(terminal.voiceprint_identity_enabled),
+            conversation_mode=("voiceprint_member" if terminal.voiceprint_identity_enabled else "public"),
+            pending_enrollment=get_pending_voiceprint_enrollment_by_terminal(
+                db,
+                household_id=household_id,
+                terminal_id=terminal_id,
+            ),
+            members=[],
+        )
+
+    profiles = list(
+        db.scalars(
+            select(MemberVoiceprintProfile)
+            .where(
+                MemberVoiceprintProfile.household_id == household_id,
+                MemberVoiceprintProfile.member_id.in_(member_ids),
+            )
+            .order_by(MemberVoiceprintProfile.updated_at.desc(), MemberVoiceprintProfile.id.desc())
+        ).all()
+    )
+    enrollments = list(
+        db.scalars(
+            select(VoiceprintEnrollment)
+            .where(
+                VoiceprintEnrollment.household_id == household_id,
+                VoiceprintEnrollment.member_id.in_(member_ids),
+            )
+            .order_by(VoiceprintEnrollment.updated_at.desc(), VoiceprintEnrollment.id.desc())
+        ).all()
+    )
+
+    latest_profile_by_member: dict[str, MemberVoiceprintProfile] = {}
+    active_profile_by_member: dict[str, MemberVoiceprintProfile] = {}
+    for profile in profiles:
+        latest_profile_by_member.setdefault(profile.member_id, profile)
+        if profile.status == "active":
+            active_profile_by_member.setdefault(profile.member_id, profile)
+
+    latest_enrollment_by_member: dict[str, VoiceprintEnrollment] = {}
+    pending_enrollment_by_member: dict[str, VoiceprintEnrollment] = {}
+    for enrollment in enrollments:
+        latest_enrollment_by_member.setdefault(enrollment.member_id, enrollment)
+        if enrollment.status in _PENDING_ENROLLMENT_STATUSES:
+            pending_enrollment_by_member.setdefault(enrollment.member_id, enrollment)
+
+    member_summaries = [
+        _build_household_member_summary(
+            member=member,
+            active_profile=active_profile_by_member.get(member.id),
+            latest_profile=latest_profile_by_member.get(member.id),
+            pending_enrollment=pending_enrollment_by_member.get(member.id),
+            latest_enrollment=latest_enrollment_by_member.get(member.id),
+        )
+        for member in members
+    ]
+
+    return HouseholdVoiceprintSummaryRead(
+        household_id=household_id,
+        terminal_id=terminal_id,
+        voiceprint_identity_enabled=bool(terminal.voiceprint_identity_enabled),
+        conversation_mode=("voiceprint_member" if terminal.voiceprint_identity_enabled else "public"),
+        pending_enrollment=get_pending_voiceprint_enrollment_by_terminal(
+            db,
+            household_id=household_id,
+            terminal_id=terminal_id,
+        ),
+        members=member_summaries,
+    )
+
+
+def _build_household_member_summary(
+    *,
+    member: Member,
+    active_profile: MemberVoiceprintProfile | None,
+    latest_profile: MemberVoiceprintProfile | None,
+    pending_enrollment: VoiceprintEnrollment | None,
+    latest_enrollment: VoiceprintEnrollment | None,
+) -> HouseholdVoiceprintMemberSummaryRead:
+    if pending_enrollment is not None:
+        return HouseholdVoiceprintMemberSummaryRead(
+            member_id=member.id,
+            member_name=member.name,
+            member_role=member.role,
+            status="pending",
+            sample_count=pending_enrollment.sample_count,
+            updated_at=pending_enrollment.updated_at,
+            pending_enrollment_id=pending_enrollment.id,
+            active_profile_id=active_profile.id if active_profile is not None else None,
+            error_message=None,
+        )
+
+    if active_profile is not None:
+        return HouseholdVoiceprintMemberSummaryRead(
+            member_id=member.id,
+            member_name=member.name,
+            member_role=member.role,
+            status="active",
+            sample_count=active_profile.sample_count,
+            updated_at=active_profile.updated_at,
+            pending_enrollment_id=None,
+            active_profile_id=active_profile.id,
+            error_message=None,
+        )
+
+    if latest_enrollment is not None and latest_enrollment.status == "failed":
+        return HouseholdVoiceprintMemberSummaryRead(
+            member_id=member.id,
+            member_name=member.name,
+            member_role=member.role,
+            status="failed",
+            sample_count=0,
+            updated_at=latest_enrollment.updated_at,
+            pending_enrollment_id=None,
+            active_profile_id=None,
+            error_message=latest_enrollment.error_message,
+        )
+
+    if latest_profile is not None and latest_profile.status in {"deleted", "superseded"}:
+        return HouseholdVoiceprintMemberSummaryRead(
+            member_id=member.id,
+            member_name=member.name,
+            member_role=member.role,
+            status="disabled",
+            sample_count=latest_profile.sample_count,
+            updated_at=latest_profile.updated_at,
+            pending_enrollment_id=None,
+            active_profile_id=None,
+            error_message=None,
+        )
+
+    if latest_profile is not None and latest_profile.status == "failed":
+        return HouseholdVoiceprintMemberSummaryRead(
+            member_id=member.id,
+            member_name=member.name,
+            member_role=member.role,
+            status="failed",
+            sample_count=latest_profile.sample_count,
+            updated_at=latest_profile.updated_at,
+            pending_enrollment_id=None,
+            active_profile_id=None,
+            error_message=None,
+        )
+
+    return HouseholdVoiceprintMemberSummaryRead(
+        member_id=member.id,
+        member_name=member.name,
+        member_role=member.role,
+        status="not_enrolled",
+        sample_count=0,
+        updated_at=None,
+        pending_enrollment_id=None,
+        active_profile_id=None,
+        error_message=None,
     )
 
 

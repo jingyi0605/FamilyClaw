@@ -584,7 +584,10 @@ export function createCoreApiClient(request: RequestClient) {
         },
       );
     },
-    updateDevice(deviceId: string, payload: Partial<Pick<Device, 'name' | 'status' | 'room_id' | 'controllable'>>) {
+    updateDevice(
+      deviceId: string,
+      payload: Partial<Pick<Device, 'name' | 'status' | 'room_id' | 'controllable' | 'voiceprint_identity_enabled'>>,
+    ) {
       return request<Device>(`/devices/${encodeURIComponent(deviceId)}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),

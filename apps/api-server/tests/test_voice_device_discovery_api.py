@@ -190,12 +190,14 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             f"{settings.api_v1_prefix}/devices/{device_id}",
             json={
                 "voice_auto_takeover_enabled": True,
+                "voiceprint_identity_enabled": True,
                 "voice_takeover_prefixes": ["请", "帮我"],
             },
         )
         self.assertEqual(200, update_response.status_code)
         updated_payload = update_response.json()
         self.assertTrue(updated_payload["voice_auto_takeover_enabled"])
+        self.assertTrue(updated_payload["voiceprint_identity_enabled"])
         self.assertEqual(["请", "帮我"], updated_payload["voice_takeover_prefixes"])
 
         binding_response = self.client.get(

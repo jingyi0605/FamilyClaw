@@ -12,7 +12,8 @@
     "build:ios": "npm run build:rn",
     "build:android": "npm run build:rn",
     "build:harmony": "taro build --type harmony_cpp",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:voiceprint": "powershell -NoProfile -Command \"Remove-Item -Recurse -Force '.tmp/voiceprint-tests' -ErrorAction SilentlyContinue; & '.\\node_modules\\.bin\\tsc.cmd' -p tsconfig.voiceprint-tests.json; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node --test '.tmp/voiceprint-tests/settings/components/__tests__/speakerVoiceprintHelpers.test.js' '.tmp/voiceprint-tests/settings/components/__tests__/speakerVoiceprintComponents.test.js'\""
   },
   "dependencies": {
     "@familyclaw/user-core": "file:../../packages/user-core",

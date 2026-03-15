@@ -27,6 +27,7 @@ class Device(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     controllable: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     voice_auto_takeover_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    voiceprint_identity_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     voice_takeover_prefixes_json: Mapped[str] = mapped_column("voice_takeover_prefixes", Text, nullable=False, default='["请"]')
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
     updated_at: Mapped[str] = mapped_column(

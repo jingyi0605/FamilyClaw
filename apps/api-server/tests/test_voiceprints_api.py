@@ -255,6 +255,89 @@ class VoiceprintsApiTests(unittest.TestCase):
             self.assertEqual("deleted", profile.status)
             self.assertEqual("cancelled", enrollment.status)
 
+    def test_household_voiceprint_summary_returns_device_strategy_and_member_statuses(self) -> None:
+        failed_member_id = new_uuid()
+        disabled_member_id = new_uuid()
+        with self.SessionLocal() as db:
+            failed_member = create_member(
+                db,
+                MemberCreate(
+                    household_id=self.household_id,
+                    name="爸爸",
+                    role="adult",
+                ),
+            )
+            disabled_member = create_member(
+                db,
+                MemberCreate(
+                    household_id=self.household_id,
+                    name="奶奶",
+                    role="elder",
+                ),
+            )
+            failed_member_id = failed_member.id
+            disabled_member_id = disabled_member.id
+
+            device = db.get(Device, self.terminal_id)
+            assert device is not None
+            device.voiceprint_identity_enabled = 1
+
+            db.add(
+                VoiceprintEnrollment(
+                    id=new_uuid(),
+                    household_id=self.household_id,
+                    member_id=self.member_id,
+                    terminal_id=self.terminal_id,
+                    status="pending",
+                    expected_phrase="我是妈妈",
+                    sample_goal=3,
+                    sample_count=2,
+                    expires_at="2026-03-16T12:00:00+08:00",
+                )
+            )
+            db.add(
+                MemberVoiceprintProfile(
+                    id=new_uuid(),
+                    household_id=self.household_id,
+                    member_id=disabled_member_id,
+                    provider="sherpa_onnx_wespeaker_resnet34",
+                    status="deleted",
+                    sample_count=3,
+                    version=1,
+                )
+            )
+            db.add(
+                VoiceprintEnrollment(
+                    id=new_uuid(),
+                    household_id=self.household_id,
+                    member_id=failed_member_id,
+                    terminal_id=self.terminal_id,
+                    status="failed",
+                    expected_phrase="我是爸爸",
+                    sample_goal=3,
+                    sample_count=1,
+                    error_code="voiceprint_provider_unavailable",
+                    error_message="provider down",
+                )
+            )
+            db.commit()
+
+        response = self.client.get(
+            f"{settings.api_v1_prefix}/voiceprints/households/{self.household_id}/summary",
+            params={"terminal_id": self.terminal_id},
+        )
+
+        self.assertEqual(200, response.status_code)
+        payload = response.json()
+        self.assertTrue(payload["voiceprint_identity_enabled"])
+        self.assertEqual("voiceprint_member", payload["conversation_mode"])
+        self.assertIsNotNone(payload["pending_enrollment"])
+        status_map = {item["member_id"]: item for item in payload["members"]}
+        self.assertEqual("pending", status_map[self.member_id]["status"])
+        self.assertEqual("failed", status_map[failed_member_id]["status"])
+        self.assertEqual("provider down", status_map[failed_member_id]["error_message"])
+        self.assertEqual("disabled", status_map[disabled_member_id]["status"])
+
 
 if __name__ == "__main__":
     unittest.main()

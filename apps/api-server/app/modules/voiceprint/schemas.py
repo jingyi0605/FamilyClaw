@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 VoiceprintEnrollmentStatus = Literal["pending", "recording", "processing", "completed", "failed", "cancelled"]
 VoiceprintProfileStatus = Literal["active", "superseded", "deleted", "failed"]
 VoiceprintSampleStatus = Literal["accepted", "rejected", "deleted"]
+VoiceprintConversationMode = Literal["public", "voiceprint_member"]
+MemberVoiceprintSummaryStatus = Literal["not_enrolled", "pending", "active", "failed", "disabled"]
 
 
 class VoiceprintEnrollmentCreate(BaseModel):
@@ -103,3 +105,24 @@ class MemberVoiceprintDeleteResponse(BaseModel):
     household_id: str
     deleted_profile_count: int = Field(ge=0)
     cancelled_enrollment_count: int = Field(ge=0)
+
+
+class HouseholdVoiceprintMemberSummaryRead(BaseModel):
+    member_id: str
+    member_name: str
+    member_role: str
+    status: MemberVoiceprintSummaryStatus
+    sample_count: int = Field(ge=0)
+    updated_at: str | None = None
+    pending_enrollment_id: str | None = None
+    active_profile_id: str | None = None
+    error_message: str | None = None
+
+
+class HouseholdVoiceprintSummaryRead(BaseModel):
+    household_id: str
+    terminal_id: str
+    voiceprint_identity_enabled: bool
+    conversation_mode: VoiceprintConversationMode
+    pending_enrollment: PendingVoiceprintEnrollmentRead | None = None
+    members: list[HouseholdVoiceprintMemberSummaryRead] = Field(default_factory=list)

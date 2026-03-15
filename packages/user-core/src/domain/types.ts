@@ -424,6 +424,7 @@ export type Device = {
   status: 'active' | 'offline' | 'inactive';
   controllable: boolean;
   voice_auto_takeover_enabled: boolean;
+  voiceprint_identity_enabled: boolean;
   voice_takeover_prefixes: string[];
   created_at: string;
   updated_at: string;

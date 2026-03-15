@@ -15,6 +15,7 @@ from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
 from app.modules.voiceprint.schemas import (
+    HouseholdVoiceprintSummaryRead,
     MemberVoiceprintDeleteResponse,
     MemberVoiceprintDetailRead,
     VoiceprintEnrollmentCreate,
@@ -25,6 +26,7 @@ from app.modules.voiceprint.service import (
     cancel_voiceprint_enrollment,
     create_voiceprint_enrollment,
     delete_member_voiceprints,
+    get_household_voiceprint_summary,
     get_member_voiceprint_detail,
     get_voiceprint_enrollment_or_404,
     list_voiceprint_enrollments,
@@ -135,6 +137,17 @@ def get_member_voiceprint_endpoint(
     detail = get_member_voiceprint_detail(db, member_id=member_id)
     ensure_actor_can_access_household(actor, detail.household_id)
     return detail
+
+
+@router.get("/households/{household_id}/summary", response_model=HouseholdVoiceprintSummaryRead)
+def get_household_voiceprint_summary_endpoint(
+    household_id: str,
+    terminal_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> HouseholdVoiceprintSummaryRead:
+    ensure_actor_can_access_household(actor, household_id)
+    return get_household_voiceprint_summary(db, household_id=household_id, terminal_id=terminal_id)
 
 
 @router.delete("/members/{member_id}", response_model=MemberVoiceprintDeleteResponse)

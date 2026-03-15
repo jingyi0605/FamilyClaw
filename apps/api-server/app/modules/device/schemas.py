@@ -19,6 +19,7 @@ class DeviceRead(BaseModel):
     status: DeviceStatus
     controllable: bool
     voice_auto_takeover_enabled: bool
+    voiceprint_identity_enabled: bool
     voice_takeover_prefixes: list[str]
     created_at: str
     updated_at: str
@@ -30,6 +31,7 @@ class DeviceUpdate(BaseModel):
     status: DeviceStatus | None = None
     controllable: bool | None = None
     voice_auto_takeover_enabled: bool | None = None
+    voiceprint_identity_enabled: bool | None = None
     voice_takeover_prefixes: list[str] | None = None
 
     @field_validator("voice_takeover_prefixes", mode="before")

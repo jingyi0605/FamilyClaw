@@ -90,6 +90,14 @@ def update_device(db: Session, device: Device, payload: DeviceUpdate) -> tuple[D
             )
         update_data["voice_auto_takeover_enabled"] = 1 if update_data["voice_auto_takeover_enabled"] else 0
 
+    if "voiceprint_identity_enabled" in update_data:
+        if device.device_type != "speaker" or device.vendor != "xiaomi":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="voiceprint settings only support xiaomi speaker devices",
+            )
+        update_data["voiceprint_identity_enabled"] = 1 if update_data["voiceprint_identity_enabled"] else 0
+
     if "voice_takeover_prefixes" in update_data:
         if device.device_type != "speaker" or device.vendor != "xiaomi":
             raise HTTPException(
