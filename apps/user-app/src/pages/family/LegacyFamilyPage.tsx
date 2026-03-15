@@ -569,7 +569,7 @@ export function FamilyOverview() {
 
   return (
     <div className="family-overview">
-      <div className="overview-grid">
+      <div className="overview-grid family-overview__summary-grid">
         <Card className="overview-card">
           <div className="overview-card__label">{t('family.name')}</div>
           <div className="overview-card__value">{household?.name ?? currentHousehold?.name ?? (loading ? '加载中...' : '-')}</div>
@@ -599,10 +599,10 @@ export function FamilyOverview() {
           <div className="overview-card__value">{serviceSummary || (loading ? '加载中...' : '暂无服务摘要')}</div>
         </Card>
       </div>
-      <Card style={{ marginTop: '1.5rem' }}>
+      <Card className="family-overview__panel">
         <Section title="地区结构">
-          <p style={{ margin: '0 0 1rem', color: 'var(--text-secondary)' }}>这里会显示您当前选择的国家、省、市和区县。</p>
-          <div className="overview-grid">
+          <p className="family-overview__intro">这里会显示您当前选择的国家、省、市和区县。</p>
+          <div className="overview-grid family-overview__region-grid">
             <Card className="overview-card">
               <div className="overview-card__label">国家 / 地区</div>
               <div className="overview-card__value">{regionCountryText}</div>
@@ -631,9 +631,9 @@ export function FamilyOverview() {
           )}
         </Section>
       </Card>
-      <Card style={{ marginTop: '1.5rem' }}>
-        <div className="setup-wizard-header" style={{ marginBottom: '1rem' }}>
-          <h2 style={{ marginBottom: '0.5rem' }}>家庭资料</h2>
+      <Card className="family-overview__panel">
+        <div className="setup-wizard-header family-overview__header">
+          <h2 className="family-overview__title">家庭资料</h2>
           <p>您可以在这里更新家庭名称、时区、语言和所在地区。</p>
         </div>
         <form className="settings-form" onSubmit={handleHouseholdSave}>
