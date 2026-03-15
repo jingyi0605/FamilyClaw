@@ -50,6 +50,7 @@ from app.modules.relationship.models import MemberRelationship
 from app.modules.scene.models import SceneExecution, SceneExecutionStep, SceneTemplate
 from app.modules.room.models import Room
 from app.modules.scheduler.models import ScheduledTaskDefinition, ScheduledTaskDelivery, ScheduledTaskRun
+from app.modules.voiceprint.models import MemberVoiceprintProfile, MemberVoiceprintSample, VoiceprintEnrollment
 
 __all__ = [
     "Account",
@@ -114,4 +115,7 @@ __all__ = [
     "SceneExecution",
     "SceneExecutionStep",
     "SceneTemplate",
+    "VoiceprintEnrollment",
+    "MemberVoiceprintProfile",
+    "MemberVoiceprintSample",
 ]

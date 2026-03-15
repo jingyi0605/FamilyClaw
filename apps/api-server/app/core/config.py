@@ -70,6 +70,17 @@ class Settings(BaseSettings):
     voice_runtime_base_url: str | None = None
     voice_runtime_timeout_ms: int = 10000
     voice_runtime_api_key: str | None = None
+    voiceprint_provider_enabled: bool = True
+    voiceprint_provider_code: str = "sherpa_onnx_wespeaker_resnet34"
+    voiceprint_model_path: str = str(
+        (BASE_DIR / "data" / "voiceprint" / "wespeaker_en_voxceleb_resnet34.onnx").resolve()
+    )
+    voiceprint_execution_provider: str = "cpu"
+    voiceprint_num_threads: int = 1
+    voiceprint_search_score_threshold: float = 0.75
+    voiceprint_verify_score_threshold: float = 0.75
+    voiceprint_query_window_min_ms: int = 1000
+    voiceprint_query_window_max_ms: int = 2000
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_household_username: str = "user"

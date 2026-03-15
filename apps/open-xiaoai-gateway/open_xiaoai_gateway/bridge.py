@@ -21,6 +21,7 @@ from open_xiaoai_gateway.translator import (
     TerminalBinaryStream,
     TerminalBridgeContext,
     TerminalDiscoveryInfo,
+    PendingVoiceprintEnrollment,
     TerminalRpcRequest,
     VoiceTerminalBinding,
     build_discovery_info,
@@ -1355,6 +1356,9 @@ def _parse_gateway_discovery_status(payload: dict[str, Any]) -> GatewayDiscovery
     binding_payload = payload.get("binding")
     binding = None
     if isinstance(binding_payload, dict):
+        pending_voiceprint_enrollment = _parse_pending_voiceprint_enrollment(
+            binding_payload.get("pending_voiceprint_enrollment")
+        )
         binding = VoiceTerminalBinding(
             household_id=str(binding_payload.get("household_id") or "").strip(),
             terminal_id=str(binding_payload.get("terminal_id") or "").strip(),
@@ -1362,6 +1366,7 @@ def _parse_gateway_discovery_status(payload: dict[str, Any]) -> GatewayDiscovery
             terminal_name=str(binding_payload.get("terminal_name") or "").strip(),
             voice_auto_takeover_enabled=bool(binding_payload.get("voice_auto_takeover_enabled")),
             voice_takeover_prefixes=tuple(_coerce_text_list(binding_payload.get("voice_takeover_prefixes")) or ["请"]),
+            pending_voiceprint_enrollment=pending_voiceprint_enrollment,
         )
     return GatewayDiscoveryStatus(
         claimed=bool(payload.get("claimed")),
@@ -1406,6 +1411,23 @@ def _coerce_optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _parse_pending_voiceprint_enrollment(payload: object) -> PendingVoiceprintEnrollment | None:
+    if not isinstance(payload, dict):
+        return None
+    enrollment_id = str(payload.get("enrollment_id") or "").strip()
+    target_member_id = str(payload.get("target_member_id") or "").strip()
+    if not enrollment_id or not target_member_id:
+        return None
+    return PendingVoiceprintEnrollment(
+        enrollment_id=enrollment_id,
+        target_member_id=target_member_id,
+        expected_phrase=_coerce_optional_text(payload.get("expected_phrase")),
+        sample_goal=max(1, int(payload.get("sample_goal") or 1)),
+        sample_count=max(0, int(payload.get("sample_count") or 0)),
+        expires_at=_coerce_optional_text(payload.get("expires_at")),
+    )
 
 
 def _coerce_text_list(value: object) -> list[str]:
@@ -1466,7 +1488,28 @@ def _collect_binding_refresh_changes(context: TerminalBridgeContext, binding: Vo
         changes.append("invocation_mode")
     if tuple(context.takeover_prefixes) != tuple(binding.voice_takeover_prefixes or ("请",)):
         changes.append("takeover_prefixes")
+    if not _same_pending_voiceprint_enrollment(
+        context.pending_voiceprint_enrollment,
+        binding.pending_voiceprint_enrollment,
+    ):
+        changes.append("pending_voiceprint_enrollment")
     return changes
+
+
+def _same_pending_voiceprint_enrollment(
+    current: PendingVoiceprintEnrollment | None,
+    next_value: PendingVoiceprintEnrollment | None,
+) -> bool:
+    if current is None or next_value is None:
+        return current is None and next_value is None
+    return (
+        current.enrollment_id == next_value.enrollment_id
+        and current.target_member_id == next_value.target_member_id
+        and current.expected_phrase == next_value.expected_phrase
+        and current.sample_goal == next_value.sample_goal
+        and current.sample_count == next_value.sample_count
+        and current.expires_at == next_value.expires_at
+    )
 
 
 def _is_takeover_abort_request(outgoing: TerminalRpcRequest) -> bool:

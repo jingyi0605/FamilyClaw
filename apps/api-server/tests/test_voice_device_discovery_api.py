@@ -14,11 +14,15 @@ from app.api.dependencies import ActorContext, require_admin_actor, require_boun
 from app.api.v1.endpoints.devices import router as devices_router
 from app.core.config import settings
 from app.db.session import get_db
+from app.db.utils import new_uuid
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.member.schemas import MemberCreate
+from app.modules.member.service import create_member
 from app.modules.room.service import create_room
 from app.modules.voice.discovery_registry import voice_terminal_discovery_registry
+from app.modules.voiceprint.models import VoiceprintEnrollment
 
 
 class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
@@ -202,6 +206,58 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         binding_payload = binding_response.json()
         self.assertTrue(binding_payload["binding"]["voice_auto_takeover_enabled"])
         self.assertEqual(["请", "帮我"], binding_payload["binding"]["voice_takeover_prefixes"])
+
+    def test_binding_query_returns_pending_voiceprint_enrollment(self) -> None:
+        fingerprint = "open_xiaoai:LX06:SN003"
+        self._report_terminal(fingerprint, "LX06", "SN003")
+
+        claim_response = self.client.post(
+            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/claim",
+            json={
+                "household_id": self.household_id,
+                "room_id": self.room_id,
+                "terminal_name": "主卧音箱",
+            },
+        )
+        self.assertEqual(200, claim_response.status_code)
+        terminal_id = claim_response.json()["terminal_id"]
+
+        with self.SessionLocal() as db:
+            member = create_member(
+                db,
+                MemberCreate(
+                    household_id=self.household_id,
+                    name="妈妈",
+                    role="adult",
+                ),
+            )
+            db.flush()
+            db.add(
+                VoiceprintEnrollment(
+                    id=new_uuid(),
+                    household_id=self.household_id,
+                    member_id=member.id,
+                    terminal_id=terminal_id,
+                    status="pending",
+                    expected_phrase="我是妈妈",
+                    sample_goal=3,
+                    sample_count=1,
+                    expires_at="2026-03-16T12:00:00+08:00",
+                )
+            )
+            db.commit()
+
+        binding_response = self.client.get(
+            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/binding",
+            headers={"x-voice-gateway-token": settings.voice_gateway_token},
+        )
+        self.assertEqual(200, binding_response.status_code)
+        binding_payload = binding_response.json()
+        pending = binding_payload["binding"]["pending_voiceprint_enrollment"]
+        self.assertIsNotNone(pending)
+        self.assertEqual("我是妈妈", pending["expected_phrase"])
+        self.assertEqual(3, pending["sample_goal"])
+        self.assertEqual(1, pending["sample_count"])
 
     def test_claim_still_succeeds_when_registry_temporarily_loses_discovery(self) -> None:
         fingerprint = "open_xiaoai:LX06:SN001"

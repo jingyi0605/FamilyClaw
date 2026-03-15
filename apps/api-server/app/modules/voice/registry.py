@@ -68,6 +68,8 @@ class VoiceSessionState(BaseModel):
     last_event_seq: int = 0
     audio_chunk_count: int = 0
     audio_bytes: int = 0
+    session_purpose: str = "conversation"
+    voiceprint_enrollment_id: str | None = None
     committed_at: str | None = None
     cancelled_at: str | None = None
     active_playback_id: str | None = None
@@ -77,6 +79,13 @@ class VoiceSessionState(BaseModel):
     runtime_status: str | None = None
     runtime_session_id: str | None = None
     runtime_error_detail: str | None = None
+    audio_artifact_id: str | None = None
+    audio_file_path: str | None = None
+    audio_sample_rate: int | None = None
+    audio_channels: int | None = None
+    audio_sample_width: int | None = None
+    audio_duration_ms: int | None = None
+    audio_sha256: str | None = None
     route_type: str | None = None
     route_target: str | None = None
     route_error_code: str | None = None
@@ -218,6 +227,8 @@ class VoiceSessionRegistry:
         terminal_id: str,
         household_id: str,
         room_id: str | None,
+        session_purpose: str,
+        voiceprint_enrollment_id: str | None,
         inbound_seq: int,
     ) -> VoiceSessionState:
         with self._lock:
@@ -227,6 +238,8 @@ class VoiceSessionRegistry:
                 terminal_id=terminal_id,
                 household_id=household_id,
                 room_id=room_id,
+                session_purpose=session_purpose,
+                voiceprint_enrollment_id=voiceprint_enrollment_id,
                 status="streaming",
                 started_at=now,
                 updated_at=now,
@@ -390,6 +403,37 @@ class VoiceSessionRegistry:
                     "runtime_status": runtime_status,
                     "runtime_session_id": runtime_session_id if runtime_session_id is not None else session.runtime_session_id,
                     "runtime_error_detail": runtime_error_detail,
+                    "updated_at": utc_now_iso(),
+                }
+            )
+            self._sessions[session_id] = updated
+            return updated
+
+    def record_audio_artifact(
+        self,
+        *,
+        session_id: str,
+        artifact_id: str,
+        file_path: str,
+        sample_rate: int,
+        channels: int,
+        sample_width: int,
+        duration_ms: int,
+        sha256: str,
+    ) -> VoiceSessionState | None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            updated = session.model_copy(
+                update={
+                    "audio_artifact_id": artifact_id,
+                    "audio_file_path": file_path,
+                    "audio_sample_rate": sample_rate,
+                    "audio_channels": channels,
+                    "audio_sample_width": sample_width,
+                    "audio_duration_ms": duration_ms,
+                    "audio_sha256": sha256,
                     "updated_at": utc_now_iso(),
                 }
             )

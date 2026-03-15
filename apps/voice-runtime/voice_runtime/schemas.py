@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+VoiceSessionPurpose = Literal["conversation", "voiceprint_enrollment"]
 
 
 class StartSessionRequest(BaseModel):
@@ -13,6 +17,14 @@ class StartSessionRequest(BaseModel):
     sample_rate: int = Field(ge=1)
     codec: str
     channels: int = Field(ge=1)
+    session_purpose: VoiceSessionPurpose = "conversation"
+    enrollment_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_enrollment_scope(self) -> "StartSessionRequest":
+        if self.session_purpose == "voiceprint_enrollment" and not self.enrollment_id:
+            raise ValueError("voiceprint_enrollment 会话必须携带 enrollment_id")
+        return self
 
 
 class AppendAudioRequest(BaseModel):
@@ -63,6 +75,13 @@ class CommitSessionResponse(BaseModel):
     transcript_text: str
     buffered_chunk_count: int
     received_bytes: int
+    audio_artifact_id: str | None = None
+    audio_file_path: str | None = None
+    sample_rate: int | None = Field(default=None, ge=1)
+    channels: int | None = Field(default=None, ge=1)
+    sample_width: int | None = Field(default=None, ge=1)
+    duration_ms: int | None = Field(default=None, ge=1)
+    audio_sha256: str | None = None
     degraded: bool = True
 
 
@@ -72,3 +91,4 @@ class ErrorResponse(BaseModel):
     ok: bool = False
     error_code: str
     detail: str
+

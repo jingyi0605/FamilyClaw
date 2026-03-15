@@ -51,6 +51,7 @@ from app.modules.voice.discovery_registry import (
     voice_terminal_discovery_registry,
 )
 from app.modules.voice.protocol import sanitize_terminal_capabilities
+from app.modules.voiceprint.schemas import PendingVoiceprintEnrollmentRead
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -79,6 +80,7 @@ class VoiceDiscoveryBindingRead(BaseModel):
     terminal_name: str
     voice_auto_takeover_enabled: bool
     voice_takeover_prefixes: list[str]
+    pending_voiceprint_enrollment: PendingVoiceprintEnrollmentRead | None = None
 
 
 class VoiceDiscoveryReportResponse(BaseModel):

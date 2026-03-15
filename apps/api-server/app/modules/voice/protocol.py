@@ -40,6 +40,7 @@ VoiceCommandEventType = Literal[
 ]
 VoicePlaybackStatus = Literal["started", "completed", "failed", "interrupted"]
 VoicePlayMode = Literal["tts_text", "audio_bytes"]
+VoiceSessionPurpose = Literal["conversation", "voiceprint_enrollment"]
 VoiceErrorCode = Literal[
     "gateway_auth_failed",
     "invalid_event_payload",
@@ -143,6 +144,14 @@ class SessionStartPayload(_StrictModel):
     codec: str = Field(default="pcm_s16le", min_length=1)
     channels: int = Field(default=1, ge=1, le=2)
     trace_id: str | None = None
+    session_purpose: VoiceSessionPurpose = "conversation"
+    enrollment_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_enrollment_scope(self) -> "SessionStartPayload":
+        if self.session_purpose == "voiceprint_enrollment" and not self.enrollment_id:
+            raise ValueError("voiceprint_enrollment 会话必须携带 enrollment_id")
+        return self
 
 
 class AudioAppendPayload(_StrictModel):
@@ -156,6 +165,14 @@ class AudioCommitPayload(_StrictModel):
     duration_ms: int | None = Field(default=None, ge=0)
     reason: str | None = None
     debug_transcript: str | None = None
+    session_purpose: VoiceSessionPurpose = "conversation"
+    enrollment_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_enrollment_scope(self) -> "AudioCommitPayload":
+        if self.session_purpose == "voiceprint_enrollment" and not self.enrollment_id:
+            raise ValueError("voiceprint_enrollment 会话必须携带 enrollment_id")
+        return self
 
 
 class SessionCancelPayload(_StrictModel):

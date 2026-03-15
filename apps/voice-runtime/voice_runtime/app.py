@@ -41,6 +41,8 @@ def create_app() -> FastAPI:
             sample_rate=payload.sample_rate,
             codec=payload.codec,
             channels=payload.channels,
+            session_purpose=payload.session_purpose,
+            enrollment_id=payload.enrollment_id,
         )
         return StartSessionResponse(runtime_session_id=session.session_id)
 
@@ -79,22 +81,32 @@ def create_app() -> FastAPI:
         x_debug_transcript: str | None = Header(default=None, alias="X-Debug-Transcript"),
         x_debug_transcript_b64: str | None = Header(default=None, alias="X-Debug-Transcript-B64"),
     ) -> CommitSessionResponse:
-        session = await session_store.commit_session(
+        commit_result = await session_store.commit_session(
             session_id=payload.session_id,
             terminal_id=payload.terminal_id,
             household_id=payload.household_id,
         )
-        if session is None:
+        if commit_result is None:
             raise not_found("voice_session_not_found", "voice session not found")
 
         debug_transcript = decode_debug_transcript(x_debug_transcript, x_debug_transcript_b64)
-        transcript_text = build_transcript(session, debug_transcript)
-        return CommitSessionResponse(
-            runtime_session_id=session.session_id,
+        transcript_text = build_transcript(commit_result.session, debug_transcript)
+        response = CommitSessionResponse(
+            runtime_session_id=commit_result.session.session_id,
             transcript_text=transcript_text,
-            buffered_chunk_count=session.chunk_count,
-            received_bytes=session.received_bytes,
+            buffered_chunk_count=commit_result.session.chunk_count,
+            received_bytes=commit_result.session.received_bytes,
+            degraded=commit_result.audio_artifact is None,
         )
+        if commit_result.audio_artifact is not None:
+            response.audio_artifact_id = commit_result.audio_artifact.artifact_id
+            response.audio_file_path = commit_result.audio_artifact.file_path
+            response.sample_rate = commit_result.audio_artifact.sample_rate
+            response.channels = commit_result.audio_artifact.channels
+            response.sample_width = commit_result.audio_artifact.sample_width
+            response.duration_ms = commit_result.audio_artifact.duration_ms
+            response.audio_sha256 = commit_result.audio_artifact.sha256
+        return response
 
     return app
 

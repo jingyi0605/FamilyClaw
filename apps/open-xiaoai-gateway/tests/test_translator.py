@@ -5,10 +5,11 @@ from unittest.mock import patch
 
 from open_xiaoai_gateway.protocol import GatewayCommand
 from open_xiaoai_gateway.translator import (
+    PendingVoiceprintEnrollment,
     TerminalBinaryStream,
     TerminalBridgeContext,
-    VoiceTerminalBinding,
     TerminalRpcRequest,
+    VoiceTerminalBinding,
     build_discovery_info,
     build_discovery_report_payload,
     build_open_xiaoai_fingerprint,
@@ -264,6 +265,31 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual([], result.events)
         self.assertEqual("takeover_prefix_not_matched", context.last_passthrough_reason)
 
+    def test_pending_voiceprint_enrollment_marks_session_and_commit_as_enrollment(self) -> None:
+        context = self._build_claimed_context(
+            pending_voiceprint_enrollment=PendingVoiceprintEnrollment(
+                enrollment_id="enrollment-1",
+                target_member_id="member-1",
+                expected_phrase="我是妈妈",
+                sample_goal=3,
+                sample_count=1,
+                expires_at="2026-03-16T12:00:00+08:00",
+            )
+        )
+
+        result = translate_text_message_result(
+            self._build_recognize_result_frame(text="我是妈妈"),
+            context,
+        )
+
+        self.assertEqual(["session.start", "audio.commit"], [item.type for item in result.events])
+        self.assertEqual("voiceprint_enrollment", result.events[0].payload["session_purpose"])
+        self.assertEqual("enrollment-1", result.events[0].payload["enrollment_id"])
+        self.assertEqual("voiceprint_enrollment", result.events[1].payload["session_purpose"])
+        self.assertEqual("enrollment-1", result.events[1].payload["enrollment_id"])
+        self.assertEqual("我是妈妈", result.events[1].payload["debug_transcript"])
+        self.assertIsNone(context.active_session_id)
+
     def test_binary_record_stream_translates_to_audio_append(self) -> None:
         context = TerminalBridgeContext()
         context.apply_discovery(
@@ -444,6 +470,7 @@ class TranslatorTests(unittest.TestCase):
         *,
         voice_auto_takeover_enabled: bool = False,
         voice_takeover_prefixes: tuple[str, ...] = ("请",),
+        pending_voiceprint_enrollment: PendingVoiceprintEnrollment | None = None,
     ) -> TerminalBridgeContext:
         context = TerminalBridgeContext()
         context.apply_discovery(
@@ -457,6 +484,7 @@ class TranslatorTests(unittest.TestCase):
                 terminal_name="客厅小爱",
                 voice_auto_takeover_enabled=voice_auto_takeover_enabled,
                 voice_takeover_prefixes=voice_takeover_prefixes,
+                pending_voiceprint_enrollment=pending_voiceprint_enrollment,
             )
         )
         return context

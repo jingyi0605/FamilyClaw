@@ -9,10 +9,12 @@ from open_xiaoai_gateway.bridge import (
     GatewayDiscoveryStatus,
     GatewayRuntimeState,
     OpenXiaoAIGateway,
+    _parse_gateway_discovery_status,
     _extract_remote_addr,
 )
 from open_xiaoai_gateway.protocol import GatewayCommand
 from open_xiaoai_gateway.translator import (
+    PendingVoiceprintEnrollment,
     TerminalBridgeContext,
     TerminalRpcRequest,
     VoiceTerminalBinding,
@@ -40,6 +42,36 @@ class GatewayBridgeTests(unittest.TestCase):
         websocket = SimpleNamespace()
 
         self.assertIsNone(_extract_remote_addr(websocket))
+
+    def test_parse_gateway_discovery_status_reads_pending_voiceprint_enrollment(self) -> None:
+        status = _parse_gateway_discovery_status(
+            {
+                "claimed": True,
+                "binding": {
+                    "household_id": "household-1",
+                    "terminal_id": "terminal-1",
+                    "room_id": "room-1",
+                    "terminal_name": "客厅小爱",
+                    "voice_auto_takeover_enabled": False,
+                    "voice_takeover_prefixes": ["请"],
+                    "pending_voiceprint_enrollment": {
+                        "enrollment_id": "enrollment-1",
+                        "target_member_id": "member-1",
+                        "expected_phrase": "我是妈妈",
+                        "sample_goal": 3,
+                        "sample_count": 1,
+                        "expires_at": "2026-03-16T12:00:00+08:00",
+                    },
+                },
+            }
+        )
+
+        self.assertTrue(status.claimed)
+        self.assertIsNotNone(status.binding)
+        assert status.binding is not None
+        self.assertIsNotNone(status.binding.pending_voiceprint_enrollment)
+        assert status.binding.pending_voiceprint_enrollment is not None
+        self.assertEqual("enrollment-1", status.binding.pending_voiceprint_enrollment.enrollment_id)
 
 
 class _FakeTerminalWebSocket:
@@ -193,6 +225,58 @@ class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("terminal-1", context.terminal_id)
         self.assertEqual("native_first", context.invocation_mode)
         self.assertEqual(("请",), context.takeover_prefixes)
+
+    async def test_refresh_active_binding_updates_pending_voiceprint_enrollment(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        context = TerminalBridgeContext()
+        context.apply_discovery(build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0"))
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="客厅小爱",
+                voice_auto_takeover_enabled=False,
+                voice_takeover_prefixes=("请",),
+            )
+        )
+        api_reader_task = asyncio.create_task(asyncio.sleep(60))
+        state = GatewayRuntimeState(
+            context=context,
+            terminal_rpc=SimpleNamespace(),
+            remote_addr="192.168.1.22",
+            api_websocket=SimpleNamespace(),
+            api_reader_task=api_reader_task,
+        )
+
+        try:
+            await gateway._refresh_active_binding(
+                state,
+                VoiceTerminalBinding(
+                    household_id="household-1",
+                    terminal_id="terminal-1",
+                    room_id="room-1",
+                    terminal_name="客厅小爱",
+                    voice_auto_takeover_enabled=False,
+                    voice_takeover_prefixes=("请",),
+                    pending_voiceprint_enrollment=PendingVoiceprintEnrollment(
+                        enrollment_id="enrollment-1",
+                        target_member_id="member-1",
+                        expected_phrase="我是妈妈",
+                        sample_goal=3,
+                        sample_count=1,
+                        expires_at="2026-03-16T12:00:00+08:00",
+                    ),
+                ),
+            )
+        finally:
+            api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await api_reader_task
+
+        self.assertIsNotNone(context.pending_voiceprint_enrollment)
+        assert context.pending_voiceprint_enrollment is not None
+        self.assertEqual("enrollment-1", context.pending_voiceprint_enrollment.enrollment_id)
 
     async def test_dispatch_local_terminal_messages_interrupts_native_xiaoai_for_takeover(self) -> None:
         gateway = OpenXiaoAIGateway()

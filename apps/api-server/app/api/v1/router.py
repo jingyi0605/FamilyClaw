@@ -29,6 +29,7 @@ from app.api.v1.endpoints.scenes import router as scenes_router
 from app.api.v1.endpoints.scheduled_tasks import router as scheduled_tasks_router
 from app.api.v1.endpoints.scheduled_tasks import run_router as scheduled_task_runs_router
 from app.api.v1.endpoints.scheduled_tasks import draft_router as scheduled_task_drafts_router
+from app.api.v1.endpoints.voiceprints import router as voiceprints_router
 
 router = APIRouter()
 router.include_router(accounts_router)
@@ -60,3 +61,4 @@ router.include_router(scenes_router)
 router.include_router(scheduled_tasks_router)
 router.include_router(scheduled_task_runs_router)
 router.include_router(scheduled_task_drafts_router)
+router.include_router(voiceprints_router)

@@ -39,7 +39,18 @@ class VoiceTerminalBinding:
     room_id: str | None
     terminal_name: str
     voice_auto_takeover_enabled: bool = False
-    voice_takeover_prefixes: tuple[str, ...] = ("请",)
+    voice_takeover_prefixes: tuple[str, ...] = ("\u8bf7",)
+    pending_voiceprint_enrollment: "PendingVoiceprintEnrollment" | None = None
+
+
+@dataclass(slots=True)
+class PendingVoiceprintEnrollment:
+    enrollment_id: str
+    target_member_id: str
+    expected_phrase: str | None
+    sample_goal: int
+    sample_count: int
+    expires_at: str | None
 
 
 @dataclass(slots=True)
@@ -65,8 +76,11 @@ class TerminalBridgeContext:
     terminal_code: str | None = None
     name: str | None = None
     active_session_id: str | None = None
+    active_session_purpose: str | None = None
+    active_enrollment_id: str | None = None
     active_playback_id: str | None = None
     active_playback_session_id: str | None = None
+    pending_voiceprint_enrollment: PendingVoiceprintEnrollment | None = None
     last_playing_state: str = "idle"
     invocation_mode: str = field(default_factory=lambda: settings.invocation_mode)
     takeover_prefixes: tuple[str, ...] = field(default_factory=lambda: tuple(settings.takeover_prefixes))
@@ -81,13 +95,17 @@ class TerminalBridgeContext:
     def new_session_id(self) -> str:
         return f"voice-session-{uuid4()}"
 
-    def start_session(self) -> str:
+    def start_session(self, *, purpose: str, enrollment_id: str | None = None) -> str:
         session_id = self.new_session_id()
         self.active_session_id = session_id
+        self.active_session_purpose = purpose
+        self.active_enrollment_id = enrollment_id
         return session_id
 
     def clear_session(self) -> None:
         self.active_session_id = None
+        self.active_session_purpose = None
+        self.active_enrollment_id = None
 
     def track_playback(self, *, playback_id: str, session_id: str | None) -> None:
         self.active_playback_id = playback_id
@@ -111,6 +129,7 @@ class TerminalBridgeContext:
         self.room_id = binding.room_id
         self.name = binding.terminal_name
         self.terminal_code = binding.terminal_id
+        self.pending_voiceprint_enrollment = binding.pending_voiceprint_enrollment
         self.invocation_mode = "always_familyclaw" if binding.voice_auto_takeover_enabled else "native_first"
         self.takeover_prefixes = binding.voice_takeover_prefixes or ("请",)
 
@@ -423,12 +442,13 @@ def _translate_kws_event(data: Any, context: TerminalBridgeContext) -> TextTrans
     if interrupted is not None:
         events.append(interrupted)
 
-    if context.invocation_mode == "always_familyclaw" and not context.active_session_id:
+    if (context.invocation_mode == "always_familyclaw" or context.pending_voiceprint_enrollment is not None) and not context.active_session_id:
         if settings.pause_on_takeover:
             terminal_messages.append(build_takeover_interrupt_message())
-        session_id = context.start_session()
+        session_purpose, enrollment_id = _resolve_session_purpose(context)
+        session_id = context.start_session(purpose=session_purpose, enrollment_id=enrollment_id)
         events.append(_build_session_start_event(context, session_id=session_id))
-        context.last_invocation_decision = "always_familyclaw"
+        context.last_invocation_decision = "voiceprint_enrollment" if session_purpose == "voiceprint_enrollment" else "always_familyclaw"
         context.last_passthrough_reason = None
         return TextTranslationResult(events=events, terminal_messages=terminal_messages)
 
@@ -469,26 +489,39 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> T
 
     events: list[GatewayEvent] = []
     terminal_messages: list[TerminalOutboundMessage] = []
-    if is_vad_begin and context.invocation_mode == "always_familyclaw" and not context.active_session_id:
+    if is_vad_begin and (context.invocation_mode == "always_familyclaw" or context.pending_voiceprint_enrollment is not None) and not context.active_session_id:
         if settings.pause_on_takeover:
             terminal_messages.append(build_takeover_interrupt_message())
-        session_id = context.start_session()
+        session_purpose, enrollment_id = _resolve_session_purpose(context)
+        session_id = context.start_session(purpose=session_purpose, enrollment_id=enrollment_id)
         events.append(_build_session_start_event(context, session_id=session_id))
 
     if not is_final:
         return TextTranslationResult(events=events, terminal_messages=terminal_messages)
 
     if text.strip():
-        if context.invocation_mode == "always_familyclaw":
+        if context.invocation_mode == "always_familyclaw" or context.pending_voiceprint_enrollment is not None:
             if not context.active_session_id:
                 if settings.pause_on_takeover:
                     terminal_messages.append(build_takeover_interrupt_message())
-                session_id = context.start_session()
+                session_purpose, enrollment_id = _resolve_session_purpose(context)
+                session_id = context.start_session(purpose=session_purpose, enrollment_id=enrollment_id)
                 events.append(_build_session_start_event(context, session_id=session_id))
             session_id = context.active_session_id
+            session_purpose = context.active_session_purpose or "conversation"
+            enrollment_id = context.active_enrollment_id
+            events.append(
+                _build_audio_commit_event(
+                    context,
+                    session_id=session_id,
+                    transcript_text=text.strip(),
+                    reason="speech_recognizer_final",
+                    session_purpose=session_purpose,
+                    enrollment_id=enrollment_id,
+                )
+            )
             context.clear_session()
-            events.append(_build_audio_commit_event(context, session_id=session_id, transcript_text=text.strip(), reason="speech_recognizer_final"))
-            context.last_invocation_decision = "always_familyclaw"
+            context.last_invocation_decision = "voiceprint_enrollment" if session_purpose == "voiceprint_enrollment" else "always_familyclaw"
             context.last_passthrough_reason = None
             return TextTranslationResult(events=events, terminal_messages=terminal_messages)
 
@@ -515,18 +548,23 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> T
         if decision.should_pause:
             terminal_messages.append(build_takeover_interrupt_message())
         if not context.active_session_id:
-            session_id = context.start_session()
+            session_purpose, enrollment_id = _resolve_session_purpose(context)
+            session_id = context.start_session(purpose=session_purpose, enrollment_id=enrollment_id)
             events.append(_build_session_start_event(context, session_id=session_id))
         session_id = context.active_session_id
-        context.clear_session()
+        session_purpose = context.active_session_purpose or "conversation"
+        enrollment_id = context.active_enrollment_id
         events.append(
             _build_audio_commit_event(
                 context,
                 session_id=session_id,
                 transcript_text=decision.resolved_text,
                 reason=decision.reason,
+                session_purpose=session_purpose,
+                enrollment_id=enrollment_id,
             )
         )
+        context.clear_session()
         return TextTranslationResult(events=events, terminal_messages=terminal_messages)
 
     if context.active_session_id:
@@ -586,6 +624,7 @@ def _translate_playing_event(data: Any, context: TerminalBridgeContext) -> TextT
 
 
 def _build_session_start_event(context: TerminalBridgeContext, *, session_id: str) -> GatewayEvent:
+    session_purpose = context.active_session_purpose or "conversation"
     return GatewayEvent(
         type="session.start",
         terminal_id=context.terminal_id or "",
@@ -599,6 +638,8 @@ def _build_session_start_event(context: TerminalBridgeContext, *, session_id: st
             "codec": "pcm_s16le",
             "channels": settings.recording_channels,
             "trace_id": None,
+            "session_purpose": session_purpose,
+            "enrollment_id": context.active_enrollment_id if session_purpose == "voiceprint_enrollment" else None,
         },
         ts=utc_now_iso(),
     )
@@ -610,6 +651,8 @@ def _build_audio_commit_event(
     session_id: str | None,
     transcript_text: str,
     reason: str,
+    session_purpose: str,
+    enrollment_id: str | None,
 ) -> GatewayEvent:
     return GatewayEvent(
         type="audio.commit",
@@ -620,9 +663,17 @@ def _build_audio_commit_event(
             "duration_ms": None,
             "reason": reason,
             "debug_transcript": transcript_text,
+            "session_purpose": session_purpose,
+            "enrollment_id": enrollment_id if session_purpose == "voiceprint_enrollment" else None,
         },
         ts=utc_now_iso(),
     )
+
+
+def _resolve_session_purpose(context: TerminalBridgeContext) -> tuple[str, str | None]:
+    if context.pending_voiceprint_enrollment is None:
+        return "conversation", None
+    return "voiceprint_enrollment", context.pending_voiceprint_enrollment.enrollment_id
 
 
 def _build_playback_audio_config() -> dict[str, object]:

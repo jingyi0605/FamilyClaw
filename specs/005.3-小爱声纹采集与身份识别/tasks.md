@@ -130,8 +130,8 @@
 
 ## 阶段 1：先把数据结构和音频产物链路立住
 
-- [ ] 1.1 定义声纹建档、样本和档案的数据模型
-  - 状态：TODO
+- [x] 1.1 定义声纹建档、样本和档案的数据模型
+  - 状态：DONE
   - 这一步到底做什么：把建档任务、成员声纹档案、录音样本三类对象建成正式 model 和 schema，别再靠零散字段硬凑。
   - 做完你能看到什么：数据库里有清楚的表结构，后续建档、识别、清理都知道该挂在哪。
   - 先依赖什么：0.4
@@ -150,11 +150,14 @@
   - 怎么验证：
     - `alembic upgrade head`
     - 新旧库迁移检查
+  - 本轮落实：
+    - 已新增 `voiceprint_enrollments / member_voiceprint_profiles / member_voiceprint_samples` 的 model、schema 和查询服务。
+    - 已补齐 Alembic migration `20260315_0036_create_voiceprint_foundation.py`，并用临时 sqlite 库跑通 `upgrade head`。
   - 对应需求：`requirements.md` 需求 1、需求 4、需求 7
   - 对应设计：`design.md` 4.3、5.1、5.2
 
-- [ ] 1.2 让 voice-runtime 在 commit 时落出可解析音频文件
-  - 状态：TODO
+- [x] 1.2 让 voice-runtime 在 commit 时落出可解析音频文件
+  - 状态：DONE
   - 这一步到底做什么：把现在只在内存里攒音频块的 `voice-runtime` 补成正式音频产物链路，commit 时能落出 `.wav`，必要时保留 `.pcm`。
   - 做完你能看到什么：每次采样或对话 commit 后，系统都能拿到明确的音频文件和元数据，而不是只剩一堆临时字节。
   - 先依赖什么：1.1
@@ -175,11 +178,14 @@
   - 怎么验证：
     - `python -m unittest tests.test_app`
     - 临时样本文件读取测试
+  - 本轮落实：
+    - `voice-runtime` 已在 `commit` 时落 `.wav`，并返回 `audio_artifact_id / audio_file_path / sample_rate / channels / sample_width / duration_ms / audio_sha256`。
+    - `api-server` 的 runtime client 和 pipeline 已接住音频产物元数据，缺失产物时按降级路径继续，不打断现有语音主链。
   - 对应需求：`requirements.md` 需求 2、需求 5、需求 7
   - 对应设计：`design.md` 4.2、4.5.3、5.3
 
-- [ ] 1.3 扩展 gateway 会话打标，支持“普通对话”和“建档采样”两种用途
-  - 状态：TODO
+- [x] 1.3 扩展 gateway 会话打标，支持“普通对话”和“建档采样”两种用途
+  - 状态：DONE
   - 这一步到底做什么：让 gateway 知道当前终端是否存在待处理建档任务，并把会话用途打到上行事件里。
   - 做完你能看到什么：同一条小爱录音链路，系统能区分“这次是普通聊天”还是“这次是给某个成员采样”。
   - 先依赖什么：1.1、1.2
@@ -201,13 +207,17 @@
   - 怎么验证：
     - gateway 单元测试
     - 事件流断言测试
+  - 本轮落实：
+    - 设备 binding 已能返回 `pending_voiceprint_enrollment` 摘要。
+    - gateway 已支持 `conversation / voiceprint_enrollment` 两类会话用途，并在 `session.start / audio.commit` 上带出 `session_purpose` 和 `enrollment_id`。
+    - 已补上热刷新逻辑，在线终端拿到新的待建档任务后会更新会话打标，不需要重连。
   - 对应需求：`requirements.md` 需求 1、需求 2
   - 对应设计：`design.md` 2.4.1、4.1、4.5.2
 
 ### 阶段检查
 
-- [ ] 1.4 阶段检查：音频样本是不是已经有正式落点
-  - 状态：TODO
+- [x] 1.4 阶段检查：音频样本是不是已经有正式落点
+  - 状态：DONE
   - 这一步到底做什么：确认建档链路最底层已经站稳，后面不会一边接 provider 一边还在猜音频样本从哪来。
   - 做完你能看到什么：数据库对象、音频文件和 gateway 会话用途三件事能串起来。
   - 先依赖什么：1.1、1.2、1.3
@@ -223,6 +233,9 @@
   - 怎么验证：
     - 人工走查
     - 样本链路回放测试
+  - 本轮阶段结论：
+    - 数据库基础对象、音频文件产物和 gateway 会话用途三件事已经串上了。
+    - 现阶段已经满足“先把底层链路站稳”的闸门，可以进入阶段 2 做正式建档 API 和主流程串联。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 7
   - 对应设计：`design.md` 2.4.1、4.1、4.2、5.2
 
@@ -230,8 +243,8 @@
 
 ## 阶段 2：把成员声纹建档主链补完整
 
-- [ ] 2.1 新增 voiceprint 模块和建档管理 API
-  - 状态：TODO
+- [x] 2.1 新增 voiceprint 模块和建档管理 API
+  - 状态：DONE
   - 这一步到底做什么：把建档任务创建、查询、取消、查看档案这些正式入口补出来，别让后面联调还靠脚本硬捅数据库。
   - 做完你能看到什么：管理员可以通过正式 API 管理成员建档任务和声纹档案。
   - 先依赖什么：1.4
@@ -250,11 +263,15 @@
   - 怎么验证：
     - API 单元测试
     - 集成测试
+  - 本轮落实：
+    - 已新增 `POST /api/v1/voiceprints/enrollments`、`GET /api/v1/voiceprints/enrollments`、`GET /api/v1/voiceprints/enrollments/{enrollment_id}`、`POST /api/v1/voiceprints/enrollments/{enrollment_id}/cancel`。
+    - 已新增 `GET /api/v1/voiceprints/members/{member_id}` 和 `DELETE /api/v1/voiceprints/members/{member_id}`，支持查看当前档案、样本和待处理建档任务，并支持停用成员现有声纹档案。
+    - 已补上 `voiceprint` API 测试，覆盖默认 3 轮建档、终端冲突、任务取消和成员档案删除。
   - 对应需求：`requirements.md` 需求 1、需求 4、需求 7
   - 对应设计：`design.md` 4.3、4.5.1、4.5.4
 
-- [ ] 2.2 接入首版声纹适配层，支持建档和更新档案
-  - 状态：TODO
+- [x] 2.2 接入首版声纹适配层，支持建档和更新档案
+  - 状态：DONE
   - 这一步到底做什么：先把已经测通过的本地基线方案接进来，把样本文件送去做 embedding，再保存档案。
   - 做完你能看到什么：系统不只是保存录音，还能真正生成“这个成员的声纹档案”。
   - 先依赖什么：2.1
@@ -273,11 +290,15 @@
   - 怎么验证：
     - provider mock 测试
     - 超时和失败分支测试
+  - 本轮落实：
+    - 已新增 `apps/api-server/app/modules/voiceprint/provider.py`，首版固定按 `sherpa-onnx + weSpeaker/ResNet34` 实现本地 ONNX 适配层，并把模型路径、query window(`1s~2s`) 和阈值做成配置。
+    - 已在 `apps/api-server/app/modules/voiceprint/service.py` 落地多轮样本 embedding 聚合、household 范围内 search/verify、历史样本增量更新 profile，以及 provider 失败时的显式状态回写。
+    - 已补 `apps/api-server/tests/test_voiceprint_service.py`，覆盖 3 轮建档聚合、provider 不可用失败、样本文本校验拒绝、household search/verify。
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 6
   - 对应设计：`design.md` 3.1、3.2、6.2
 
-- [ ] 2.3 把建档任务、样本和档案状态真正串起来
-  - 状态：TODO
+- [x] 2.3 把建档任务、样本和档案状态真正串起来
+  - 状态：DONE
   - 这一步到底做什么：把“创建任务 -> 采到样本 -> 校验样本 -> 调 provider -> 更新档案 -> 回写状态”串成一条完整主链。
   - 做完你能看到什么：建档这件事不再是半路断开的多个步骤，而是一条完整工作流。
   - 先依赖什么：2.2
@@ -295,13 +316,17 @@
   - 怎么验证：
     - 建档流程集成测试
     - 失败重试测试
+  - 本轮落实：
+    - 已在 `apps/api-server/app/modules/voice/pipeline.py` 增加 `voiceprint_enrollment` 专用 commit 分支，普通 `conversation` 路由保持原状，不破坏 Spec 005 / 005.2 现有主链。
+    - 已把 runtime 回来的 `.wav` 产物元数据、转写文本、样本校验、样本入库、profile 更新和 enrollment 状态回写串成一条正式后端链路。
+    - 已补 `apps/api-server/tests/test_voiceprint_enrollment_pipeline.py`，用 mocked runtime/provider 跑通三轮建档会话，证明 enrollment 会从 `pending` 走到 `completed`，并生成 `member_voiceprint_profiles / member_voiceprint_samples`。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 4
   - 对应设计：`design.md` 2.4.1、5.2、6.2
 
 ### 阶段检查
 
-- [ ] 2.4 阶段检查：成员声纹是不是已经能正式建出来
-  - 状态：TODO
+- [x] 2.4 阶段检查：成员声纹是不是已经能正式建出来
+  - 状态：DONE
   - 这一步到底做什么：确认系统已经不是“会录音”，而是真的“会建档”。
   - 做完你能看到什么：指定成员能产出可追踪的声纹档案，失败也有明确状态。
   - 先依赖什么：2.1、2.2、2.3
@@ -317,6 +342,9 @@
   - 怎么验证：
     - 端到端建档测试
     - 人工走查状态记录
+  - 本轮阶段结论：
+    - `voiceprint_enrollment` 会话已经能从 runtime 音频产物一路走到样本入库、embedding 聚合、profile 完成和 enrollment 状态回写。
+    - 阶段 2 的自动化证明已经补齐：`voiceprints_api / voiceprint_service / voiceprint_enrollment_pipeline / voice_pipeline / voice_runtime_client / voice_device_discovery_api` 相关测试全部通过，建档主链成立。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 4、需求 7
   - 对应设计：`design.md` 2.4.1、4.3、5.2
 

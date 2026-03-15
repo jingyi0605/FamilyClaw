@@ -44,6 +44,26 @@ class VoiceProtocolTests(unittest.TestCase):
                 }
             )
 
+    def test_voiceprint_enrollment_session_requires_enrollment_id(self) -> None:
+        with self.assertRaises(ValidationError):
+            VoiceGatewayEvent.model_validate(
+                {
+                    "type": "session.start",
+                    "terminal_id": "terminal-1",
+                    "session_id": "session-1",
+                    "seq": 1,
+                    "payload": {
+                        "household_id": "household-1",
+                        "room_id": "room-1",
+                        "sample_rate": 16000,
+                        "codec": "pcm_s16le",
+                        "channels": 1,
+                        "session_purpose": "voiceprint_enrollment",
+                    },
+                    "ts": "2026-03-15T00:00:00+08:00",
+                }
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

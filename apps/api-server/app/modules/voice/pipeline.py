@@ -25,6 +25,7 @@ from app.modules.voice.registry import (
 )
 from app.modules.voice.router import VoiceRoutingResult, voice_router
 from app.modules.voice.runtime_client import voice_runtime_client
+from app.modules.voiceprint.service import mark_voiceprint_enrollment_failed, process_voiceprint_enrollment_sample
 
 
 class VoicePipelineService:
@@ -89,6 +90,8 @@ class VoicePipelineService:
                 terminal_id=event.terminal_id,
                 household_id=payload.household_id,
                 room_id=payload.room_id or terminal.room_id,
+                session_purpose=payload.session_purpose,
+                voiceprint_enrollment_id=payload.enrollment_id,
                 inbound_seq=event.seq,
             )
             session = voice_session_registry.get(event.session_id or "")
@@ -238,6 +241,13 @@ class VoicePipelineService:
             debug_transcript=debug_transcript,
         )
         if not transcript_result.ok:
+            if session.session_purpose == "voiceprint_enrollment" and session.voiceprint_enrollment_id:
+                self._persist_voiceprint_enrollment_failure(
+                    db,
+                    enrollment_id=session.voiceprint_enrollment_id,
+                    error_code=transcript_result.error_code or "voice_runtime_unavailable",
+                    detail=transcript_result.detail or "声纹建档样本转写失败",
+                )
             voice_session_registry.mark_failed(
                 session_id=session.session_id,
                 error_code=transcript_result.error_code or "voice_runtime_unavailable",
@@ -253,6 +263,13 @@ class VoicePipelineService:
 
         transcript_text = (transcript_result.transcript_text or "").strip()
         if not transcript_text:
+            if session.session_purpose == "voiceprint_enrollment" and session.voiceprint_enrollment_id:
+                self._persist_voiceprint_enrollment_failure(
+                    db,
+                    enrollment_id=session.voiceprint_enrollment_id,
+                    error_code="voice_transcript_empty",
+                    detail="声纹建档样本文本为空，无法继续入库",
+                )
             voice_session_registry.mark_failed(session_id=session.session_id, error_code="voice_transcript_empty")
             return [
                 self._build_error(
@@ -270,6 +287,25 @@ class VoicePipelineService:
             runtime_session_id=transcript_result.runtime_session_id,
             runtime_error_detail=transcript_result.detail,
         )
+        if transcript_result.audio_artifact is not None:
+            voice_session_registry.record_audio_artifact(
+                session_id=session.session_id,
+                artifact_id=transcript_result.audio_artifact.artifact_id,
+                file_path=transcript_result.audio_artifact.file_path,
+                sample_rate=transcript_result.audio_artifact.sample_rate,
+                channels=transcript_result.audio_artifact.channels,
+                sample_width=transcript_result.audio_artifact.sample_width,
+                duration_ms=transcript_result.audio_artifact.duration_ms,
+                sha256=transcript_result.audio_artifact.sha256,
+            )
+        session = voice_session_registry.get(session.session_id) or session
+
+        if session.session_purpose == "voiceprint_enrollment":
+            return self._handle_voiceprint_enrollment_commit(
+                db,
+                session=session,
+                transcript_text=transcript_text,
+            )
 
         routing_result = await voice_router.route(
             db,
@@ -393,6 +429,76 @@ class VoicePipelineService:
             return []
         return self._build_route_feedback(session=session, text=bridge_result.response_text)
 
+    def _handle_voiceprint_enrollment_commit(
+        self,
+        db: Session,
+        *,
+        session: VoiceSessionState,
+        transcript_text: str,
+    ) -> list[VoiceCommandEvent]:
+        enrollment_id = session.voiceprint_enrollment_id
+        if not enrollment_id:
+            voice_session_registry.mark_failed(session_id=session.session_id, error_code="voiceprint_enrollment_missing")
+            return []
+        if (
+            not session.audio_artifact_id
+            or not session.audio_file_path
+            or session.audio_sample_rate is None
+            or session.audio_channels is None
+            or session.audio_sample_width is None
+            or session.audio_duration_ms is None
+            or not session.audio_sha256
+        ):
+            self._persist_voiceprint_enrollment_failure(
+                db,
+                enrollment_id=enrollment_id,
+                error_code="voiceprint_artifact_missing",
+                detail="声纹建档样本缺少音频产物元数据",
+            )
+            voice_session_registry.mark_failed(session_id=session.session_id, error_code="voiceprint_artifact_missing")
+            return []
+
+        try:
+            result = process_voiceprint_enrollment_sample(
+                db,
+                enrollment_id=enrollment_id,
+                transcript_text=transcript_text,
+                artifact_id=session.audio_artifact_id,
+                artifact_path=session.audio_file_path,
+                artifact_sha256=session.audio_sha256,
+                sample_rate=session.audio_sample_rate,
+                channels=session.audio_channels,
+                sample_width=session.audio_sample_width,
+                duration_ms=session.audio_duration_ms,
+            )
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            detail = getattr(exc, "detail", str(exc))
+            self._persist_voiceprint_enrollment_failure(
+                db,
+                enrollment_id=enrollment_id,
+                error_code="voiceprint_enrollment_failed",
+                detail=str(detail),
+            )
+            voice_session_registry.mark_failed(session_id=session.session_id, error_code="voiceprint_enrollment_failed")
+            return []
+
+        route_target = result.profile.id if result.profile is not None else result.sample.id if result.sample is not None else None
+        voice_session_registry.update_route(
+            session_id=session.session_id,
+            lane="voiceprint_enrollment",
+            route_type="voiceprint_enrollment",
+            route_target=route_target,
+            route_error_code=result.error_code,
+        )
+        if result.outcome == "failed":
+            voice_session_registry.mark_failed(
+                session_id=session.session_id,
+                error_code=result.error_code or "voiceprint_enrollment_failed",
+            )
+        return []
+
     def _record_identity(self, *, session_id: str, routing_result: VoiceRoutingResult) -> None:
         identity = routing_result.identity
         voice_session_registry.update_identity(
@@ -444,6 +550,25 @@ class VoicePipelineService:
             seq=seq,
             payload=payload,
         )
+
+    def _persist_voiceprint_enrollment_failure(
+        self,
+        db: Session,
+        *,
+        enrollment_id: str,
+        error_code: str,
+        detail: str,
+    ) -> None:
+        try:
+            mark_voiceprint_enrollment_failed(
+                db,
+                enrollment_id=enrollment_id,
+                error_code=error_code,
+                error_message=detail,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
 
 
 voice_pipeline_service = VoicePipelineService()

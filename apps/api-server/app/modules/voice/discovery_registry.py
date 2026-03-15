@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.room.models import Room
+from app.modules.voiceprint.schemas import PendingVoiceprintEnrollmentRead
+from app.modules.voiceprint.service import get_pending_voiceprint_enrollment_by_terminal
 
 VoiceDiscoveryConnectionStatus = Literal["online", "offline", "unknown"]
 OPEN_XIAOAI_BINDING_PLATFORM = "open_xiaoai"
@@ -24,7 +26,8 @@ class VoiceTerminalBindingSnapshot(BaseModel):
     room_id: str | None = None
     terminal_name: str
     voice_auto_takeover_enabled: bool = False
-    voice_takeover_prefixes: list[str] = Field(default_factory=lambda: ["请"])
+    voice_takeover_prefixes: list[str] = Field(default_factory=lambda: ["\u8bf7"])
+    pending_voiceprint_enrollment: PendingVoiceprintEnrollmentRead | None = None
 
 
 class VoiceTerminalDiscoveryRecord(BaseModel):
@@ -147,7 +150,12 @@ def get_voice_terminal_binding(db: Session, *, fingerprint: str) -> VoiceTermina
     row = db.execute(statement).first()
     if row is None:
         return None
-    binding, device = row
+    _binding, device = row
+    pending_voiceprint_enrollment = get_pending_voiceprint_enrollment_by_terminal(
+        db,
+        household_id=device.household_id,
+        terminal_id=device.id,
+    )
     return VoiceTerminalBindingSnapshot(
         household_id=device.household_id,
         terminal_id=device.id,
@@ -155,6 +163,7 @@ def get_voice_terminal_binding(db: Session, *, fingerprint: str) -> VoiceTermina
         terminal_name=device.name,
         voice_auto_takeover_enabled=bool(device.voice_auto_takeover_enabled),
         voice_takeover_prefixes=device.voice_takeover_prefixes,
+        pending_voiceprint_enrollment=pending_voiceprint_enrollment,
     )
 
 
@@ -220,7 +229,7 @@ def claim_voice_terminal_discovery(
         controllable=0,
         voice_auto_takeover_enabled=0,
     )
-    device.voice_takeover_prefixes = ["请"]
+    device.voice_takeover_prefixes = ["\u8bf7"]
     db.add(device)
     db.flush()
 

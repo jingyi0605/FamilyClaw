@@ -173,6 +173,8 @@ class VoiceRealtimeWsTests(unittest.TestCase):
             terminal_id="terminal-1",
             household_id="household-1",
             room_id="room-1",
+            session_purpose="conversation",
+            voiceprint_enrollment_id=None,
             inbound_seq=2,
         )
 
