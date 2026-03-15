@@ -9,17 +9,17 @@
     ".": {
       "browser": {
         "types": "./src/index.web.ts",
-        "import": "./src/index.web.ts",
-        "default": "./src/index.web.ts"
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
       },
       "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "default": "./src/index.ts"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./web": {
       "types": "./src/index.web.ts",
-      "import": "./src/index.web.ts",
-      "default": "./src/index.web.ts"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "dependencies": {

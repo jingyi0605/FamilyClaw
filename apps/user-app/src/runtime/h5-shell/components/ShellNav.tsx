@@ -1,15 +1,38 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import Taro from '@tarojs/taro';
-import { Home, Users, MessageSquareText, BookOpenText, Settings, PanelLeftClose, PanelLeft, ChevronUp, LogOut, Building2 } from 'lucide-react';
+import {
+  BookOpenText,
+  Building2,
+  ChevronUp,
+  Home,
+  LogOut,
+  MessageSquareText,
+  PanelLeft,
+  PanelLeftClose,
+  Settings,
+  Users,
+} from 'lucide-react';
 import { useAuthContext } from '../../auth';
 import { useHouseholdContext } from '../../household';
 
 const navItems: { url: string; label: string; aliases: string[]; icon: ReactNode }[] = [
-  { url: '/pages/home/index', label: '首页', aliases: ['/', '/home'], icon: <Home size={20} strokeWidth={2.5} /> },
-  { url: '/pages/family/index', label: '家庭', aliases: ['/family'], icon: <Users size={20} strokeWidth={2.5} /> },
-  { url: '/pages/assistant/index', label: '助手', aliases: ['/assistant'], icon: <MessageSquareText size={20} strokeWidth={2.5} /> },
-  { url: '/pages/memories/index', label: '记忆', aliases: ['/memories'], icon: <BookOpenText size={20} strokeWidth={2.5} /> },
-  { url: '/pages/settings/index', label: '设置', aliases: ['/settings'], icon: <Settings size={20} strokeWidth={2.5} /> },
+  { url: '/pages/home/index', label: '首页', aliases: ['/', '/home', '/pages/home/index'], icon: <Home size={20} strokeWidth={2.5} /> },
+  { url: '/pages/family/index', label: '家庭', aliases: ['/family', '/pages/family/index'], icon: <Users size={20} strokeWidth={2.5} /> },
+  { url: '/pages/assistant/index', label: '对话', aliases: ['/conversation', '/assistant', '/pages/assistant/index'], icon: <MessageSquareText size={20} strokeWidth={2.5} /> },
+  { url: '/pages/memories/index', label: '记忆', aliases: ['/memories', '/pages/memories/index'], icon: <BookOpenText size={20} strokeWidth={2.5} /> },
+  {
+    url: '/pages/settings/index',
+    label: '设置',
+    aliases: [
+      '/settings',
+      '/pages/settings/index',
+      '/pages/settings/ai/index',
+      '/pages/settings/integrations/index',
+      '/pages/settings/channel-access/index',
+      '/pages/plugins/index',
+    ],
+    icon: <Settings size={20} strokeWidth={2.5} />,
+  },
 ];
 
 function normalizePath(pathname: string) {
@@ -40,7 +63,7 @@ export function ShellNav(props: { collapsed: boolean; onToggleCollapse: () => vo
       </div>
 
       <nav className="shell-nav__links">
-        {navItems.map(item => {
+        {navItems.map((item) => {
           const isActive = item.aliases.includes(currentPath);
           return (
             <button
@@ -62,7 +85,7 @@ export function ShellNav(props: { collapsed: boolean; onToggleCollapse: () => vo
           <button
             className="shell-nav__user-trigger"
             type="button"
-            onClick={() => setUserMenuOpen(current => !current)}
+            onClick={() => setUserMenuOpen((current) => !current)}
             title={actor?.username ?? '用户菜单'}
           >
             <span className="shell-nav__user-avatar">{actor?.username?.slice(0, 1).toUpperCase() ?? '?'}</span>
@@ -80,12 +103,12 @@ export function ShellNav(props: { collapsed: boolean; onToggleCollapse: () => vo
                 <select
                   className="shell-nav__household-select"
                   value={currentHousehold?.id ?? ''}
-                  onChange={event => {
+                  onChange={(event) => {
                     setCurrentHouseholdId(event.target.value);
                     setUserMenuOpen(false);
                   }}
                 >
-                  {households.map(household => (
+                  {households.map((household) => (
                     <option key={household.id} value={household.id}>
                       {household.name}
                     </option>

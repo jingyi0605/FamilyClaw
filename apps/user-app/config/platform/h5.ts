@@ -9,7 +9,7 @@ const h5Config = {
       '/pages/login/index': '/login',
       '/pages/setup/index': '/setup',
       '/pages/family/index': '/family',
-      '/pages/assistant/index': '/assistant',
+      '/pages/assistant/index': ['/conversation', '/assistant'],
       '/pages/memories/index': '/memories',
       '/pages/settings/index': '/settings',
       '/pages/plugins/index': '/plugins',

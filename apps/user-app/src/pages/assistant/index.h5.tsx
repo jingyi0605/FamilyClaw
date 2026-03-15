@@ -249,6 +249,7 @@ function AssistantPageContent() {
     () => agents.find(item => item.id === selectedAgentId) ?? defaultAgent,
     [agents, defaultAgent, selectedAgentId],
   );
+  const canSwitchAgent = conversationAgents.length > 1;
   const recentFacts = useMemo(
     () => (activeSessionDetail?.messages ?? []).filter(item => item.role === 'assistant').flatMap(item => item.facts).slice(0, 3),
     [activeSessionDetail],
@@ -569,12 +570,22 @@ function AssistantPageContent() {
   }
 
   async function handleAgentSwitch(agentId: string) {
+    if (!agentId || agentId === selectedAgent?.id) return;
     setSelectedAgentId(agentId);
     if (!activeSessionDetail || activeSessionDetail.messages.length === 0) return;
     const nextAgent = conversationAgents.find(item => item.id === agentId);
     if (!nextAgent) return;
     setStatus(`已切换到 ${nextAgent.display_name}，新对话会按这个角色继续。`);
     await handleNewChat();
+  }
+
+  function handleAgentAvatarClick() {
+    if (!canSwitchAgent || conversationAgents.length === 0) return;
+    const currentAgentId = selectedAgent?.id ?? selectedAgentId;
+    const currentIndex = conversationAgents.findIndex(agent => agent.id === currentAgentId);
+    const nextAgent = conversationAgents[(currentIndex + 1 + conversationAgents.length) % conversationAgents.length];
+    if (!nextAgent || nextAgent.id === currentAgentId) return;
+    void handleAgentSwitch(nextAgent.id);
   }
 
   async function submitQuestion(rawQuestion: string) {
@@ -1056,9 +1067,15 @@ function AssistantPageContent() {
 
         <div className="conversation-agent-banner">
           <div className="conversation-agent-banner__main">
-            <div className="conversation-agent-banner__avatar">
+            <button
+              type="button"
+              className={`conversation-agent-banner__avatar ${canSwitchAgent ? 'conversation-agent-banner__avatar--switchable' : ''}`.trim()}
+              onClick={handleAgentAvatarClick}
+              disabled={!canSwitchAgent}
+              title={canSwitchAgent ? '点击切换对话 Agent' : (selectedAgent?.display_name ?? '当前对话 Agent')}
+            >
               {selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : <Bot size={18} />}
-            </div>
+            </button>
             <div className="conversation-agent-banner__text">
               <div className="conversation-agent-banner__title-row">
                 <h2>{selectedAgent?.display_name ?? 'AI 助手'}</h2>
@@ -1066,19 +1083,6 @@ function AssistantPageContent() {
               </div>
               <p>{selectedAgent?.summary ?? 'AI 管家，协助家庭日常事务。'}</p>
             </div>
-          </div>
-          <div className="conversation-agent-switcher">
-            {conversationAgents.map(agent => (
-              <button
-                key={agent.id}
-                type="button"
-                className={`conversation-agent-switcher__item ${selectedAgentId === agent.id ? 'conversation-agent-switcher__item--active' : ''}`.trim()}
-                onClick={() => void handleAgentSwitch(agent.id)}
-              >
-                <span>{getAgentTypeEmoji(agent.agent_type)}</span>
-                <span>{agent.display_name}</span>
-              </button>
-            ))}
           </div>
         </div>
 
@@ -1154,7 +1158,7 @@ function AssistantPageContent() {
                 <div className="chat-composer__footer">
                   <span className="chat-composer__hint">Enter 发送，Shift + Enter 换行</span>
                   <button type="submit" className="btn btn--primary" disabled={sending || !inputValue.trim() || !realtimeReady}>
-                    {sending ? '发送中...' : t('assistant.send')}
+                    {sending ? t('assistant.sending') : t('assistant.send')}
                   </button>
                 </div>
               </form>

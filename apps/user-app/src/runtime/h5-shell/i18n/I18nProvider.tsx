@@ -43,6 +43,8 @@ const SHELL_MESSAGES = {
     // 助手页
     'assistant.newChat': '新对话',
     'assistant.inputPlaceholder': '输入你的问题...',
+    'assistant.send': '发送',
+    'assistant.sending': '发送中...',
     'assistant.context': '当前上下文',
     'assistant.currentFamily': '当前家庭',
     'assistant.currentAgent': '当前 Agent',
@@ -117,6 +119,8 @@ const SHELL_MESSAGES = {
     // Assistant
     'assistant.newChat': 'New Chat',
     'assistant.inputPlaceholder': 'Ask me anything...',
+    'assistant.send': 'Send',
+    'assistant.sending': 'Sending...',
     'assistant.context': 'Context',
     'assistant.currentFamily': 'Current Family',
     'assistant.currentAgent': 'Current Agent',

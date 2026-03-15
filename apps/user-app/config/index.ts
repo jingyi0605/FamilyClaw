@@ -25,6 +25,12 @@ function resolveTaroEnv() {
 
 export default defineConfig(async merge => {
   const taroEnv = resolveTaroEnv();
+  const workspacePackageSrcRoots = [
+    'user-platform',
+    'user-core',
+    'user-ui',
+    'user-testing',
+  ].map(packageName => path.resolve(process.cwd(), `../../packages/${packageName}/src`));
 
   const baseConfig = {
     projectName: 'familyclaw-user-app',
@@ -50,6 +56,17 @@ export default defineConfig(async merge => {
       '@': path.resolve(process.cwd(), 'src'),
     },
     appPath: 'src/app.ts',
+    modifyWebpackChain(chain: any) {
+      if (taroEnv !== 'h5') {
+        return;
+      }
+
+      // H5 需要编译工作区包源码，否则 file: 依赖会绕过 Babel 的 TS 处理。
+      const scriptRule = chain.module.rule('script');
+      workspacePackageSrcRoots.forEach(packageSrcRoot => {
+        scriptRule.include.add(packageSrcRoot);
+      });
+    },
   };
 
   if (taroEnv === 'h5') {
