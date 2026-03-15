@@ -9,9 +9,12 @@ export function AppShellPage({ children }: PropsWithChildren) {
         minHeight: '100vh',
         background: userAppTokens.colorBg,
         padding: userAppTokens.spacingSm,
+        paddingBottom: '40px',
       }}
     >
-      {children}
+      <View style={{ display: 'flex', flexDirection: 'column', gap: userAppTokens.spacingSm }}>
+        {children}
+      </View>
     </View>
   );
 }

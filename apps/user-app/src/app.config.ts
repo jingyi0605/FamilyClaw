@@ -20,7 +20,7 @@ export default {
     },
     {
       root: 'pages/settings',
-      pages: ['index'],
+      pages: ['index', 'ai/index', 'integrations/index', 'channel-access/index'],
     },
     {
       root: 'pages/plugins',

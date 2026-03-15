@@ -45,12 +45,14 @@ export async function loadBootstrapSnapshot(options: {
 
   const householdsResponse = await client.listHouseholds();
   const storedHouseholdId = await getStoredHouseholdId(storage);
-  const preferredHouseholdId = storedHouseholdId || actor.household_id || householdsResponse.items[0]?.id || '';
-  const currentHousehold = householdsResponse.items.find(item => item.id === preferredHouseholdId) ?? null;
+  const currentHousehold = (
+    (storedHouseholdId ? householdsResponse.items.find(item => item.id === storedHouseholdId) : null)
+    ?? (actor.household_id ? householdsResponse.items.find(item => item.id === actor.household_id) : null)
+    ?? householdsResponse.items[0]
+    ?? null
+  );
 
-  if (currentHousehold) {
-    await persistHouseholdId(storage, currentHousehold.id);
-  }
+  await persistHouseholdId(storage, currentHousehold?.id ?? '');
 
   const [setupStatus, locales] = await Promise.all([
     currentHousehold ? client.getHouseholdSetupStatus(currentHousehold.id).catch(() => null) : Promise.resolve(null),

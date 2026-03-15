@@ -6,6 +6,7 @@
     "stylelint": "16.10.0"
   },
   "scripts": {
+    "dev:h5": "taro build --type h5 --watch",
     "build:h5": "taro build --type h5",
     "build:rn": "taro build --type rn",
     "build:ios": "npm run build:rn",
@@ -14,18 +15,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@react-native/metro-config": "^0.73.2",
     "@familyclaw/user-core": "file:../../packages/user-core",
     "@familyclaw/user-platform": "file:../../packages/user-platform",
     "@familyclaw/user-testing": "file:../../packages/user-testing",
     "@familyclaw/user-ui": "file:../../packages/user-ui",
     "@react-native-community/slider": "4.4.2",
     "@react-native-picker/picker": "2.6.1",
-    "@tarojs/components-rn": "4.1.11",
+    "@react-native/metro-config": "^0.73.2",
     "@tarojs/components": "4.1.11",
+    "@tarojs/components-rn": "4.1.11",
+    "@tarojs/react": "4.1.11",
     "@tarojs/rn-runner": "4.1.11",
     "@tarojs/rn-supporter": "4.1.11",
-    "@tarojs/react": "4.1.11",
     "@tarojs/runtime": "4.1.11",
     "@tarojs/runtime-rn": "4.1.11",
     "@tarojs/taro": "4.1.11",
@@ -47,14 +48,15 @@
     "react-native-webview": "13.6.4"
   },
   "devDependencies": {
-    "metro-react-native-babel-preset": "0.73.10",
-    "stylelint": "16.10.0",
+    "@pmmmwh/react-refresh-webpack-plugin": "^0.6.2",
     "@tarojs/cli": "4.1.11",
     "@tarojs/plugin-framework-react": "4.1.11",
     "@tarojs/plugin-platform-h5": "4.1.11",
     "@tarojs/plugin-platform-harmony-cpp": "4.1.11",
     "@tarojs/vite-runner": "4.1.11",
     "babel-preset-taro": "4.1.11",
+    "metro-react-native-babel-preset": "0.73.10",
+    "stylelint": "16.10.0",
     "typescript": "^5.7.3",
     "webpack": "5.91.0"
   }

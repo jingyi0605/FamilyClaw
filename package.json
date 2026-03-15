@@ -2,6 +2,7 @@
   "name": "familyclaw-workspace",
   "private": true,
   "scripts": {
+    "dev:user-app:h5": "npm --prefix ./apps/user-app run dev:h5 --",
     "build:user-app:h5": "npm --prefix ./apps/user-app run build:h5",
     "build:user-app:ios": "npm --prefix ./apps/user-app run build:ios",
     "build:user-app:android": "npm --prefix ./apps/user-app run build:android",
