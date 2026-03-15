@@ -18,6 +18,7 @@ class VoiceGatewayConnection(BaseModel):
     connection_id: str
     household_id: str
     terminal_id: str
+    fingerprint: str | None = None
     connected_at: str
     last_seen_at: str
     remote_addr: str | None = None
@@ -28,6 +29,7 @@ class VoiceTerminalState(BaseModel):
 
     terminal_id: str
     household_id: str
+    fingerprint: str | None = None
     room_id: str | None = None
     terminal_code: str | None = None
     name: str | None = None
@@ -102,6 +104,7 @@ class VoiceTerminalRegistry:
         *,
         terminal_id: str,
         household_id: str,
+        fingerprint: str | None,
         room_id: str | None,
         terminal_code: str | None,
         name: str | None,
@@ -118,6 +121,7 @@ class VoiceTerminalRegistry:
             terminal = VoiceTerminalState(
                 terminal_id=terminal_id,
                 household_id=household_id,
+                fingerprint=fingerprint if fingerprint is not None else current.fingerprint if current else None,
                 room_id=room_id if room_id is not None else current.room_id if current else None,
                 terminal_code=terminal_code if terminal_code is not None else current.terminal_code if current else None,
                 name=name if name is not None else current.name if current else None,
@@ -133,12 +137,21 @@ class VoiceTerminalRegistry:
             self._terminals[terminal_id] = terminal
             return terminal
 
-    def bind_connection(self, *, terminal_id: str, household_id: str, connection_id: str, remote_addr: str | None) -> VoiceTerminalState:
+    def bind_connection(
+        self,
+        *,
+        terminal_id: str,
+        household_id: str,
+        fingerprint: str | None,
+        connection_id: str,
+        remote_addr: str | None,
+    ) -> VoiceTerminalState:
         with self._lock:
             current = self._terminals.get(terminal_id)
             terminal = VoiceTerminalState(
                 terminal_id=terminal_id,
                 household_id=household_id if current is None else current.household_id,
+                fingerprint=fingerprint if fingerprint is not None else current.fingerprint if current else None,
                 room_id=current.room_id if current else None,
                 terminal_code=current.terminal_code if current else None,
                 name=current.name if current else None,
@@ -160,6 +173,7 @@ class VoiceTerminalRegistry:
             terminal = VoiceTerminalState(
                 terminal_id=terminal_id,
                 household_id=household_id if current is None else current.household_id,
+                fingerprint=current.fingerprint if current else None,
                 room_id=current.room_id if current else None,
                 terminal_code=current.terminal_code if current else None,
                 name=current.name if current else None,
@@ -501,12 +515,20 @@ class VoiceGatewayConnectionRegistry:
         with self._lock:
             self._connections.clear()
 
-    def register(self, *, household_id: str, terminal_id: str, remote_addr: str | None) -> VoiceGatewayConnection:
+    def register(
+        self,
+        *,
+        household_id: str,
+        terminal_id: str,
+        fingerprint: str | None,
+        remote_addr: str | None,
+    ) -> VoiceGatewayConnection:
         with self._lock:
             connection = VoiceGatewayConnection(
                 connection_id=new_uuid(),
                 household_id=household_id,
                 terminal_id=terminal_id,
+                fingerprint=fingerprint,
                 connected_at=utc_now_iso(),
                 last_seen_at=utc_now_iso(),
                 remote_addr=remote_addr,

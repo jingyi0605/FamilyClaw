@@ -222,6 +222,30 @@ export type HomeAssistantRoomCandidatesResponse = {
   items: HomeAssistantRoomCandidate[];
 };
 
+export type VoiceDiscoveryTerminal = {
+  fingerprint: string;
+  model: string;
+  sn: string;
+  runtime_version: string;
+  capabilities: string[];
+  discovered_at: string;
+  last_seen_at: string;
+  connection_status: 'online' | 'offline' | 'unknown';
+  remote_addr: string | null;
+};
+
+export type VoiceDiscoveryListResponse = {
+  household_id: string;
+  items: VoiceDiscoveryTerminal[];
+};
+
+export type VoiceDiscoveryBinding = {
+  household_id: string;
+  terminal_id: string;
+  room_id: string | null;
+  terminal_name: string;
+};
+
 export type FamilyQaFactReference = {
   type: string;
   label: string;

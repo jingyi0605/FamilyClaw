@@ -40,6 +40,7 @@ class VoicePipelineService:
             voice_terminal_registry.upsert_online(
                 terminal_id=event.terminal_id,
                 household_id=payload.household_id,
+                fingerprint=connection.fingerprint if connection else None,
                 room_id=payload.room_id,
                 terminal_code=payload.terminal_code,
                 name=payload.name,

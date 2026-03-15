@@ -19,6 +19,7 @@ import type {
   HomeAssistantRoomSyncResponse,
   HomeAssistantSyncResponse,
   Room,
+  VoiceDiscoveryTerminal,
 } from '../lib/types';
 export { SettingsAiPage as SettingsAi } from './SettingsAiPage';
 
@@ -444,15 +445,64 @@ export function SettingsIntegrations() {
   const [roomModalOpen, setRoomModalOpen] = useState(false);
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [roomModalLoading, setRoomModalLoading] = useState(false);
+  const [voiceDiscoveries, setVoiceDiscoveries] = useState<VoiceDiscoveryTerminal[]>([]);
+  const [voiceDiscoveryDrafts, setVoiceDiscoveryDrafts] = useState<Record<string, { terminal_name: string; room_id: string }>>({});
+  const [voiceDiscoveryError, setVoiceDiscoveryError] = useState('');
+  const [voiceClaimingFingerprint, setVoiceClaimingFingerprint] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+
+  function mergeVoiceDiscoveryDrafts(items: VoiceDiscoveryTerminal[], previous: Record<string, { terminal_name: string; room_id: string }>) {
+    return Object.fromEntries(
+      items.map(item => [
+        item.fingerprint,
+        previous[item.fingerprint] ?? {
+          terminal_name: '小爱音箱',
+          room_id: '',
+        },
+      ]),
+    );
+  }
+
+  function normalizeVoiceDiscoveryErrorMessage(message: string) {
+    switch (message) {
+      case 'voice discovery not found':
+        return '这台音箱已经不在待添加列表里了，请刷新后再试。';
+      case 'room not found':
+        return '所选房间不存在，请重新选择。';
+      case 'room must belong to the same household':
+        return '请选择当前家庭下的房间。';
+      case 'voice terminal already claimed by another household':
+        return '这台音箱已经被其他家庭添加了。';
+      default:
+        return message;
+    }
+  }
+
+  async function loadVoiceDiscoveries(householdId: string, options?: { silent?: boolean }) {
+    try {
+      const result = await api.listVoiceTerminalDiscoveries(householdId);
+      setVoiceDiscoveries(result.items);
+      setVoiceDiscoveryDrafts(current => mergeVoiceDiscoveryDrafts(result.items, current));
+      if (!options?.silent) {
+        setVoiceDiscoveryError('');
+      }
+    } catch (loadError) {
+      if (!options?.silent) {
+        setVoiceDiscoveryError(loadError instanceof Error ? normalizeVoiceDiscoveryErrorMessage(loadError.message) : '新音箱列表加载失败');
+      }
+    }
+  }
 
   useEffect(() => {
     if (!currentHouseholdId) {
       setOverview(null);
       setDevices([]);
       setRooms([]);
+      setVoiceDiscoveries([]);
+      setVoiceDiscoveryDrafts({});
+      setVoiceDiscoveryError('');
       return;
     }
 
@@ -483,6 +533,7 @@ export function SettingsIntegrations() {
         clear_access_token: false,
       });
       setDeviceDrafts(Object.fromEntries((devicesResult.status === 'fulfilled' ? devicesResult.value.items : []).map(device => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
+      await loadVoiceDiscoveries(currentHouseholdId);
 
       const hasHaConfig = Boolean(nextConfig?.base_url && nextConfig?.token_configured);
       if (hasHaConfig) {
@@ -517,6 +568,35 @@ export function SettingsIntegrations() {
     };
   }, [currentHouseholdId]);
 
+  useEffect(() => {
+    if (!currentHouseholdId) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void loadVoiceDiscoveries(currentHouseholdId, { silent: true });
+    }, 5000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [currentHouseholdId]);
+
+  useEffect(() => {
+    if (rooms.length === 0) {
+      return;
+    }
+    setVoiceDiscoveryDrafts(current => Object.fromEntries(
+      Object.entries(current).map(([fingerprint, draft]) => [
+        fingerprint,
+        {
+          ...draft,
+          room_id: draft.room_id || rooms[0].id,
+        },
+      ]),
+    ));
+  }, [rooms]);
+
   async function reloadWorkspace() {
     if (!currentHouseholdId) {
       return;
@@ -538,6 +618,7 @@ export function SettingsIntegrations() {
     setDevices(nextDevices.items);
     setRooms(nextRooms.items);
     setDeviceDrafts(Object.fromEntries(nextDevices.items.map(device => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
+    await loadVoiceDiscoveries(currentHouseholdId, { silent: true });
   }
 
   async function runAction(action: () => Promise<void>) {
@@ -680,6 +761,52 @@ export function SettingsIntegrations() {
     });
   }
 
+  function updateVoiceDiscoveryDraft(
+    fingerprint: string,
+    patch: Partial<{ terminal_name: string; room_id: string }>,
+  ) {
+    setVoiceDiscoveryDrafts(current => ({
+      ...current,
+      [fingerprint]: {
+        terminal_name: current[fingerprint]?.terminal_name ?? '小爱音箱',
+        room_id: current[fingerprint]?.room_id ?? (rooms[0]?.id ?? ''),
+        ...patch,
+      },
+    }));
+  }
+
+  async function handleClaimVoiceDiscovery(fingerprint: string) {
+    const draft = voiceDiscoveryDrafts[fingerprint];
+    if (!currentHouseholdId) {
+      setVoiceDiscoveryError('还没有选中家庭，暂时无法添加音箱。');
+      return;
+    }
+    if (!draft?.terminal_name.trim()) {
+      setVoiceDiscoveryError('请先填写设备名称。');
+      return;
+    }
+    if (!draft.room_id) {
+      setVoiceDiscoveryError('请先选择所在房间。');
+      return;
+    }
+
+    setVoiceClaimingFingerprint(fingerprint);
+    setVoiceDiscoveryError('');
+    try {
+      await api.claimVoiceTerminalDiscovery(fingerprint, {
+        household_id: currentHouseholdId,
+        room_id: draft.room_id,
+        terminal_name: draft.terminal_name.trim(),
+      });
+      await reloadWorkspace();
+      setStatus('新音箱已经添加到当前家庭。');
+    } catch (claimError) {
+      setVoiceDiscoveryError(claimError instanceof Error ? normalizeVoiceDiscoveryErrorMessage(claimError.message) : '添加音箱失败');
+    } finally {
+      setVoiceClaimingFingerprint(null);
+    }
+  }
+
   const roomNameMap = useMemo(() => Object.fromEntries(rooms.map(room => [room.id, room.name])), [rooms]);
   const roomOptions = useMemo(() => [{ id: '', name: '未分配房间' }, ...rooms.map(room => ({ id: room.id, name: room.name }))], [rooms]);
   const deviceCandidateGroups = useMemo(() => {
@@ -703,6 +830,31 @@ export function SettingsIntegrations() {
       case 'sensor': return '传感器';
       case 'lock': return '门锁';
     }
+  }
+
+  function formatVoiceDiscoveryStatus(statusValue: VoiceDiscoveryTerminal['connection_status']) {
+    return statusValue === 'online' ? '在线' : '最近在线';
+  }
+
+  function formatVoiceDiscoveryTime(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString('zh-CN', {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  function formatVoiceDiscoverySerial(sn: string) {
+    const normalized = sn.trim();
+    if (normalized.length <= 4) {
+      return normalized;
+    }
+    return normalized.slice(-4);
   }
 
   function formatHaStatus(config: HomeAssistantConfig | null, statusValue: ContextOverviewRead['home_assistant_status'] | undefined) {
@@ -766,6 +918,76 @@ export function SettingsIntegrations() {
           )}
           {status && <div className="integration-status__detail" style={{ marginTop: '0.5rem' }}>{status}</div>}
           {error && <div className="integration-status__detail" style={{ marginTop: '0.5rem' }}>{error}</div>}
+        </Card>
+      </Section>
+      <Section title="发现到的新音箱">
+        <Card className="integration-status-card">
+          <div className="integration-status" style={{ alignItems: 'flex-start' }}>
+            <div className="integration-status__text">
+              <span className="integration-status__label">局域网发现</span>
+              <span className="integration-status__detail">已在局域网中发现可接入的音箱，完成名称和房间设置后即可使用语音控制。</span>
+              <span className="integration-status__detail">请确认音箱和当前服务在同一局域网内。</span>
+            </div>
+          </div>
+          {voiceDiscoveryError && (
+            <div className="integration-status__detail" style={{ marginTop: '0.75rem' }}>
+              {voiceDiscoveryError}
+            </div>
+          )}
+          <div className="device-list" style={{ marginTop: '1rem' }}>
+            {voiceDiscoveries.length === 0 ? (
+              <div className="integration-status__detail">暂时没有发现新的音箱。</div>
+            ) : voiceDiscoveries.map(item => {
+              const draft = voiceDiscoveryDrafts[item.fingerprint] ?? {
+                terminal_name: '小爱音箱',
+                room_id: rooms[0]?.id ?? '',
+              };
+              const isClaiming = voiceClaimingFingerprint === item.fingerprint;
+              return (
+                <Card key={item.fingerprint} className="device-card device-card--editor">
+                  <div className="device-card__editor-grid">
+                    <div className="device-card__info">
+                      <span className="device-card__name">{item.model}</span>
+                      <span className="device-card__room">
+                        设备编号尾号 {formatVoiceDiscoverySerial(item.sn)} · {formatVoiceDiscoveryStatus(item.connection_status)} · 最近发现于 {formatVoiceDiscoveryTime(item.last_seen_at)}
+                      </span>
+                    </div>
+                    <input
+                      className="form-input"
+                      value={draft.terminal_name}
+                      placeholder="例如：客厅音箱"
+                      onChange={event => updateVoiceDiscoveryDraft(item.fingerprint, { terminal_name: event.target.value })}
+                    />
+                    <select
+                      className="form-select"
+                      value={draft.room_id}
+                      onChange={event => updateVoiceDiscoveryDraft(item.fingerprint, { room_id: event.target.value })}
+                      disabled={rooms.length === 0}
+                    >
+                      {rooms.length === 0 ? (
+                        <option value="">请先创建房间</option>
+                      ) : rooms.map(room => (
+                        <option key={room.id} value={room.id}>{room.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="device-card__actions">
+                    <span className={`badge badge--${item.connection_status === 'online' ? 'success' : 'secondary'}`}>
+                      {formatVoiceDiscoveryStatus(item.connection_status)}
+                    </span>
+                    <button
+                      className="btn btn--outline btn--sm"
+                      type="button"
+                      onClick={() => void handleClaimVoiceDiscovery(item.fingerprint)}
+                      disabled={isClaiming || rooms.length === 0}
+                    >
+                      {isClaiming ? '添加中...' : '添加到家庭'}
+                    </button>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
         </Card>
       </Section>
       <Section title={t('settings.integrations.devices')}>

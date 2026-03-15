@@ -57,6 +57,8 @@ import type {
   ReminderTask,
   ReminderOverviewRead,
   Room,
+  VoiceDiscoveryBinding,
+  VoiceDiscoveryListResponse,
   ScheduledTaskDefinition,
   ScheduledTaskDefinitionCreate,
   ScheduledTaskDefinitionUpdate,
@@ -239,6 +241,23 @@ export const api = {
   },
   listDevices(householdId: string) {
     return request<PaginatedResponse<Device>>(`/devices?household_id=${encodeURIComponent(householdId)}&page_size=100`);
+  },
+  listVoiceTerminalDiscoveries(householdId: string) {
+    return request<VoiceDiscoveryListResponse>(
+      `/devices/voice-terminals/discoveries?household_id=${encodeURIComponent(householdId)}`,
+    );
+  },
+  claimVoiceTerminalDiscovery(
+    fingerprint: string,
+    payload: { household_id: string; room_id: string; terminal_name: string },
+  ) {
+    return request<VoiceDiscoveryBinding>(
+      `/devices/voice-terminals/discoveries/${encodeURIComponent(fingerprint)}/claim`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
   },
   updateDevice(deviceId: string, payload: Partial<Pick<Device, 'name' | 'status' | 'room_id' | 'controllable'>>) {
     return request<Device>(`/devices/${encodeURIComponent(deviceId)}`, {

@@ -7,13 +7,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     listen_host: str = "0.0.0.0"
     listen_port: int = Field(default=4399, ge=1, le=65535)
+    api_server_http_url: str = "http://127.0.0.1:8000/api/v1"
     api_server_ws_url: str = "ws://127.0.0.1:8000/api/v1/realtime/voice"
     voice_gateway_token: str = "dev-voice-gateway-token"
-    household_id: str = "household-dev"
-    terminal_id: str = "open-xiaoai-terminal-1"
-    room_id: str | None = None
-    terminal_code: str | None = None
-    terminal_name: str = "小爱音箱"
+    claim_poll_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     recording_enabled: bool = True
     recording_pcm: str = "noop"
     recording_channels: int = Field(default=1, ge=1, le=2)

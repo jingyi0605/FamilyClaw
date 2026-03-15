@@ -6,6 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect, status
 
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.modules.voice.discovery_registry import get_voice_terminal_binding
 from app.modules.voice.pipeline import voice_pipeline_service
 from app.modules.voice.protocol import VoiceCommandEvent, VoiceGatewayEvent
 from app.modules.voice.registry import voice_gateway_connection_registry, voice_terminal_registry
@@ -45,12 +46,22 @@ class VoiceRealtimeService:
     async def handle_gateway_websocket(self, websocket: WebSocket) -> None:
         household_id = (websocket.query_params.get("household_id") or "").strip()
         terminal_id = (websocket.query_params.get("terminal_id") or "").strip()
+        fingerprint = (websocket.query_params.get("fingerprint") or "").strip()
         gateway_token = (websocket.headers.get("x-voice-gateway-token") or websocket.query_params.get("gateway_token") or "").strip()
         remote_addr = websocket.client.host if websocket.client else None
         accepted = False
         db = SessionLocal()
 
-        if not household_id or not terminal_id or gateway_token != settings.voice_gateway_token:
+        binding = get_voice_terminal_binding(db, fingerprint=fingerprint) if fingerprint else None
+        if (
+            not household_id
+            or not terminal_id
+            or not fingerprint
+            or gateway_token != settings.voice_gateway_token
+            or binding is None
+            or binding.household_id != household_id
+            or binding.terminal_id != terminal_id
+        ):
             db.close()
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
@@ -61,12 +72,14 @@ class VoiceRealtimeService:
         connection = voice_gateway_connection_registry.register(
             household_id=household_id,
             terminal_id=terminal_id,
+            fingerprint=fingerprint,
             remote_addr=remote_addr,
         )
         self.connection_manager.register(terminal_id=terminal_id, websocket=websocket)
         voice_terminal_registry.bind_connection(
             terminal_id=terminal_id,
             household_id=household_id,
+            fingerprint=fingerprint,
             connection_id=connection.connection_id,
             remote_addr=remote_addr,
         )

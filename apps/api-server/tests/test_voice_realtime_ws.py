@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 from typing import Any, cast
+from unittest.mock import patch
 
 from fastapi import WebSocketDisconnect
 from starlette.datastructures import Headers, QueryParams
@@ -20,10 +21,13 @@ class _FakeVoiceWebSocket:
         *,
         household_id: str,
         terminal_id: str,
+        fingerprint: str = "open_xiaoai:LX06:SN0001",
         token: str,
         inbound_messages: list[dict[str, Any]] | None = None,
     ) -> None:
-        self.query_params = QueryParams({"household_id": household_id, "terminal_id": terminal_id})
+        self.query_params = QueryParams(
+            {"household_id": household_id, "terminal_id": terminal_id, "fingerprint": fingerprint}
+        )
         self.headers = Headers({"x-voice-gateway-token": token})
         self._inbound_messages = list(inbound_messages or [])
         self.accepted = False
@@ -60,10 +64,31 @@ class VoiceRealtimeWsTests(unittest.TestCase):
             token="bad-token",
         )
 
-        asyncio.run(voice_realtime_service.handle_gateway_websocket(cast(Any, websocket)))
+        with patch(
+            "app.modules.voice.realtime_service.get_voice_terminal_binding",
+            return_value=None,
+        ):
+            asyncio.run(voice_realtime_service.handle_gateway_websocket(cast(Any, websocket)))
 
         self.assertFalse(websocket.accepted)
         self.assertEqual(1008, websocket.close_code)
+
+    def test_unclaimed_terminal_is_rejected_before_entering_voice_chain(self) -> None:
+        websocket = _FakeVoiceWebSocket(
+            household_id="household-1",
+            terminal_id="terminal-1",
+            token="dev-voice-gateway-token",
+        )
+
+        with patch(
+            "app.modules.voice.realtime_service.get_voice_terminal_binding",
+            return_value=None,
+        ):
+            asyncio.run(voice_realtime_service.handle_gateway_websocket(cast(Any, websocket)))
+
+        self.assertFalse(websocket.accepted)
+        self.assertEqual(1008, websocket.close_code)
+        self.assertIsNone(voice_terminal_registry.get("terminal-1"))
 
     def test_voice_gateway_session_start_returns_session_ready(self) -> None:
         websocket = _FakeVoiceWebSocket(
@@ -100,7 +125,20 @@ class VoiceRealtimeWsTests(unittest.TestCase):
             ],
         )
 
-        asyncio.run(voice_realtime_service.handle_gateway_websocket(cast(Any, websocket)))
+        with patch(
+            "app.modules.voice.realtime_service.get_voice_terminal_binding",
+            return_value=type(
+                "Binding",
+                (),
+                {
+                    "household_id": "household-1",
+                    "terminal_id": "terminal-1",
+                    "room_id": "room-1",
+                    "terminal_name": "客厅小爱",
+                },
+            )(),
+        ):
+            asyncio.run(voice_realtime_service.handle_gateway_websocket(cast(Any, websocket)))
 
         self.assertTrue(websocket.accepted)
         self.assertEqual(["session.ready"], [item["type"] for item in websocket.sent_messages])
@@ -119,6 +157,7 @@ class VoiceRealtimeWsTests(unittest.TestCase):
         voice_terminal_registry.upsert_online(
             terminal_id="terminal-1",
             household_id="household-1",
+            fingerprint="open_xiaoai:LX06:SN0001",
             room_id="room-1",
             terminal_code="living-room-speaker",
             name="客厅小爱",

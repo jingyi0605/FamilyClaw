@@ -125,7 +125,10 @@
     - 已新增 `api-server /api/v1/realtime/voice` 入口和最小会话收口
     - 已补最小测试覆盖终端上线、会话开始和音频事件结构
     - 已把 `open-xiaoai-gateway` 从自造的 `hello / listen.start / playback.*` 假协议切到官方 Rust client 的 `Request / Response / Event / Stream` 实际协议
-    - 已改为由 gateway 配置提供 `household_id / terminal_id / room_id`，连接建立后主动上报 `terminal.online`
+    - 已改为先由 gateway 自动探测 `model / sn / runtime_version`，生成稳定指纹 `open_xiaoai:<model>:<sn>` 上报待添加终端
+    - 已新增 `api-server` 内存态待认领终端注册、绑定查询和认领接口，认领时复用现有 `Device / DeviceBinding`，并以 `Device.id` 作为正式 `terminal_id`
+    - 已新增前端“发现到的新音箱”区块，用户可直接填写设备名称、选择房间并完成接入
+    - 已改为未认领终端不会连接 `/api/v1/realtime/voice`、不会上报 `terminal.online`、不会启动正式录音；认领后才进入实时语音链路
     - 已改为消费官方 `kws / instruction / playing / record` 消息，并翻译成内部 `session.start / audio.append / audio.commit / playback.receipt`
     - 还没做实机联调和断线重连幂等校正，所以先不标 DONE
 
@@ -158,7 +161,7 @@
     - 还没做终端实播联调，所以先不标 DONE
 
 - [ ] 1.5 阶段检查：终端接入层是不是收干净了
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：只检查网关、终端模型、事件协议和播放控制有没有站稳，不往业务逻辑乱扩。
   - 做完你能看到什么：后面接 `voice_pipeline` 时，不需要再返工终端协议层。
   - 先依赖什么：1.1、1.2、1.3、1.4
@@ -169,6 +172,12 @@
   - 怎么验证：
     - 人工走查
     - 核心协议回放测试
+  - 本轮回写：
+    - 已把“小爱接入”从环境变量硬绑终端推进到“待添加设备 -> 前端认领 -> 认领后入链路”的最小可用闭环
+    - 已确认 `api-server` 不直接理解 `open-xiaoai` 私有发现协议，只接收网关整理后的统一发现上报和正式语音事件
+    - 已通过 `x-voice-gateway-token` 继续保护网关发现上报、绑定查询和 realtime voice 接入，未认领终端也会被正式链路拒绝
+    - 已补后端接口测试、realtime 拒绝未认领终端测试、gateway 翻译器测试，并完成 `user-web` 构建校验
+    - 还没做实机认领联调和断线重连场景复核，所以先维持 IN_REVIEW
 
 ## 阶段 2：接 `voice_pipeline`，打通快路径主链
 

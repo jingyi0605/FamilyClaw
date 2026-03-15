@@ -5,7 +5,11 @@ from open_xiaoai_gateway.protocol import GatewayCommand
 from open_xiaoai_gateway.translator import (
     TerminalBinaryStream,
     TerminalBridgeContext,
+    VoiceTerminalBinding,
     TerminalRpcRequest,
+    build_discovery_info,
+    build_discovery_report_payload,
+    build_open_xiaoai_fingerprint,
     build_terminal_online_event,
     parse_open_xiaoai_text_message,
     translate_audio_chunk,
@@ -16,12 +20,17 @@ from open_xiaoai_gateway.translator import (
 
 class TranslatorTests(unittest.TestCase):
     def test_terminal_online_uses_configured_identity_and_capabilities(self) -> None:
-        context = TerminalBridgeContext(
-            household_id="household-1",
-            terminal_id="terminal-1",
-            room_id="room-1",
-            terminal_code="living-room-speaker",
-            name="客厅小爱",
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="客厅小爱",
+            )
         )
 
         event = build_terminal_online_event(context)
@@ -30,9 +39,48 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual("household-1", event.payload["household_id"])
         self.assertIn("audio_input", event.payload["capabilities"])
         self.assertEqual("open_xiaoai_app_message", event.payload["adapter_meta"]["protocol"])
+        self.assertEqual("open_xiaoai:LX06:SN001", event.payload["adapter_meta"]["fingerprint"])
+
+    def test_build_discovery_info_generates_stable_fingerprint(self) -> None:
+        discovery = build_discovery_info(
+            model="LX06",
+            sn="SN001",
+            runtime_version="1.0.0",
+        )
+
+        self.assertEqual("LX06", discovery.model)
+        self.assertEqual("SN001", discovery.sn)
+        self.assertEqual("1.0.0", discovery.runtime_version)
+        self.assertEqual(build_open_xiaoai_fingerprint(model="LX06", sn="SN001"), discovery.fingerprint)
+
+    def test_build_discovery_report_payload_contains_required_fields(self) -> None:
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+
+        payload = build_discovery_report_payload(context, remote_addr="192.168.1.22")
+
+        self.assertEqual("open_xiaoai", payload["adapter_type"])
+        self.assertEqual("open_xiaoai:LX06:SN001", payload["fingerprint"])
+        self.assertEqual("LX06", payload["model"])
+        self.assertEqual("SN001", payload["sn"])
+        self.assertEqual("1.0.0", payload["runtime_version"])
+        self.assertEqual("online", payload["connection_status"])
 
     def test_kws_keyword_starts_voice_session(self) -> None:
-        context = TerminalBridgeContext(household_id="household-1", terminal_id="terminal-1", room_id="room-1")
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="客厅小爱",
+            )
+        )
 
         events = translate_text_message(
             json.dumps(
@@ -54,7 +102,18 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(events[0].session_id, context.active_session_id)
 
     def test_instruction_final_result_commits_with_debug_transcript(self) -> None:
-        context = TerminalBridgeContext(household_id="household-1", terminal_id="terminal-1", room_id="room-1")
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="客厅小爱",
+            )
+        )
         context.active_session_id = "session-1"
 
         events = translate_text_message(
@@ -92,7 +151,18 @@ class TranslatorTests(unittest.TestCase):
         self.assertIsNone(context.active_session_id)
 
     def test_binary_record_stream_translates_to_audio_append(self) -> None:
-        context = TerminalBridgeContext(household_id="household-1", terminal_id="terminal-1")
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="客厅小爱",
+            )
+        )
         context.active_session_id = "session-1"
 
         events = translate_audio_chunk(
@@ -111,8 +181,42 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual("session-1", events[0].session_id)
         self.assertEqual(3, events[0].payload["chunk_bytes"])
 
+    def test_unclaimed_terminal_does_not_enter_formal_voice_session(self) -> None:
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+
+        events = translate_text_message(
+            json.dumps(
+                {
+                    "Event": {
+                        "id": "event-1",
+                        "event": "kws",
+                        "data": {"Keyword": "小爱同学"},
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            context,
+        )
+
+        self.assertEqual([], events)
+        self.assertIsNone(context.active_session_id)
+
     def test_play_command_translates_to_controlled_run_shell_request(self) -> None:
-        context = TerminalBridgeContext(household_id="household-1", terminal_id="terminal-1")
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="客厅小爱",
+            )
+        )
 
         messages = translate_command_to_terminal(
             GatewayCommand.model_validate(
@@ -136,7 +240,18 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual("playback-1", context.active_playback_id)
 
     def test_audio_bytes_command_translates_to_rpc_then_stream(self) -> None:
-        context = TerminalBridgeContext(household_id="household-1", terminal_id="terminal-1")
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="客厅小爱",
+            )
+        )
 
         messages = translate_command_to_terminal(
             GatewayCommand.model_validate(
@@ -159,7 +274,18 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(b"abc", messages[1].raw_bytes)
 
     def test_playing_idle_marks_playback_completed(self) -> None:
-        context = TerminalBridgeContext(household_id="household-1", terminal_id="terminal-1")
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="客厅小爱",
+            )
+        )
         context.active_playback_id = "playback-1"
         context.active_playback_session_id = "session-1"
         context.last_playing_state = "playing"
