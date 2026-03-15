@@ -35,6 +35,7 @@ class VoiceRouter:
             terminal=terminal,
             transcript_text=transcript_text,
             context_overview=context_overview,
+            audio_artifact_path=session.audio_file_path,
         )
         decision = await voice_fast_action_service.resolve(
             db,

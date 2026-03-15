@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from app.modules.context.schemas import (
     ContextOverviewActiveMember,
@@ -10,9 +11,75 @@ from app.modules.context.schemas import (
 )
 from app.modules.voice.identity_service import voice_identity_service
 from app.modules.voice.registry import VoiceSessionState, VoiceTerminalState
+from app.modules.voiceprint.service import VoiceprintIdentificationCandidateRead, VoiceprintIdentificationRead
 
 
 class VoiceIdentityTests(unittest.TestCase):
+    def test_identity_prefers_voiceprint_before_context_fallback(self) -> None:
+        overview = _build_overview().model_copy(
+            update={
+                "active_member": ContextOverviewActiveMember(
+                    member_id="member-2",
+                    name="爸爸",
+                    role="adult",
+                    presence="home",
+                    activity="active",
+                    current_room_id="room-living",
+                    current_room_name="客厅",
+                    confidence=95,
+                    source="snapshot",
+                )
+            }
+        )
+
+        with patch(
+            "app.modules.voice.identity_service.identify_household_member_by_voiceprint",
+            return_value=VoiceprintIdentificationRead(
+                provider="sherpa_onnx_wespeaker_resnet34",
+                status="matched",
+                threshold=0.75,
+                reason="声纹识别命中妈妈。",
+                profile_id="profile-1",
+                member_id="member-1",
+                score=0.93,
+                candidate_count=1,
+                candidates=[
+                    VoiceprintIdentificationCandidateRead(
+                        member_id="member-1",
+                        profile_id="profile-1",
+                        score=0.93,
+                    )
+                ],
+            ),
+        ):
+            result = asyncio.run(
+                voice_identity_service.resolve(
+                    _FakeDbSession(),
+                    household_id="household-1",
+                    session=VoiceSessionState(
+                        session_id="session-1",
+                        terminal_id="terminal-1",
+                        household_id="household-1",
+                        room_id="room-living",
+                    ),
+                    terminal=VoiceTerminalState(
+                        terminal_id="terminal-1",
+                        household_id="household-1",
+                        room_id="room-living",
+                        name="客厅小爱",
+                        status="online",
+                    ),
+                    transcript_text="打开客厅灯",
+                    context_overview=overview,
+                    audio_artifact_path="C:/tmp/query.wav",
+                )
+            )
+
+        self.assertEqual("resolved", result.status)
+        self.assertEqual("member-1", result.primary_member_id)
+        self.assertEqual("matched", result.voiceprint_hint.status)
+        self.assertEqual("member-1", result.voiceprint_hint.member_id)
+
     def test_identity_prefers_active_member_in_terminal_room(self) -> None:
         overview = _build_overview()
         result = asyncio.run(
@@ -40,6 +107,46 @@ class VoiceIdentityTests(unittest.TestCase):
         self.assertEqual("resolved", result.status)
         self.assertEqual("member-1", result.primary_member_id)
         self.assertEqual("room-living", result.inferred_room_id)
+
+    def test_identity_falls_back_to_context_when_voiceprint_unavailable(self) -> None:
+        overview = _build_overview()
+
+        with patch(
+            "app.modules.voice.identity_service.identify_household_member_by_voiceprint",
+            return_value=VoiceprintIdentificationRead(
+                provider="sherpa_onnx_wespeaker_resnet34",
+                status="unavailable",
+                threshold=0.75,
+                reason="provider mocked unavailable",
+                candidate_count=2,
+            ),
+        ):
+            result = asyncio.run(
+                voice_identity_service.resolve(
+                    _FakeDbSession(),
+                    household_id="household-1",
+                    session=VoiceSessionState(
+                        session_id="session-1",
+                        terminal_id="terminal-1",
+                        household_id="household-1",
+                        room_id="room-living",
+                    ),
+                    terminal=VoiceTerminalState(
+                        terminal_id="terminal-1",
+                        household_id="household-1",
+                        room_id="room-living",
+                        name="客厅小爱",
+                        status="online",
+                    ),
+                    transcript_text="打开客厅灯",
+                    context_overview=overview,
+                    audio_artifact_path="C:/tmp/query.wav",
+                )
+            )
+
+        self.assertEqual("resolved", result.status)
+        self.assertEqual("member-1", result.primary_member_id)
+        self.assertEqual("unavailable", result.voiceprint_hint.status)
 
     def test_identity_marks_conflict_when_two_members_same_score(self) -> None:
         overview = _build_overview().model_copy(

@@ -3,12 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.device.models import Device
 from app.modules.member.models import Member
@@ -34,6 +35,8 @@ _PENDING_ENROLLMENT_STATUSES = ("pending", "recording", "processing")
 _ENROLLMENT_EXPIRE_MINUTES = 30
 _ENROLLMENT_SAMPLE_MIN_DURATION_MS = 1000
 _ENROLLMENT_SAMPLE_MAX_DURATION_MS = 8000
+_VOICEPRINT_IDENTIFICATION_LIMIT = 3
+_VOICEPRINT_CONFLICT_SCORE_MARGIN = 0.05
 
 
 @dataclass(slots=True)
@@ -66,6 +69,26 @@ class MemberVoiceprintVerifyRead:
     profile_id: str | None
     matched: bool
     score: float | None
+
+
+@dataclass(slots=True)
+class VoiceprintIdentificationCandidateRead:
+    member_id: str
+    profile_id: str
+    score: float
+
+
+@dataclass(slots=True)
+class VoiceprintIdentificationRead:
+    provider: str
+    status: str
+    threshold: float
+    reason: str
+    profile_id: str | None = None
+    member_id: str | None = None
+    score: float | None = None
+    candidate_count: int = 0
+    candidates: list[VoiceprintIdentificationCandidateRead] = field(default_factory=list)
 
 
 def create_voiceprint_enrollment(db: Session, payload: VoiceprintEnrollmentCreate) -> VoiceprintEnrollment:
@@ -467,6 +490,146 @@ def verify_member_voiceprint(
         profile_id=profile.id,
         matched=result.matched,
         score=result.score,
+    )
+
+
+def identify_household_member_by_voiceprint(
+    db: Session,
+    *,
+    household_id: str,
+    artifact_path: str | None,
+    provider: VoiceprintProvider | None = None,
+    limit: int = _VOICEPRINT_IDENTIFICATION_LIMIT,
+    conflict_score_margin: float = _VOICEPRINT_CONFLICT_SCORE_MARGIN,
+) -> VoiceprintIdentificationRead:
+    provider_instance = provider or get_voiceprint_provider()
+    if not artifact_path:
+        return VoiceprintIdentificationRead(
+            provider=provider_instance.provider_code,
+            status="skipped",
+            threshold=0,
+            reason="当前会话没有可用音频产物，先跳过声纹识别。",
+        )
+
+    candidates = _load_household_profile_candidates(db, household_id=household_id)
+    if not candidates:
+        return VoiceprintIdentificationRead(
+            provider=provider_instance.provider_code,
+            status="no_profile",
+            threshold=settings.voiceprint_search_score_threshold,
+            reason="当前家庭还没有可用于识别的声纹档案，先按旧逻辑回退。",
+        )
+
+    try:
+        query_embedding = provider_instance.extract_embedding(artifact_path)
+    except VoiceprintProviderError as exc:
+        return VoiceprintIdentificationRead(
+            provider=provider_instance.provider_code,
+            status="unavailable",
+            threshold=settings.voiceprint_search_score_threshold,
+            reason=f"声纹 provider 当前不可用：{exc.message}",
+            candidate_count=len(candidates),
+        )
+
+    search_result = provider_instance.search(
+        query_embedding=query_embedding.vector,
+        candidates=candidates,
+        threshold=None,
+        limit=max(limit, 1),
+    )
+    readable_candidates = [
+        VoiceprintIdentificationCandidateRead(
+            member_id=item.member_id,
+            profile_id=item.profile_id,
+            score=item.score,
+        )
+        for item in search_result.hits
+    ]
+    top_hit = search_result.top_hit
+    if top_hit is None:
+        return VoiceprintIdentificationRead(
+            provider=search_result.provider,
+            status="no_profile",
+            threshold=search_result.threshold,
+            reason="当前家庭没有命中任何有效声纹候选，先按旧逻辑回退。",
+            candidate_count=0,
+            candidates=readable_candidates,
+        )
+
+    if top_hit.score < search_result.threshold:
+        return VoiceprintIdentificationRead(
+            provider=search_result.provider,
+            status="low_confidence",
+            threshold=search_result.threshold,
+            reason="声纹候选分数不够，不能拿来直接认人。",
+            profile_id=top_hit.profile_id,
+            member_id=top_hit.member_id,
+            score=top_hit.score,
+            candidate_count=len(readable_candidates),
+            candidates=readable_candidates,
+        )
+
+    second_hit = search_result.hits[1] if len(search_result.hits) > 1 else None
+    if (
+        second_hit is not None
+        and second_hit.score >= search_result.threshold
+        and (top_hit.score - second_hit.score) < conflict_score_margin
+    ):
+        return VoiceprintIdentificationRead(
+            provider=search_result.provider,
+            status="conflict",
+            threshold=search_result.threshold,
+            reason="多个家庭成员的声纹分数太接近，当前不能安全认人。",
+            profile_id=top_hit.profile_id,
+            member_id=top_hit.member_id,
+            score=top_hit.score,
+            candidate_count=len(readable_candidates),
+            candidates=readable_candidates,
+        )
+
+    profile_embedding_map = {item.profile_id: item.embedding for item in candidates}
+    profile_embedding = profile_embedding_map.get(top_hit.profile_id)
+    if not profile_embedding:
+        return VoiceprintIdentificationRead(
+            provider=search_result.provider,
+            status="unavailable",
+            threshold=search_result.threshold,
+            reason="命中了声纹档案，但档案 embedding 缺失，先按旧逻辑回退。",
+            profile_id=top_hit.profile_id,
+            member_id=top_hit.member_id,
+            score=top_hit.score,
+            candidate_count=len(readable_candidates),
+            candidates=readable_candidates,
+        )
+
+    verify_result = provider_instance.verify(
+        query_embedding=query_embedding.vector,
+        profile_embedding=profile_embedding,
+        threshold=None,
+    )
+    if not verify_result.matched:
+        return VoiceprintIdentificationRead(
+            provider=verify_result.provider,
+            status="low_confidence",
+            threshold=verify_result.threshold,
+            reason="声纹搜索命中了候选，但二次校验没有通过。",
+            profile_id=top_hit.profile_id,
+            member_id=top_hit.member_id,
+            score=verify_result.score,
+            candidate_count=len(readable_candidates),
+            candidates=readable_candidates,
+        )
+
+    return VoiceprintIdentificationRead(
+        provider=verify_result.provider,
+        status="matched",
+        threshold=verify_result.threshold,
+        reason="声纹搜索和二次校验都通过，优先使用声纹结果。",
+        profile_id=top_hit.profile_id,
+        member_id=top_hit.member_id,
+        score=verify_result.score,
+        candidate_count=len(readable_candidates),
+        candidates=readable_candidates,
     )
 
 

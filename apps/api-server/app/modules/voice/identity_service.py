@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.modules.context.schemas import ContextOverviewMemberState, ContextOverviewRead
 from app.modules.context.service import get_context_overview
 from app.modules.voice.registry import VoiceSessionState, VoiceTerminalState
+from app.modules.voiceprint.service import VoiceprintIdentificationRead, identify_household_member_by_voiceprint
 
 VoiceIdentityStatus = Literal["resolved", "anonymous", "conflict", "degraded"]
 
@@ -24,6 +25,28 @@ class VoiceIdentityCandidate(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class VoiceIdentityVoiceprintCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    member_id: str
+    profile_id: str
+    score: float = Field(ge=0, le=1)
+
+
+class VoiceIdentityVoiceprintHint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str | None = None
+    status: str = "not_attempted"
+    member_id: str | None = None
+    profile_id: str | None = None
+    score: float | None = Field(default=None, ge=0, le=1)
+    threshold: float | None = Field(default=None, ge=0, le=1)
+    reason: str = "当前还没尝试声纹识别。"
+    candidate_count: int = Field(default=0, ge=0)
+    candidates: list[VoiceIdentityVoiceprintCandidate] = Field(default_factory=list)
+
+
 class VoiceIdentityResolution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -37,13 +60,7 @@ class VoiceIdentityResolution(BaseModel):
     context_conflict: bool = False
     reason: str
     candidates: list[VoiceIdentityCandidate] = Field(default_factory=list)
-    voiceprint_hint: dict[str, object] = Field(
-        default_factory=lambda: {
-            "provider": None,
-            "status": "pending_integration",
-            "candidates": [],
-        }
-    )
+    voiceprint_hint: VoiceIdentityVoiceprintHint = Field(default_factory=VoiceIdentityVoiceprintHint)
 
 
 class VoiceIdentityService:
@@ -58,11 +75,57 @@ class VoiceIdentityService:
         terminal: VoiceTerminalState,
         transcript_text: str,
         context_overview: ContextOverviewRead | None = None,
+        audio_artifact_path: str | None = None,
     ) -> VoiceIdentityResolution:
         overview = context_overview or get_context_overview(db, household_id)
         normalized_text = transcript_text.strip()
         active_member_id = overview.active_member.member_id if overview.active_member is not None else None
         terminal_room_id = session.room_id or terminal.room_id
+        voiceprint_hint = self._build_voiceprint_hint(
+            identify_household_member_by_voiceprint(
+                db,
+                household_id=household_id,
+                artifact_path=audio_artifact_path,
+            )
+            if audio_artifact_path
+            else None
+        )
+
+        if voiceprint_hint.status == "matched" and voiceprint_hint.member_id:
+            voiceprint_member = self._find_member_state(overview, voiceprint_hint.member_id)
+            inferred_room_id = terminal_room_id
+            inferred_room_name = self._find_room_name(overview, terminal_room_id)
+            if voiceprint_member is not None and inferred_room_id is None:
+                inferred_room_id = voiceprint_member.current_room_id
+                inferred_room_name = voiceprint_member.current_room_name
+
+            return VoiceIdentityResolution(
+                status="resolved",
+                primary_member_id=voiceprint_hint.member_id,
+                primary_member_name=voiceprint_member.name if voiceprint_member is not None else None,
+                primary_member_role=voiceprint_member.role if voiceprint_member is not None else None,
+                confidence=voiceprint_hint.score or 0,
+                inferred_room_id=inferred_room_id,
+                inferred_room_name=inferred_room_name,
+                context_conflict=False,
+                reason="声纹识别已命中家庭成员，当前优先使用声纹结果。",
+                candidates=(
+                    [
+                        VoiceIdentityCandidate(
+                            member_id=voiceprint_member.member_id,
+                            name=voiceprint_member.name,
+                            role=voiceprint_member.role,
+                            confidence=voiceprint_hint.score or 0,
+                            current_room_id=voiceprint_member.current_room_id,
+                            current_room_name=voiceprint_member.current_room_name,
+                            reasons=["声纹识别命中", voiceprint_hint.reason],
+                        )
+                    ]
+                    if voiceprint_member is not None
+                    else []
+                ),
+                voiceprint_hint=voiceprint_hint,
+            )
 
         candidates = [
             self._build_candidate(
@@ -88,6 +151,7 @@ class VoiceIdentityService:
                 inferred_room_id=inferred_room_id,
                 inferred_room_name=inferred_room_name,
                 reason="上下文里没有可用的在家成员候选，先按匿名请求处理。",
+                voiceprint_hint=voiceprint_hint,
             )
 
         primary = candidates[0]
@@ -131,6 +195,7 @@ class VoiceIdentityService:
             context_conflict=context_conflict,
             reason=reason,
             candidates=candidates[:4],
+            voiceprint_hint=voiceprint_hint,
         )
 
     def _build_candidate(
@@ -196,6 +261,37 @@ class VoiceIdentityService:
             if room.room_id == room_id:
                 return room.name
         return None
+
+    def _find_member_state(self, overview: ContextOverviewRead, member_id: str) -> ContextOverviewMemberState | None:
+        for member in overview.member_states:
+            if member.member_id == member_id:
+                return member
+        return None
+
+    def _build_voiceprint_hint(
+        self,
+        result: VoiceprintIdentificationRead | None,
+    ) -> VoiceIdentityVoiceprintHint:
+        if result is None:
+            return VoiceIdentityVoiceprintHint()
+        return VoiceIdentityVoiceprintHint(
+            provider=result.provider,
+            status=result.status,
+            member_id=result.member_id,
+            profile_id=result.profile_id,
+            score=result.score,
+            threshold=result.threshold,
+            reason=result.reason,
+            candidate_count=result.candidate_count,
+            candidates=[
+                VoiceIdentityVoiceprintCandidate(
+                    member_id=item.member_id,
+                    profile_id=item.profile_id,
+                    score=item.score,
+                )
+                for item in result.candidates
+            ],
+        )
 
 
 voice_identity_service = VoiceIdentityService()

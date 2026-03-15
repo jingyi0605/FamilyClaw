@@ -19,6 +19,7 @@ from app.modules.room.service import create_room
 from app.modules.voiceprint.models import MemberVoiceprintProfile, MemberVoiceprintSample, VoiceprintEnrollment
 from app.modules.voiceprint.provider import VoiceprintEmbedding, VoiceprintProvider, VoiceprintProviderError
 from app.modules.voiceprint.service import (
+    identify_household_member_by_voiceprint,
     process_voiceprint_enrollment_sample,
     search_voiceprint_profiles_in_household,
     verify_member_voiceprint,
@@ -234,6 +235,95 @@ class VoiceprintServiceTests(unittest.TestCase):
         self.assertEqual(1, len(samples))
         self.assertEqual("rejected", samples[0].status)
 
+    def test_identify_household_member_reports_conflict_when_top_hits_too_close(self) -> None:
+        sample_paths = [self._create_artifact(f"sample-{index}.wav") for index in range(1, 4)]
+        other_paths = [self._create_artifact(f"other-{index}.wav") for index in range(1, 4)]
+        query_path = self._create_artifact("query-conflict.wav")
+        provider = FakeVoiceprintProvider(
+            {
+                sample_paths[0]: [1.0, 0.0, 0.0],
+                sample_paths[1]: [0.99, 0.04, 0.0],
+                sample_paths[2]: [0.98, 0.06, 0.0],
+                other_paths[0]: [0.97, 0.07, 0.0],
+                other_paths[1]: [0.96, 0.08, 0.0],
+                other_paths[2]: [0.95, 0.09, 0.0],
+                query_path: [0.985, 0.055, 0.0],
+            }
+        )
+
+        with self.SessionLocal() as db:
+            for index, sample_path in enumerate(sample_paths, start=1):
+                process_voiceprint_enrollment_sample(
+                    db,
+                    enrollment_id=self.enrollment_id,
+                    transcript_text="我是妈妈",
+                    artifact_id=f"artifact-primary-{index}",
+                    artifact_path=sample_path,
+                    artifact_sha256=f"sha-primary-{index}",
+                    sample_rate=16000,
+                    channels=1,
+                    sample_width=2,
+                    duration_ms=2200,
+                    provider=provider,
+                )
+            other_member_id = self._create_other_member_with_profile(
+                db,
+                provider=provider,
+                artifact_paths=other_paths,
+            )
+            db.commit()
+
+            result = identify_household_member_by_voiceprint(
+                db,
+                household_id=self.household_id,
+                artifact_path=query_path,
+                provider=provider,
+            )
+
+        self.assertEqual("conflict", result.status)
+        self.assertEqual(2, result.candidate_count)
+        self.assertEqual(other_member_id, result.candidates[1].member_id)
+
+    def test_identify_household_member_returns_unavailable_when_provider_fails(self) -> None:
+        sample_paths = [self._create_artifact(f"sample-ok-{index}.wav") for index in range(1, 4)]
+        query_path = self._create_artifact("query-unavailable.wav")
+        provider = FakeVoiceprintProvider(
+            {
+                sample_paths[0]: [1.0, 0.0, 0.0],
+                sample_paths[1]: [0.99, 0.04, 0.0],
+                sample_paths[2]: [0.98, 0.06, 0.0],
+                query_path: [0.99, 0.03, 0.0],
+            },
+            failure_paths={query_path},
+        )
+
+        with self.SessionLocal() as db:
+            for index, sample_path in enumerate(sample_paths, start=1):
+                process_voiceprint_enrollment_sample(
+                    db,
+                    enrollment_id=self.enrollment_id,
+                    transcript_text="我是妈妈",
+                    artifact_id=f"artifact-ok-{index}",
+                    artifact_path=sample_path,
+                    artifact_sha256=f"sha-ok-{index}",
+                    sample_rate=16000,
+                    channels=1,
+                    sample_width=2,
+                    duration_ms=2200,
+                    provider=provider,
+                )
+            db.commit()
+
+            result = identify_household_member_by_voiceprint(
+                db,
+                household_id=self.household_id,
+                artifact_path=query_path,
+                provider=provider,
+            )
+
+        self.assertEqual("unavailable", result.status)
+        self.assertEqual(1, result.candidate_count)
+
     def test_process_sample_rejects_phrase_mismatch_without_breaking_enrollment(self) -> None:
         sample_path = self._create_artifact("mismatch.wav")
         provider = FakeVoiceprintProvider({sample_path: [1.0, 0.0, 0.0]})
@@ -275,6 +365,50 @@ class VoiceprintServiceTests(unittest.TestCase):
         path = Path(self._tempdir.name) / name
         path.write_bytes(b"fake-wave")
         return str(path.resolve())
+
+    def _create_other_member_with_profile(
+        self,
+        db: Session,
+        *,
+        provider: FakeVoiceprintProvider,
+        artifact_paths: list[str],
+    ) -> str:
+        other_member = create_member(
+            db,
+            MemberCreate(
+                household_id=self.household_id,
+                name="爸爸",
+                role="adult",
+            ),
+        )
+        other_enrollment = VoiceprintEnrollment(
+            id=new_uuid(),
+            household_id=self.household_id,
+            member_id=other_member.id,
+            terminal_id=self.terminal_id,
+            status="pending",
+            expected_phrase="我是爸爸",
+            sample_goal=3,
+            sample_count=0,
+        )
+        db.add(other_enrollment)
+        db.flush()
+
+        for index, artifact_path in enumerate(artifact_paths, start=1):
+            process_voiceprint_enrollment_sample(
+                db,
+                enrollment_id=other_enrollment.id,
+                transcript_text="我是爸爸",
+                artifact_id=f"artifact-other-{index}",
+                artifact_path=artifact_path,
+                artifact_sha256=f"sha-other-{index}",
+                sample_rate=16000,
+                channels=1,
+                sample_width=2,
+                duration_ms=2200,
+                provider=provider,
+            )
+        return other_member.id
 
 
 if __name__ == "__main__":

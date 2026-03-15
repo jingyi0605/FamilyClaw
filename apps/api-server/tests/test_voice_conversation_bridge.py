@@ -128,6 +128,8 @@ class VoiceConversationBridgeTests(unittest.TestCase):
         self.assertFalse(result.degraded)
         self.assertTrue(result.streaming_playback)
         create_session_mock.assert_called_once()
+        create_payload = create_session_mock.call_args.kwargs["payload"]
+        self.assertEqual("member-1", create_payload.requester_member_id)
         playback_mock.assert_awaited_once_with(
             session_id="voice-session-1",
             terminal_id="terminal-1",

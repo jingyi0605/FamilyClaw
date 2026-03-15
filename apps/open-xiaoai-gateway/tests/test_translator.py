@@ -161,6 +161,19 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual("打开客厅灯", events[0].payload["debug_transcript"])
         self.assertIsNone(context.active_session_id)
 
+    def test_regular_conversation_keeps_conversation_session_purpose(self) -> None:
+        context = self._build_claimed_context(voice_auto_takeover_enabled=True)
+        result = translate_text_message_result(
+            self._build_recognize_result_frame(text="打开客厅灯"),
+            context,
+        )
+
+        self.assertEqual(["session.start", "audio.commit"], [item.type for item in result.events])
+        self.assertEqual("conversation", result.events[0].payload["session_purpose"])
+        self.assertIsNone(result.events[0].payload.get("enrollment_id"))
+        self.assertEqual("conversation", result.events[1].payload["session_purpose"])
+        self.assertIsNone(result.events[1].payload.get("enrollment_id"))
+
     def test_native_first_without_matched_prefix_does_not_enter_formal_voice_session(self) -> None:
         with self._patch_invocation_settings(
             invocation_mode="native_first",

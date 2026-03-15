@@ -112,6 +112,52 @@ class VoiceRuntimeAppTests(unittest.TestCase):
             self.assertEqual(16000, wav_file.getframerate())
             self.assertGreater(wav_file.getnframes(), 0)
 
+    def test_voiceprint_enrollment_commit_uses_enrollment_artifact_directory(self) -> None:
+        response = self.client.post(
+            "/v1/voice/sessions/start",
+            json={
+                "session_id": "session-enrollment-1",
+                "terminal_id": "terminal-1",
+                "household_id": "household-1",
+                "room_id": "room-1",
+                "sample_rate": 16000,
+                "codec": "pcm_s16le",
+                "channels": 1,
+                "session_purpose": "voiceprint_enrollment",
+                "enrollment_id": "enrollment-1",
+            },
+        )
+        self.assertEqual(200, response.status_code)
+
+        chunk = _build_pcm16_silence(frame_count=1600)
+        self.client.post(
+            "/v1/voice/sessions/append",
+            json={
+                "session_id": "session-enrollment-1",
+                "terminal_id": "terminal-1",
+                "chunk_base64": base64.b64encode(chunk).decode("ascii"),
+                "chunk_bytes": len(chunk),
+                "codec": "pcm_s16le",
+                "sample_rate": 16000,
+            },
+        )
+
+        commit_response = self.client.post(
+            "/v1/voice/sessions/commit",
+            json={
+                "session_id": "session-enrollment-1",
+                "terminal_id": "terminal-1",
+                "household_id": "household-1",
+            },
+            headers={
+                "X-Debug-Transcript-B64": base64.b64encode("我是妈妈".encode("utf-8")).decode("ascii"),
+            },
+        )
+        self.assertEqual(200, commit_response.status_code)
+
+        artifact_path = Path(commit_response.json()["audio_file_path"])
+        self.assertIn("voiceprint_enrollment", artifact_path.as_posix())
+
     def test_append_unknown_session_returns_not_found(self) -> None:
         response = self.client.post(
             "/v1/voice/sessions/append",

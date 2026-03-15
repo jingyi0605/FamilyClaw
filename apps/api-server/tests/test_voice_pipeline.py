@@ -2,6 +2,13 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from app.modules.context.schemas import (
+    ContextOverviewActiveMember,
+    ContextOverviewDeviceSummary,
+    ContextOverviewMemberState,
+    ContextOverviewRead,
+    ContextOverviewRoomOccupancy,
+)
 from app.modules.voice.conversation_bridge import VoiceConversationBridgeResult
 from app.modules.voice.fast_action_service import VoiceRouteDecision
 from app.modules.voice.identity_service import VoiceIdentityResolution
@@ -14,10 +21,12 @@ from app.modules.voice.registry import (
 )
 from app.modules.voice.router import VoiceRoutingResult
 from app.modules.voice.runtime_client import (
+    VoiceRuntimeAudioArtifact,
     VoiceRuntimeAppendResult,
     VoiceRuntimeStartResult,
     VoiceRuntimeTranscriptResult,
 )
+from app.modules.voiceprint.service import VoiceprintIdentificationCandidateRead, VoiceprintIdentificationRead
 
 
 class VoicePipelineTests(unittest.TestCase):
@@ -218,6 +227,171 @@ class VoicePipelineTests(unittest.TestCase):
         session = voice_session_registry.get("session-1")
         self.assertEqual("conversation", session.lane)
         self.assertEqual("conversation-1", session.conversation_session_id)
+
+    def test_audio_commit_runs_voiceprint_before_conversation_bridge(self) -> None:
+        event = VoiceGatewayEvent.model_validate(
+            {
+                "type": "audio.commit",
+                "terminal_id": "terminal-1",
+                "session_id": "session-1",
+                "seq": 2,
+                "payload": {"duration_ms": 1200, "debug_transcript": "提醒我明天买牛奶"},
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+        order: list[str] = []
+
+        async def fake_fast_action_resolve(*args, **kwargs):
+            identity = kwargs["identity"]
+            self.assertEqual("member-1", identity.primary_member_id)
+            order.append("fast_action")
+            return VoiceRouteDecision(
+                route_type="conversation",
+                reason="继续走慢路径",
+                handoff_to_conversation=True,
+            )
+
+        async def fake_bridge(*args, **kwargs):
+            identity = kwargs["identity"]
+            self.assertEqual("member-1", identity.primary_member_id)
+            order.append("bridge")
+            return VoiceConversationBridgeResult(
+                conversation_session_id="conversation-voiceprint-1",
+                response_text="好，我记下了。",
+            )
+
+        with patch(
+            "app.modules.voice.pipeline.voice_runtime_client.finalize_session",
+            new=AsyncMock(
+                return_value=VoiceRuntimeTranscriptResult(
+                    ok=True,
+                    transcript_text="提醒我明天买牛奶",
+                    runtime_status="transcribed",
+                    runtime_session_id="runtime-session-1",
+                    audio_artifact=VoiceRuntimeAudioArtifact(
+                        artifact_id="artifact-1",
+                        file_path="C:/tmp/query.wav",
+                        sample_rate=16000,
+                        channels=1,
+                        sample_width=2,
+                        duration_ms=1200,
+                        sha256="sha-voiceprint-1",
+                    ),
+                )
+            ),
+        ), patch(
+            "app.modules.voice.router.get_context_overview",
+            return_value=_build_context_overview(active_member_id="member-2"),
+        ), patch(
+            "app.modules.voice.identity_service.identify_household_member_by_voiceprint",
+            side_effect=lambda *args, **kwargs: order.append("voiceprint")
+            or VoiceprintIdentificationRead(
+                provider="sherpa_onnx_wespeaker_resnet34",
+                status="matched",
+                threshold=0.75,
+                reason="声纹识别命中妈妈。",
+                profile_id="profile-1",
+                member_id="member-1",
+                score=0.92,
+                candidate_count=1,
+                candidates=[
+                    VoiceprintIdentificationCandidateRead(
+                        member_id="member-1",
+                        profile_id="profile-1",
+                        score=0.92,
+                    )
+                ],
+            ),
+        ), patch(
+            "app.modules.voice.router.voice_fast_action_service.resolve",
+            new=AsyncMock(side_effect=fake_fast_action_resolve),
+        ), patch(
+            "app.modules.voice.pipeline.voice_conversation_bridge.bridge",
+            new=AsyncMock(side_effect=fake_bridge),
+        ):
+            commands = asyncio.run(voice_pipeline_service.handle_inbound_event(_FakeDbSession(), event))
+
+        self.assertEqual(["play.start"], [item.type for item in commands])
+        self.assertEqual(["voiceprint", "fast_action", "bridge"], order)
+        session = voice_session_registry.get("session-1")
+        self.assertEqual("member-1", session.requester_member_id)
+        self.assertEqual("conversation-voiceprint-1", session.conversation_session_id)
+
+    def test_audio_commit_degrades_to_context_when_voiceprint_unavailable(self) -> None:
+        event = VoiceGatewayEvent.model_validate(
+            {
+                "type": "audio.commit",
+                "terminal_id": "terminal-1",
+                "session_id": "session-1",
+                "seq": 2,
+                "payload": {"duration_ms": 1200, "debug_transcript": "提醒我明天买牛奶"},
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+
+        async def fake_fast_action_resolve(*args, **kwargs):
+            identity = kwargs["identity"]
+            self.assertEqual("member-2", identity.primary_member_id)
+            self.assertEqual("unavailable", identity.voiceprint_hint.status)
+            return VoiceRouteDecision(
+                route_type="conversation",
+                reason="继续走慢路径",
+                handoff_to_conversation=True,
+            )
+
+        async def fake_bridge(*args, **kwargs):
+            identity = kwargs["identity"]
+            self.assertEqual("member-2", identity.primary_member_id)
+            self.assertEqual("unavailable", identity.voiceprint_hint.status)
+            return VoiceConversationBridgeResult(
+                conversation_session_id="conversation-fallback-1",
+                response_text="好，我记下了。",
+            )
+
+        with patch(
+            "app.modules.voice.pipeline.voice_runtime_client.finalize_session",
+            new=AsyncMock(
+                return_value=VoiceRuntimeTranscriptResult(
+                    ok=True,
+                    transcript_text="提醒我明天买牛奶",
+                    runtime_status="transcribed",
+                    runtime_session_id="runtime-session-1",
+                    audio_artifact=VoiceRuntimeAudioArtifact(
+                        artifact_id="artifact-1",
+                        file_path="C:/tmp/query.wav",
+                        sample_rate=16000,
+                        channels=1,
+                        sample_width=2,
+                        duration_ms=1200,
+                        sha256="sha-voiceprint-1",
+                    ),
+                )
+            ),
+        ), patch(
+            "app.modules.voice.router.get_context_overview",
+            return_value=_build_context_overview(active_member_id="member-2"),
+        ), patch(
+            "app.modules.voice.identity_service.identify_household_member_by_voiceprint",
+            return_value=VoiceprintIdentificationRead(
+                provider="sherpa_onnx_wespeaker_resnet34",
+                status="unavailable",
+                threshold=0.75,
+                reason="provider mocked unavailable",
+                candidate_count=2,
+            ),
+        ), patch(
+            "app.modules.voice.router.voice_fast_action_service.resolve",
+            new=AsyncMock(side_effect=fake_fast_action_resolve),
+        ), patch(
+            "app.modules.voice.pipeline.voice_conversation_bridge.bridge",
+            new=AsyncMock(side_effect=fake_bridge),
+        ):
+            commands = asyncio.run(voice_pipeline_service.handle_inbound_event(_FakeDbSession(), event))
+
+        self.assertEqual(["play.start"], [item.type for item in commands])
+        session = voice_session_registry.get("session-1")
+        self.assertEqual("member-2", session.requester_member_id)
+        self.assertEqual("unavailable", session.identity_summary["voiceprint_hint"]["status"])
 
     def test_takeover_commit_keeps_existing_fast_action_pipeline(self) -> None:
         event = VoiceGatewayEvent.model_validate(
@@ -445,6 +619,97 @@ class _FakeDbSession:
 
     def rollback(self) -> None:
         return None
+
+
+def _build_context_overview(*, active_member_id: str) -> ContextOverviewRead:
+    member_states = [
+        ContextOverviewMemberState(
+            member_id="member-1",
+            name="妈妈",
+            role="adult",
+            presence="home",
+            activity="active",
+            current_room_id="room-1",
+            current_room_name="客厅",
+            confidence=95,
+            last_seen_minutes=1,
+            highlight="",
+            source="snapshot",
+            source_summary=None,
+            updated_at="2026-03-15T00:00:00+08:00",
+        ),
+        ContextOverviewMemberState(
+            member_id="member-2",
+            name="爸爸",
+            role="adult",
+            presence="home",
+            activity="active",
+            current_room_id="room-1",
+            current_room_name="客厅",
+            confidence=93,
+            last_seen_minutes=1,
+            highlight="",
+            source="snapshot",
+            source_summary=None,
+            updated_at="2026-03-15T00:00:00+08:00",
+        ),
+    ]
+    active_member = next(item for item in member_states if item.member_id == active_member_id)
+    return ContextOverviewRead(
+        household_id="household-1",
+        household_name="测试家庭",
+        home_mode="home",
+        privacy_mode="balanced",
+        automation_level="assisted",
+        home_assistant_status="healthy",
+        voice_fast_path_enabled=True,
+        guest_mode_enabled=False,
+        child_protection_enabled=False,
+        elder_care_watch_enabled=False,
+        quiet_hours_enabled=False,
+        quiet_hours_start="22:00",
+        quiet_hours_end="07:00",
+        active_member=ContextOverviewActiveMember(
+            member_id=active_member.member_id,
+            name=active_member.name,
+            role=active_member.role,
+            presence=active_member.presence,
+            activity=active_member.activity,
+            current_room_id=active_member.current_room_id,
+            current_room_name=active_member.current_room_name,
+            confidence=active_member.confidence,
+            source=active_member.source,
+        ),
+        member_states=member_states,
+        room_occupancy=[
+            ContextOverviewRoomOccupancy(
+                room_id="room-1",
+                name="客厅",
+                room_type="living_room",
+                privacy_level="public",
+                occupant_count=2,
+                occupants=[],
+                device_count=1,
+                online_device_count=1,
+                scene_preset="welcome",
+                climate_policy="follow_room",
+                privacy_guard_enabled=False,
+                announcement_enabled=True,
+            )
+        ],
+        device_summary=ContextOverviewDeviceSummary(
+            total=1,
+            active=1,
+            offline=0,
+            inactive=0,
+            controllable=1,
+            controllable_active=1,
+            controllable_offline=0,
+        ),
+        insights=[],
+        degraded=False,
+        generated_at="2026-03-15T00:00:00+08:00",
+    )
 
 
 if __name__ == "__main__":

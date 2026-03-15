@@ -352,8 +352,8 @@
 
 ## 阶段 3：把对话前身份判定接进正式语音主链
 
-- [ ] 3.1 在 voice pipeline 里接入“先声纹，后上下文兜底”的身份解析顺序
-  - 状态：TODO
+- [x] 3.1 在 voice pipeline 里接入“先声纹，后上下文兜底”的身份解析顺序
+  - 状态：DONE
   - 这一步到底做什么：把对话前身份判定顺序改成“先试声纹识别，失败再退回现有上下文推断”，并统一产出一份身份结果。
   - 做完你能看到什么：系统不再只是靠房间和活跃成员猜人，而是真正先跑一次声纹。
   - 先依赖什么：2.4
@@ -375,11 +375,15 @@
   - 怎么验证：
     - voice pipeline 集成测试
     - 低置信度回退测试
+  - 本轮落实：
+    - 已在 `apps/api-server/app/modules/voiceprint/service.py` 补齐 household 范围内的普通对话声纹识别读模型，按“先 search，后 verify”输出 `matched / conflict / low_confidence / unavailable / no_profile`。
+    - 已在 `apps/api-server/app/modules/voice/identity_service.py` 和 `apps/api-server/app/modules/voice/router.py` 把普通 `conversation` 会话改成优先读取本次 `.wav` 产物做声纹识别，命中时直接用声纹成员，失败时再退回现有上下文推断。
+    - 已补 `tests.test_voice_identity` 和 `tests.test_voice_pipeline`，证明普通对话会先尝试声纹识别，且最终仍通过统一 `VoiceIdentityResolution` 暴露身份结果。
   - 对应需求：`requirements.md` 需求 5、需求 6
   - 对应设计：`design.md` 2.4.2、4.4、7.3
 
-- [ ] 3.2 确保 LLM 慢路径使用声纹识别出的成员身份
-  - 状态：TODO
+- [x] 3.2 确保 LLM 慢路径使用声纹识别出的成员身份
+  - 状态：DONE
   - 这一步到底做什么：把识别出的成员真正传进 `conversation` 慢路径，别停留在日志里自嗨。
   - 做完你能看到什么：同一个小爱音响，不同成员说话时，LLM 对话上下文会按成员身份走。
   - 先依赖什么：3.1
@@ -397,11 +401,14 @@
   - 怎么验证：
     - conversation bridge 集成测试
     - 请求身份断言测试
+  - 本轮落实：
+    - 已确认 `apps/api-server/app/modules/voice/conversation_bridge.py` 在创建会话时直接把 `identity.primary_member_id` 写进 `ConversationSession.requester_member_id`，普通对话无需另开旁路。
+    - 已补 `tests.test_voice_conversation_bridge` 和 `tests.test_voice_pipeline`，断言慢路径创建会话时拿到的 `requester_member_id` 就是声纹识别出的成员 id；声纹没识别出来时仍按现有逻辑回退。
   - 对应需求：`requirements.md` 需求 5、需求 6
   - 对应设计：`design.md` 2.4.2、4.4、7.2
 
-- [ ] 3.3 回归快路径、权限和现有用户空间
-  - 状态：TODO
+- [x] 3.3 回归快路径、权限和现有用户空间
+  - 状态：DONE
   - 这一步到底做什么：确认加了声纹识别之后，设备控制快路径、匿名回退和默认对话主链都没被搞坏。
   - 做完你能看到什么：新能力是增强项，不是新炸弹。
   - 先依赖什么：3.2
@@ -419,13 +426,17 @@
   - 怎么验证：
     - 降级回归测试
     - 快路径回归测试
+  - 本轮落实：
+    - 已补 provider 不可用、低置信度冲突和上下文兜底测试，确认声纹失败时不会返回新的 `agent.error`，普通对话仍能继续走现有快路径或慢路径。
+    - 已补 `tests.test_voiceprint_service`、`tests.test_voice_identity`、`tests.test_voice_pipeline`，证明快路径和慢路径读取的是同一份 `VoiceIdentityResolution`，不会出现一边按声纹、一边按上下文各跑各的。
+    - 已保留 Spec 005 / 005.2 现有行为：gateway 普通会话仍打 `conversation` 标记，voice-runtime 仍只做音频落盘和元数据返回，不做身份决策。
   - 对应需求：`requirements.md` 需求 6
   - 对应设计：`design.md` 2.4.3、6.2、7.2、7.3
 
 ### 阶段检查
 
-- [ ] 3.4 阶段检查：声纹识别是不是已经站到 LLM 前面了
-  - 状态：TODO
+- [x] 3.4 阶段检查：声纹识别是不是已经站到 LLM 前面了
+  - 状态：DONE
   - 这一步到底做什么：确认系统已经真的做到“先识别身份，再进 LLM”，不是只把字段塞进数据库装样子。
   - 做完你能看到什么：慢路径对话前已经有正式身份结果，且回退策略清楚。
   - 先依赖什么：3.1、3.2、3.3
@@ -441,6 +452,9 @@
   - 怎么验证：
     - 端到端对话回归测试
     - 人工走查
+  - 本轮阶段结论：
+    - 自动化测试已经证明普通对话 commit 后会先做 household 范围声纹识别，再把统一身份结果交给快路径/慢路径；慢路径创建会话前就已经拿到正式 `member_id`。
+    - 识别失败、provider 不可用、低置信度和冲突路径都能稳定降级，不会打断现有语音主链。
   - 对应需求：`requirements.md` 需求 5、需求 6
   - 对应设计：`design.md` 2.4.2、2.4.3、4.4
 
@@ -448,8 +462,8 @@
 
 ## 阶段 4：补测试、联调和交接文档
 
-- [ ] 4.1 补齐 gateway、voice-runtime、api-server 三段测试
-  - 状态：TODO
+- [x] 4.1 补齐 gateway、voice-runtime、api-server 三段测试
+  - 状态：DONE
   - 这一步到底做什么：把最容易回归的三段链路都补上测试，不然以后谁一改语音链路，声纹能力就会被顺手搞死。
   - 做完你能看到什么：建档、音频落地、对话前识别和降级回退都有自动化保护。
   - 先依赖什么：3.4
@@ -466,11 +480,15 @@
     2. 关键主链有回归保护。
   - 怎么验证：
     - 分项目测试跑通
+  - 本轮落实：
+    - `apps/api-server/tests/` 已补普通对话声纹优先、慢路径成员透传、provider 降级、household 冲突和快路径同源身份结果测试。
+    - `apps/open-xiaoai-gateway/tests/test_translator.py` 已补普通对话默认保持 `conversation` 会话用途的回归测试，防止普通会话误打成建档会话。
+    - `apps/voice-runtime/tests/test_app.py` 已补 `voiceprint_enrollment` 产物目录回归测试，确认 runtime 仍只负责落盘和元数据，不把身份决策塞进去。
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 8.2、8.3、8.4
 
-- [ ] 4.2 写联调和验收文档
-  - 状态：TODO
+- [x] 4.2 写联调和验收文档
+  - 状态：DONE
   - 这一步到底做什么：把建档怎么跑、样本怎么看、识别失败怎么查、隐私数据怎么清理写成文档，别让后面的人继续靠猜。
   - 做完你能看到什么：后续接手的人知道怎么验建档、怎么验识别、怎么定位问题。
   - 先依赖什么：4.1
@@ -487,11 +505,14 @@
     3. 隐私清理规则写清楚。
   - 怎么验证：
     - 人工走查
+  - 本轮落实：
+    - 已新增 `docs/20260315-普通对话声纹识别联调与验收手册.md`，把建档联调、普通对话识别验收、降级回退、排查入口和隐私清理规则写成可执行步骤。
+    - 已更新 `docs/README.md`，把普通对话声纹识别联调文档加进目录入口，避免后续接手的人继续靠猜。
   - 对应需求：`requirements.md` 需求 2、需求 6、需求 7
   - 对应设计：`design.md` 6、8、9
 
-- [ ] 4.3 最终检查点
-  - 状态：TODO
+- [x] 4.3 最终检查点
+  - 状态：DONE
   - 这一步到底做什么：确认这份 Spec 真的把边界、数据、链路、回退和验证方式写完整了，而不是又留下一堆口头约定。
   - 做完你能看到什么：新的 Codex 上下文或新同事拿到这份 Spec，能直接接着干，不需要重新猜架构。
   - 先依赖什么：4.2
@@ -509,5 +530,8 @@
     3. 后续接手的人知道先做什么、改哪里、怎么验。
   - 怎么验证：
     - 按 Spec 验收清单逐项核对
+  - 本轮最终结论：
+    - `README.md / requirements.md / design.md / tasks.md / docs/` 已按当前实现和测试结果重新核对，阶段 3 和阶段 4 的边界、链路、降级和验证口径没有互相打架。
+    - 后续接手的人现在可以直接从文档和测试进入：先看 `docs/` 知道怎么验，再看 `tests/` 知道主链保护在哪里，最后改 `voiceprint / voice` 相关模块。
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文
