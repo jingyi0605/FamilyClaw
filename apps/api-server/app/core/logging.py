@@ -12,6 +12,22 @@ CONVERSATION_DEBUG_LOG_FILE = LOG_DIR / "conversation-debug.log"
 MAX_LOG_BYTES = 10 * 1024 * 1024
 BACKUP_COUNT = 5
 CONVERSATION_DEBUG_LOGGER_NAME = "app.conversation.debug"
+VOICE_DISCOVERY_REPORT_PATH = "/api/v1/devices/voice-terminals/discoveries/report"
+VOICE_DISCOVERY_BINDING_PATH_PREFIX = "/api/v1/devices/voice-terminals/discoveries/"
+VOICE_DISCOVERY_BINDING_PATH_SUFFIX = "/binding"
+
+
+class UvicornAccessNoiseFilter(logging.Filter):
+    """过滤小爱发现接口的成功访问日志，保留失败请求。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        path = _extract_uvicorn_access_path(record)
+        status_code = _extract_uvicorn_access_status_code(record)
+        if path is None or status_code is None:
+            return True
+        if status_code >= 400:
+            return True
+        return not _is_noisy_voice_discovery_path(path)
 
 
 def setup_logging(log_level: str, *, conversation_debug_enabled: bool = False) -> None:
@@ -42,8 +58,11 @@ def setup_logging(log_level: str, *, conversation_debug_enabled: bool = False) -
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
         logger = logging.getLogger(logger_name)
         logger.handlers.clear()
+        logger.filters.clear()
         logger.propagate = True
         logger.setLevel(level)
+        if logger_name == "uvicorn.access":
+            logger.addFilter(UvicornAccessNoiseFilter())
 
     _setup_conversation_debug_logger(enabled=conversation_debug_enabled)
 
@@ -75,3 +94,31 @@ def get_conversation_debug_logger() -> logging.Logger:
 
 def dump_conversation_debug_event(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _extract_uvicorn_access_path(record: logging.LogRecord) -> str | None:
+    args = record.args
+    if not isinstance(args, tuple) or len(args) < 5:
+        return None
+    path = args[2]
+    return path if isinstance(path, str) else None
+
+
+def _extract_uvicorn_access_status_code(record: logging.LogRecord) -> int | None:
+    args = record.args
+    if not isinstance(args, tuple) or len(args) < 5:
+        return None
+    try:
+        return int(args[4])
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_noisy_voice_discovery_path(path: str) -> bool:
+    normalized_path = path.split("?", 1)[0]
+    if normalized_path == VOICE_DISCOVERY_REPORT_PATH:
+        return True
+    return (
+        normalized_path.startswith(VOICE_DISCOVERY_BINDING_PATH_PREFIX)
+        and normalized_path.endswith(VOICE_DISCOVERY_BINDING_PATH_SUFFIX)
+    )
