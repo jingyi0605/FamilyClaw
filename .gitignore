@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 node_modules/
 dist/
+.swc/
 apps/api-server/data/*.db
 apps/api-server/data/*.db-*
 apps/api-server/data/*.sqlite3
