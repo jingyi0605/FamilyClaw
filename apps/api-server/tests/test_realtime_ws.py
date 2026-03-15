@@ -1,8 +1,10 @@
 import asyncio
+import re
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -35,9 +37,11 @@ from app.modules.conversation import repository as conversation_repository
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.llm_task.invoke import LlmResult, LlmStreamEvent
-from app.modules.llm_task.output_models import ButlerBootstrapOutput
+from app.modules.llm_task.output_models import ButlerBootstrapOutput, ProposalBatchExtractionOutput, ProposalExtractionItemOutput
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
+from app.modules.memory.schemas import MemoryCardManualCreate
+from app.modules.memory.service import create_manual_memory_card
 from app.modules.realtime.connection_manager import realtime_connection_manager
 
 
@@ -45,6 +49,7 @@ class _FakeWebSocket:
     def __init__(self, *, household_id: str, session_id: str, cookie: str | None = None, inbound_messages: list[dict] | None = None):
         self.query_params = QueryParams({"household_id": household_id, "session_id": session_id})
         self.headers = Headers({"cookie": cookie} if cookie else {})
+        self.client = SimpleNamespace(host="test-client", port=12345)
         self._inbound_messages = list(inbound_messages or [])
         self.accepted = False
         self.sent_messages: list[dict] = []
@@ -519,6 +524,179 @@ class RealtimeWsTests(unittest.TestCase):
         final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
         self.assertEqual("failed", final_snapshot["messages"][1]["status"])
         self.assertIn("很久很久以前", final_snapshot["messages"][1]["content"])
+
+    def test_conversation_websocket_does_not_create_memory_proposal_from_assistant_recall_answer(self) -> None:
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[
+                {
+                    "type": "user.message",
+                    "session_id": self.conversation_session_id,
+                    "request_id": "conversation-request-memory-recall",
+                    "payload": {"text": "你知道我最喜欢吃什么吗"},
+                }
+            ],
+        )
+
+        from app.modules.conversation import service as conversation_service_module
+        from app.modules.conversation.orchestrator import ConversationIntent, ConversationOrchestratorResult
+
+        async def _fake_stream_orchestrated_turn(_db, **kwargs):
+            _ = kwargs
+            yield ("chunk", "根据我的记录，")
+            yield ("done", ConversationOrchestratorResult(
+                intent=ConversationIntent.FREE_CHAT,
+                text="根据我的记录，你特别喜欢巧克力蛋糕和甜食。",
+                degraded=False,
+                facts=[],
+                suggestions=[],
+                memory_candidate_payloads=[],
+                config_suggestion=None,
+                action_payloads=[],
+                ai_trace_id="trace-memory-recall",
+                ai_provider_code="mock-provider",
+                effective_agent_id=None,
+                effective_agent_name="笨笨",
+            ))
+
+        def _fake_extract_invoke(_db, task_type, variables, **kwargs):
+            _ = (_db, kwargs)
+            self.assertEqual("proposal_batch_extraction", task_type)
+            turn_messages = str(variables.get("turn_messages") or "")
+            main_reply_summary = str(variables.get("main_reply_summary") or "")
+            leaked_text = "巧克力蛋糕和甜食"
+            if leaked_text in turn_messages or leaked_text in main_reply_summary:
+                matched = re.search(r"\[user_message\] user\(([^)]+)\):", turn_messages)
+                self.assertIsNotNone(matched)
+                user_message_id = matched.group(1)
+                return LlmResult(
+                    raw_text="{}",
+                    display_text="",
+                    parsed=ProposalBatchExtractionOutput(
+                        memory_items=[
+                            ProposalExtractionItemOutput(
+                                title="记忆提案：favorite_food",
+                                summary="favorite_food：巧克力蛋糕和甜食",
+                                confidence=0.91,
+                                evidence_message_ids=[user_message_id],
+                                payload={"memory_type": "preference", "favorite_food": "巧克力蛋糕和甜食"},
+                            )
+                        ]
+                    ),
+                    provider="mock-provider",
+                )
+            return LlmResult(
+                raw_text="{}",
+                display_text="",
+                parsed=ProposalBatchExtractionOutput(),
+                provider="mock-provider",
+            )
+
+        with patch.object(
+            conversation_service_module,
+            "stream_orchestrated_turn",
+            side_effect=_fake_stream_orchestrated_turn,
+        ), patch(
+            "app.modules.conversation.proposal_pipeline.invoke_llm",
+            side_effect=_fake_extract_invoke,
+        ):
+            asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
+
+        final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
+        self.assertEqual("根据我的记录，你特别喜欢巧克力蛋糕和甜食。", final_snapshot["messages"][1]["content"])
+        self.assertEqual([], final_snapshot["proposal_batches"])
+        self.assertEqual([], list(conversation_repository.list_proposal_batches(self.db, session_id=self.conversation_session_id)))
+
+    def test_conversation_websocket_filters_duplicate_memory_proposal_when_memory_already_exists(self) -> None:
+        create_manual_memory_card(
+            self.db,
+            payload=MemoryCardManualCreate(
+                household_id=self.household_id,
+                memory_type="preference",
+                title="favorite_food",
+                summary="巧克力蛋糕和甜食",
+                content={"favorite_food": "巧克力蛋糕和甜食"},
+                subject_member_id=self.member_id,
+                dedupe_key="existing-favorite-food",
+                reason="test setup",
+            ),
+            actor=self.member_actor,
+        )
+        self.db.commit()
+
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[
+                {
+                    "type": "user.message",
+                    "session_id": self.conversation_session_id,
+                    "request_id": "conversation-request-memory-duplicate",
+                    "payload": {"text": "你知道我最喜欢吃什么吗"},
+                }
+            ],
+        )
+
+        from app.modules.conversation import service as conversation_service_module
+        from app.modules.conversation.orchestrator import ConversationIntent, ConversationOrchestratorResult
+
+        async def _fake_stream_orchestrated_turn(_db, **kwargs):
+            _ = kwargs
+            yield ("done", ConversationOrchestratorResult(
+                intent=ConversationIntent.FREE_CHAT,
+                text="你之前说过自己喜欢巧克力蛋糕和甜食。",
+                degraded=False,
+                facts=[],
+                suggestions=[],
+                memory_candidate_payloads=[],
+                config_suggestion=None,
+                action_payloads=[],
+                ai_trace_id="trace-memory-duplicate",
+                ai_provider_code="mock-provider",
+                effective_agent_id=None,
+                effective_agent_name="笨笨",
+            ))
+
+        def _fake_extract_invoke(_db, task_type, variables, **kwargs):
+            _ = (_db, kwargs)
+            self.assertEqual("proposal_batch_extraction", task_type)
+            turn_messages = str(variables.get("turn_messages") or "")
+            matched = re.search(r"\[user_message\] user\(([^)]+)\):", turn_messages)
+            self.assertIsNotNone(matched)
+            user_message_id = matched.group(1)
+            return LlmResult(
+                raw_text="{}",
+                display_text="",
+                parsed=ProposalBatchExtractionOutput(
+                    memory_items=[
+                        ProposalExtractionItemOutput(
+                            title="记忆提案：favorite_food",
+                            summary="favorite_food：巧克力蛋糕和甜食",
+                            confidence=0.93,
+                            evidence_message_ids=[user_message_id],
+                            payload={"memory_type": "preference", "favorite_food": "巧克力蛋糕和甜食"},
+                        )
+                    ]
+                ),
+                provider="mock-provider",
+            )
+
+        with patch.object(
+            conversation_service_module,
+            "stream_orchestrated_turn",
+            side_effect=_fake_stream_orchestrated_turn,
+        ), patch(
+            "app.modules.conversation.proposal_pipeline.invoke_llm",
+            side_effect=_fake_extract_invoke,
+        ):
+            asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
+
+        final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
+        self.assertEqual([], final_snapshot["proposal_batches"])
+        self.assertEqual([], list(conversation_repository.list_proposal_batches(self.db, session_id=self.conversation_session_id)))
 
     def test_conversation_websocket_stream_does_not_block_other_http_requests(self) -> None:
         from app.main import app

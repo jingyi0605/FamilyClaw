@@ -3,21 +3,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from app.modules.device.schemas import DeviceRead
-
-DeviceActionName = Literal[
-    "turn_on",
-    "turn_off",
-    "set_brightness",
-    "set_temperature",
-    "set_hvac_mode",
-    "open",
-    "close",
-    "stop",
-    "play_pause",
-    "set_volume",
-    "lock",
-    "unlock",
-]
+from app.modules.device_control.protocol import DeviceActionName
 
 
 class DeviceActionExecuteRequest(BaseModel):
@@ -27,6 +13,7 @@ class DeviceActionExecuteRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(default="context.fast_path", min_length=1, max_length=100)
     confirm_high_risk: bool = False
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class DeviceActionExecuteResponse(BaseModel):

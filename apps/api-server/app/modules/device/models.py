@@ -51,6 +51,8 @@ class DeviceBinding(Base):
     platform: Mapped[str] = mapped_column(String(30), nullable=False)
     external_entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
     external_device_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    plugin_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    binding_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     capabilities: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_sync_at: Mapped[str | None] = mapped_column(Text, nullable=True)
 

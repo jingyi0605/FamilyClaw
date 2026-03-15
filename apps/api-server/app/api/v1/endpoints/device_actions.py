@@ -7,8 +7,7 @@ from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
 from app.modules.device_action.schemas import DeviceActionExecuteRequest, DeviceActionExecuteResponse
-from app.modules.device_action.service import aexecute_device_action, execute_device_action
-from app.modules.ha_integration.client import HomeAssistantClientError
+from app.modules.device_action.service import aexecute_device_action
 
 router = APIRouter(prefix="/device-actions", tags=["device-actions"])
 
@@ -59,20 +58,6 @@ async def execute_device_action_endpoint(
             details=audit_context.details,
         )
         return response
-    except HomeAssistantClientError as exc:
-        db.rollback()
-        _write_device_action_audit_best_effort(
-            db,
-            household_id=payload.household_id,
-            actor=actor,
-            result="fail",
-            payload=payload,
-            details={"error": str(exc)},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
     except HTTPException as exc:
         db.rollback()
         _write_device_action_audit_best_effort(

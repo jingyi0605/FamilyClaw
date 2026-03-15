@@ -219,7 +219,7 @@ def extract_proposal_batch(
         variables={
             "turn_messages": _render_turn_messages(turn_context.turn_messages),
             "trusted_events": dump_json(turn_context.trusted_events) or "[]",
-            "main_reply_summary": turn_context.main_reply_summary,
+            "main_reply_summary": _render_assistant_context_summary(turn_context.main_reply_summary),
         },
         household_id=household_id,
         conversation_history=turn_context.conversation_history_excerpt,
@@ -299,8 +299,17 @@ def persist_proposal_batch(
 def _render_turn_messages(turn_messages: list[TurnProposalEvidence]) -> str:
     lines: list[str] = []
     for item in turn_messages:
-        lines.append(f"[{item.kind}] {item.role}({item.message_id}): {item.content}")
+        content = item.content
+        if item.kind == "assistant_message":
+            content = "<助手回复内容已省略；仅作上下文，不能作为事实证据>"
+        lines.append(f"[{item.kind}] {item.role}({item.message_id}): {content}")
     return "\n".join(lines)
+
+
+def _render_assistant_context_summary(summary: str) -> str:
+    if not summary.strip():
+        return "无"
+    return "助手回复摘要已省略；它只能帮助理解当前是在追问、确认还是普通问答，不能作为新增事实证据。"
 
 
 def _resolve_item_status(policy_category: str) -> str:

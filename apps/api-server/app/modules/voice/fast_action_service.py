@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,7 +12,8 @@ from app.modules.context.schemas import ContextOverviewRead
 from app.modules.device.models import Device
 from app.modules.device.service import list_devices
 from app.modules.device_action.schemas import DeviceActionExecuteRequest
-from app.modules.device_action.service import HIGH_RISK_ACTIONS, aexecute_device_action
+from app.modules.device_action.service import aexecute_device_action
+from app.modules.device_control.protocol import DeviceActionName, device_control_protocol_registry
 from app.modules.scene.schemas import SceneTriggerRequest
 from app.modules.scene.service import atrigger_template, list_templates
 from app.modules.voice.identity_service import VoiceIdentityResolution
@@ -186,7 +187,7 @@ class VoiceFastActionService:
                     payload=DeviceActionExecuteRequest(
                         household_id=household_id,
                         device_id=device_id,
-                        action=action,
+                        action=cast(DeviceActionName, action),
                         params=decision.route_params,
                         reason="voice_fast_path",
                         confirm_high_risk=decision.confirm_high_risk,
@@ -568,7 +569,7 @@ class VoiceFastActionService:
         contains_broadcast = any(str(action.get("type") or "") == "broadcast" for action in actions if isinstance(action, dict))
         contains_high_risk = any(
             str(action.get("type") or "") == "device_action"
-            and str(action.get("action") or "") in HIGH_RISK_ACTIONS.get("lock", set())
+            and device_control_protocol_registry.is_high_risk(str(action.get("action") or "turn_on"))
             for action in actions
             if isinstance(action, dict)
         )
@@ -628,7 +629,8 @@ class VoiceFastActionService:
         return {alias for alias in aliases if alias}
 
     def _is_high_risk(self, *, device_type: str, action: str) -> bool:
-        return action in HIGH_RISK_ACTIONS.get(device_type, set())
+        definition = device_control_protocol_registry.get_definition(action)
+        return device_type in definition.supported_device_types and definition.risk_level == "high"
 
     def _is_quiet_hours_active(self, context_overview: ContextOverviewRead) -> bool:
         if not context_overview.quiet_hours_enabled:

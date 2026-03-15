@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from alembic import command
@@ -34,7 +35,13 @@ from app.modules.conversation.proposal_analyzers import (
     ProposalAnalyzerRegistry,
     ProposalDraft,
 )
-from app.modules.conversation.proposal_pipeline import ProposalPipeline, ProposalPipelineResult, TurnProposalContext, build_turn_proposal_context
+from app.modules.conversation.proposal_pipeline import (
+    ProposalPipeline,
+    ProposalPipelineResult,
+    TurnProposalContext,
+    build_turn_proposal_context,
+    extract_proposal_batch,
+)
 from app.modules.conversation.schemas import ConversationSessionCreate, ConversationTurnCreate
 from app.modules.conversation.service import create_conversation_session, create_conversation_turn
 from app.modules.household.schemas import HouseholdCreate
@@ -337,6 +344,23 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         self.assertEqual("memory_write", drafts[0].proposal_kind)
         self.assertEqual([context.turn_messages[0].message_id], drafts[0].evidence_message_ids)
         self.assertEqual(["user"], drafts[0].evidence_roles)
+
+    @patch("app.modules.conversation.proposal_pipeline.invoke_llm")
+    def test_extract_proposal_batch_redacts_assistant_reply_before_llm(self, invoke_llm_mock) -> None:
+        context = self._build_context(
+            user_text="你知道我最喜欢吃什么吗",
+            assistant_text="根据我的记录，你特别喜欢巧克力蛋糕和甜食。",
+        )
+        invoke_llm_mock.return_value = SimpleNamespace(data=ProposalBatchExtractionOutput())
+
+        extract_proposal_batch(self.db, context, self.household.id)
+
+        variables = invoke_llm_mock.call_args.kwargs["variables"]
+        self.assertIn("你知道我最喜欢吃什么吗", variables["turn_messages"])
+        self.assertNotIn("巧克力蛋糕和甜食", variables["turn_messages"])
+        self.assertIn("仅作上下文", variables["turn_messages"])
+        self.assertNotIn("巧克力蛋糕和甜食", variables["main_reply_summary"])
+        self.assertIn("不能作为新增事实证据", variables["main_reply_summary"])
 
     def test_once_schedule_intent_creates_scheduled_task_proposal(self) -> None:
         context = self._build_context(user_text="明天上午10点提醒我开会", assistant_text="我来整理成一次性计划任务。")

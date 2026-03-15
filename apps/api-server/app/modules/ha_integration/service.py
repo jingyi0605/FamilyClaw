@@ -10,6 +10,7 @@ from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.device.models import Device, DeviceBinding
 import asyncio
 
+from app.modules.device_control.router import resolve_home_assistant_action_plugin_id
 from app.modules.ha_integration.client import AsyncHomeAssistantClient, HomeAssistantClient
 from app.modules.ha_integration.models import HouseholdHaConfig
 from app.modules.household.service import get_household_or_404
@@ -265,6 +266,8 @@ def sync_home_assistant_devices(
                         id=new_uuid(),
                         device_id=device.id,
                         platform="home_assistant",
+                        plugin_id=resolve_home_assistant_action_plugin_id(device_type),
+                        binding_version=1,
                         external_entity_id=entity_id,
                         external_device_id=str(external_device_id) if external_device_id else None,
                         capabilities=dump_json(capabilities),
@@ -287,6 +290,8 @@ def sync_home_assistant_devices(
                     device.status = normalized_status
                     device.controllable = 1 if controllable else 0
                     binding.external_device_id = str(external_device_id) if external_device_id else None
+                    binding.plugin_id = resolve_home_assistant_action_plugin_id(device_type)
+                    binding.binding_version = 1
                     binding.capabilities = dump_json(capabilities)
                     binding.last_sync_at = utc_now_iso()
                     db.add(device)
@@ -415,7 +420,7 @@ async def async_sync_home_assistant_devices(
                     device = Device(id=new_uuid(), household_id=household_id, room_id=None, name=device_name, device_type=device_type, vendor="ha", status=normalized_status, controllable=1 if controllable else 0)
                     db.add(device)
                     db.flush()
-                    binding = DeviceBinding(id=new_uuid(), device_id=device.id, platform="home_assistant", external_entity_id=entity_id, external_device_id=str(external_device_id) if external_device_id else None, capabilities=dump_json(capabilities), last_sync_at=utc_now_iso())
+                    binding = DeviceBinding(id=new_uuid(), device_id=device.id, platform="home_assistant", plugin_id=resolve_home_assistant_action_plugin_id(device_type), binding_version=1, external_entity_id=entity_id, external_device_id=str(external_device_id) if external_device_id else None, capabilities=dump_json(capabilities), last_sync_at=utc_now_iso())
                     db.add(binding)
                     db.flush()
                     created_devices += 1
@@ -432,6 +437,8 @@ async def async_sync_home_assistant_devices(
                     device.status = normalized_status
                     device.controllable = 1 if controllable else 0
                     binding.external_device_id = str(external_device_id) if external_device_id else None
+                    binding.plugin_id = resolve_home_assistant_action_plugin_id(device_type)
+                    binding.binding_version = 1
                     binding.capabilities = dump_json(capabilities)
                     binding.last_sync_at = utc_now_iso()
                     db.add(device)

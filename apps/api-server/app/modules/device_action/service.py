@@ -10,12 +10,16 @@ from app.modules.device.models import Device
 from app.modules.device.schemas import DeviceRead
 from app.modules.device.service import get_device_or_404
 from app.modules.device_action.schemas import DeviceActionExecuteRequest, DeviceActionExecuteResponse
+from app.modules.device_control.protocol import device_control_protocol_registry
 from app.modules.ha_integration.client import HomeAssistantClient, HomeAssistantClientError
 from app.modules.ha_integration.service import async_execute_home_assistant_device_action, execute_home_assistant_device_action
 
-HIGH_RISK_ACTIONS: dict[str, set[str]] = {
-    "lock": {"unlock"},
-}
+HIGH_RISK_ACTIONS: dict[str, set[str]] = {}
+for definition in device_control_protocol_registry.list_definitions():
+    if definition.risk_level != "high":
+        continue
+    for device_type in definition.supported_device_types:
+        HIGH_RISK_ACTIONS.setdefault(device_type, set()).add(definition.action)
 
 
 @dataclass
