@@ -1,30 +1,3 @@
-.home-page-shell {
-  min-height: 100vh;
-  background: var(--bg-app);
-  color: var(--text-primary);
-  font-family: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
-}
-
-.home-page-shell *,
-.home-page-shell *::before,
-.home-page-shell *::after {
-  box-sizing: border-box;
-}
-
-.home-page-shell button {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-}
-
-.app-layout__main {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: var(--spacing-xl) var(--spacing-xxl);
-}
-
 .page {
   animation: fadeIn 0.3s ease;
 }
@@ -52,7 +25,7 @@
 }
 
 .empty-state__icon {
-  font-size: 2.5rem;
+  font-size: 40px;
   margin-bottom: var(--spacing-md);
   opacity: 0.6;
 }
@@ -298,7 +271,7 @@
 }
 
 .drag-handle {
-  font-size: 1.25rem;
+  font-size: 20px;
   color: var(--text-tertiary);
   cursor: grab;
   user-select: none;
@@ -446,6 +419,13 @@
   height: 64px;
 }
 
+.weather-icon-animated {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .weather-sun {
   position: absolute;
   top: 0;
@@ -472,7 +452,7 @@
 
 .weather-temp-value {
   display: block;
-  font-size: 2.5rem;
+  font-size: 40px;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1;
@@ -769,10 +749,6 @@
 .opacity-50 { opacity: 0.5; }
 
 @media (max-width: 768px) {
-  .app-layout__main {
-    padding: var(--spacing-md) var(--spacing-md) calc(60px + var(--spacing-xl));
-  }
-
   .welcome-banner {
     flex-direction: column;
     align-items: flex-start;

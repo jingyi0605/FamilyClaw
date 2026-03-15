@@ -24,8 +24,9 @@ import {
   Zap,
 } from 'lucide-react';
 import './index.h5.scss';
+import { useI18n } from '../../runtime/h5-shell';
+import type { ShellMessageKey } from '../../runtime/h5-shell/i18n/I18nProvider';
 import {
-  COPY,
   DEFAULT_LAYOUT,
   STORAGE_KEY,
   type CardType,
@@ -45,17 +46,6 @@ type DashboardCard = {
   label: string;
   icon: React.ReactNode;
   width: 'half' | 'full';
-};
-
-const ALL_CARDS: Record<CardType, DashboardCard> = {
-  weather: { type: 'weather', label: '天气状态', icon: <CloudSun size={18} />, width: 'half' },
-  stats: { type: 'stats', label: '关键指标', icon: <BarChart2 size={18} />, width: 'full' },
-  rooms: { type: 'rooms', label: '房间状态', icon: <Home size={18} />, width: 'half' },
-  members: { type: 'members', label: '成员状态', icon: <Users size={18} />, width: 'half' },
-  events: { type: 'events', label: '最近事件', icon: <ClipboardList size={18} />, width: 'half' },
-  quickActions: { type: 'quickActions', label: '快捷操作', icon: <Zap size={18} />, width: 'half' },
-  aiSummary: { type: 'aiSummary', label: 'AI 今日摘要', icon: <Bot size={18} />, width: 'full' },
-  devices: { type: 'devices', label: '设备状态', icon: <Smartphone size={18} />, width: 'half' },
 };
 
 function getStoredLayout(): CardType[] {
@@ -205,17 +195,17 @@ function DevicesCard({ data }: { data: DashboardData }) {
   );
 }
 
-function renderDashboardCard(type: CardType, data: DashboardData, loading: boolean) {
+function renderDashboardCard(type: CardType, data: DashboardData, loading: boolean, t: (key: ShellMessageKey) => string) {
   switch (type) {
     case 'weather':
       return <WeatherCard data={data} />;
     case 'stats':
       return (
         <div className="stats-grid animate-card">
-          <StatCard icon={<Users size={24} />} label={COPY['home.membersAtHome']} value={data.overview?.member_states.filter(item => item.presence === 'home').length ?? 0} color="var(--brand-primary)" />
-          <StatCard icon={<Home size={24} />} label={COPY['home.activeRooms']} value={data.overview?.room_occupancy.filter(item => item.occupant_count > 0 || item.online_device_count > 0).length ?? data.rooms.length} color="var(--color-success)" />
-          <StatCard icon={<Smartphone size={24} />} label={COPY['home.devicesOnline']} value={data.overview?.device_summary.active ?? data.devices.filter(item => item.status === 'active').length} color="var(--color-info)" />
-          <StatCard icon={<ShieldCheck size={24} />} label={COPY['home.alerts']} value={(data.reminders?.pending_runs ?? 0) + (data.overview?.insights.filter(item => item.tone === 'warning' || item.tone === 'danger').length ?? 0)} color="var(--color-warning)" />
+          <StatCard icon={<Users size={24} />} label={t('home.membersAtHome')} value={data.overview?.member_states.filter(item => item.presence === 'home').length ?? 0} color="var(--brand-primary)" />
+          <StatCard icon={<Home size={24} />} label={t('home.activeRooms')} value={data.overview?.room_occupancy.filter(item => item.occupant_count > 0 || item.online_device_count > 0).length ?? data.rooms.length} color="var(--color-success)" />
+          <StatCard icon={<Smartphone size={24} />} label={t('home.devicesOnline')} value={data.overview?.device_summary.active ?? data.devices.filter(item => item.status === 'active').length} color="var(--color-info)" />
+          <StatCard icon={<ShieldCheck size={24} />} label={t('home.alerts')} value={(data.reminders?.pending_runs ?? 0) + (data.overview?.insights.filter(item => item.tone === 'warning' || item.tone === 'danger').length ?? 0)} color="var(--color-warning)" />
         </div>
       );
     case 'rooms': {
@@ -223,7 +213,7 @@ function renderDashboardCard(type: CardType, data: DashboardData, loading: boole
 
       return (
         <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title flex items-center gap-2"><Home size={20} /> {COPY['home.roomStatus']}</h3>
+          <h3 className="dashboard-card__title flex items-center gap-2"><Home size={20} /> {t('home.roomStatus')}</h3>
           <div className="room-cards">
             {loading ? <div className="text-text-secondary">正在加载房间状态...</div> : roomCards.map(room => (
               <div key={room.id} className="mini-room-card">
@@ -246,7 +236,7 @@ function renderDashboardCard(type: CardType, data: DashboardData, loading: boole
 
       return (
         <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title flex items-center gap-2"><Users size={20} /> {COPY['home.memberStatus']}</h3>
+          <h3 className="dashboard-card__title flex items-center gap-2"><Users size={20} /> {t('home.memberStatus')}</h3>
           <div className="member-cards">
             {loading ? <div className="text-text-secondary">正在加载成员状态...</div> : memberCards.map(member => (
               <div key={member.id} className="mini-member-card">
@@ -256,7 +246,7 @@ function renderDashboardCard(type: CardType, data: DashboardData, loading: boole
                   <span className="mini-member-card__role">{member.roleLabel}</span>
                 </div>
                 <span className={`member-status-badge member-status-badge--${member.badgeStatus}`}>
-                  {member.badgeStatus === 'resting' ? COPY['member.resting'] : member.badgeStatus === 'home' ? COPY['member.atHome'] : COPY['member.away']}
+                  {member.badgeStatus === 'resting' ? t('member.resting') : member.badgeStatus === 'home' ? t('member.atHome') : t('member.away')}
                 </span>
               </div>
             ))}
@@ -281,7 +271,7 @@ function renderDashboardCard(type: CardType, data: DashboardData, loading: boole
 
       return (
         <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title flex items-center gap-2"><ClipboardList size={20} /> {COPY['home.recentEvents']}</h3>
+          <h3 className="dashboard-card__title flex items-center gap-2"><ClipboardList size={20} /> {t('home.recentEvents')}</h3>
           <div className="event-list">
             {loading ? <div className="text-text-secondary">正在加载最近事件...</div> : recentEvents.length > 0 ? recentEvents.map(ev => (
               <div key={ev.id} className="event-item">
@@ -289,7 +279,7 @@ function renderDashboardCard(type: CardType, data: DashboardData, loading: boole
                 <span className="event-item__text">{ev.text}</span>
                 <span className="event-item__time">{ev.time}</span>
               </div>
-            )) : <div className="text-text-secondary">{COPY['home.noEventsHint']}</div>}
+            )) : <div className="text-text-secondary">{t('home.noEventsHint')}</div>}
           </div>
         </Card>
       );
@@ -297,12 +287,12 @@ function renderDashboardCard(type: CardType, data: DashboardData, loading: boole
     case 'quickActions':
       return (
         <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title flex items-center gap-2"><Zap size={20} /> {COPY['home.quickActions']}</h3>
+          <h3 className="dashboard-card__title flex items-center gap-2"><Zap size={20} /> {t('home.quickActions')}</h3>
           <div className="quick-actions">
-            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/assistant/index' })}><MessageSquareText size={16} /> {COPY['nav.assistant']}</button>
-            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/memories/index' })}><BookOpenText size={16} /> {COPY['nav.memories']}</button>
-            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/settings/index' })}><Settings size={16} /> {COPY['nav.settings']}</button>
-            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/family/index' })}><Users size={16} /> {COPY['nav.family']}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/assistant/index' })}><MessageSquareText size={16} /> {t('nav.assistant')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/memories/index' })}><BookOpenText size={16} /> {t('nav.memories')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/settings/index' })}><Settings size={16} /> {t('nav.settings')}</button>
+            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/family/index' })}><Users size={16} /> {t('nav.family')}</button>
           </div>
         </Card>
       );
@@ -316,12 +306,24 @@ function renderDashboardCard(type: CardType, data: DashboardData, loading: boole
 }
 
 export default function HomePage() {
+  const { t } = useI18n();
   const { familyName, dashboardData, loading } = useHomeDashboardData();
   const [layout, setLayout] = useState<CardType[]>(getStoredLayout);
   const [editMode, setEditMode] = useState(false);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const dragRef = useRef<number | null>(null);
+
+  const ALL_CARDS: Record<CardType, DashboardCard> = {
+    weather: { type: 'weather', label: '天气状态', icon: <CloudSun size={18} />, width: 'half' },
+    stats: { type: 'stats', label: '关键指标', icon: <BarChart2 size={18} />, width: 'full' },
+    rooms: { type: 'rooms', label: t('home.roomStatus'), icon: <Home size={18} />, width: 'half' },
+    members: { type: 'members', label: t('home.memberStatus'), icon: <Users size={18} />, width: 'half' },
+    events: { type: 'events', label: t('home.recentEvents'), icon: <ClipboardList size={18} />, width: 'half' },
+    quickActions: { type: 'quickActions', label: t('home.quickActions'), icon: <Zap size={18} />, width: 'half' },
+    aiSummary: { type: 'aiSummary', label: 'AI 今日摘要', icon: <Bot size={18} />, width: 'full' },
+    devices: { type: 'devices', label: '设备状态', icon: <Smartphone size={18} />, width: 'half' },
+  };
 
   const saveLayout = useCallback((newLayout: CardType[]) => {
     setLayout(newLayout);
@@ -377,14 +379,14 @@ export default function HomePage() {
   const unusedCards = (Object.keys(ALL_CARDS) as CardType[]).filter(key => !layout.includes(key));
 
   return (
-    <div className="home-page-shell">
-      <div className="page page--home">
-          <div className="welcome-banner">
+    <div className="page page--home">
+      {/* 欢迎区 */}
+      <div className="welcome-banner">
             <div className="welcome-banner__text">
               <h1 className="welcome-banner__title animate-slide-in flex items-center gap-3">
-                {COPY['home.welcome']}，{familyName} <Home size={32} className="text-brand-primary" />
+                {t('home.welcome')}，{familyName} <Home size={32} className="text-brand-primary" />
               </h1>
-              <p className="welcome-banner__sub">{COPY['home.greeting']}</p>
+              <p className="welcome-banner__sub">{t('home.greeting')}</p>
               {dashboardData.errors.length > 0 && (
                 <p className="text-text-secondary">部分卡片加载失败，页面已自动降级显示可用数据。</p>
               )}
@@ -441,25 +443,24 @@ export default function HomePage() {
                       <button className="remove-card-btn" type="button" onClick={() => removeCard(idx)}>✕</button>
                     </div>
                   )}
-                  {renderDashboardCard(type, dashboardData, loading)}
+                  {renderDashboardCard(type, dashboardData, loading, t)}
                 </div>
               );
             })}
           </div>
 
-          {layout.length === 0 && (
-            <EmptyState
-              icon={<Home size={64} className="text-text-tertiary opacity-50" />}
-              title="仪表盘是空的"
-              description={'点击"编辑仪表盘"来添加卡片'}
-              action={
-                <button className="btn btn--primary" type="button" onClick={() => setEditMode(true)}>
-                  编辑仪表盘
-                </button>
-              }
-            />
-          )}
-      </div>
+      {layout.length === 0 && (
+        <EmptyState
+          icon={<Home size={64} className="text-text-tertiary opacity-50" />}
+          title="仪表盘是空的"
+          description={'点击"编辑仪表盘"来添加卡片'}
+          action={
+            <button className="btn btn--primary" type="button" onClick={() => setEditMode(true)}>
+              编辑仪表盘
+            </button>
+          }
+        />
+      )}
     </div>
   );
 }

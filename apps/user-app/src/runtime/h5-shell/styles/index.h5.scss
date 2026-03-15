@@ -29,6 +29,11 @@ body {
   transition: background var(--transition), color var(--transition);
 }
 
+page {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
 #root,
 #app,
 .taro_router,
@@ -71,13 +76,16 @@ input, select, textarea {
 .app-layout {
   display: flex;
   min-height: 100vh;
+  background: var(--bg-app);
 }
 
 .app-layout__main {
   flex: 1;
   min-width: 0;
+  min-height: 100vh;
   margin-left: var(--nav-width);
   padding: var(--spacing-xl) var(--spacing-xxl);
+  background: var(--bg-app);
   transition: margin var(--transition);
   max-width: 1400px;
 }
@@ -245,6 +253,9 @@ input, select, textarea {
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-sm);
   border-radius: var(--radius-md);
+  background: var(--nav-bg);
+  color: var(--text-primary);
+  border: none;
   transition: background var(--transition);
   cursor: pointer;
 }
@@ -369,9 +380,12 @@ input, select, textarea {
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-sm);
   border-radius: var(--radius-md);
+  background: var(--nav-bg);
   color: var(--text-secondary);
+  border: none;
   font-size: var(--font-size-sm);
   transition: all var(--transition);
+  cursor: pointer;
 }
 
 .shell-nav__toggle:hover {
@@ -592,6 +606,8 @@ input, select, textarea {
 
 /* ---- 页面通用 ---- */
 .page {
+  min-height: 100%;
+  background: var(--bg-app);
   animation: fadeIn 0.3s ease;
 }
 
@@ -1815,9 +1831,12 @@ input, select, textarea {
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-md);
+  background: var(--bg-surface);
   color: var(--text-secondary);
+  border: none;
   font-size: var(--font-size-sm);
   transition: all var(--transition);
+  cursor: pointer;
 }
 
 .assistant-toolbar__btn:hover {
@@ -3223,9 +3242,12 @@ input, select, textarea {
 
 .settings-content {
   min-width: 0;
+  background: var(--bg-app);
 }
 
 .settings-page {
+  min-height: 100%;
+  background: var(--bg-app);
   animation: fadeIn 0.2s ease;
 }
 
