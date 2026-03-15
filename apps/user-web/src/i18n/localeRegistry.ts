@@ -1,7 +1,14 @@
 import zhCN, { type LocaleMessages } from './zh-CN';
 import enUS from './en-US';
+import {
+  DEFAULT_LOCALE_ID,
+  formatLocaleOptionLabel as formatSharedLocaleOptionLabel,
+  getLocaleSourceLabel as getSharedLocaleSourceLabel,
+  resolveSupportedLocale as resolveSharedSupportedLocale,
+  type LocaleId as SharedLocaleId,
+} from '@familyclaw/user-core';
 
-export type LocaleId = string;
+export type LocaleId = SharedLocaleId;
 
 export interface LocaleDefinition {
   id: LocaleId;
@@ -17,13 +24,11 @@ export interface LocaleDefinition {
 }
 
 export function formatLocaleOptionLabel(definition: Pick<LocaleDefinition, 'id' | 'nativeLabel'>): string {
-  return `${definition.nativeLabel} (${definition.id})`;
+  return formatSharedLocaleOptionLabel(definition);
 }
 
 export function getLocaleSourceLabel(definition: Pick<LocaleDefinition, 'source' | 'sourceType'>): string {
-  if (definition.source === 'builtin' || definition.sourceType === 'builtin') return 'builtin';
-  if (definition.sourceType === 'official') return 'official';
-  return 'third_party';
+  return getSharedLocaleSourceLabel(definition);
 }
 
 const localeRegistry = new Map<LocaleId, LocaleDefinition>();
@@ -103,24 +108,8 @@ export function isRegisteredLocale(locale: string | null | undefined): locale is
   return getLocaleDefinition(locale) !== undefined;
 }
 
-export function resolveSupportedLocale(locale: string | null | undefined, fallback: LocaleId = 'zh-CN'): LocaleId {
-  const direct = getLocaleDefinition(locale);
-  if (direct) return direct.id;
-
-  const normalized = normalizeLocaleLookup(locale ?? '');
-  if (!normalized) return fallback;
-
-  if ((normalized.includes('hant') || normalized.startsWith('zh-tw') || normalized.startsWith('zh-hk') || normalized.startsWith('zh-mo')) && isRegisteredLocale('zh-TW')) {
-    return 'zh-TW';
-  }
-
-  if (normalized.startsWith('zh') && isRegisteredLocale('zh-CN')) {
-    return 'zh-CN';
-  }
-
-  const languageCode = normalized.split(/[-_]/)[0];
-  const matched = listLocaleDefinitions().find(item => normalizeLocaleLookup(item.id).split(/[-_]/)[0] === languageCode);
-  return matched?.id ?? fallback;
+export function resolveSupportedLocale(locale: string | null | undefined, fallback: LocaleId = DEFAULT_LOCALE_ID): LocaleId {
+  return resolveSharedSupportedLocale(locale, listLocaleDefinitions(), fallback);
 }
 
 export function getLocaleLabel(locale: string | null | undefined): string {

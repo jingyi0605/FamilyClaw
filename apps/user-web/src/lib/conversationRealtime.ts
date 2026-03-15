@@ -1,5 +1,4 @@
-import { buildConversationRealtimeUrl, parseBootstrapRealtimeEvent, type BootstrapRealtimeEvent } from './realtime';
-import { newRealtimeRequestId } from './butlerBootstrapRealtime';
+import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealtimeEvent } from '@familyclaw/user-platform';
 
 type ConnectOptions = {
   householdId: string;
@@ -17,56 +16,12 @@ export type ConversationRealtimeClient = {
 };
 
 export function createConversationRealtimeClient(options: ConnectOptions): ConversationRealtimeClient {
-  const socket = new WebSocket(buildConversationRealtimeUrl(options.sessionId, options.householdId));
-
-  socket.addEventListener('open', () => {
-    options.onOpen?.();
+  return createBrowserRealtimeClient({
+    ...options,
+    channel: 'conversation',
+    baseUrl: import.meta.env.VITE_REALTIME_BASE_URL ?? import.meta.env.VITE_API_BASE_URL ?? '/api/v1',
+    origin: window.location.origin,
   });
-
-  socket.addEventListener('message', (message) => {
-    try {
-      const raw = JSON.parse(String(message.data));
-      const event = parseBootstrapRealtimeEvent(raw);
-      options.onEvent(event);
-    } catch {
-      options.onError?.();
-    }
-  });
-
-  socket.addEventListener('close', (event) => {
-    options.onClose?.(event);
-  });
-
-  socket.addEventListener('error', () => {
-    options.onError?.();
-  });
-
-  return {
-    close() {
-      socket.close();
-    },
-    sendPing(nonce) {
-      if (socket.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      socket.send(JSON.stringify({
-        type: 'ping',
-        session_id: options.sessionId,
-        payload: { nonce: nonce ?? null },
-      }));
-    },
-    sendUserMessage(requestId, text) {
-      if (socket.readyState !== WebSocket.OPEN) {
-        throw new Error('实时连接还没建立完成');
-      }
-      socket.send(JSON.stringify({
-        type: 'user.message',
-        session_id: options.sessionId,
-        request_id: requestId,
-        payload: { text },
-      }));
-    },
-  };
 }
 
 export { newRealtimeRequestId };

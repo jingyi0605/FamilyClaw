@@ -1,3 +1,8 @@
+import {
+  ApiError,
+  createCoreApiClient,
+  createRequestClient,
+} from '@familyclaw/user-core';
 import type {
   AgentDetail,
   AgentListResponse,
@@ -67,184 +72,17 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? 8000);
+const request = createRequestClient({
+  baseUrl: API_BASE_URL,
+  timeoutMs: API_TIMEOUT_MS,
+  credentials: 'include',
+});
 
-export class ApiError extends Error {
-  status: number;
-  payload: unknown;
-
-  constructor(status: number, message: string, payload: unknown) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.payload = payload;
-  }
-}
-
-function resolveErrorMessage(payload: unknown, fallbackMessage: string): string {
-  if (typeof payload === 'string' && payload.trim()) {
-    return payload;
-  }
-
-  if (payload && typeof payload === 'object' && 'detail' in payload) {
-    const detail = (payload as { detail?: unknown }).detail;
-    if (typeof detail === 'string' && detail.trim()) {
-      return detail;
-    }
-    if (detail && typeof detail === 'object' && 'detail' in detail) {
-      const nestedDetail = (detail as { detail?: unknown }).detail;
-      if (typeof nestedDetail === 'string' && nestedDetail.trim()) {
-        return nestedDetail;
-      }
-    }
-  }
-
-  return fallbackMessage;
-}
-
-async function readResponsePayload(response: Response, isJsonResponse: boolean): Promise<unknown> {
-  if (response.status === 204 || response.status === 205) {
-    return undefined;
-  }
-
-  const text = await response.text().catch(() => '');
-  if (!text.trim()) {
-    return undefined;
-  }
-
-  if (!isJsonResponse) {
-    return text;
-  }
-
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return text;
-  }
-}
-
-async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
-  const headers = new Headers(init?.headers ?? {});
-  if (init?.body !== undefined && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs ?? API_TIMEOUT_MS);
-
-  let response: Response;
-
-  try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      credentials: 'include',
-      headers,
-      signal: controller.signal,
-    });
-  } catch (error) {
-    window.clearTimeout(timeoutId);
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ApiError(0, '请求超时，请确认后端服务是否可用', null);
-    }
-    throw error;
-  }
-
-  window.clearTimeout(timeoutId);
-
-  const contentType = response.headers.get('content-type') ?? '';
-  const isJsonResponse = contentType.includes('application/json');
-
-  if (!response.ok) {
-    const payload = await readResponsePayload(response, isJsonResponse);
-    throw new ApiError(
-      response.status,
-      resolveErrorMessage(payload, `Request failed with status ${response.status}`),
-      payload,
-    );
-  }
-
-  if (!isJsonResponse) {
-    return undefined as T;
-  }
-
-  const payload = await readResponsePayload(response, isJsonResponse);
-  return payload as T;
-}
+const coreApi = createCoreApiClient(request);
+export { ApiError };
 
 export const api = {
-  login(payload: { username: string; password: string }) {
-    return request<LoginResponse>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  },
-  getAuthMe() {
-    return request<LoginResponse>('/auth/me');
-  },
-  logout() {
-    return request<void>('/auth/logout', {
-      method: 'POST',
-    });
-  },
-  completeBootstrapAccount(payload: {
-    household_id: string;
-    member_id: string;
-    username: string;
-    password: string;
-  }) {
-    return request<LoginResponse>('/auth/bootstrap/complete', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  },
-  listHouseholds() {
-    return request<PaginatedResponse<Household>>('/households?page_size=100');
-  },
-  createHousehold(payload: Pick<Household, 'name' | 'timezone' | 'locale'> & { city?: string | null; region_selection?: RegionSelection | null }) {
-    return request<Household>('/households', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  },
-  getHousehold(householdId: string) {
-    return request<Household>(`/households/${encodeURIComponent(householdId)}`);
-  },
-  updateHousehold(householdId: string, payload: Partial<Pick<Household, 'name' | 'city' | 'timezone' | 'locale'> & { region_selection: RegionSelection | null }>) {
-    return request<Household>(`/households/${encodeURIComponent(householdId)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    });
-  },
-  listRegionCatalog(params: {
-    provider_code: string;
-    country_code: string;
-    admin_level?: 'province' | 'city' | 'district';
-    parent_region_code?: string;
-  }) {
-    const search = new URLSearchParams();
-    search.set('provider_code', params.provider_code);
-    search.set('country_code', params.country_code);
-    if (params.admin_level) search.set('admin_level', params.admin_level);
-    if (params.parent_region_code) search.set('parent_region_code', params.parent_region_code);
-    return request<RegionNode[]>(`/regions/catalog?${search.toString()}`);
-  },
-  searchRegions(params: {
-    provider_code: string;
-    country_code: string;
-    keyword: string;
-    admin_level?: 'province' | 'city' | 'district';
-    parent_region_code?: string;
-  }) {
-    const search = new URLSearchParams();
-    search.set('provider_code', params.provider_code);
-    search.set('country_code', params.country_code);
-    search.set('keyword', params.keyword);
-    if (params.admin_level) search.set('admin_level', params.admin_level);
-    if (params.parent_region_code) search.set('parent_region_code', params.parent_region_code);
-    return request<RegionNode[]>(`/regions/search?${search.toString()}`);
-  },
-  getHouseholdSetupStatus(householdId: string) {
-    return request<HouseholdSetupStatus>(`/households/${encodeURIComponent(householdId)}/setup-status`);
-  },
+  ...coreApi,
   listAiProviderAdapters() {
     return request<AiProviderAdapter[]>('/ai-config/provider-adapters');
   },

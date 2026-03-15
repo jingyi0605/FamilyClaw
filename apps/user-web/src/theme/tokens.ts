@@ -1,3 +1,5 @@
+import type { ThemeId as SharedThemeId } from '@familyclaw/user-core';
+
 /* ============================================================
  * FamilyClaw 用户前端 - 主题设计 Token
  * 
@@ -5,15 +7,7 @@
  * 主题只影响颜色/阴影/圆角/字号，不影响信息结构
  * ============================================================ */
 
-export type ThemeId =
-  | 'chun-he-jing-ming'   // 春和景明 - 默认浅色
-  | 'yue-lang-xing-xi'    // 月朗星稀 - 深色
-  | 'ming-cha-qiu-hao'    // 明察秋毫 - 长辈友好
-  | 'wan-zi-qian-hong'    // 万紫千红 - 鲜艳活泼
-  | 'feng-chi-dian-che'   // 风驰电掣 - 炫酷
-  | 'xing-he-wan-li'      // 星河万里 - 科幻
-  | 'qing-shan-lv-shui'   // 青山绿水 - 自然
-  | 'jin-xiu-qian-cheng'; // 锦绣前程 - 华贵
+export type ThemeId = SharedThemeId;
 
 export interface ThemeTokens {
   id: ThemeId;

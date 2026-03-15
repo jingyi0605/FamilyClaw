@@ -2,6 +2,7 @@
  * ThemeProvider - 管理主题切换和 CSS 变量注入
  * ============================================================ */
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { DEFAULT_THEME_ID, THEME_STORAGE_KEY, resolveThemeId } from '@familyclaw/user-core';
 import { themes, type ThemeId, type ThemeTokens } from './tokens';
 
 interface ThemeContextValue {
@@ -10,16 +11,14 @@ interface ThemeContextValue {
   setTheme: (id: ThemeId) => void;
 }
 
-const STORAGE_KEY = 'familyclaw-theme';
-
 function getStoredTheme(): ThemeId {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored && stored in themes) return stored as ThemeId;
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    return resolveThemeId(stored, DEFAULT_THEME_ID);
   } catch {
     /* 忽略存储访问失败 */
   }
-  return 'chun-he-jing-ming';
+  return DEFAULT_THEME_ID;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -105,7 +104,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     applyCssVariables(theme);
-    try { localStorage.setItem(STORAGE_KEY, themeId); } catch { /* noop */ }
+    try { localStorage.setItem(THEME_STORAGE_KEY, themeId); } catch { /* noop */ }
   }, [theme, themeId]);
 
   const setTheme = (id: ThemeId) => setThemeId(id);

@@ -1,0 +1,15 @@
+export const userAppTokens = {
+  colorBg: '#f5f6f8',
+  colorSurface: '#ffffff',
+  colorBorder: '#d6dbe4',
+  colorText: '#152033',
+  colorMuted: '#5c6b80',
+  colorPrimary: '#1d6fd6',
+  colorSuccess: '#0f9d6c',
+  colorWarning: '#c47900',
+  spacingXs: '12px',
+  spacingSm: '16px',
+  spacingMd: '24px',
+  radiusMd: '16px',
+  radiusLg: '24px',
+} as const;

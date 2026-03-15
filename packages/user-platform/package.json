@@ -1,0 +1,19 @@
+{
+  "name": "@familyclaw/user-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@familyclaw/user-core": "file:../user-core",
+    "@tarojs/taro": "4.1.11"
+  }
+}
