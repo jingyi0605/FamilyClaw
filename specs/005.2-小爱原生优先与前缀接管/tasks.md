@@ -34,8 +34,8 @@
 
 ## 阶段 1：先把 native-first 的入口边界立住
 
-- [ ] 1.1 定 gateway 入口模式和接管前缀配置
-  - 状态：TODO
+- [x] 1.1 定 gateway 入口模式和接管前缀配置
+  - 状态：DONE
   - 这一步到底做什么：把 gateway 的入口模式、前缀配置、前缀剥离和 takeover 打断开关一次写清楚并落到正式配置上。
   - 做完你能看到什么：gateway 不再只有“默认接管”一种行为，而是有明确模式和清晰配置，不靠散落硬编码。
   - 先依赖什么：无
@@ -53,11 +53,15 @@
   - 怎么验证：
     - 配置解析单元测试
     - 非法配置测试
+  - 本轮回写：
+    - 已在 `apps/open-xiaoai-gateway/open_xiaoai_gateway/settings.py` 新增 `invocation_mode / takeover_prefixes / strip_takeover_prefix / pause_on_takeover` 正式配置
+    - 已新增 `apps/open-xiaoai-gateway/open_xiaoai_gateway/invocation_policy.py`，把 `always_familyclaw / native_first` 和前缀命中判定从翻译逻辑里拆出来
+    - 已补 `apps/open-xiaoai-gateway/tests/test_settings.py`，覆盖 CSV 前缀解析、去重和 `native_first` 空前缀非法配置
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 5、需求 6
   - 对应设计：`design.md` §1.4、§2.2、§3.2、§5.2
 
-- [ ] 1.2 在 gateway 落正式接管判定，不让未命中前缀进主链
-  - 状态：TODO
+- [x] 1.2 在 gateway 落正式接管判定，不让未命中前缀进主链
+  - 状态：DONE
   - 这一步到底做什么：把“是否接管这次语音”的第一道判定落在 gateway，未命中前缀时保持 FamilyClaw 侧静默。
   - 做完你能看到什么：native-first 模式下，普通对话不会再跑进 FamilyClaw 正式主链。
   - 先依赖什么：1.1
@@ -77,11 +81,15 @@
   - 怎么验证：
     - gateway 单元测试
     - 事件流断言测试
+  - 本轮回写：
+    - 已改造 `apps/open-xiaoai-gateway/open_xiaoai_gateway/translator.py`，`native_first` 模式下不再在 `kws` 或普通最终文本阶段默认发 `session.start / audio.commit`
+    - 已在 `TerminalBridgeContext` 补 `invocation_mode / last_invocation_decision / last_passthrough_reason`，未命中前缀时明确记录为 passthrough
+    - 已补 `apps/open-xiaoai-gateway/tests/test_translator.py`，覆盖 `native_first` 未命中前缀时不进入正式语音会话
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 4
   - 对应设计：`design.md` §3.1、§3.3.2、§4.4.1
 
-- [ ] 1.3 落命中前缀后的 takeover 最小事件流
-  - 状态：TODO
+- [x] 1.3 落命中前缀后的 takeover 最小事件流
+  - 状态：DONE
   - 这一步到底做什么：命中前缀后，让 gateway 先做最小 takeover，再把清洗后的文本送进现有正式主链。
   - 做完你能看到什么：gateway 已经能像 `mi-gpt` 一样只在命中前缀时接管，但接管后继续走我们现有正式链路。
   - 先依赖什么：1.2
@@ -101,13 +109,18 @@
   - 怎么验证：
     - gateway 单元测试
     - takeover 事件流测试
+  - 本轮回写：
+    - 已在 `apps/open-xiaoai-gateway/open_xiaoai_gateway/translator.py` 实现命中前缀后的最小 takeover 事件流，按配置发 `session.start + audio.commit(debug_transcript=...)`
+    - 已支持前缀剥离和保留两种行为，并在 `pause_on_takeover=true` 时先生成本地 `mphelper pause`
+    - 已改造 `apps/open-xiaoai-gateway/open_xiaoai_gateway/bridge.py`，在把 takeover 事件送进 `api-server` 前先执行本地 pause，失败只记日志，不把业务判定塞进 gateway
+    - 已补 `apps/open-xiaoai-gateway/tests/test_translator.py`，覆盖命中前缀接管、前缀剥离和保留前缀两种路径
   - 对应需求：`requirements.md` 需求 2、需求 3、需求 5
   - 对应设计：`design.md` §1.4.3、§3.3.3、§5.2
 
 ### 阶段检查
 
-- [ ] 1.4 阶段检查：gateway 还是不是干净入口层
-  - 状态：TODO
+- [x] 1.4 阶段检查：gateway 还是不是干净入口层
+  - 状态：DONE
   - 这一步到底做什么：检查这次改动有没有把 gateway 污染成业务决策层。
   - 做完你能看到什么：gateway 只多了一道接管判定，没有顺手长出快路径、慢路径、权限和身份逻辑。
   - 先依赖什么：1.1、1.2、1.3
@@ -122,6 +135,10 @@
   - 怎么验证：
     - 人工走查
     - grep 检查 gateway 中没有新增快路径/慢路径/权限调用
+  - 本轮回写：
+    - 已人工走查本轮 diff，gateway 新增内容只剩配置解析、前缀命中判定和 takeover 前本地 pause
+    - 本轮没有把快路径、慢路径、权限、身份判断塞进 `translator.py / bridge.py`
+    - `api-server` 仍然只接收 `session.start / audio.commit` 后的正式主链事件
   - 对应需求：`requirements.md` 需求 2、需求 6
   - 对应设计：`design.md` §1.4.2、§4.4.3
 
@@ -129,8 +146,8 @@
 
 ## 阶段 2：让 api-server 无痛复用现有主链
 
-- [ ] 2.1 校正 `voice_pipeline` 对 takeover 文本的接入假设
-  - 状态：TODO
+- [x] 2.1 校正 `voice_pipeline` 对 takeover 文本的接入假设
+  - 状态：DONE
   - 这一步到底做什么：确认 `audio.commit(debug_transcript=...)` 这条现有入口足够承接 takeover 文本，必要时补齐最小兼容处理。
   - 做完你能看到什么：命中前缀后的文本进入 `voice_pipeline` 时，不需要重造协议。
   - 先依赖什么：1.3
@@ -149,11 +166,15 @@
   - 怎么验证：
     - `api-server` 集成测试
     - takeover 文本回放测试
+  - 本轮回写：
+    - 已确认现有 `audio.commit(debug_transcript=...) -> voice_pipeline` 接缝足够承接 takeover 文本，不需要新增协议
+    - 已在 `apps/api-server/tests/test_voice_pipeline.py` 补 takeover 文本回归测试，分别验证快路径和慢路径仍然复用现有主链
+    - `api-server` 本轮没有新增前缀判定逻辑，继续保持“只处理已接管文本”的边界
   - 对应需求：`requirements.md` 需求 3、需求 6
   - 对应设计：`design.md` §3.4、§4.4.2、§6.2
 
-- [ ] 2.2 补 native-first 双模式回归测试
-  - 状态：TODO
+- [x] 2.2 补 native-first 双模式回归测试
+  - 状态：DONE
   - 这一步到底做什么：给“默认接管”和“native-first”两种模式都补回归测试，防止以后只保一边。
   - 做完你能看到什么：模式切换不再靠口头保证，而是有自动化约束。
   - 先依赖什么：2.1
@@ -172,13 +193,17 @@
     3. native-first 模式下命中前缀能进入正式主链
   - 怎么验证：
     - Python 测试跑通
+  - 本轮回写：
+    - 已补 gateway 配置测试、默认接管模式测试、`native_first` 未命中前缀测试、命中前缀 takeover 测试
+    - 已补 `api-server` takeover 快路径和慢路径回归测试，确认双模式下正式主链都可用
+    - 已实际跑通 `python -m unittest tests.test_settings tests.test_translator` 和 `python -m unittest tests.test_voice_pipeline`
   - 对应需求：`requirements.md` 需求 4、需求 6
   - 对应设计：`design.md` §2.2、§3.3、§6
 
 ### 阶段检查
 
-- [ ] 2.3 阶段检查：接管后是不是还在复用现有主链
-  - 状态：TODO
+- [x] 2.3 阶段检查：接管后是不是还在复用现有主链
+  - 状态：DONE
   - 这一步到底做什么：只检查命中前缀后的处理是不是仍然走现有 `voice_pipeline / fast_action / conversation`。
   - 做完你能看到什么：前缀模式不是一条新主链，只是新入口。
   - 先依赖什么：2.1、2.2
@@ -193,6 +218,10 @@
   - 怎么验证：
     - 集成测试
     - 人工走查
+  - 本轮回写：
+    - 已用 takeover 专项测试确认 `audio.commit(debug_transcript=...)` 进入后仍由 `voice_pipeline -> router -> fast_action / conversation` 处理
+    - 本轮没有新增“前缀专用快路径”或“前缀专用慢路径”
+    - gateway 只决定“要不要接管”，接管后的业务处理仍然留在 `api-server`
   - 对应需求：`requirements.md` 需求 3
   - 对应设计：`design.md` §3.4、§4.4.2
 

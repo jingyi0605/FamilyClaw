@@ -28,6 +28,7 @@ class VoicePipelineTests(unittest.TestCase):
         voice_terminal_registry.upsert_online(
             terminal_id="terminal-1",
             household_id="household-1",
+            fingerprint="open_xiaoai:LX06:SN001",
             room_id="room-1",
             terminal_code="living-room-speaker",
             name="客厅小爱",
@@ -212,6 +213,111 @@ class VoicePipelineTests(unittest.TestCase):
             commands = asyncio.run(voice_pipeline_service.handle_inbound_event(_FakeDbSession(), event))
 
         self.assertEqual(["play.start"], [item.type for item in commands])
+        session = voice_session_registry.get("session-1")
+        self.assertEqual("conversation", session.lane)
+        self.assertEqual("conversation-1", session.conversation_session_id)
+
+    def test_takeover_commit_keeps_existing_fast_action_pipeline(self) -> None:
+        event = VoiceGatewayEvent.model_validate(
+            {
+                "type": "audio.commit",
+                "terminal_id": "terminal-1",
+                "session_id": "session-1",
+                "seq": 2,
+                "payload": {
+                    "duration_ms": None,
+                    "reason": "takeover_prefix_matched",
+                    "debug_transcript": "打开客厅灯",
+                },
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+
+        with patch(
+            "app.modules.voice.pipeline.voice_router.route",
+            new=AsyncMock(
+                return_value=VoiceRoutingResult(
+                    decision=VoiceRouteDecision(
+                        route_type="device_action",
+                        route_target="device-1:turn_on",
+                        reason="接管后继续命中快路径",
+                        response_text="好的，已处理设备：客厅灯。",
+                    ),
+                    identity=VoiceIdentityResolution(
+                        status="resolved",
+                        primary_member_id="member-1",
+                        primary_member_name="妈妈",
+                        primary_member_role="adult",
+                        confidence=0.82,
+                        inferred_room_id="room-1",
+                        inferred_room_name="客厅",
+                        reason="终端房间和活跃成员一致。",
+                    ),
+                )
+            ),
+        ), patch(
+            "app.modules.voice.pipeline.voice_fast_action_service.execute",
+            new=AsyncMock(
+                return_value=VoiceRouteDecision(
+                    route_type="device_action",
+                    route_target="device-1:turn_on",
+                    reason="执行完成",
+                    response_text="好的，已处理设备：客厅灯。",
+                )
+            ),
+        ):
+            commands = asyncio.run(voice_pipeline_service.handle_inbound_event(_FakeDbSession(), event))
+
+        self.assertEqual(["play.start"], [item.type for item in commands])
+        self.assertEqual("好的，已处理设备：客厅灯。", commands[0].payload.text)
+        session = voice_session_registry.get("session-1")
+        self.assertEqual("fast_action", session.lane)
+        self.assertEqual("device_action", session.route_type)
+
+    def test_takeover_commit_keeps_existing_conversation_pipeline(self) -> None:
+        event = VoiceGatewayEvent.model_validate(
+            {
+                "type": "audio.commit",
+                "terminal_id": "terminal-1",
+                "session_id": "session-1",
+                "seq": 2,
+                "payload": {
+                    "duration_ms": None,
+                    "reason": "takeover_prefix_matched",
+                    "debug_transcript": "提醒我明天买牛奶",
+                },
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+
+        with patch(
+            "app.modules.voice.pipeline.voice_router.route",
+            new=AsyncMock(
+                return_value=VoiceRoutingResult(
+                    decision=VoiceRouteDecision(
+                        route_type="conversation",
+                        reason="接管后继续回到慢路径",
+                        handoff_to_conversation=True,
+                    ),
+                    identity=VoiceIdentityResolution(
+                        status="anonymous",
+                        reason="没有可信身份候选。",
+                    ),
+                )
+            ),
+        ), patch(
+            "app.modules.voice.pipeline.voice_conversation_bridge.bridge",
+            new=AsyncMock(
+                return_value=VoiceConversationBridgeResult(
+                    conversation_session_id="conversation-1",
+                    response_text="明白了，我已经把这件事交给完整对话链路处理。",
+                )
+            ),
+        ):
+            commands = asyncio.run(voice_pipeline_service.handle_inbound_event(_FakeDbSession(), event))
+
+        self.assertEqual(["play.start"], [item.type for item in commands])
+        self.assertEqual("明白了，我已经把这件事交给完整对话链路处理。", commands[0].payload.text)
         session = voice_session_registry.get("session-1")
         self.assertEqual("conversation", session.lane)
         self.assertEqual("conversation-1", session.conversation_session_id)

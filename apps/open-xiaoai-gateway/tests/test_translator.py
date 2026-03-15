@@ -1,5 +1,7 @@
 import json
 import unittest
+from contextlib import ExitStack
+from unittest.mock import patch
 
 from open_xiaoai_gateway.protocol import GatewayCommand
 from open_xiaoai_gateway.translator import (
@@ -15,6 +17,7 @@ from open_xiaoai_gateway.translator import (
     translate_audio_chunk,
     translate_command_to_terminal,
     translate_text_message,
+    translate_text_message_result,
 )
 
 
@@ -149,6 +152,79 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual("audio.commit", events[0].type)
         self.assertEqual("打开客厅灯", events[0].payload["debug_transcript"])
         self.assertIsNone(context.active_session_id)
+
+    def test_native_first_without_matched_prefix_does_not_enter_formal_voice_session(self) -> None:
+        with self._patch_invocation_settings(
+            invocation_mode="native_first",
+            takeover_prefixes=["帮我"],
+            strip_takeover_prefix=True,
+            pause_on_takeover=True,
+        ):
+            context = self._build_claimed_context()
+
+            kws_result = translate_text_message_result(
+                json.dumps(
+                    {
+                        "Event": {
+                            "id": "event-kws-1",
+                            "event": "kws",
+                            "data": {"Keyword": "小爱同学"},
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                context,
+            )
+            final_result = translate_text_message_result(
+                self._build_recognize_result_frame(text="打开客厅灯"),
+                context,
+            )
+
+        self.assertEqual([], kws_result.events)
+        self.assertEqual([], final_result.events)
+        self.assertEqual([], final_result.terminal_messages)
+        self.assertIsNone(context.active_session_id)
+        self.assertEqual("native_passthrough", context.last_invocation_decision)
+        self.assertEqual("takeover_prefix_not_matched", context.last_passthrough_reason)
+
+    def test_native_first_with_matched_prefix_emits_takeover_events(self) -> None:
+        with self._patch_invocation_settings(
+            invocation_mode="native_first",
+            takeover_prefixes=["帮我"],
+            strip_takeover_prefix=True,
+            pause_on_takeover=True,
+        ):
+            context = self._build_claimed_context()
+            result = translate_text_message_result(
+                self._build_recognize_result_frame(text="帮我 打开客厅灯"),
+                context,
+            )
+
+        self.assertEqual(["session.start", "audio.commit"], [item.type for item in result.events])
+        self.assertEqual("打开客厅灯", result.events[1].payload["debug_transcript"])
+        self.assertEqual(1, len(result.terminal_messages))
+        self.assertIsInstance(result.terminal_messages[0], TerminalRpcRequest)
+        assert isinstance(result.terminal_messages[0], TerminalRpcRequest)
+        self.assertEqual("run_shell", result.terminal_messages[0].command)
+        self.assertEqual("mphelper pause", result.terminal_messages[0].payload)
+        self.assertIsNone(context.active_session_id)
+
+    def test_native_first_can_keep_prefix_when_strip_disabled(self) -> None:
+        with self._patch_invocation_settings(
+            invocation_mode="native_first",
+            takeover_prefixes=["请"],
+            strip_takeover_prefix=False,
+            pause_on_takeover=False,
+        ):
+            context = self._build_claimed_context()
+            result = translate_text_message_result(
+                self._build_recognize_result_frame(text="请打开客厅灯"),
+                context,
+            )
+
+        self.assertEqual(["session.start", "audio.commit"], [item.type for item in result.events])
+        self.assertEqual("请打开客厅灯", result.events[1].payload["debug_transcript"])
+        self.assertEqual([], result.terminal_messages)
 
     def test_binary_record_stream_translates_to_audio_append(self) -> None:
         context = TerminalBridgeContext()
@@ -323,6 +399,63 @@ class TranslatorTests(unittest.TestCase):
 
         self.assertEqual("Response", frame.variant)
         self.assertEqual("req-1", frame.Response.id)
+
+    def _build_claimed_context(self) -> TerminalBridgeContext:
+        context = TerminalBridgeContext()
+        context.apply_discovery(
+            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+        )
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="客厅小爱",
+            )
+        )
+        return context
+
+    def _build_recognize_result_frame(self, *, text: str) -> str:
+        return json.dumps(
+            {
+                "Event": {
+                    "id": "event-instruction-1",
+                    "event": "instruction",
+                    "data": {
+                        "NewLine": json.dumps(
+                            {
+                                "header": {
+                                    "namespace": "SpeechRecognizer",
+                                    "name": "RecognizeResult",
+                                },
+                                "payload": {
+                                    "is_final": True,
+                                    "is_vad_begin": False,
+                                    "results": [{"text": text}],
+                                },
+                            },
+                            ensure_ascii=False,
+                        )
+                    },
+                }
+            },
+            ensure_ascii=False,
+        )
+
+    def _patch_invocation_settings(
+        self,
+        *,
+        invocation_mode: str,
+        takeover_prefixes: list[str],
+        strip_takeover_prefix: bool,
+        pause_on_takeover: bool,
+    ):
+        stack = ExitStack()
+        stack.enter_context(patch("open_xiaoai_gateway.translator.settings.invocation_mode", invocation_mode))
+        stack.enter_context(patch("open_xiaoai_gateway.translator.settings.takeover_prefixes", list(takeover_prefixes)))
+        stack.enter_context(patch("open_xiaoai_gateway.translator.settings.strip_takeover_prefix", strip_takeover_prefix))
+        stack.enter_context(patch("open_xiaoai_gateway.translator.settings.pause_on_takeover", pause_on_takeover))
+        return stack
 
 
 if __name__ == "__main__":

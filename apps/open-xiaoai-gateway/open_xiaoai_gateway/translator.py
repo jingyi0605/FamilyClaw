@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
+from open_xiaoai_gateway.invocation_policy import GatewayInvocationPolicy
 from open_xiaoai_gateway.protocol import (
     GatewayCommand,
     GatewayEvent,
@@ -62,6 +63,10 @@ class TerminalBridgeContext:
     active_playback_id: str | None = None
     active_playback_session_id: str | None = None
     last_playing_state: str = "idle"
+    invocation_mode: str = field(default_factory=lambda: settings.invocation_mode)
+    takeover_prefixes: tuple[str, ...] = field(default_factory=lambda: tuple(settings.takeover_prefixes))
+    last_invocation_decision: str = "always_familyclaw"
+    last_passthrough_reason: str | None = None
     seq_counter: int = 0
 
     def next_seq(self) -> int:
@@ -120,6 +125,12 @@ class TerminalBinaryStream:
 
 
 TerminalOutboundMessage = TerminalRpcRequest | TerminalBinaryStream
+
+
+@dataclass(slots=True)
+class TextTranslationResult:
+    events: list[GatewayEvent]
+    terminal_messages: list[TerminalOutboundMessage]
 
 
 def sanitize_capabilities(capabilities: list[str] | None = None) -> list[str]:
@@ -286,13 +297,17 @@ def parse_open_xiaoai_stream(raw_message: bytes) -> OpenXiaoAIStream:
     return parse_stream_frame(raw_message)
 
 
-def translate_text_message(raw_message: str, context: TerminalBridgeContext) -> list[GatewayEvent]:
+def translate_text_message_result(raw_message: str, context: TerminalBridgeContext) -> TextTranslationResult:
     if not context.is_claimed():
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
     frame = parse_open_xiaoai_text_message(raw_message)
     if frame.Event is None:
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
     return _translate_open_xiaoai_event(frame.Event, context)
+
+
+def translate_text_message(raw_message: str, context: TerminalBridgeContext) -> list[GatewayEvent]:
+    return translate_text_message_result(raw_message, context).events
 
 
 def translate_audio_chunk(raw_chunk: bytes, context: TerminalBridgeContext) -> list[GatewayEvent]:
@@ -360,6 +375,10 @@ def translate_command_to_terminal(command: GatewayCommand, context: TerminalBrid
     return []
 
 
+def build_takeover_pause_message() -> TerminalRpcRequest:
+    return TerminalRpcRequest(command="run_shell", payload="mphelper pause")
+
+
 def build_rpc_request_message(*, request_id: str, command: str, payload: Any | None = None) -> str:
     return build_request_frame(request_id=request_id, command=command, payload=payload)
 
@@ -368,17 +387,17 @@ def build_stream_message(*, stream_id: str, tag: str, raw_bytes: bytes, data: An
     return build_stream_frame(stream_id=stream_id, tag=tag, raw_bytes=raw_bytes, data=data)
 
 
-def _translate_open_xiaoai_event(event: OpenXiaoAIEvent, context: TerminalBridgeContext) -> list[GatewayEvent]:
+def _translate_open_xiaoai_event(event: OpenXiaoAIEvent, context: TerminalBridgeContext) -> TextTranslationResult:
     if event.event == "kws":
         return _translate_kws_event(event.data, context)
     if event.event == "instruction":
         return _translate_instruction_event(event.data, context)
     if event.event == "playing":
         return _translate_playing_event(event.data, context)
-    return []
+    return TextTranslationResult(events=[], terminal_messages=[])
 
 
-def _translate_kws_event(data: Any, context: TerminalBridgeContext) -> list[GatewayEvent]:
+def _translate_kws_event(data: Any, context: TerminalBridgeContext) -> TextTranslationResult:
     keyword: str | None = None
     if isinstance(data, dict):
         keyword = _coerce_text(data.get("Keyword"))
@@ -386,39 +405,45 @@ def _translate_kws_event(data: Any, context: TerminalBridgeContext) -> list[Gate
         keyword = data
 
     if not keyword or not context.terminal_id:
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
 
     events: list[GatewayEvent] = []
     interrupted = build_playback_interrupted_event(context, reason=f"wake_word:{keyword}")
     if interrupted is not None:
         events.append(interrupted)
 
-    if not context.active_session_id:
+    if context.invocation_mode == "always_familyclaw" and not context.active_session_id:
         session_id = context.start_session()
         events.append(_build_session_start_event(context, session_id=session_id))
-    return events
+        context.last_invocation_decision = "always_familyclaw"
+        context.last_passthrough_reason = None
+        return TextTranslationResult(events=events, terminal_messages=[])
+
+    context.last_invocation_decision = "await_takeover_prefix"
+    context.last_passthrough_reason = None
+    return TextTranslationResult(events=events, terminal_messages=[])
 
 
-def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> list[GatewayEvent]:
+def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> TextTranslationResult:
     if not isinstance(data, dict):
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
     line = _coerce_text(data.get("NewLine"))
     if not line or not context.terminal_id:
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
 
     try:
         message = json.loads(line)
     except json.JSONDecodeError:
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
     if not isinstance(message, dict):
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
 
     header = message.get("header") or {}
     payload = message.get("payload") or {}
     if not isinstance(header, dict) or not isinstance(payload, dict):
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
     if header.get("namespace") != "SpeechRecognizer" or header.get("name") != "RecognizeResult":
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
 
     is_vad_begin = bool(payload.get("is_vad_begin"))
     is_final = bool(payload.get("is_final"))
@@ -430,34 +455,48 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> l
             text = _coerce_text(first.get("text")) or ""
 
     events: list[GatewayEvent] = []
-    if is_vad_begin and not context.active_session_id:
+    if is_vad_begin and context.invocation_mode == "always_familyclaw" and not context.active_session_id:
         session_id = context.start_session()
         events.append(_build_session_start_event(context, session_id=session_id))
 
     if not is_final:
-        return events
+        return TextTranslationResult(events=events, terminal_messages=[])
 
     if text.strip():
+        if context.invocation_mode == "always_familyclaw":
+            if not context.active_session_id:
+                session_id = context.start_session()
+                events.append(_build_session_start_event(context, session_id=session_id))
+            session_id = context.active_session_id
+            context.clear_session()
+            events.append(_build_audio_commit_event(context, session_id=session_id, transcript_text=text.strip(), reason="speech_recognizer_final"))
+            context.last_invocation_decision = "always_familyclaw"
+            context.last_passthrough_reason = None
+            return TextTranslationResult(events=events, terminal_messages=[])
+
+        decision = GatewayInvocationPolicy.from_settings(settings).decide(text)
+        context.last_invocation_decision = decision.decision_type
+        context.last_passthrough_reason = decision.reason if decision.decision_type != "familyclaw_takeover" else None
+        if decision.decision_type != "familyclaw_takeover" or not decision.resolved_text:
+            return TextTranslationResult(events=events, terminal_messages=[])
+
+        terminal_messages: list[TerminalOutboundMessage] = []
+        if decision.should_pause:
+            terminal_messages.append(build_takeover_pause_message())
         if not context.active_session_id:
             session_id = context.start_session()
             events.append(_build_session_start_event(context, session_id=session_id))
         session_id = context.active_session_id
         context.clear_session()
         events.append(
-            GatewayEvent(
-                type="audio.commit",
-                terminal_id=context.terminal_id,
+            _build_audio_commit_event(
+                context,
                 session_id=session_id,
-                seq=context.next_seq(),
-                payload={
-                    "duration_ms": None,
-                    "reason": "speech_recognizer_final",
-                    "debug_transcript": text.strip(),
-                },
-                ts=utc_now_iso(),
+                transcript_text=decision.resolved_text,
+                reason=decision.reason,
             )
         )
-        return events
+        return TextTranslationResult(events=events, terminal_messages=terminal_messages)
 
     if context.active_session_id:
         session_id = context.active_session_id
@@ -472,13 +511,15 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> l
                 ts=utc_now_iso(),
             )
         )
-    return events
+    context.last_invocation_decision = "native_passthrough" if context.invocation_mode == "native_first" else context.last_invocation_decision
+    context.last_passthrough_reason = "speech_recognizer_empty"
+    return TextTranslationResult(events=events, terminal_messages=[])
 
 
-def _translate_playing_event(data: Any, context: TerminalBridgeContext) -> list[GatewayEvent]:
+def _translate_playing_event(data: Any, context: TerminalBridgeContext) -> TextTranslationResult:
     state = _normalize_playing_state(data)
     if state is None:
-        return []
+        return TextTranslationResult(events=[], terminal_messages=[])
 
     events: list[GatewayEvent] = []
     if (
@@ -505,7 +546,7 @@ def _translate_playing_event(data: Any, context: TerminalBridgeContext) -> list[
         )
         context.clear_playback()
     context.last_playing_state = state
-    return events
+    return TextTranslationResult(events=events, terminal_messages=[])
 
 
 def _build_session_start_event(context: TerminalBridgeContext, *, session_id: str) -> GatewayEvent:
@@ -522,6 +563,27 @@ def _build_session_start_event(context: TerminalBridgeContext, *, session_id: st
             "codec": "pcm_s16le",
             "channels": settings.recording_channels,
             "trace_id": None,
+        },
+        ts=utc_now_iso(),
+    )
+
+
+def _build_audio_commit_event(
+    context: TerminalBridgeContext,
+    *,
+    session_id: str | None,
+    transcript_text: str,
+    reason: str,
+) -> GatewayEvent:
+    return GatewayEvent(
+        type="audio.commit",
+        terminal_id=context.terminal_id or "",
+        session_id=session_id,
+        seq=context.next_seq(),
+        payload={
+            "duration_ms": None,
+            "reason": reason,
+            "debug_transcript": transcript_text,
         },
         ts=utc_now_iso(),
     )

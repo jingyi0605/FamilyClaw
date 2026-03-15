@@ -33,7 +33,7 @@ from open_xiaoai_gateway.translator import (
     parse_open_xiaoai_text_message,
     translate_audio_chunk,
     translate_command_to_terminal,
-    translate_text_message,
+    translate_text_message_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -193,8 +193,22 @@ class OpenXiaoAIGateway:
                 if not state.is_active():
                     continue
 
-                events = translate_text_message(message, context)
-                for event in events:
+                translation = translate_text_message_result(message, context)
+                if translation.terminal_messages:
+                    try:
+                        await self._dispatch_local_terminal_messages(
+                            terminal_rpc=terminal_rpc,
+                            outgoing_messages=translation.terminal_messages,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "native-first 本地 takeover pause 失败 fingerprint=%s reason=%s",
+                            context.fingerprint,
+                            context.last_passthrough_reason or context.last_invocation_decision,
+                            exc_info=True,
+                        )
+
+                for event in translation.events:
                     await state.api_websocket.send(event.model_dump_json())
         finally:
             if claim_poll_task is not None:
@@ -403,6 +417,20 @@ class OpenXiaoAIGateway:
             return
 
         _ = last_response
+
+    async def _dispatch_local_terminal_messages(
+        self,
+        *,
+        terminal_rpc: TerminalRpcClient,
+        outgoing_messages: list[TerminalRpcRequest | TerminalBinaryStream],
+    ) -> None:
+        for outgoing in outgoing_messages:
+            if isinstance(outgoing, TerminalRpcRequest):
+                response = await terminal_rpc.call(command=outgoing.command, payload=outgoing.payload)
+                if not self._is_successful_response(response):
+                    raise RuntimeError(self._describe_response(response))
+                continue
+            await terminal_rpc.send_stream(tag=outgoing.tag, raw_bytes=outgoing.raw_bytes, data=outgoing.data)
 
     async def _report_offline_discovery(self, api_client: GatewayApiClient, state: GatewayRuntimeState) -> None:
         if not state.context.fingerprint:
