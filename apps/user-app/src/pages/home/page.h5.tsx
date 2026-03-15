@@ -125,18 +125,24 @@ function WeatherCard({ data }: { data: DashboardData }) {
       <div className="weather-card__forecast">
         <div className="weather-forecast-item">
           <span className="weather-forecast-day">在家成员</span>
-          <span className="weather-forecast-icon"><Users size={20} /></span>
-          <span className="weather-forecast-temp">{membersAtHome}</span>
+          <div className="weather-forecast-value">
+            <span className="weather-forecast-icon"><Users size={18} /></span>
+            <span className="weather-forecast-temp">{membersAtHome}</span>
+          </div>
         </div>
         <div className="weather-forecast-item">
           <span className="weather-forecast-day">在线设备</span>
-          <span className="weather-forecast-icon"><Smartphone size={20} /></span>
-          <span className="weather-forecast-temp">{onlineDevices}</span>
+          <div className="weather-forecast-value">
+            <span className="weather-forecast-icon"><Smartphone size={18} /></span>
+            <span className="weather-forecast-temp">{onlineDevices}</span>
+          </div>
         </div>
         <div className="weather-forecast-item">
           <span className="weather-forecast-day">待处理提醒</span>
-          <span className="weather-forecast-icon"><ClipboardList size={20} /></span>
-          <span className="weather-forecast-temp">{reminderCount}</span>
+          <div className="weather-forecast-value">
+            <span className="weather-forecast-icon"><ClipboardList size={18} /></span>
+            <span className="weather-forecast-temp">{reminderCount}</span>
+          </div>
         </div>
       </div>
     </Card>

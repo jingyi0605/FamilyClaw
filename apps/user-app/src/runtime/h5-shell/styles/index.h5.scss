@@ -3835,30 +3835,47 @@ input, select, textarea {
 }
 
 .weather-card__forecast {
-  display: flex;
-  gap: var(--spacing-lg);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--spacing-sm);
 }
 
 .weather-forecast-item {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 .weather-forecast-day {
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);
+  line-height: 1.2;
+}
+
+.weather-forecast-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .weather-forecast-icon {
-  font-size: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
 }
 
 .weather-forecast-temp {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-size: var(--font-size-lg);
+  font-weight: 700;
   color: var(--text-primary);
+  line-height: 1;
 }
 
 /* ============================================================
@@ -4394,9 +4411,11 @@ body::before {
     grid-template-columns: 1fr;
   }
   
-  .weather-card__details,
-  .weather-card__forecast {
+  .weather-card__details {
     flex-direction: column;
+  }
+
+  .weather-card__forecast {
     gap: var(--spacing-md);
   }
 
