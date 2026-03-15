@@ -35,10 +35,19 @@ class UvicornAccessNoiseFilterTests(unittest.TestCase):
 
         self.assertTrue(self.filter.filter(record))
 
-    def test_keeps_non_target_access_log(self) -> None:
+    def test_filters_voice_discovery_list_success_log(self) -> None:
         record = self._build_access_record(
             method="GET",
             path="/api/v1/devices/voice-terminals/discoveries",
+            status_code=200,
+        )
+
+        self.assertFalse(self.filter.filter(record))
+
+    def test_keeps_non_target_access_log(self) -> None:
+        record = self._build_access_record(
+            method="GET",
+            path="/api/v1/devices",
             status_code=200,
         )
 
