@@ -1,4 +1,4 @@
-import { createCoreApiClient, createRequestClient, loadBootstrapSnapshot, type KeyValueStorage } from '@familyclaw/user-core';
+import { createCoreApiClient, createRequestClient, loadBootstrapSnapshot } from '@familyclaw/user-core';
 import { getPlatformTarget, createTaroStorageAdapter, createBrowserStorageAdapter } from '@familyclaw/user-platform';
 
 const coreApiClient = createCoreApiClient(
@@ -8,7 +8,7 @@ const coreApiClient = createCoreApiClient(
 );
 
 // 在 H5 环境中使用浏览器存储，其他环境使用 Taro 存储
-const appStorage: KeyValueStorage = process.env.TARO_ENV === 'h5'
+const appStorage = process.env.TARO_ENV === 'h5'
   ? createBrowserStorageAdapter()
   : createTaroStorageAdapter();
 

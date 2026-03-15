@@ -2,10 +2,10 @@
  * 家庭页 - 包含概览/房间/成员/关系四个子路由
  * ============================================================ */
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { getLocaleDefinition, type LocaleDefinition } from '@familyclaw/user-core';
 import { DEFAULT_REGION_COUNTRY, DEFAULT_REGION_PROVIDER, RegionSelector, type RegionSelectionFormValue } from './RegionSelector';
-import { formatLocaleOptionLabel, getLocaleLabel, listLocaleDefinitions, useI18n } from './familyI18n';
 import { PageHeader, Card, Section } from './base';
-import { useHouseholdContext } from './familyRuntime';
+import { useHouseholdContext, useI18n } from '../../runtime';
 import { api } from './api';
 import { formatRoomType, ROOM_TYPE_OPTIONS } from './roomTypes';
 import type {
@@ -54,8 +54,17 @@ type FamilyWorkspaceValue = {
 
 const FamilyWorkspaceContext = createContext<FamilyWorkspaceValue | null>(null);
 
-function formatLocale(locale: string | null | undefined) {
-  return getLocaleLabel(locale);
+function formatLocale(
+  locale: string | null | undefined,
+  localeDefinitions: LocaleDefinition[],
+  formatLocaleLabel: (definition: Pick<LocaleDefinition, 'id' | 'nativeLabel'>) => string,
+) {
+  if (!locale) {
+    return '-';
+  }
+
+  const definition = getLocaleDefinition(localeDefinitions, locale);
+  return definition ? formatLocaleLabel(definition) : locale;
 }
 
 function formatFamilyRegion(household: Household | null | undefined) {
@@ -480,7 +489,7 @@ export function FamilyLayout() {
 
 /* ---- 家庭概览 ---- */
 export function FamilyOverview() {
-  const { t } = useI18n();
+  const { t, locales, formatLocaleLabel } = useI18n();
   const { currentHousehold, currentHouseholdId, refreshCurrentHousehold, refreshHouseholds } = useHouseholdContext();
   const { household, overview, loading, refreshWorkspace } = useFamilyWorkspace();
   const [editForm, setEditForm] = useState({
@@ -571,7 +580,7 @@ export function FamilyOverview() {
         </Card>
         <Card className="overview-card">
           <div className="overview-card__label">{t('family.language')}</div>
-          <div className="overview-card__value">{formatLocale(household?.locale)}</div>
+          <div className="overview-card__value">{formatLocale(household?.locale, locales, formatLocaleLabel)}</div>
         </Card>
         <Card className="overview-card">
           <div className="overview-card__label">{t('family.mode')}</div>
@@ -659,8 +668,8 @@ export function FamilyOverview() {
                 value={editForm.locale}
                 onChange={event => setEditForm(current => ({ ...current, locale: event.target.value }))}
               >
-                {listLocaleDefinitions().map(localeOption => (
-                  <option key={localeOption.id} value={localeOption.id}>{formatLocaleOptionLabel(localeOption)}</option>
+                {locales.map(localeOption => (
+                  <option key={localeOption.id} value={localeOption.id}>{formatLocaleLabel(localeOption)}</option>
                 ))}
               </select>
             </div>

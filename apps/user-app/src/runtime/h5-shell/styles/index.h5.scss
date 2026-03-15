@@ -13,6 +13,7 @@
 }
 
 html {
+  font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100%;
@@ -33,10 +34,11 @@ body {
 .taro_router,
 .taro_page {
   min-height: 100vh;
+  background: var(--bg-app);
 }
 
 .taro_page {
-  background: transparent;
+  background: var(--bg-app);
 }
 
 a {
@@ -50,11 +52,19 @@ button {
   cursor: pointer;
   font: inherit;
   color: inherit;
+  padding: 0;
+  text-decoration: none;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 input, select, textarea {
   font: inherit;
   color: inherit;
+  line-height: 1.5;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
 }
 
 /* ---- App 主布局 ---- */
@@ -182,6 +192,8 @@ input, select, textarea {
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-md);
+  border: none;
+  background: transparent;
   border-radius: var(--radius-md);
   color: var(--nav-text);
   font-size: var(--font-size-md);
@@ -3239,11 +3251,13 @@ input, select, textarea {
 
 .form-input,
 .form-select {
+  width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-input);
   font-size: var(--font-size-md);
+  line-height: 1.5;
   color: var(--text-primary);
   transition: border-color var(--transition);
 }
