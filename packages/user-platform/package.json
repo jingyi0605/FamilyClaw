@@ -7,14 +7,14 @@
   "types": "./src/index.ts",
   "exports": {
     ".": {
+      "browser": {
+        "types": "./src/index.web.ts",
+        "import": "./src/index.web.ts",
+        "default": "./src/index.web.ts"
+      },
       "types": "./src/index.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
-    },
-    "./web": {
-      "types": "./src/index.web.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
     }
   },
   "dependencies": {

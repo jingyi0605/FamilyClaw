@@ -8,6 +8,9 @@ export { createBrowserStorageAdapter } from './storage/browser';
 export { createMemoryStorage } from './storage/memory';
 export type { KeyValueStorage } from './storage/types';
 
+// 兼容别名：在 H5 环境中，Taro 存储适配器等同于浏览器存储适配器
+export { createBrowserStorageAdapter as createTaroStorageAdapter } from './storage/browser';
+
 // 实时连接（浏览器实现，无 Taro 依赖）
 export {
   BOOTSTRAP_REALTIME_EVENT_TYPES,

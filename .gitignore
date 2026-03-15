@@ -16,3 +16,5 @@ apps/api-server/data/models/embeddings/
 apps/api-server/data/
 apps/api-server/scripts/20260314-语义路由评估.py
 .claude/settings.local.json
+*.log
+.lsp.json

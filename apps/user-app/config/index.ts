@@ -25,39 +25,44 @@ function resolveTaroEnv() {
 
 export default defineConfig(async merge => {
   const taroEnv = resolveTaroEnv();
-  const platformConfig =
-    taroEnv === 'rn'
-      ? rnConfig
-      : taroEnv === 'harmony_cpp'
-        ? harmonyConfig
-        : h5Config;
 
-  return merge(
-    {
-      projectName: 'familyclaw-user-app',
-      date: '2026-03-15',
-      designWidth: 750,
-      deviceRatio: {
-        640: 2.34 / 2,
-        750: 1,
-        375: 2,
-        828: 1.81 / 2,
-      },
-      sourceRoot: 'src',
-      outputRoot: 'dist',
-      framework: 'react',
-      compiler: {
-        type: 'webpack5',
-        prebundle: {
-          enable: false,
-        },
-      },
-      plugins: taroEnv === 'harmony_cpp' ? ['@tarojs/plugin-platform-harmony-cpp'] : [],
-      alias: {
-        '@': path.resolve(process.cwd(), 'src'),
-      },
-      appPath: 'src/app.ts',
+  const baseConfig = {
+    projectName: 'familyclaw-user-app',
+    date: '2026-03-15',
+    designWidth: 750,
+    deviceRatio: {
+      640: 2.34 / 2,
+      750: 1,
+      375: 2,
+      828: 1.81 / 2,
     },
-    platformConfig,
-  );
+    sourceRoot: 'src',
+    outputRoot: 'dist',
+    framework: 'react',
+    compiler: {
+      type: 'webpack5',
+      prebundle: {
+        enable: false,
+      },
+    },
+    plugins: taroEnv === 'harmony_cpp' ? ['@tarojs/plugin-platform-harmony-cpp'] : [],
+    alias: {
+      '@': path.resolve(process.cwd(), 'src'),
+    },
+    appPath: 'src/app.ts',
+  };
+
+  if (taroEnv === 'h5') {
+    return merge(baseConfig, { h5: h5Config });
+  }
+
+  if (taroEnv === 'rn') {
+    return merge(baseConfig, { rn: rnConfig });
+  }
+
+  if (taroEnv === 'harmony_cpp') {
+    return merge(baseConfig, { harmony: harmonyConfig });
+  }
+
+  return baseConfig;
 });

@@ -1,4 +1,4 @@
-export { coreApiClient, loadUserAppBootstrap, taroStorage } from './core';
+export { coreApiClient, loadUserAppBootstrap, appStorage } from './core';
 export { AuthProvider, useAuthContext } from './auth';
 export { GuardedPage } from './guard';
 export {

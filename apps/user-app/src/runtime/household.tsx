@@ -7,7 +7,7 @@ import {
   type Household,
   type PluginLocale,
 } from '@familyclaw/user-core';
-import { coreApiClient, loadUserAppBootstrap, taroStorage } from './core';
+import { coreApiClient, loadUserAppBootstrap, appStorage } from './core';
 
 type HouseholdContextValue = {
   currentHouseholdId: string;
@@ -56,7 +56,7 @@ export function HouseholdProvider(props: { children: ReactNode }) {
     setCurrentHousehold(nextCurrentHousehold);
 
     if (id) {
-      void persistHouseholdId(taroStorage, id);
+      void persistHouseholdId(appStorage, id);
       void loadLocales(id, nextCurrentHousehold?.locale);
       return;
     }
@@ -83,7 +83,7 @@ export function HouseholdProvider(props: { children: ReactNode }) {
       setCurrentHousehold(nextCurrentHousehold);
 
       if (resolvedHouseholdId) {
-        await persistHouseholdId(taroStorage, resolvedHouseholdId);
+        await persistHouseholdId(appStorage, resolvedHouseholdId);
         await loadLocales(resolvedHouseholdId, nextCurrentHousehold?.locale);
       } else {
         setLocales([]);

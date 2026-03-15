@@ -12,7 +12,7 @@ import {
   type AuthActor,
   type LoginResponse,
 } from '@familyclaw/user-core';
-import { coreApiClient, taroStorage } from './core';
+import { coreApiClient, appStorage } from './core';
 
 type AuthContextValue = {
   actor: AuthActor | null;
@@ -90,7 +90,7 @@ export function AuthProvider(props: { children: ReactNode }) {
       await coreApiClient.logout();
     } finally {
       try {
-        await clearClientOnlyStorage(taroStorage);
+        await clearClientOnlyStorage(appStorage);
       } catch {
         // 本地清理失败不能阻断退出流程。
       }
