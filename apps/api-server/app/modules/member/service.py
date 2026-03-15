@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.utils import new_uuid
 from app.modules.household.models import Household
-from app.modules.member.models import Member
+from app.modules.member.models import Member, MemberPreference
 from app.modules.member.schemas import MemberCreate, MemberUpdate
 
 
@@ -80,6 +80,55 @@ def get_member_or_404(db: Session, member_id: str) -> Member:
             detail="member not found",
         )
     return member
+
+
+def resolve_member_display_name(
+    member: Member,
+    preference: MemberPreference | None = None,
+) -> str:
+    preferred_name = str(preference.preferred_name or "").strip() if preference is not None else ""
+    nickname = str(member.nickname or "").strip()
+    name = str(member.name or "").strip()
+    return preferred_name or nickname or name
+
+
+def get_member_display_name(db: Session, *, member_id: str) -> str | None:
+    member = db.get(Member, member_id)
+    if member is None:
+        return None
+    preference = db.get(MemberPreference, member_id)
+    return resolve_member_display_name(member, preference)
+
+
+def build_member_display_name_map(
+    db: Session,
+    *,
+    household_id: str,
+    members: list[Member] | None = None,
+    status_value: str | None = None,
+) -> dict[str, str]:
+    effective_members = members
+    if effective_members is None:
+        effective_members, _ = list_members(
+            db,
+            household_id=household_id,
+            page=1,
+            page_size=1000,
+            status_value=status_value,
+        )
+
+    member_ids = [member.id for member in effective_members]
+    if not member_ids:
+        return {}
+
+    preferences = list(
+        db.scalars(select(MemberPreference).where(MemberPreference.member_id.in_(member_ids))).all()
+    )
+    preference_map = {item.member_id: item for item in preferences}
+    return {
+        member.id: resolve_member_display_name(member, preference_map.get(member.id))
+        for member in effective_members
+    }
 
 
 def list_members(

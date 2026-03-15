@@ -29,6 +29,7 @@ from app.modules.agent.schemas import (
     AgentSummaryRead,
     AgentUpdate,
 )
+from app.modules.member import service as member_service
 from app.modules.member.models import Member
 from app.modules.memory.schemas import MemoryCardRead
 from app.modules.memory.service import list_memory_cards
@@ -172,6 +173,12 @@ def build_agent_runtime_context(
     )
     soul = repository.get_active_soul_profile(db, agent_id=effective_agent.id)
     runtime_policy = repository.get_runtime_policy(db, agent_id=effective_agent.id)
+    requester_member = db.get(Member, requester_member_id) if requester_member_id is not None else None
+    requester_display_name = (
+        member_service.get_member_display_name(db, member_id=requester_member_id)
+        if requester_member_id is not None
+        else None
+    )
     requester_cognition = (
         repository.get_member_cognition(
             db,
@@ -181,6 +188,11 @@ def build_agent_runtime_context(
         if requester_member_id is not None
         else None
     )
+    requester_display_address = (
+        str(requester_cognition.display_address or "").strip()
+        if requester_cognition is not None
+        else ""
+    ) or str(requester_display_name or "").strip()
 
     return {
         "agent": {
@@ -201,7 +213,7 @@ def build_agent_runtime_context(
         },
         "requester_member_cognition": {
             "member_id": requester_cognition.member_id,
-            "display_address": requester_cognition.display_address,
+            "display_address": requester_display_address,
             "closeness_level": requester_cognition.closeness_level,
             "service_priority": requester_cognition.service_priority,
             "communication_style": requester_cognition.communication_style,
@@ -209,6 +221,14 @@ def build_agent_runtime_context(
             "prompt_notes": requester_cognition.prompt_notes,
         }
         if requester_cognition is not None
+        else None,
+        "requester_member_profile": {
+            "member_id": requester_member.id,
+            "role": requester_member.role,
+            "name": requester_member.name,
+            "preferred_display_name": requester_display_name,
+        }
+        if requester_member is not None
         else None,
         "runtime_policy": {
             "conversation_enabled": runtime_policy.conversation_enabled,

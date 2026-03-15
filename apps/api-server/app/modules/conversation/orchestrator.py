@@ -1599,6 +1599,13 @@ def _build_free_chat_variables(
     )
     identity = agent_context.get("identity", {}) if isinstance(agent_context, dict) else {}
     agent = agent_context.get("agent", {}) if isinstance(agent_context, dict) else {}
+    active_member_display_name = (
+        member_service.get_member_display_name(db, member_id=overview.active_member.member_id)
+        if overview.active_member is not None
+        else None
+    ) or (overview.active_member.name if overview.active_member is not None else None)
+    if overview.active_member is not None and active_member_display_name:
+        overview.active_member.name = active_member_display_name
     memory_highlights = memory_bundle.hot_summary.preference_highlights[:3] or memory_bundle.hot_summary.recent_event_highlights[:3]
     memory_context_text = f"当前长期记忆摘要：{'；'.join(memory_highlights) if memory_highlights else '暂无明显长期记忆摘要。'}"
     if log_memory_context:
@@ -1663,6 +1670,17 @@ def _render_history_role(role: str) -> str:
 
 def _build_member_context(db: Session, *, household_id: str) -> str:
     members, _ = member_service.list_members(db, household_id=household_id, page=1, page_size=100, status_value="active")
+    if members:
+        display_name_map = member_service.build_member_display_name_map(
+            db,
+            household_id=household_id,
+            members=members,
+            status_value="active",
+        )
+        return "\n".join(
+            f"- {display_name_map.get(member.id, member.name)} ({member.role})"
+            for member in members
+        )
     if not members:
         return "当前家庭还没有有效成员。"
     return "\n".join(f"- {(member.nickname or member.name)}（{member.role}）" for member in members)

@@ -9,6 +9,7 @@ from app.modules.memory.schemas import (
     MemoryContextLiveSummary,
     MemoryQueryRequest,
 )
+from app.modules.member import service as member_service
 
 
 def build_memory_context_bundle(
@@ -21,6 +22,11 @@ def build_memory_context_bundle(
     capability: str = "family_qa",
 ) -> MemoryContextBundleRead:
     overview = get_context_overview(db, household_id)
+    active_member_name = (
+        member_service.get_member_display_name(db, member_id=overview.active_member.member_id)
+        if overview.active_member is not None
+        else None
+    ) or (overview.active_member.name if overview.active_member is not None else None)
     hot_summary = get_memory_hot_summary(
         db,
         household_id=household_id,
@@ -49,7 +55,7 @@ def build_memory_context_bundle(
         question=question,
         generated_at=utc_now_iso(),
         live_summary=MemoryContextLiveSummary(
-            active_member_name=overview.active_member.name if overview.active_member is not None else None,
+            active_member_name=active_member_name,
             active_member_id=overview.active_member.member_id if overview.active_member is not None else None,
             pending_reminders=0,
             running_scenes=0,

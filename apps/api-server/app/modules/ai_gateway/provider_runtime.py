@@ -1344,6 +1344,7 @@ def _build_agent_prompt(payload: Mapping[str, object]) -> str:
     agent = runtime_context.get("agent")
     identity = runtime_context.get("identity")
     requester_cognition = runtime_context.get("requester_member_cognition")
+    requester_profile = runtime_context.get("requester_member_profile")
 
     if isinstance(agent, Mapping):
         agent_name = str(agent.get("name") or "").strip()
@@ -1383,6 +1384,13 @@ def _build_agent_prompt(payload: Mapping[str, object]) -> str:
             prompt_parts.append(f"补充注意事项：{prompt_notes}。")
         if isinstance(care_notes, Mapping) and care_notes:
             prompt_parts.append(f"成员关怀说明：{json.dumps(care_notes, ensure_ascii=False)}。")
+
+    if isinstance(requester_profile, Mapping):
+        preferred_display_name = str(requester_profile.get("preferred_display_name") or "").strip()
+        if preferred_display_name:
+            prompt_parts.append(
+                f"Preferred user address: {preferred_display_name}. If no more specific address is configured, use this instead of the legal name."
+            )
 
     if not prompt_parts:
         return ""

@@ -2139,6 +2139,18 @@ def _build_memory_extraction_conversation(
 
 def _build_member_context(db: Session, *, household_id: str) -> str:
     members, _ = member_service.list_members(db, household_id=household_id, page=1, page_size=100, status_value="active")
+    if members:
+        display_name_map = member_service.build_member_display_name_map(
+            db,
+            household_id=household_id,
+            members=members,
+            status_value="active",
+        )
+        lines: list[str] = []
+        for member in members:
+            display_name = display_name_map.get(member.id, member.name)
+            lines.append(f"- {display_name} ({member.role})")
+        return "\n".join(lines)
     if not members:
         return "当前家庭还没有有效成员。"
     lines: list[str] = []

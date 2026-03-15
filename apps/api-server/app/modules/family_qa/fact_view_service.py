@@ -8,6 +8,7 @@ from app.db.utils import load_json
 from app.modules.agent.service import build_agent_runtime_context
 from app.modules.context.service import get_context_overview
 from app.modules.device.models import Device
+from app.modules.member import service as member_service
 from app.modules.family_qa.schemas import (
     QaFactReference,
     QaFactDeviceState,
@@ -41,6 +42,38 @@ def build_qa_fact_view(
         raise ValueError("household not found")
 
     overview = get_context_overview(db, household_id)
+    display_name_map = member_service.build_member_display_name_map(db, household_id=household_id)
+    active_member = (
+        overview.active_member.model_copy(
+            update={
+                "name": display_name_map.get(
+                    overview.active_member.member_id,
+                    overview.active_member.name,
+                )
+            }
+        )
+        if overview.active_member is not None
+        else None
+    )
+    member_states = [
+        member_state.model_copy(
+            update={"name": display_name_map.get(member_state.member_id, member_state.name)}
+        )
+        for member_state in overview.member_states
+    ]
+    room_occupancy = [
+        room.model_copy(
+            update={
+                "occupants": [
+                    occupant.model_copy(
+                        update={"name": display_name_map.get(occupant.member_id, occupant.name)}
+                    )
+                    for occupant in room.occupants
+                ]
+            }
+        )
+        for room in overview.room_occupancy
+    ]
     rooms = list(
         db.scalars(
             select(Room)
@@ -150,9 +183,9 @@ def build_qa_fact_view(
         household_id=household_id,
         generated_at=overview.generated_at,
         requester_member_id=requester_member_id,
-        active_member=overview.active_member,
-        member_states=overview.member_states,
-        room_occupancy=overview.room_occupancy,
+        active_member=active_member,
+        member_states=member_states,
+        room_occupancy=room_occupancy,
         device_summary=overview.device_summary,
         device_states=[
             QaFactDeviceState(

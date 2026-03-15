@@ -48,8 +48,12 @@ from app.modules.llm_task.output_models import (
 )
 from app.modules.llm_task.parser import parse_to_model
 from app.modules.ai_gateway.provider_runtime import build_template_fallback_output
+from app.modules.agent.service import build_agent_runtime_context
+from app.modules.family_qa.fact_view_service import build_qa_fact_view
 from app.modules.memory import repository as memory_repository
 from app.modules.member.schemas import MemberCreate
+from app.modules.member.preferences_schemas import MemberPreferenceUpsert
+from app.modules.member.preferences_service import upsert_member_preferences
 from app.modules.member.service import create_member
 from app.modules.reminder.service import list_tasks as list_reminder_tasks
 
@@ -276,6 +280,47 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual(1, len(detail.proposal_batches))
         self.assertEqual("memory_write", detail.proposal_batches[0].items[0].proposal_kind)
         self.assertEqual("笨笨", detail.active_agent_name)
+
+    def test_build_agent_runtime_context_prefers_member_preferred_name(self) -> None:
+        upsert_member_preferences(
+            self.db,
+            member_id=self.member.id,
+            payload=MemberPreferenceUpsert(preferred_name="宝宝"),
+        )
+        self.db.commit()
+
+        runtime_context = build_agent_runtime_context(
+            self.db,
+            household_id=self.household.id,
+            agent_id=self.agent.id,
+            requester_member_id=self.member.id,
+        )
+
+        requester_profile = runtime_context.get("requester_member_profile")
+        assert isinstance(requester_profile, dict)
+        self.assertEqual("宝宝", requester_profile.get("preferred_display_name"))
+
+    def test_build_qa_fact_view_prefers_member_preferred_name(self) -> None:
+        upsert_member_preferences(
+            self.db,
+            member_id=self.member.id,
+            payload=MemberPreferenceUpsert(preferred_name="宝宝"),
+        )
+        self.db.commit()
+
+        fact_view = build_qa_fact_view(
+            self.db,
+            household_id=self.household.id,
+            requester_member_id=self.member.id,
+            agent_id=self.agent.id,
+            actor=self.actor,
+            question="我现在在哪",
+        )
+
+        self.assertIsNotNone(fact_view.active_member)
+        assert fact_view.active_member is not None
+        self.assertEqual("宝宝", fact_view.active_member.name)
+        self.assertIn("宝宝", [item.name for item in fact_view.member_states])
 
     def test_list_conversation_debug_logs_reflects_env_switch(self) -> None:
         session = create_conversation_session(
@@ -1018,6 +1063,49 @@ class ConversationFoundationTests(unittest.TestCase):
         logged_text = logger_mock.info.call_args[0][0]
         self.assertIn("memory_context.read", logged_text)
         self.assertIn("memory-1", logged_text)
+
+    @patch("app.modules.conversation.orchestrator.build_memory_context_bundle")
+    @patch("app.modules.conversation.orchestrator.build_agent_runtime_context")
+    def test_build_free_chat_variables_prefers_member_preferred_name_in_household_context(
+        self,
+        build_agent_runtime_context_mock,
+        build_memory_context_bundle_mock,
+    ) -> None:
+        upsert_member_preferences(
+            self.db,
+            member_id=self.member.id,
+            payload=MemberPreferenceUpsert(preferred_name="宝宝"),
+        )
+        self.db.commit()
+
+        build_agent_runtime_context_mock.return_value = {
+            "agent": {"name": "绗ㄧ"},
+            "identity": {"role_summary": "AI绠″", "speaking_style": "鑷劧浜插垏"},
+        }
+        build_memory_context_bundle_mock.return_value = SimpleNamespace(
+            hot_summary=SimpleNamespace(
+                preference_highlights=[],
+                recent_event_highlights=[],
+            ),
+        )
+
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        variables = _build_free_chat_variables(
+            self.db,
+            session=session,
+            actor=self.actor,
+            user_message="你记得我吗",
+        )
+
+        self.assertIn("宝宝", variables["household_context"])
+        self.assertNotIn("Owner", variables["household_context"])
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_detect_conversation_intent_routes_family_status_to_structured_qa(self, invoke_llm_mock) -> None:
