@@ -7,6 +7,7 @@
     "build:user-app:ios": "npm --prefix ./apps/user-app run build:ios",
     "build:user-app:android": "npm --prefix ./apps/user-app run build:android",
     "build:user-app:harmony": "npm --prefix ./apps/user-app run build:harmony",
+    "typecheck": "npm run typecheck:user-app",
     "typecheck:user-app": "npm --prefix ./apps/user-app run typecheck"
   },
   "workspaces": [
