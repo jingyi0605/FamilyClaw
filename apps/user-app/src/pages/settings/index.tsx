@@ -93,9 +93,9 @@ export default function SettingsPage() {
                 onClick={() => void handleThemeChange(option.id)}
                 style={{
                   background: option.id === themeId ? option.brandPrimary : option.bgCard,
-                  borderRadius: userAppTokens.radiusMd,
-                  border: `1px solid ${option.brandPrimary}`,
-                  color: option.id === themeId ? '#ffffff' : userAppTokens.colorText,
+                  borderRadius: option.radiusMd,
+                  border: `1px solid ${option.id === themeId ? option.brandPrimary : option.border}`,
+                  color: option.id === themeId ? option.textInverse : option.textPrimary,
                 }}
               >
                 {option.label} 路 {option.description}

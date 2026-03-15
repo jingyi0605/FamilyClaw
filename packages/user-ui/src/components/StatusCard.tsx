@@ -19,7 +19,7 @@ export function StatusCard({ label, value, tone = 'info' }: StatusCardProps) {
   return (
     <View
       style={{
-        background: '#f9fbff',
+        background: userAppTokens.colorSurfaceMuted,
         border: `1px solid ${userAppTokens.colorBorder}`,
         borderRadius: userAppTokens.radiusMd,
         marginBottom: userAppTokens.spacingXs,

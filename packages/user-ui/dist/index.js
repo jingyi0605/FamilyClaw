@@ -2,19 +2,20 @@ import { Text, View } from '@tarojs/components';
 import { createElement } from 'react';
 
 export const userAppTokens = {
-  colorBg: '#f5f6f8',
-  colorSurface: '#ffffff',
-  colorBorder: '#d6dbe4',
-  colorText: '#152033',
-  colorMuted: '#5c6b80',
-  colorPrimary: '#1d6fd6',
-  colorSuccess: '#0f9d6c',
-  colorWarning: '#c47900',
-  spacingXs: '12px',
-  spacingSm: '16px',
-  spacingMd: '24px',
-  radiusMd: '16px',
-  radiusLg: '24px',
+  colorBg: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--bg-app)' : '#f5f6f8',
+  colorSurface: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--bg-card)' : '#ffffff',
+  colorSurfaceMuted: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--bg-input)' : '#f9fbff',
+  colorBorder: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--border-light)' : '#d6dbe4',
+  colorText: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--text-primary)' : '#152033',
+  colorMuted: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--text-secondary)' : '#5c6b80',
+  colorPrimary: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--brand-primary)' : '#1d6fd6',
+  colorSuccess: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--color-success)' : '#0f9d6c',
+  colorWarning: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--color-warning)' : '#c47900',
+  spacingXs: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--spacing-xs)' : '12px',
+  spacingSm: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--spacing-sm)' : '16px',
+  spacingMd: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--spacing-md)' : '24px',
+  radiusMd: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--radius-md)' : '16px',
+  radiusLg: typeof process !== 'undefined' && process.env.TARO_ENV === 'h5' ? 'var(--radius-lg)' : '24px',
 };
 
 export function PageSection({ title, description, children }) {
@@ -60,7 +61,7 @@ export function StatusCard({ label, value, tone = 'info' }) {
     View,
     {
       style: {
-        background: '#f9fbff',
+        background: userAppTokens.colorSurfaceMuted,
         border: `1px solid ${userAppTokens.colorBorder}`,
         borderRadius: userAppTokens.radiusMd,
         marginBottom: userAppTokens.spacingXs,
