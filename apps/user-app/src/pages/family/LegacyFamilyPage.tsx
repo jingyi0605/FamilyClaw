@@ -2076,16 +2076,16 @@ function hashGraphEdge(value: string) {
 
 function getGraphEdgePalette(edgeId: string) {
   const palettes = [
-    { line: '#ff6b6b', labelText: '#8f1d1d', labelFill: 'rgba(255, 214, 214, 0.96)', labelStroke: 'rgba(255, 107, 107, 0.52)' },
-    { line: '#ff922b', labelText: '#8a4300', labelFill: 'rgba(255, 228, 198, 0.96)', labelStroke: 'rgba(255, 146, 43, 0.52)' },
-    { line: '#ffd43b', labelText: '#7a5b00', labelFill: 'rgba(255, 244, 191, 0.96)', labelStroke: 'rgba(255, 212, 59, 0.52)' },
-    { line: '#69db7c', labelText: '#1f6b2d', labelFill: 'rgba(211, 249, 216, 0.96)', labelStroke: 'rgba(105, 219, 124, 0.5)' },
-    { line: '#38d9a9', labelText: '#0b6b53', labelFill: 'rgba(195, 250, 232, 0.96)', labelStroke: 'rgba(56, 217, 169, 0.5)' },
-    { line: '#4dabf7', labelText: '#164b82', labelFill: 'rgba(208, 235, 255, 0.96)', labelStroke: 'rgba(77, 171, 247, 0.52)' },
-    { line: '#748ffc', labelText: '#243b8f', labelFill: 'rgba(219, 228, 255, 0.96)', labelStroke: 'rgba(116, 143, 252, 0.5)' },
-    { line: '#b197fc', labelText: '#5a36a3', labelFill: 'rgba(235, 224, 255, 0.96)', labelStroke: 'rgba(177, 151, 252, 0.5)' },
-    { line: '#f06595', labelText: '#8a1e4f', labelFill: 'rgba(255, 222, 235, 0.96)', labelStroke: 'rgba(240, 101, 149, 0.5)' },
-    { line: '#f783ac', labelText: '#96214f', labelFill: 'rgba(255, 222, 235, 0.96)', labelStroke: 'rgba(247, 131, 172, 0.5)' },
+    '#ff6b6b',
+    '#ff922b',
+    '#ffd43b',
+    '#69db7c',
+    '#38d9a9',
+    '#4dabf7',
+    '#748ffc',
+    '#b197fc',
+    '#f06595',
+    '#f783ac',
   ] as const;
 
   return palettes[hashGraphEdge(edgeId) % palettes.length];
@@ -2659,13 +2659,18 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
         <rect x="0" y="0" width={DYNAMIC_GRAPH_WIDTH} height={DYNAMIC_GRAPH_HEIGHT} className="graph-grid" />
         <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`}>
         {edgeLayouts.map(({ edge, geometry, palette, isHighlighted, isDimmed, label, labelWidth, labelAnchor }) => {
+          const labelFill = `color-mix(in srgb, ${palette} 14%, var(--bg-card) 86%)`;
+          const labelStroke = `color-mix(in srgb, ${palette} 36%, var(--border-light))`;
+          const labelText = isHighlighted
+            ? 'var(--brand-primary)'
+            : `color-mix(in srgb, ${palette} 68%, var(--text-primary))`;
 
           return (
             <g key={edge.id}>
               <path
                 d={geometry.path}
                 className={`graph-edge ${isHighlighted ? 'graph-edge--highlight' : ''} ${isDimmed ? 'graph-edge--dim' : ''}`}
-                style={{ stroke: palette.line }}
+                style={{ stroke: palette }}
               />
               <rect
                 x={labelAnchor.x - labelWidth / 2}
@@ -2674,14 +2679,14 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
                 height={24}
                 rx={6}
                 className={`graph-edge-label-bg ${isDimmed ? 'graph-edge-label-bg--dim' : ''}`}
-                style={{ fill: palette.labelFill, stroke: palette.labelStroke }}
+                style={{ fill: labelFill, stroke: labelStroke }}
               />
               <text
                 x={labelAnchor.x}
                 y={labelAnchor.y + 4}
                 textAnchor="middle"
                 className={`graph-edge-label ${isHighlighted ? 'graph-edge-label--highlight' : ''} ${isDimmed ? 'graph-edge-label--dim' : ''}`}
-                style={{ fill: palette.labelText }}
+                style={{ fill: labelText }}
               >
                 {label}
               </text>

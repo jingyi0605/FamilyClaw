@@ -4429,11 +4429,16 @@ body::before {
   position: relative;
   overflow: hidden;
   border-radius: var(--radius-xl);
+  border: 1px solid var(--border-light);
   -webkit-user-select: none;
   user-select: none;
   background:
-    radial-gradient(circle at top, rgba(214, 120, 74, 0.08), transparent 36%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.94));
+    radial-gradient(circle at top, color-mix(in srgb, var(--brand-primary) 12%, transparent), transparent 36%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-card) 82%, var(--brand-primary-light)) 0%,
+      var(--bg-surface) 100%
+    );
 }
 
 .relationship-graph--dragging {
@@ -4446,45 +4451,53 @@ body::before {
   right: var(--spacing-md);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--spacing-xs);
   z-index: 2;
-  padding: 0.35rem 0.5rem;
+  padding: 6px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(207, 201, 196, 0.7);
-  box-shadow: 0 6px 18px rgba(54, 36, 24, 0.08);
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 84%, var(--brand-primary-light));
+  box-shadow: var(--shadow-md);
   backdrop-filter: blur(8px);
 }
 
 .relationship-graph__toolbtn {
-  width: 2rem;
-  height: 2rem;
-  border: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: rgba(214, 120, 74, 0.12);
+  background: color-mix(in srgb, var(--brand-primary-light) 72%, var(--bg-card));
   color: var(--brand-primary);
-  font-size: 1rem;
+  font-size: var(--font-size-md);
   font-weight: 700;
+  font-family: inherit;
+  line-height: 1;
   cursor: pointer;
-  transition: transform 0.16s ease, background 0.16s ease;
+  transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
 }
 
 .relationship-graph__toolbtn:hover {
-  background: rgba(214, 120, 74, 0.2);
+  background: color-mix(in srgb, var(--brand-primary-light) 88%, var(--bg-card-hover));
+  border-color: color-mix(in srgb, var(--brand-primary) 28%, transparent);
   transform: translateY(-1px);
 }
 
 .relationship-graph__toolbtn--wide {
   width: auto;
-  padding: 0 0.8rem;
-  font-size: 0.875rem;
+  min-width: 56px;
+  padding: 0 12px;
+  font-size: var(--font-size-sm);
 }
 
 .relationship-graph__zoom {
-  min-width: 3rem;
+  min-width: 48px;
   text-align: center;
-  font-size: 0.82rem;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .relationship-graph__svg {
@@ -4517,9 +4530,10 @@ body::before {
 .graph-legend {
   text-align: center;
   padding: var(--spacing-sm) var(--spacing-md);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  background: var(--bg-surface);
+  background: color-mix(in srgb, var(--bg-surface) 94%, var(--bg-card));
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
   margin-top: var(--spacing-sm);
 }
@@ -4529,7 +4543,7 @@ body::before {
 }
 
 .graph-grid__line {
-  stroke: rgba(207, 201, 196, 0.55);
+  stroke: color-mix(in srgb, var(--border-light) 78%, transparent);
   stroke-width: 1;
 }
 
@@ -4546,7 +4560,7 @@ body::before {
 }
 
 .graph-node--fixed .graph-node__circle {
-  fill: rgba(214, 120, 74, 0.12);
+  fill: color-mix(in srgb, var(--brand-primary-light) 78%, var(--bg-card));
 }
 
 .graph-node--selected .graph-node__circle {
@@ -4560,12 +4574,12 @@ body::before {
 }
 
 .graph-node__emoji {
-  font-size: 20px;
+  font-size: 18px;
   pointer-events: none;
 }
 
 .graph-node__name {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   fill: var(--text-primary);
   font-weight: 600;
   pointer-events: none;
@@ -4573,7 +4587,7 @@ body::before {
 
 .graph-node__pin {
   fill: none;
-  stroke: rgba(214, 120, 74, 0.32);
+  stroke: color-mix(in srgb, var(--brand-primary) 42%, transparent);
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
   pointer-events: none;
@@ -4599,9 +4613,9 @@ body::before {
 
 /* 边标签 */
 .graph-edge-label-bg {
-  fill: var(--bg-surface);
+  fill: color-mix(in srgb, var(--bg-card) 92%, var(--bg-surface));
   opacity: 0.94;
-  stroke: rgba(207, 201, 196, 0.7);
+  stroke: color-mix(in srgb, var(--border-light) 90%, var(--brand-primary-light));
   stroke-width: 1;
   transition: opacity 0.3s, stroke 0.3s;
 }
@@ -4611,7 +4625,7 @@ body::before {
 }
 
 .graph-edge-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   fill: var(--text-secondary);
   transition: fill 0.3s, opacity 0.3s;
 }
