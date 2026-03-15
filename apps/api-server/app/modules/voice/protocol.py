@@ -51,7 +51,16 @@ VoiceErrorCode = Literal[
     "voice_runtime_unavailable",
     "voice_transcript_empty",
     "fast_action_ambiguous",
+    "fast_action_room_ambiguous",
+    "fast_action_device_ambiguous",
+    "fast_action_action_ambiguous",
     "fast_action_blocked",
+    "quiet_hours_blocked",
+    "child_protection_blocked",
+    "high_risk_action_blocked",
+    "voice_identity_conflict",
+    "voice_identity_low_confidence",
+    "context_conflict",
     "conversation_bridge_unavailable",
 ]
 

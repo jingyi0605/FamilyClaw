@@ -2,55 +2,86 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
+from uuid import uuid4
 
-from open_xiaoai_gateway.protocol import GatewayCommand, GatewayEvent, OpenXiaoAIEnvelope
+from open_xiaoai_gateway.protocol import (
+    GatewayCommand,
+    GatewayEvent,
+    OpenXiaoAIEvent,
+    OpenXiaoAIStream,
+    OpenXiaoAITextFrame,
+    build_request_frame,
+    build_stream_frame,
+    parse_stream_frame,
+    parse_text_frame,
+)
+from open_xiaoai_gateway.settings import settings
 
 VOICE_CAPABILITY_WHITELIST = ("audio_input", "audio_output", "playback_stop", "playback_abort", "heartbeat")
 VOICE_CAPABILITY_BLACKLIST = ("shell_exec", "script_exec", "system_upgrade", "reboot_control", "business_logic")
-_TEXT_EVENT_ALIASES = {
-    "hello": "terminal.online",
-    "terminal.online": "terminal.online",
-    "terminal.offline": "terminal.offline",
-    "heartbeat": "terminal.heartbeat",
-    "terminal.heartbeat": "terminal.heartbeat",
-    "session.start": "session.start",
-    "listen.start": "session.start",
-    "audio.commit": "audio.commit",
-    "listen.stop": "audio.commit",
-    "session.cancel": "session.cancel",
-    "listen.cancel": "session.cancel",
-    "playback.interrupted": "playback.interrupted",
-    "playback.started": "playback.receipt",
-    "playback.completed": "playback.receipt",
-    "playback.failed": "playback.receipt",
-}
-_FORBIDDEN_OPEN_XIAOAI_EVENTS = {"shell.exec", "script.exec", "system.upgrade", "reboot.control", "business.logic"}
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
 
 
-@dataclass
+@dataclass(slots=True)
 class TerminalBridgeContext:
-    terminal_id: str | None = None
-    household_id: str | None = None
-    room_id: str | None = None
-    terminal_code: str | None = None
-    name: str | None = None
+    household_id: str = settings.household_id
+    terminal_id: str = settings.terminal_id
+    room_id: str | None = settings.room_id
+    terminal_code: str | None = settings.terminal_code
+    name: str | None = settings.terminal_name
     active_session_id: str | None = None
+    active_playback_id: str | None = None
+    active_playback_session_id: str | None = None
+    last_playing_state: str = "idle"
     seq_counter: int = 0
-    capabilities: list[str] = field(default_factory=lambda: list(VOICE_CAPABILITY_WHITELIST))
 
     def next_seq(self) -> int:
         self.seq_counter += 1
         return self.seq_counter
 
+    def new_session_id(self) -> str:
+        return f"voice-session-{uuid4()}"
 
-def sanitize_capabilities(capabilities: list[str] | None) -> list[str]:
+    def start_session(self) -> str:
+        session_id = self.new_session_id()
+        self.active_session_id = session_id
+        return session_id
+
+    def clear_session(self) -> None:
+        self.active_session_id = None
+
+    def track_playback(self, *, playback_id: str, session_id: str | None) -> None:
+        self.active_playback_id = playback_id
+        self.active_playback_session_id = session_id
+
+    def clear_playback(self) -> None:
+        self.active_playback_id = None
+        self.active_playback_session_id = None
+
+
+@dataclass(slots=True)
+class TerminalRpcRequest:
+    command: str
+    payload: Any | None = None
+
+
+@dataclass(slots=True)
+class TerminalBinaryStream:
+    tag: str
+    raw_bytes: bytes
+    data: Any | None = None
+
+
+TerminalOutboundMessage = TerminalRpcRequest | TerminalBinaryStream
+
+
+def sanitize_capabilities(capabilities: list[str] | None = None) -> list[str]:
     if not capabilities:
         return list(VOICE_CAPABILITY_WHITELIST)
 
@@ -66,138 +97,23 @@ def sanitize_capabilities(capabilities: list[str] | None) -> list[str]:
     return sanitized
 
 
-def translate_text_message(raw_message: str, context: TerminalBridgeContext) -> list[GatewayEvent]:
-    envelope = OpenXiaoAIEnvelope.model_validate(json.loads(raw_message))
-    event_name = str(envelope.event)
-    if event_name in _FORBIDDEN_OPEN_XIAOAI_EVENTS:
-        return []
-
-    mapped_type = _TEXT_EVENT_ALIASES.get(event_name)
-    if mapped_type is None:
-        return []
-
-    data = dict(envelope.data)
-    terminal_id = str(data.get("terminal_id") or context.terminal_id or "").strip()
-    if not terminal_id:
-        return []
-
-    context.terminal_id = terminal_id
-    household_id = str(data.get("household_id") or context.household_id or "").strip() or None
-    context.household_id = household_id
-    context.room_id = str(data.get("room_id") or context.room_id or "").strip() or context.room_id
-    context.terminal_code = str(data.get("terminal_code") or context.terminal_code or "").strip() or context.terminal_code
-    context.name = str(data.get("name") or context.name or "").strip() or context.name
-
-    session_id = str(data.get("session_id") or context.active_session_id or "").strip() or None
-    if mapped_type == "session.start" and session_id:
-        context.active_session_id = session_id
-    if mapped_type in {"audio.commit", "session.cancel"} and session_id:
-        context.active_session_id = session_id
-
-    payload: dict[str, Any] = {}
-    if mapped_type == "terminal.online":
-        context.capabilities = sanitize_capabilities([str(item) for item in data.get("capabilities", [])])
-        payload = {
-            "household_id": household_id or "unknown-household",
+def build_terminal_online_event(context: TerminalBridgeContext) -> GatewayEvent:
+    return GatewayEvent(
+        type="terminal.online",
+        terminal_id=context.terminal_id,
+        seq=context.next_seq(),
+        payload={
+            "household_id": context.household_id,
             "room_id": context.room_id,
             "terminal_code": context.terminal_code,
             "name": context.name,
             "adapter_type": "open_xiaoai",
             "transport_type": "gateway_ws",
-            "capabilities": context.capabilities,
-            "adapter_meta": {key: value for key, value in data.items() if key not in {"capabilities"}},
-        }
-    elif mapped_type == "terminal.offline":
-        payload = {
-            "household_id": household_id or "unknown-household",
-            "reason": str(data.get("reason") or "terminal_disconnect"),
-        }
-    elif mapped_type == "terminal.heartbeat":
-        payload = {
-            "household_id": household_id or "unknown-household",
-            "status": str(data.get("status") or "online"),
-            "adapter_meta": data,
-        }
-    elif mapped_type == "session.start":
-        payload = {
-            "household_id": household_id or "unknown-household",
-            "room_id": context.room_id,
-            "terminal_code": context.terminal_code,
-            "sample_rate": int(data.get("sample_rate") or 16000),
-            "codec": str(data.get("codec") or "pcm_s16le"),
-            "channels": int(data.get("channels") or 1),
-            "trace_id": data.get("trace_id"),
-        }
-    elif mapped_type == "audio.commit":
-        payload = {
-            "duration_ms": int(data["duration_ms"]) if data.get("duration_ms") is not None else None,
-            "reason": data.get("reason"),
-        }
-    elif mapped_type == "session.cancel":
-        payload = {"reason": str(data.get("reason") or "user_cancelled")}
-    elif mapped_type == "playback.interrupted":
-        payload = {
-            "playback_id": str(data.get("playback_id") or "unknown-playback"),
-            "reason": data.get("reason"),
-        }
-    elif mapped_type == "playback.receipt":
-        playback_status = "started"
-        if event_name == "playback.completed":
-            playback_status = "completed"
-        elif event_name == "playback.failed":
-            playback_status = "failed"
-        payload = {
-            "playback_id": str(data.get("playback_id") or "unknown-playback"),
-            "status": playback_status,
-            "detail": data.get("detail"),
-            "error_code": data.get("error_code"),
-        }
-
-    return [
-        GatewayEvent(
-            type=mapped_type,
-            terminal_id=terminal_id,
-            session_id=session_id,
-            seq=context.next_seq(),
-            payload=payload,
-            ts=utc_now_iso(),
-        )
-    ]
-
-
-def translate_audio_chunk(raw_chunk: bytes, context: TerminalBridgeContext) -> list[GatewayEvent]:
-    if not context.terminal_id or not context.active_session_id:
-        return []
-
-    return [
-        GatewayEvent(
-            type="audio.append",
-            terminal_id=context.terminal_id,
-            session_id=context.active_session_id,
-            seq=context.next_seq(),
-            payload={
-                "chunk_base64": base64.b64encode(raw_chunk).decode("ascii"),
-                "chunk_bytes": len(raw_chunk),
-                "codec": "pcm_s16le",
-                "sample_rate": 16000,
-            },
-            ts=utc_now_iso(),
-        )
-    ]
-
-
-def translate_command_to_terminal(command: GatewayCommand) -> str:
-    if command.type == "session.ready":
-        envelope = {"event": "session.ready", "data": {"session_id": command.session_id, **command.payload}}
-    elif command.type == "play.start":
-        envelope = {"event": "play", "data": {"session_id": command.session_id, **command.payload}}
-    elif command.type == "play.stop":
-        envelope = {"event": "stop", "data": {"session_id": command.session_id, **command.payload}}
-    elif command.type == "play.abort":
-        envelope = {"event": "abort", "data": {"session_id": command.session_id, **command.payload}}
-    else:
-        envelope = {"event": "error", "data": {"session_id": command.session_id, **command.payload}}
-    return json.dumps(envelope, ensure_ascii=False)
+            "capabilities": sanitize_capabilities(),
+            "adapter_meta": {"protocol": "open_xiaoai_app_message"},
+        },
+        ts=utc_now_iso(),
+    )
 
 
 def build_terminal_offline_event(context: TerminalBridgeContext) -> GatewayEvent | None:
@@ -210,3 +126,342 @@ def build_terminal_offline_event(context: TerminalBridgeContext) -> GatewayEvent
         payload={"household_id": context.household_id, "reason": "gateway_disconnect"},
         ts=utc_now_iso(),
     )
+
+
+def build_playback_started_event(context: TerminalBridgeContext) -> GatewayEvent | None:
+    if not context.active_playback_id or not context.active_playback_session_id:
+        return None
+    return GatewayEvent(
+        type="playback.receipt",
+        terminal_id=context.terminal_id,
+        session_id=context.active_playback_session_id,
+        seq=context.next_seq(),
+        payload={
+            "playback_id": context.active_playback_id,
+            "status": "started",
+            "detail": None,
+            "error_code": None,
+        },
+        ts=utc_now_iso(),
+    )
+
+
+def build_playback_failed_event(context: TerminalBridgeContext, *, detail: str, error_code: str) -> GatewayEvent | None:
+    if not context.active_playback_id or not context.active_playback_session_id:
+        return None
+    event = GatewayEvent(
+        type="playback.receipt",
+        terminal_id=context.terminal_id,
+        session_id=context.active_playback_session_id,
+        seq=context.next_seq(),
+        payload={
+            "playback_id": context.active_playback_id,
+            "status": "failed",
+            "detail": detail,
+            "error_code": error_code,
+        },
+        ts=utc_now_iso(),
+    )
+    context.clear_playback()
+    return event
+
+
+def build_playback_interrupted_event(context: TerminalBridgeContext, *, reason: str | None) -> GatewayEvent | None:
+    if not context.active_playback_id or not context.active_playback_session_id:
+        return None
+    event = GatewayEvent(
+        type="playback.interrupted",
+        terminal_id=context.terminal_id,
+        session_id=context.active_playback_session_id,
+        seq=context.next_seq(),
+        payload={
+            "playback_id": context.active_playback_id,
+            "reason": reason,
+        },
+        ts=utc_now_iso(),
+    )
+    context.clear_playback()
+    return event
+
+
+def parse_open_xiaoai_text_message(raw_message: str) -> OpenXiaoAITextFrame:
+    return parse_text_frame(raw_message)
+
+
+def parse_open_xiaoai_stream(raw_message: bytes) -> OpenXiaoAIStream:
+    return parse_stream_frame(raw_message)
+
+
+def translate_text_message(raw_message: str, context: TerminalBridgeContext) -> list[GatewayEvent]:
+    frame = parse_open_xiaoai_text_message(raw_message)
+    if frame.Event is None:
+        return []
+    return _translate_open_xiaoai_event(frame.Event, context)
+
+
+def translate_audio_chunk(raw_chunk: bytes, context: TerminalBridgeContext) -> list[GatewayEvent]:
+    stream = parse_open_xiaoai_stream(raw_chunk)
+    if stream.tag != "record" or not context.active_session_id:
+        return []
+
+    raw_bytes = stream.raw_bytes()
+    if not raw_bytes:
+        return []
+
+    return [
+        GatewayEvent(
+            type="audio.append",
+            terminal_id=context.terminal_id,
+            session_id=context.active_session_id,
+            seq=context.next_seq(),
+            payload={
+                "chunk_base64": base64.b64encode(raw_bytes).decode("ascii"),
+                "chunk_bytes": len(raw_bytes),
+                "codec": "pcm_s16le",
+                "sample_rate": settings.recording_sample_rate,
+            },
+            ts=utc_now_iso(),
+        )
+    ]
+
+
+def translate_command_to_terminal(command: GatewayCommand, context: TerminalBridgeContext) -> list[TerminalOutboundMessage]:
+    if command.type in {"session.ready", "agent.error"}:
+        return []
+
+    if command.type == "play.start":
+        playback_id = str(command.payload.get("playback_id") or "").strip()
+        if not playback_id:
+            return []
+        context.track_playback(playback_id=playback_id, session_id=command.session_id)
+        mode = str(command.payload.get("mode") or "tts_text")
+        if mode == "audio_bytes":
+            audio_base64 = str(command.payload.get("audio_base64") or "")
+            if not audio_base64:
+                return []
+            return [
+                TerminalRpcRequest(command="start_play", payload=_build_playback_audio_config()),
+                TerminalBinaryStream(tag="play", raw_bytes=base64.b64decode(audio_base64.encode("ascii"))),
+            ]
+
+        text = str(command.payload.get("text") or "").strip()
+        if not text:
+            return []
+        return [
+            TerminalRpcRequest(
+                command="run_shell",
+                payload=f"/usr/sbin/tts_play.sh {_shell_quote(text)}",
+            )
+        ]
+
+    if command.type in {"play.stop", "play.abort"}:
+        return [
+            TerminalRpcRequest(
+                command="run_shell",
+                payload="mphelper pause",
+            )
+        ]
+
+    return []
+
+
+def build_rpc_request_message(*, request_id: str, command: str, payload: Any | None = None) -> str:
+    return build_request_frame(request_id=request_id, command=command, payload=payload)
+
+
+def build_stream_message(*, stream_id: str, tag: str, raw_bytes: bytes, data: Any | None = None) -> bytes:
+    return build_stream_frame(stream_id=stream_id, tag=tag, raw_bytes=raw_bytes, data=data)
+
+
+def _translate_open_xiaoai_event(event: OpenXiaoAIEvent, context: TerminalBridgeContext) -> list[GatewayEvent]:
+    if event.event == "kws":
+        return _translate_kws_event(event.data, context)
+    if event.event == "instruction":
+        return _translate_instruction_event(event.data, context)
+    if event.event == "playing":
+        return _translate_playing_event(event.data, context)
+    return []
+
+
+def _translate_kws_event(data: Any, context: TerminalBridgeContext) -> list[GatewayEvent]:
+    keyword: str | None = None
+    if isinstance(data, dict):
+        keyword = _coerce_text(data.get("Keyword"))
+    elif isinstance(data, str) and data != "Started":
+        keyword = data
+
+    if not keyword:
+        return []
+
+    events: list[GatewayEvent] = []
+    interrupted = build_playback_interrupted_event(context, reason=f"wake_word:{keyword}")
+    if interrupted is not None:
+        events.append(interrupted)
+
+    if not context.active_session_id:
+        session_id = context.start_session()
+        events.append(_build_session_start_event(context, session_id=session_id))
+    return events
+
+
+def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> list[GatewayEvent]:
+    if not isinstance(data, dict):
+        return []
+    line = _coerce_text(data.get("NewLine"))
+    if not line:
+        return []
+
+    try:
+        message = json.loads(line)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(message, dict):
+        return []
+
+    header = message.get("header") or {}
+    payload = message.get("payload") or {}
+    if not isinstance(header, dict) or not isinstance(payload, dict):
+        return []
+    if header.get("namespace") != "SpeechRecognizer" or header.get("name") != "RecognizeResult":
+        return []
+
+    is_vad_begin = bool(payload.get("is_vad_begin"))
+    is_final = bool(payload.get("is_final"))
+    results = payload.get("results") or []
+    text = ""
+    if isinstance(results, list) and results:
+        first = results[0]
+        if isinstance(first, dict):
+            text = _coerce_text(first.get("text")) or ""
+
+    events: list[GatewayEvent] = []
+    if is_vad_begin and not context.active_session_id:
+        session_id = context.start_session()
+        events.append(_build_session_start_event(context, session_id=session_id))
+
+    if not is_final:
+        return events
+
+    if text.strip():
+        if not context.active_session_id:
+            session_id = context.start_session()
+            events.append(_build_session_start_event(context, session_id=session_id))
+        session_id = context.active_session_id
+        context.clear_session()
+        events.append(
+            GatewayEvent(
+                type="audio.commit",
+                terminal_id=context.terminal_id,
+                session_id=session_id,
+                seq=context.next_seq(),
+                payload={
+                    "duration_ms": None,
+                    "reason": "speech_recognizer_final",
+                    "debug_transcript": text.strip(),
+                },
+                ts=utc_now_iso(),
+            )
+        )
+        return events
+
+    if context.active_session_id:
+        session_id = context.active_session_id
+        context.clear_session()
+        events.append(
+            GatewayEvent(
+                type="session.cancel",
+                terminal_id=context.terminal_id,
+                session_id=session_id,
+                seq=context.next_seq(),
+                payload={"reason": "speech_recognizer_empty"},
+                ts=utc_now_iso(),
+            )
+        )
+    return events
+
+
+def _translate_playing_event(data: Any, context: TerminalBridgeContext) -> list[GatewayEvent]:
+    state = _normalize_playing_state(data)
+    if state is None:
+        return []
+
+    events: list[GatewayEvent] = []
+    if state == "idle" and context.active_playback_id and context.active_playback_session_id and context.last_playing_state != "idle":
+        events.append(
+            GatewayEvent(
+                type="playback.receipt",
+                terminal_id=context.terminal_id,
+                session_id=context.active_playback_session_id,
+                seq=context.next_seq(),
+                payload={
+                    "playback_id": context.active_playback_id,
+                    "status": "completed",
+                    "detail": None,
+                    "error_code": None,
+                },
+                ts=utc_now_iso(),
+            )
+        )
+        context.clear_playback()
+    context.last_playing_state = state
+    return events
+
+
+def _build_session_start_event(context: TerminalBridgeContext, *, session_id: str) -> GatewayEvent:
+    return GatewayEvent(
+        type="session.start",
+        terminal_id=context.terminal_id,
+        session_id=session_id,
+        seq=context.next_seq(),
+        payload={
+            "household_id": context.household_id,
+            "room_id": context.room_id,
+            "terminal_code": context.terminal_code,
+            "sample_rate": settings.recording_sample_rate,
+            "codec": "pcm_s16le",
+            "channels": settings.recording_channels,
+            "trace_id": None,
+        },
+        ts=utc_now_iso(),
+    )
+
+
+def _build_playback_audio_config() -> dict[str, object]:
+    return {
+        "pcm": "noop",
+        "channels": settings.playback_channels,
+        "bits_per_sample": settings.playback_bits_per_sample,
+        "sample_rate": settings.playback_sample_rate,
+        "period_size": settings.playback_period_size,
+        "buffer_size": settings.playback_buffer_size,
+    }
+
+
+def build_recording_rpc_payload() -> dict[str, object]:
+    return {
+        "pcm": settings.recording_pcm,
+        "channels": settings.recording_channels,
+        "bits_per_sample": settings.recording_bits_per_sample,
+        "sample_rate": settings.recording_sample_rate,
+        "period_size": settings.recording_period_size,
+        "buffer_size": settings.recording_buffer_size,
+    }
+
+
+def _normalize_playing_state(data: Any) -> Literal["playing", "paused", "idle"] | None:
+    if isinstance(data, str):
+        lowered = data.strip().lower()
+        if lowered in {"playing", "paused", "idle"}:
+            return lowered
+    return None
+
+
+def _coerce_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _shell_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"

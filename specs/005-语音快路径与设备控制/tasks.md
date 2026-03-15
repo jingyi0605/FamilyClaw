@@ -124,6 +124,9 @@
     - 已新增网关终端桥接逻辑，支持文本事件翻译和二进制音频帧转 `audio.append`
     - 已新增 `api-server /api/v1/realtime/voice` 入口和最小会话收口
     - 已补最小测试覆盖终端上线、会话开始和音频事件结构
+    - 已把 `open-xiaoai-gateway` 从自造的 `hello / listen.start / playback.*` 假协议切到官方 Rust client 的 `Request / Response / Event / Stream` 实际协议
+    - 已改为由 gateway 配置提供 `household_id / terminal_id / room_id`，连接建立后主动上报 `terminal.online`
+    - 已改为消费官方 `kws / instruction / playing / record` 消息，并翻译成内部 `session.start / audio.append / audio.commit / playback.receipt`
     - 还没做实机联调和断线重连幂等校正，所以先不标 DONE
 
 - [ ] 1.4 实现 `内部 play/stop/abort -> open-xiaoai WS commands`
@@ -148,8 +151,10 @@
     - 打断联调测试
   - 本轮回写：
     - 已新增 `playback_service`，能下发 `play.start / play.stop / play.abort`
-    - 已在网关翻译层把内部播放命令翻成终端侧 `play / stop / abort` 消息
-    - 已支持把 `playback.started / completed / failed / interrupted` 翻回统一回执结构
+    - 已在 gateway 改为把内部播放命令翻成官方 client 可理解的 RPC 和音频流消息，不再假定终端支持 `play / stop / abort` 文本事件
+    - `tts_text` 现通过受控 `run_shell` 包装调用固定播放命令，`audio_bytes` 现可翻成 `start_play + Stream(tag=play)`
+    - 已把官方 `playing` 事件和 gateway 本地受控回执翻回 `started / completed / failed / interrupted`
+    - 已补 gateway 翻译器测试，覆盖官方协议下的播放请求、音频流下发和完成回执映射
     - 还没做终端实播联调，所以先不标 DONE
 
 - [ ] 1.5 阶段检查：终端接入层是不是收干净了
@@ -179,6 +184,7 @@
   - 主要改哪里：
     - `apps/api-server/app/modules/voice/pipeline.py`
     - `apps/api-server/app/modules/voice/runtime_client.py`
+    - `apps/voice-runtime/`
     - `apps/api-server/tests/`
   - 这一步先不做什么：先不落具体设备控制解析
   - 怎么算完成：
@@ -192,11 +198,17 @@
     - 已把 `voice/pipeline.py` 从纯状态收口升级为最小编排器
     - 已新增 `voice/runtime_client.py`，为后续 `voice-runtime` 留正式接缝
     - 已支持 `audio.commit -> runtime -> route -> playback` 这条最小闭环
+    - 已把 `session.start / audio.append / audio.commit` 三个节点正式接到 `voice-runtime` HTTP 协议
+    - 已新增 `voice_runtime_enabled / voice_runtime_base_url / voice_runtime_timeout_ms / voice_runtime_api_key` 配置收口
+    - 已新建 `apps/voice-runtime/` 独立进程，提供 `start / append / commit` 三个最小 HTTP 接口，先用内存会话把运行时协议跑通
+    - `voice-runtime commit` 现支持显式调试转写和 UTF-8 文本兜底转写，目的是先把服务进程、协议和回执链路跑起来，不假装这已经是真 ASR
+    - 已补 `test_voice_runtime_client.py` 和 `test_voice_pipeline.py`，覆盖 runtime 会话建立、音频转发和 commit 转写
+    - 已补 `apps/voice-runtime/tests/test_app.py`，覆盖 start 成功、append 成功、commit 返回转写、未知 session 错误
     - 已补运行时不可用、快路径成功、慢路径回退三类测试
-    - 还没接真实流式 ASR，也还没把最终转写正式持久化到数据库，所以先不标 DONE
+    - 还没接真实流式 ASR partial 回推，也还没做实机音频转写质量校正，更没把最终转写正式持久化到数据库，所以先不标 DONE
 
 - [ ] 2.2 建快路径动作解析并复用现有 `device_action / scene`
-  - 状态：IN_PROGRESS
+  - 状态：IN_REVIEW
   - 这一步到底做什么：把“开灯、关空调、拉窗帘、进入睡前模式”这类语音命令解析成现有设备动作或场景执行，不再走 LLM 主链。
   - 做完你能看到什么：简单语音控制终于能快起来，而且不是新造一套控制器。
   - 先依赖什么：2.1
@@ -219,12 +231,14 @@
     - 快路径集成测试
     - 模糊目标回退测试
   - 本轮回写：
-    - 已新增 `voice/fast_action_service.py` 和 `voice/router.py`
-    - 已用最小规则复用现有 `device_action / scene` 服务
-    - 当前只支持很窄的命令模式和单设备精确命中，多目标追问和更复杂语言解析还没做
+    - 已把 `voice/fast_action_service.py` 和 `voice/router.py` 升级到“房间 + 设备 + 动作 + 场景”收缩决策
+    - 已正式接入 `context`，用终端房间、活跃成员和房间占用信息保守收缩目标范围
+    - 已对多房间、多设备、动作不明确做正式收口，不再瞎猜执行
+    - 已继续复用现有 `device_action / scene`，没有新造第二套执行器
+    - 已补快路径测试：房间收缩成功、多设备歧义回退、静默时段阻断、儿童保护影响、高风险动作阻断
 
 - [ ] 2.3 建身份融合和高风险动作保护
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：把声纹结果、终端房间、在家状态和家庭保护开关融合起来，决定是直接执行、匿名降级还是追问确认。
   - 做完你能看到什么：语音入口不会因为一段低质量音频就误开门、误切场景。
   - 先依赖什么：2.2
@@ -243,9 +257,14 @@
   - 怎么验证：
     - 高风险阻断测试
     - 声纹低置信回退测试
+  - 本轮回写：
+    - 已新增 `voice/identity_service.py`，先用终端房间、活跃成员和在家状态做最小身份候选融合
+    - 已在 `voice/registry.py` 回写身份状态、请求成员、置信度和身份摘要
+    - 已把门锁解锁、静默时段、儿童保护、访客模式等保护条件正式接进快路径决策
+    - 当前还没有接真实声纹 runtime，但接口位和降级结构已经留好
 
 - [ ] 2.4 阶段检查：快路径链路是不是闭合了
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：检查“音频 -> 转写 -> 身份融合 -> 快路径动作 -> 播放回执 -> 审计”这条链是不是已经闭合。
   - 做完你能看到什么：简单语音控制已经不是 PPT，而是真能跑。
   - 先依赖什么：2.1、2.2、2.3
@@ -256,11 +275,15 @@
   - 怎么验证：
     - 集成测试
     - 人工回放链路
+  - 本轮回写：
+    - 已把 `audio.commit -> 转写 -> 身份/上下文收缩 -> 快路径或慢路径 -> play.start` 这条链正式收口
+    - 已对快路径成功、慢路径回退、阻断提示和运行时错误补充回归测试
+    - 当前还没接真实 `voice-runtime` 流式 ASR，也还没做数据库持久化，所以先不标 DONE
 
 ## 阶段 3：把慢路径和声纹链路补齐
 
 - [ ] 3.1 建语音慢路径到 `conversation` 的桥接
-  - 状态：IN_PROGRESS
+  - 状态：IN_REVIEW
   - 这一步到底做什么：把复杂语音问题正式转成现有 `conversation` 请求，复用会话、提案、记忆和后续任务草稿能力。
   - 做完你能看到什么：语音问“奶奶今天吃药了吗”时，背后用的还是同一个 AI 主链。
   - 先依赖什么：2.4
@@ -280,10 +303,9 @@
   - 怎么验证：
     - 慢路径集成测试
   - 本轮回写：
-    - 已新增 `voice/conversation_bridge.py` 最小桥接骨架
-    - 当前先把语音会话正式挂到 `conversation session`，并返回降级提示文本
-    - 还没真正复用完整 `conversation` 实时编排，所以先不标 IN_REVIEW
-    - 对话能力回归测试
+    - 已把 `voice/conversation_bridge.py` 从假桥位升级到真实桥接：创建 `conversation session` 并发起正式 `conversation turn`
+    - 已让语音会话回写 `conversation_session_id` 和慢路径回复文本
+    - 已补 `test_voice_conversation_bridge.py` 和 `test_voice_pipeline.py` 的慢路径回写测试
 
 - [ ] 3.2 建声纹注册、更新和停用链路
   - 状态：TODO

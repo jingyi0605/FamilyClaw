@@ -73,8 +73,16 @@ class VoiceSessionState(BaseModel):
     lane: str | None = None
     transcript_text: str | None = None
     runtime_status: str | None = None
+    runtime_session_id: str | None = None
+    runtime_error_detail: str | None = None
     route_type: str | None = None
     route_target: str | None = None
+    route_error_code: str | None = None
+    requester_member_id: str | None = None
+    requester_member_role: str | None = None
+    speaker_confidence: float | None = None
+    identity_status: str | None = None
+    identity_summary: dict[str, object] = Field(default_factory=dict)
     conversation_session_id: str | None = None
     last_response_text: str | None = None
     playback_receipts: list[VoicePlaybackReceiptRecord] = Field(default_factory=list)
@@ -332,6 +340,8 @@ class VoiceSessionRegistry:
         session_id: str,
         transcript_text: str,
         runtime_status: str,
+        runtime_session_id: str | None = None,
+        runtime_error_detail: str | None = None,
     ) -> VoiceSessionState | None:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -341,6 +351,31 @@ class VoiceSessionRegistry:
                 update={
                     "transcript_text": transcript_text,
                     "runtime_status": runtime_status,
+                    "runtime_session_id": runtime_session_id if runtime_session_id is not None else session.runtime_session_id,
+                    "runtime_error_detail": runtime_error_detail,
+                    "updated_at": utc_now_iso(),
+                }
+            )
+            self._sessions[session_id] = updated
+            return updated
+
+    def update_runtime_state(
+        self,
+        *,
+        session_id: str,
+        runtime_status: str,
+        runtime_session_id: str | None = None,
+        runtime_error_detail: str | None = None,
+    ) -> VoiceSessionState | None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            updated = session.model_copy(
+                update={
+                    "runtime_status": runtime_status,
+                    "runtime_session_id": runtime_session_id if runtime_session_id is not None else session.runtime_session_id,
+                    "runtime_error_detail": runtime_error_detail,
                     "updated_at": utc_now_iso(),
                 }
             )
@@ -354,6 +389,7 @@ class VoiceSessionRegistry:
         lane: str,
         route_type: str,
         route_target: str | None,
+        route_error_code: str | None = None,
     ) -> VoiceSessionState | None:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -364,6 +400,34 @@ class VoiceSessionRegistry:
                     "lane": lane,
                     "route_type": route_type,
                     "route_target": route_target,
+                    "route_error_code": route_error_code,
+                    "updated_at": utc_now_iso(),
+                }
+            )
+            self._sessions[session_id] = updated
+            return updated
+
+    def update_identity(
+        self,
+        *,
+        session_id: str,
+        requester_member_id: str | None,
+        requester_member_role: str | None,
+        speaker_confidence: float | None,
+        identity_status: str,
+        identity_summary: dict[str, object],
+    ) -> VoiceSessionState | None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            updated = session.model_copy(
+                update={
+                    "requester_member_id": requester_member_id,
+                    "requester_member_role": requester_member_role,
+                    "speaker_confidence": speaker_confidence,
+                    "identity_status": identity_status,
+                    "identity_summary": identity_summary,
                     "updated_at": utc_now_iso(),
                 }
             )
