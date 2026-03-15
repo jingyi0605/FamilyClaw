@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -24,6 +25,8 @@ from open_xiaoai_gateway.settings import settings
 VOICE_CAPABILITY_WHITELIST = ("audio_input", "audio_output", "playback_stop", "playback_abort", "heartbeat")
 VOICE_CAPABILITY_BLACKLIST = ("shell_exec", "script_exec", "system_upgrade", "reboot_control", "business_logic")
 
+logger = logging.getLogger(__name__)
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
@@ -35,6 +38,8 @@ class VoiceTerminalBinding:
     terminal_id: str
     room_id: str | None
     terminal_name: str
+    voice_auto_takeover_enabled: bool = False
+    voice_takeover_prefixes: tuple[str, ...] = ("请",)
 
 
 @dataclass(slots=True)
@@ -106,6 +111,8 @@ class TerminalBridgeContext:
         self.room_id = binding.room_id
         self.name = binding.terminal_name
         self.terminal_code = binding.terminal_id
+        self.invocation_mode = "always_familyclaw" if binding.voice_auto_takeover_enabled else "native_first"
+        self.takeover_prefixes = binding.voice_takeover_prefixes or ("请",)
 
     def is_claimed(self) -> bool:
         return bool(self.fingerprint and self.household_id and self.terminal_id and self.name)
@@ -365,7 +372,7 @@ def translate_command_to_terminal(command: GatewayCommand, context: TerminalBrid
         return [
             TerminalRpcRequest(
                 command="run_shell",
-                payload=f"/usr/sbin/tts_play.sh {_shell_quote(text)}",
+                payload=_build_xiaoai_tts_command(text),
             )
         ]
 
@@ -375,8 +382,11 @@ def translate_command_to_terminal(command: GatewayCommand, context: TerminalBrid
     return []
 
 
-def build_takeover_pause_message() -> TerminalRpcRequest:
-    return TerminalRpcRequest(command="run_shell", payload="mphelper pause")
+def build_takeover_interrupt_message() -> TerminalRpcRequest:
+    return TerminalRpcRequest(
+        command="run_shell",
+        payload="/etc/init.d/mico_aivs_lab restart >/dev/null 2>&1",
+    )
 
 
 def build_rpc_request_message(*, request_id: str, command: str, payload: Any | None = None) -> str:
@@ -408,20 +418,23 @@ def _translate_kws_event(data: Any, context: TerminalBridgeContext) -> TextTrans
         return TextTranslationResult(events=[], terminal_messages=[])
 
     events: list[GatewayEvent] = []
+    terminal_messages: list[TerminalOutboundMessage] = []
     interrupted = build_playback_interrupted_event(context, reason=f"wake_word:{keyword}")
     if interrupted is not None:
         events.append(interrupted)
 
     if context.invocation_mode == "always_familyclaw" and not context.active_session_id:
+        if settings.pause_on_takeover:
+            terminal_messages.append(build_takeover_interrupt_message())
         session_id = context.start_session()
         events.append(_build_session_start_event(context, session_id=session_id))
         context.last_invocation_decision = "always_familyclaw"
         context.last_passthrough_reason = None
-        return TextTranslationResult(events=events, terminal_messages=[])
+        return TextTranslationResult(events=events, terminal_messages=terminal_messages)
 
     context.last_invocation_decision = "await_takeover_prefix"
     context.last_passthrough_reason = None
-    return TextTranslationResult(events=events, terminal_messages=[])
+    return TextTranslationResult(events=events, terminal_messages=terminal_messages)
 
 
 def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> TextTranslationResult:
@@ -455,16 +468,21 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> T
             text = _coerce_text(first.get("text")) or ""
 
     events: list[GatewayEvent] = []
+    terminal_messages: list[TerminalOutboundMessage] = []
     if is_vad_begin and context.invocation_mode == "always_familyclaw" and not context.active_session_id:
+        if settings.pause_on_takeover:
+            terminal_messages.append(build_takeover_interrupt_message())
         session_id = context.start_session()
         events.append(_build_session_start_event(context, session_id=session_id))
 
     if not is_final:
-        return TextTranslationResult(events=events, terminal_messages=[])
+        return TextTranslationResult(events=events, terminal_messages=terminal_messages)
 
     if text.strip():
         if context.invocation_mode == "always_familyclaw":
             if not context.active_session_id:
+                if settings.pause_on_takeover:
+                    terminal_messages.append(build_takeover_interrupt_message())
                 session_id = context.start_session()
                 events.append(_build_session_start_event(context, session_id=session_id))
             session_id = context.active_session_id
@@ -472,9 +490,22 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> T
             events.append(_build_audio_commit_event(context, session_id=session_id, transcript_text=text.strip(), reason="speech_recognizer_final"))
             context.last_invocation_decision = "always_familyclaw"
             context.last_passthrough_reason = None
-            return TextTranslationResult(events=events, terminal_messages=[])
+            return TextTranslationResult(events=events, terminal_messages=terminal_messages)
 
-        decision = GatewayInvocationPolicy.from_settings(settings).decide(text)
+        decision = GatewayInvocationPolicy(
+            mode=context.invocation_mode,
+            takeover_prefixes=context.takeover_prefixes,
+            strip_takeover_prefix=settings.strip_takeover_prefix,
+            pause_on_takeover=settings.pause_on_takeover,
+        ).decide(text)
+        logger.info(
+            "invocation decision fingerprint=%s decision=%s reason=%s matched_prefix=%s transcript=%s",
+            context.fingerprint,
+            decision.decision_type,
+            decision.reason,
+            decision.matched_prefix,
+            text.strip(),
+        )
         context.last_invocation_decision = decision.decision_type
         context.last_passthrough_reason = decision.reason if decision.decision_type != "familyclaw_takeover" else None
         if decision.decision_type != "familyclaw_takeover" or not decision.resolved_text:
@@ -482,7 +513,7 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> T
 
         terminal_messages: list[TerminalOutboundMessage] = []
         if decision.should_pause:
-            terminal_messages.append(build_takeover_pause_message())
+            terminal_messages.append(build_takeover_interrupt_message())
         if not context.active_session_id:
             session_id = context.start_session()
             events.append(_build_session_start_event(context, session_id=session_id))
@@ -514,6 +545,11 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> T
     context.last_invocation_decision = "native_passthrough" if context.invocation_mode == "native_first" else context.last_invocation_decision
     context.last_passthrough_reason = "speech_recognizer_empty"
     return TextTranslationResult(events=events, terminal_messages=[])
+
+
+def _build_xiaoai_tts_command(text: str) -> str:
+    normalized_text = _normalize_tts_text(text)
+    return f"/usr/sbin/tts_play.sh {_shell_quote(normalized_text)} >/tmp/familyclaw-tts.log 2>&1"
 
 
 def _translate_playing_event(data: Any, context: TerminalBridgeContext) -> TextTranslationResult:
@@ -624,6 +660,10 @@ def _coerce_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _normalize_tts_text(text: str) -> str:
+    return " ".join(str(text).split())
 
 
 def _shell_quote(value: str) -> str:

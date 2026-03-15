@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+import json
+from json import JSONDecodeError
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 GatewayInvocationMode = Literal["always_familyclaw", "native_first"]
 
@@ -28,7 +30,7 @@ class Settings(BaseSettings):
     playback_period_size: int = Field(default=360, ge=1)
     playback_buffer_size: int = Field(default=1440, ge=1)
     invocation_mode: GatewayInvocationMode = "always_familyclaw"
-    takeover_prefixes: list[str] = Field(default_factory=list)
+    takeover_prefixes: Annotated[list[str], NoDecode] = Field(default_factory=list)
     strip_takeover_prefix: bool = True
     pause_on_takeover: bool = True
     log_level: str = "INFO"
@@ -39,7 +41,19 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return []
         if isinstance(value, str):
-            raw_items = value.split(",")
+            text = value.strip()
+            if not text:
+                return []
+            if text.startswith("["):
+                try:
+                    decoded = json.loads(text)
+                except JSONDecodeError as exc:
+                    raise ValueError("takeover_prefixes JSON 格式不合法") from exc
+                if not isinstance(decoded, list):
+                    raise ValueError("takeover_prefixes JSON 必须是字符串数组")
+                raw_items = decoded
+            else:
+                raw_items = text.replace("，", ",").split(",")
         elif isinstance(value, (list, tuple, set)):
             raw_items = list(value)
         else:

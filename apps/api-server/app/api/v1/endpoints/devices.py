@@ -77,6 +77,8 @@ class VoiceDiscoveryBindingRead(BaseModel):
     terminal_id: str
     room_id: str | None = None
     terminal_name: str
+    voice_auto_takeover_enabled: bool
+    voice_takeover_prefixes: list[str]
 
 
 class VoiceDiscoveryReportResponse(BaseModel):
@@ -192,7 +194,7 @@ def list_voice_terminal_discoveries(
 
 
 @router.post(
-    "/voice-terminals/discoveries/{fingerprint}/claim",
+    "/voice-terminals/discoveries/{fingerprint:path}/claim",
     response_model=VoiceDiscoveryBindingRead,
     status_code=status.HTTP_200_OK,
 )
@@ -244,7 +246,7 @@ def claim_voice_terminal_discovery_endpoint(
     return VoiceDiscoveryBindingRead.model_validate(binding.model_dump(mode="json"))
 
 
-@router.get("/voice-terminals/discoveries/{fingerprint}/binding", response_model=VoiceDiscoveryReportResponse)
+@router.get("/voice-terminals/discoveries/{fingerprint:path}/binding", response_model=VoiceDiscoveryReportResponse)
 def get_voice_terminal_discovery_binding(
     fingerprint: str,
     _gateway_auth: None = Depends(require_voice_gateway_token),

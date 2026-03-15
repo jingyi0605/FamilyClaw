@@ -1,7 +1,7 @@
 /* ============================================================
  * 设置页 - 二级导航 + 6 个子页面
  * ============================================================ */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Outlet, useMatch, Navigate } from 'react-router-dom';
 import { formatLocaleOptionLabel, useI18n, type LocaleId } from '../i18n';
 import { useTheme, themeList, type ThemeId } from '../theme';
@@ -22,8 +22,6 @@ import type {
   VoiceDiscoveryTerminal,
 } from '../lib/types';
 export { SettingsAiPage as SettingsAi } from './SettingsAiPage';
-
-type VoiceDiscoveryDraft = { terminal_name: string; room_id: string };
 
 function useContextConfigSettings() {
   const { currentHouseholdId } = useHouseholdContext();
@@ -448,34 +446,35 @@ export function SettingsIntegrations() {
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [roomModalLoading, setRoomModalLoading] = useState(false);
   const [voiceDiscoveries, setVoiceDiscoveries] = useState<VoiceDiscoveryTerminal[]>([]);
-  const [voiceDiscoveryDrafts, setVoiceDiscoveryDrafts] = useState<Record<string, VoiceDiscoveryDraft>>({});
+  const [voiceDiscoveryDrafts, setVoiceDiscoveryDrafts] = useState<Record<string, { terminal_name: string; room_id: string }>>({});
   const [voiceDiscoveryError, setVoiceDiscoveryError] = useState('');
   const [voiceClaimingFingerprint, setVoiceClaimingFingerprint] = useState<string | null>(null);
+  const [speakerSettingsForm, setSpeakerSettingsForm] = useState<{
+    device_id: string;
+    device_name: string;
+    voice_auto_takeover_enabled: boolean;
+    voice_takeover_prefixes_text: string;
+  } | null>(null);
+  const [speakerSettingsError, setSpeakerSettingsError] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const roomsRef = useRef<Room[]>([]);
 
-  function normalizeVoiceDiscoveryDraft(draft: Partial<VoiceDiscoveryDraft> | undefined, availableRooms: Room[]): VoiceDiscoveryDraft {
-    const fallbackRoomId = availableRooms[0]?.id ?? '';
-    const roomId = draft?.room_id ?? '';
-    const roomExists = roomId !== '' && availableRooms.some(room => room.id === roomId);
-
+  function getDefaultVoiceDiscoveryDraft() {
     return {
-      terminal_name: draft?.terminal_name ?? '小爱音箱',
-      room_id: availableRooms.length === 0 ? '' : (roomExists ? roomId : fallbackRoomId),
+      terminal_name: '小爱音箱',
+      room_id: rooms[0]?.id ?? '',
     };
   }
 
-  function mergeVoiceDiscoveryDrafts(
-    items: VoiceDiscoveryTerminal[],
-    previous: Record<string, VoiceDiscoveryDraft>,
-    availableRooms: Room[],
-  ) {
+  function mergeVoiceDiscoveryDrafts(items: VoiceDiscoveryTerminal[], previous: Record<string, { terminal_name: string; room_id: string }>) {
     return Object.fromEntries(
       items.map(item => [
         item.fingerprint,
-        normalizeVoiceDiscoveryDraft(previous[item.fingerprint], availableRooms),
+        {
+          ...getDefaultVoiceDiscoveryDraft(),
+          ...previous[item.fingerprint],
+        },
       ]),
     );
   }
@@ -495,12 +494,11 @@ export function SettingsIntegrations() {
     }
   }
 
-  async function loadVoiceDiscoveries(householdId: string, options?: { silent?: boolean; rooms?: Room[] }) {
+  async function loadVoiceDiscoveries(householdId: string, options?: { silent?: boolean }) {
     try {
       const result = await api.listVoiceTerminalDiscoveries(householdId);
-      const availableRooms = options?.rooms ?? roomsRef.current;
       setVoiceDiscoveries(result.items);
-      setVoiceDiscoveryDrafts(current => mergeVoiceDiscoveryDrafts(result.items, current, availableRooms));
+      setVoiceDiscoveryDrafts(current => mergeVoiceDiscoveryDrafts(result.items, current));
       if (!options?.silent) {
         setVoiceDiscoveryError('');
       }
@@ -541,7 +539,6 @@ export function SettingsIntegrations() {
       const nextConfig = configResult.status === 'fulfilled' ? configResult.value : null;
       setDevices(devicesResult.status === 'fulfilled' ? devicesResult.value.items : []);
       setRooms(roomsResult.status === 'fulfilled' ? roomsResult.value.items : []);
-      roomsRef.current = roomsResult.status === 'fulfilled' ? roomsResult.value.items : [];
       setHaConfig(nextConfig);
       setHaForm({
         base_url: nextConfig?.base_url ?? '',
@@ -550,7 +547,7 @@ export function SettingsIntegrations() {
         clear_access_token: false,
       });
       setDeviceDrafts(Object.fromEntries((devicesResult.status === 'fulfilled' ? devicesResult.value.items : []).map(device => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
-      await loadVoiceDiscoveries(currentHouseholdId, { rooms: roomsRef.current });
+      await loadVoiceDiscoveries(currentHouseholdId);
 
       const hasHaConfig = Boolean(nextConfig?.base_url && nextConfig?.token_configured);
       if (hasHaConfig) {
@@ -600,14 +597,16 @@ export function SettingsIntegrations() {
   }, [currentHouseholdId]);
 
   useEffect(() => {
-    roomsRef.current = rooms;
     if (rooms.length === 0) {
       return;
     }
     setVoiceDiscoveryDrafts(current => Object.fromEntries(
       Object.entries(current).map(([fingerprint, draft]) => [
         fingerprint,
-        normalizeVoiceDiscoveryDraft(draft, rooms),
+        {
+          ...draft,
+          room_id: draft.room_id || rooms[0].id,
+        },
       ]),
     ));
   }, [rooms]);
@@ -632,9 +631,8 @@ export function SettingsIntegrations() {
     setOverview(hasHaConfig ? await api.getContextOverview(currentHouseholdId).catch(() => null) : null);
     setDevices(nextDevices.items);
     setRooms(nextRooms.items);
-    roomsRef.current = nextRooms.items;
     setDeviceDrafts(Object.fromEntries(nextDevices.items.map(device => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
-    await loadVoiceDiscoveries(currentHouseholdId, { silent: true, rooms: nextRooms.items });
+    await loadVoiceDiscoveries(currentHouseholdId, { silent: true });
   }
 
   async function runAction(action: () => Promise<void>) {
@@ -777,39 +775,95 @@ export function SettingsIntegrations() {
     });
   }
 
+  function normalizeTakeoverPrefixes(text: string) {
+    return text
+      .replace(/，/g, ',')
+      .split(',')
+      .map(item => item.trim())
+      .filter((item, index, array) => item.length > 0 && array.indexOf(item) === index);
+  }
+
+  function openSpeakerSettings(device: Device) {
+    setSpeakerSettingsError('');
+    setSpeakerSettingsForm({
+      device_id: device.id,
+      device_name: device.name,
+      voice_auto_takeover_enabled: device.voice_auto_takeover_enabled,
+      voice_takeover_prefixes_text: (device.voice_takeover_prefixes.length > 0 ? device.voice_takeover_prefixes : ['请']).join(', '),
+    });
+  }
+
+  async function handleSaveSpeakerSettings() {
+    if (!speakerSettingsForm) {
+      return;
+    }
+
+    const prefixes = normalizeTakeoverPrefixes(speakerSettingsForm.voice_takeover_prefixes_text);
+    if (!speakerSettingsForm.voice_auto_takeover_enabled && prefixes.length === 0) {
+      setSpeakerSettingsError('请至少填写一个请求词前缀，例如“请”。');
+      return;
+    }
+
+    setSpeakerSettingsError('');
+    await runAction(async () => {
+      await api.updateDevice(speakerSettingsForm.device_id, {
+        voice_auto_takeover_enabled: speakerSettingsForm.voice_auto_takeover_enabled,
+        voice_takeover_prefixes: prefixes.length > 0 ? prefixes : ['请'],
+      });
+      await reloadWorkspace();
+      setSpeakerSettingsForm(null);
+      setStatus('音箱语音接管设置已保存。');
+    });
+  }
+
   function updateVoiceDiscoveryDraft(
     fingerprint: string,
-    patch: Partial<VoiceDiscoveryDraft>,
+    patch: Partial<{ terminal_name: string; room_id: string }>,
   ) {
     setVoiceDiscoveryDrafts(current => ({
       ...current,
-      [fingerprint]: normalizeVoiceDiscoveryDraft(
-        { ...current[fingerprint], ...patch },
-        roomsRef.current,
-      ),
+      [fingerprint]: {
+        terminal_name: current[fingerprint]?.terminal_name ?? '小爱音箱',
+        room_id: current[fingerprint]?.room_id ?? (rooms[0]?.id ?? ''),
+        ...patch,
+      },
     }));
   }
 
-  async function handleClaimVoiceDiscovery(item: VoiceDiscoveryTerminal) {
-    const { fingerprint } = item;
-    const draft = normalizeVoiceDiscoveryDraft(voiceDiscoveryDrafts[fingerprint], rooms);
+  function getVoiceDiscoveryDraft(fingerprint: string) {
+    const draft = voiceDiscoveryDrafts[fingerprint];
+    if (!draft) {
+      return getDefaultVoiceDiscoveryDraft();
+    }
+    return {
+      terminal_name: draft.terminal_name || '小爱音箱',
+      room_id: draft.room_id || rooms[0]?.id || '',
+    };
+  }
+
+  async function handleClaimVoiceDiscovery(fingerprint: string) {
+    const draft = getVoiceDiscoveryDraft(fingerprint);
+    console.debug('[voice-discovery] claim draft', {
+      fingerprint,
+      currentHouseholdId,
+      roomId: draft.room_id,
+      terminalName: draft.terminal_name,
+      roomCount: rooms.length,
+    });
     if (!currentHouseholdId) {
       setVoiceDiscoveryError('还没有选中家庭，暂时无法添加音箱。');
       return;
     }
     if (!draft?.terminal_name.trim()) {
+      console.warn('[voice-discovery] claim blocked: missing terminal name', { fingerprint, draft });
       setVoiceDiscoveryError('请先填写设备名称。');
       return;
     }
     if (!draft.room_id) {
+      console.warn('[voice-discovery] claim blocked: missing room id', { fingerprint, draft, rooms });
       setVoiceDiscoveryError('请先选择所在房间。');
       return;
     }
-
-    setVoiceDiscoveryDrafts(current => ({
-      ...current,
-      [fingerprint]: draft,
-    }));
 
     setVoiceClaimingFingerprint(fingerprint);
     setVoiceDiscoveryError('');
@@ -818,13 +872,15 @@ export function SettingsIntegrations() {
         household_id: currentHouseholdId,
         room_id: draft.room_id,
         terminal_name: draft.terminal_name.trim(),
-        model: item.model,
-        sn: item.sn,
-        connection_status: item.connection_status,
       });
       await reloadWorkspace();
       setStatus('新音箱已经添加到当前家庭。');
     } catch (claimError) {
+      console.error('[voice-discovery] claim failed', {
+        fingerprint,
+        draft,
+        claimError,
+      });
       setVoiceDiscoveryError(claimError instanceof Error ? normalizeVoiceDiscoveryErrorMessage(claimError.message) : '添加音箱失败');
     } finally {
       setVoiceClaimingFingerprint(null);
@@ -962,7 +1018,7 @@ export function SettingsIntegrations() {
             {voiceDiscoveries.length === 0 ? (
               <div className="integration-status__detail">暂时没有发现新的音箱。</div>
             ) : voiceDiscoveries.map(item => {
-              const draft = normalizeVoiceDiscoveryDraft(voiceDiscoveryDrafts[item.fingerprint], rooms);
+              const draft = getVoiceDiscoveryDraft(item.fingerprint);
               const isClaiming = voiceClaimingFingerprint === item.fingerprint;
               return (
                 <Card key={item.fingerprint} className="device-card device-card--editor">
@@ -999,7 +1055,7 @@ export function SettingsIntegrations() {
                     <button
                       className="btn btn--outline btn--sm"
                       type="button"
-                      onClick={() => void handleClaimVoiceDiscovery(item)}
+                      onClick={() => void handleClaimVoiceDiscovery(item.fingerprint)}
                       disabled={isClaiming || rooms.length === 0}
                     >
                       {isClaiming ? '添加中...' : '添加到家庭'}
@@ -1015,12 +1071,20 @@ export function SettingsIntegrations() {
         <div className="device-list">
           {loading && devices.length === 0 ? <div className="text-text-secondary">正在加载设备列表...</div> : devices.map(device => {
             const draft = deviceDrafts[device.id] ?? { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable };
+            const supportsVoiceSettings = device.device_type === 'speaker' && device.vendor === 'xiaomi';
             return (
               <Card key={device.id} className="device-card device-card--editor">
                 <div className="device-card__editor-grid">
                   <div className="device-card__info">
                     <span className="device-card__name">{device.name}</span>
                     <span className="device-card__room">{roomNameMap[device.room_id ?? ''] ?? '未分配房间'} · {formatDeviceType(device.device_type)}</span>
+                    {supportsVoiceSettings && (
+                      <span className="integration-status__detail">
+                        {device.voice_auto_takeover_enabled
+                          ? '当前设置：默认接管所有请求'
+                          : `当前设置：只响应 ${device.voice_takeover_prefixes.join('、')} 开头的请求`}
+                      </span>
+                    )}
                   </div>
                   <input className="form-input" value={draft.name} onChange={event => setDeviceDrafts(current => ({ ...current, [device.id]: { ...draft, name: event.target.value } }))} />
                   <select className="form-select" value={draft.room_id ?? ''} onChange={event => setDeviceDrafts(current => ({ ...current, [device.id]: { ...draft, room_id: event.target.value || null } }))}>
@@ -1040,6 +1104,11 @@ export function SettingsIntegrations() {
                   <span className={`badge badge--${device.status === 'active' ? 'success' : 'secondary'}`}>
                     {device.status === 'active' ? '在线' : device.status === 'offline' ? '离线' : '未启用'}
                   </span>
+                  {supportsVoiceSettings && (
+                    <button className="btn btn--outline btn--sm" type="button" onClick={() => openSpeakerSettings(device)} disabled={loading}>
+                      语音设置
+                    </button>
+                  )}
                   <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleSaveDevice(device.id)} disabled={loading}>保存设备</button>
                 </div>
               </Card>
@@ -1047,6 +1116,61 @@ export function SettingsIntegrations() {
           })}
         </div>
       </Section>
+      {speakerSettingsForm && (
+        <div className="member-modal-overlay" onClick={() => setSpeakerSettingsForm(null)}>
+          <div className="member-modal ha-config-modal" onClick={event => event.stopPropagation()}>
+            <div className="member-modal__header">
+              <div>
+                <h3>{speakerSettingsForm.device_name} · 语音设置</h3>
+                <p>这里控制这台小爱音箱的 FamilyClaw 接管策略，不会影响其他设备。</p>
+              </div>
+            </div>
+            <div className="settings-form integration-config-form">
+              {speakerSettingsError && <div className="form-error">{speakerSettingsError}</div>}
+              <div className="form-group">
+                <label className="form-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={speakerSettingsForm.voice_auto_takeover_enabled}
+                    onChange={event => setSpeakerSettingsForm(current => current ? {
+                      ...current,
+                      voice_auto_takeover_enabled: event.target.checked,
+                    } : current)}
+                  />
+                  <span className="form-checkbox__label">默认接管所有语音请求</span>
+                </label>
+                <div className="form-hint">
+                  开启后，这台音箱的请求会优先进入 FamilyClaw，不再默认交给小爱原生处理。
+                </div>
+              </div>
+              <div className="form-group">
+                <label>仅响应这些开头词</label>
+                <input
+                  className="form-input"
+                  value={speakerSettingsForm.voice_takeover_prefixes_text}
+                  onChange={event => setSpeakerSettingsForm(current => current ? {
+                    ...current,
+                    voice_takeover_prefixes_text: event.target.value,
+                  } : current)}
+                  placeholder="请"
+                />
+                <div className="form-hint">
+                  仅在“默认接管所有语音请求”关闭时生效。多个前缀用逗号分隔，例如：请，帮我。默认是“请”。
+                </div>
+                <div className="form-hint">
+                  作用：只有识别文本以这些词开头时，FamilyClaw 才会抢占回答；其他请求继续由小爱同学处理。
+                </div>
+              </div>
+              <div className="member-modal__actions">
+                <button className="btn btn--outline btn--sm" type="button" onClick={() => setSpeakerSettingsForm(null)} disabled={loading}>取消</button>
+                <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleSaveSpeakerSettings()} disabled={loading}>
+                  {loading ? '保存中...' : '保存语音设置'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {roomModalOpen && (
         <div className="member-modal-overlay" onClick={() => setRoomModalOpen(false)}>
           <div className="member-modal ha-room-modal" onClick={event => event.stopPropagation()}>

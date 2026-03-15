@@ -244,6 +244,8 @@ export type VoiceDiscoveryBinding = {
   terminal_id: string;
   room_id: string | null;
   terminal_name: string;
+  voice_auto_takeover_enabled: boolean;
+  voice_takeover_prefixes: string[];
 };
 
 export type FamilyQaFactReference = {

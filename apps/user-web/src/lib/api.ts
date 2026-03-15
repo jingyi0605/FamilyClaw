@@ -268,7 +268,7 @@ export const api = {
       },
     );
   },
-  updateDevice(deviceId: string, payload: Partial<Pick<Device, 'name' | 'status' | 'room_id' | 'controllable'>>) {
+  updateDevice(deviceId: string, payload: Partial<Pick<Device, 'name' | 'status' | 'room_id' | 'controllable' | 'voice_auto_takeover_enabled' | 'voice_takeover_prefixes'>>) {
     return request<Device>(`/devices/${encodeURIComponent(deviceId)}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),

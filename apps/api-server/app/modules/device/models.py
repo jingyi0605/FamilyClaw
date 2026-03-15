@@ -2,7 +2,7 @@ from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.db.utils import utc_now_iso
+from app.db.utils import dump_json, load_json, utc_now_iso
 
 
 class Device(Base):
@@ -26,6 +26,8 @@ class Device(Base):
     vendor: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     controllable: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    voice_auto_takeover_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    voice_takeover_prefixes_json: Mapped[str] = mapped_column("voice_takeover_prefixes", Text, nullable=False, default='["请"]')
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
     updated_at: Mapped[str] = mapped_column(
         Text,
@@ -33,6 +35,29 @@ class Device(Base):
         default=utc_now_iso,
         onupdate=utc_now_iso,
     )
+
+    @property
+    def voice_takeover_prefixes(self) -> list[str]:
+        loaded = load_json(self.voice_takeover_prefixes_json)
+        if not isinstance(loaded, list):
+            return ["请"]
+        normalized: list[str] = []
+        for item in loaded:
+            text = str(item).strip()
+            if not text or text in normalized:
+                continue
+            normalized.append(text)
+        return normalized or ["请"]
+
+    @voice_takeover_prefixes.setter
+    def voice_takeover_prefixes(self, value: list[str] | tuple[str, ...]) -> None:
+        normalized: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if not text or text in normalized:
+                continue
+            normalized.append(text)
+        self.voice_takeover_prefixes_json = dump_json(normalized or ["请"]) or '["请"]'
 
 
 class DeviceBinding(Base):

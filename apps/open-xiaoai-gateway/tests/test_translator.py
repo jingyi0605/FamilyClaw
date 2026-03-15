@@ -72,18 +72,7 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual("online", payload["connection_status"])
 
     def test_kws_keyword_starts_voice_session(self) -> None:
-        context = TerminalBridgeContext()
-        context.apply_discovery(
-            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
-        )
-        context.apply_binding(
-            VoiceTerminalBinding(
-                household_id="household-1",
-                terminal_id="terminal-1",
-                room_id="room-1",
-                terminal_name="客厅小爱",
-            )
-        )
+        context = self._build_claimed_context(voice_auto_takeover_enabled=True)
 
         events = translate_text_message(
             json.dumps(
@@ -104,19 +93,37 @@ class TranslatorTests(unittest.TestCase):
         self.assertTrue(events[0].session_id)
         self.assertEqual(events[0].session_id, context.active_session_id)
 
-    def test_instruction_final_result_commits_with_debug_transcript(self) -> None:
-        context = TerminalBridgeContext()
-        context.apply_discovery(
-            build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
-        )
-        context.apply_binding(
-            VoiceTerminalBinding(
-                household_id="household-1",
-                terminal_id="terminal-1",
-                room_id="room-1",
-                terminal_name="客厅小爱",
+    def test_always_familyclaw_kws_emits_takeover_pause_when_enabled(self) -> None:
+        with self._patch_invocation_settings(
+            invocation_mode="always_familyclaw",
+            takeover_prefixes=["帮我"],
+            strip_takeover_prefix=True,
+            pause_on_takeover=True,
+        ):
+            context = self._build_claimed_context(voice_auto_takeover_enabled=True)
+            result = translate_text_message_result(
+                json.dumps(
+                    {
+                        "Event": {
+                            "id": "event-kws-1",
+                            "event": "kws",
+                            "data": {"Keyword": "小爱同学"},
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                context,
             )
-        )
+
+        self.assertEqual(["session.start"], [item.type for item in result.events])
+        self.assertEqual(1, len(result.terminal_messages))
+        self.assertIsInstance(result.terminal_messages[0], TerminalRpcRequest)
+        assert isinstance(result.terminal_messages[0], TerminalRpcRequest)
+        self.assertEqual("run_shell", result.terminal_messages[0].command)
+        self.assertIn("mico_aivs_lab restart", str(result.terminal_messages[0].payload))
+
+    def test_instruction_final_result_commits_with_debug_transcript(self) -> None:
+        context = self._build_claimed_context(voice_auto_takeover_enabled=True)
         context.active_session_id = "session-1"
 
         events = translate_text_message(
@@ -160,7 +167,7 @@ class TranslatorTests(unittest.TestCase):
             strip_takeover_prefix=True,
             pause_on_takeover=True,
         ):
-            context = self._build_claimed_context()
+            context = self._build_claimed_context(voice_takeover_prefixes=("帮我",))
 
             kws_result = translate_text_message_result(
                 json.dumps(
@@ -194,7 +201,7 @@ class TranslatorTests(unittest.TestCase):
             strip_takeover_prefix=True,
             pause_on_takeover=True,
         ):
-            context = self._build_claimed_context()
+            context = self._build_claimed_context(voice_takeover_prefixes=("帮我",))
             result = translate_text_message_result(
                 self._build_recognize_result_frame(text="帮我 打开客厅灯"),
                 context,
@@ -206,7 +213,7 @@ class TranslatorTests(unittest.TestCase):
         self.assertIsInstance(result.terminal_messages[0], TerminalRpcRequest)
         assert isinstance(result.terminal_messages[0], TerminalRpcRequest)
         self.assertEqual("run_shell", result.terminal_messages[0].command)
-        self.assertEqual("mphelper pause", result.terminal_messages[0].payload)
+        self.assertIn("mico_aivs_lab restart", str(result.terminal_messages[0].payload))
         self.assertIsNone(context.active_session_id)
 
     def test_native_first_can_keep_prefix_when_strip_disabled(self) -> None:
@@ -225,6 +232,37 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(["session.start", "audio.commit"], [item.type for item in result.events])
         self.assertEqual("请打开客厅灯", result.events[1].payload["debug_transcript"])
         self.assertEqual([], result.terminal_messages)
+
+    def test_binding_settings_override_global_invocation_strategy(self) -> None:
+        with self._patch_invocation_settings(
+            invocation_mode="always_familyclaw",
+            takeover_prefixes=["帮我"],
+            strip_takeover_prefix=True,
+            pause_on_takeover=False,
+        ):
+            context = TerminalBridgeContext()
+            context.apply_discovery(
+                build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
+            )
+            context.apply_binding(
+                VoiceTerminalBinding(
+                    household_id="household-1",
+                    terminal_id="terminal-1",
+                    room_id="room-1",
+                    terminal_name="客厅小爱",
+                    voice_auto_takeover_enabled=False,
+                    voice_takeover_prefixes=("请",),
+                )
+            )
+            result = translate_text_message_result(
+                self._build_recognize_result_frame(text="帮我打开客厅灯"),
+                context,
+            )
+
+        self.assertEqual("native_first", context.invocation_mode)
+        self.assertEqual(("请",), context.takeover_prefixes)
+        self.assertEqual([], result.events)
+        self.assertEqual("takeover_prefix_not_matched", context.last_passthrough_reason)
 
     def test_binary_record_stream_translates_to_audio_append(self) -> None:
         context = TerminalBridgeContext()
@@ -313,6 +351,7 @@ class TranslatorTests(unittest.TestCase):
         assert isinstance(messages[0], TerminalRpcRequest)
         self.assertEqual("run_shell", messages[0].command)
         self.assertIn("tts_play.sh", str(messages[0].payload))
+        self.assertFalse(str(messages[0].payload).strip().endswith("&"))
         self.assertEqual("playback-1", context.active_playback_id)
 
     def test_audio_bytes_command_translates_to_rpc_then_stream(self) -> None:
@@ -400,7 +439,12 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual("Response", frame.variant)
         self.assertEqual("req-1", frame.Response.id)
 
-    def _build_claimed_context(self) -> TerminalBridgeContext:
+    def _build_claimed_context(
+        self,
+        *,
+        voice_auto_takeover_enabled: bool = False,
+        voice_takeover_prefixes: tuple[str, ...] = ("请",),
+    ) -> TerminalBridgeContext:
         context = TerminalBridgeContext()
         context.apply_discovery(
             build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0")
@@ -411,6 +455,8 @@ class TranslatorTests(unittest.TestCase):
                 terminal_id="terminal-1",
                 room_id="room-1",
                 terminal_name="客厅小爱",
+                voice_auto_takeover_enabled=voice_auto_takeover_enabled,
+                voice_takeover_prefixes=voice_takeover_prefixes,
             )
         )
         return context

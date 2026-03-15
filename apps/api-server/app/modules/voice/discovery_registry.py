@@ -23,6 +23,8 @@ class VoiceTerminalBindingSnapshot(BaseModel):
     terminal_id: str
     room_id: str | None = None
     terminal_name: str
+    voice_auto_takeover_enabled: bool = False
+    voice_takeover_prefixes: list[str] = Field(default_factory=lambda: ["请"])
 
 
 class VoiceTerminalDiscoveryRecord(BaseModel):
@@ -151,6 +153,8 @@ def get_voice_terminal_binding(db: Session, *, fingerprint: str) -> VoiceTermina
         terminal_id=device.id,
         room_id=device.room_id,
         terminal_name=device.name,
+        voice_auto_takeover_enabled=bool(device.voice_auto_takeover_enabled),
+        voice_takeover_prefixes=device.voice_takeover_prefixes,
     )
 
 
@@ -201,6 +205,8 @@ def claim_voice_terminal_discovery(
             terminal_id=device.id,
             room_id=device.room_id,
             terminal_name=device.name,
+            voice_auto_takeover_enabled=bool(device.voice_auto_takeover_enabled),
+            voice_takeover_prefixes=device.voice_takeover_prefixes,
         )
 
     device = Device(
@@ -212,7 +218,9 @@ def claim_voice_terminal_discovery(
         vendor="xiaomi",
         status=_map_device_status(discovery.connection_status),
         controllable=0,
+        voice_auto_takeover_enabled=0,
     )
+    device.voice_takeover_prefixes = ["请"]
     db.add(device)
     db.flush()
 
@@ -231,6 +239,8 @@ def claim_voice_terminal_discovery(
         terminal_id=device.id,
         room_id=device.room_id,
         terminal_name=device.name,
+        voice_auto_takeover_enabled=bool(device.voice_auto_takeover_enabled),
+        voice_takeover_prefixes=device.voice_takeover_prefixes,
     )
 
 

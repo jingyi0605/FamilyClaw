@@ -423,6 +423,8 @@ export type Device = {
   vendor: 'xiaomi' | 'ha' | 'other';
   status: 'active' | 'offline' | 'inactive';
   controllable: boolean;
+  voice_auto_takeover_enabled: boolean;
+  voice_takeover_prefixes: string[];
   created_at: string;
   updated_at: string;
 };

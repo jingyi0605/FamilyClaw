@@ -82,6 +82,21 @@ def update_device(db: Session, device: Device, payload: DeviceUpdate) -> tuple[D
     if "controllable" in update_data:
         update_data["controllable"] = 1 if update_data["controllable"] else 0
 
+    if "voice_auto_takeover_enabled" in update_data:
+        if device.device_type != "speaker" or device.vendor != "xiaomi":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="voice takeover settings only support xiaomi speaker devices",
+            )
+        update_data["voice_auto_takeover_enabled"] = 1 if update_data["voice_auto_takeover_enabled"] else 0
+
+    if "voice_takeover_prefixes" in update_data:
+        if device.device_type != "speaker" or device.vendor != "xiaomi":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="voice takeover settings only support xiaomi speaker devices",
+            )
+
     for field_name, field_value in update_data.items():
         setattr(device, field_name, field_value)
 

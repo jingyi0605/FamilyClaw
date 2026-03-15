@@ -147,6 +147,8 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         binding_payload = binding_response.json()
         self.assertTrue(binding_payload["claimed"])
         self.assertEqual(self.household_id, binding_payload["binding"]["household_id"])
+        self.assertFalse(binding_payload["binding"]["voice_auto_takeover_enabled"])
+        self.assertEqual(["请"], binding_payload["binding"]["voice_takeover_prefixes"])
 
         with self.SessionLocal() as db:
             device = db.scalar(select(Device).where(Device.id == binding_payload["binding"]["terminal_id"]))
@@ -162,6 +164,44 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             self.assertEqual("speaker", device.device_type)
             self.assertEqual("xiaomi", device.vendor)
             self.assertEqual(self.room_id, device.room_id)
+            self.assertEqual(0, device.voice_auto_takeover_enabled)
+            self.assertEqual(["请"], device.voice_takeover_prefixes)
+
+    def test_device_takeover_settings_update_flow_back_to_binding_snapshot(self) -> None:
+        fingerprint = "open_xiaoai:LX06:SN002"
+        self._report_terminal(fingerprint, "LX06", "SN002")
+
+        claim_response = self.client.post(
+            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/claim",
+            json={
+                "household_id": self.household_id,
+                "room_id": self.room_id,
+                "terminal_name": "餐厅音箱",
+            },
+        )
+        self.assertEqual(200, claim_response.status_code)
+        device_id = claim_response.json()["terminal_id"]
+
+        update_response = self.client.patch(
+            f"{settings.api_v1_prefix}/devices/{device_id}",
+            json={
+                "voice_auto_takeover_enabled": True,
+                "voice_takeover_prefixes": ["请", "帮我"],
+            },
+        )
+        self.assertEqual(200, update_response.status_code)
+        updated_payload = update_response.json()
+        self.assertTrue(updated_payload["voice_auto_takeover_enabled"])
+        self.assertEqual(["请", "帮我"], updated_payload["voice_takeover_prefixes"])
+
+        binding_response = self.client.get(
+            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/binding",
+            headers={"x-voice-gateway-token": settings.voice_gateway_token},
+        )
+        self.assertEqual(200, binding_response.status_code)
+        binding_payload = binding_response.json()
+        self.assertTrue(binding_payload["binding"]["voice_auto_takeover_enabled"])
+        self.assertEqual(["请", "帮我"], binding_payload["binding"]["voice_takeover_prefixes"])
 
     def test_claim_still_succeeds_when_registry_temporarily_loses_discovery(self) -> None:
         fingerprint = "open_xiaoai:LX06:SN001"
@@ -213,6 +253,29 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
 
         self.assertEqual(404, response.status_code)
         self.assertEqual("voice discovery not found", response.json()["detail"])
+
+    def test_claim_and_binding_support_fingerprint_with_slash(self) -> None:
+        fingerprint = "open_xiaoai:LX06:23948/C4QX00829"
+        self._report_terminal(fingerprint, "LX06", "23948/C4QX00829")
+
+        claim_response = self.client.post(
+            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/claim",
+            json={
+                "household_id": self.household_id,
+                "room_id": self.room_id,
+                "terminal_name": "书房小爱音箱",
+            },
+        )
+        self.assertEqual(200, claim_response.status_code)
+
+        binding_response = self.client.get(
+            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/binding",
+            headers={"x-voice-gateway-token": settings.voice_gateway_token},
+        )
+        self.assertEqual(200, binding_response.status_code)
+        binding_payload = binding_response.json()
+        self.assertTrue(binding_payload["claimed"])
+        self.assertEqual(fingerprint, binding_payload["fingerprint"])
 
     def _report_terminal(self, fingerprint: str, model: str, sn: str) -> None:
         response = self.client.post(

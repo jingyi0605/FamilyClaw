@@ -4,10 +4,17 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
-from app.modules.conversation.schemas import ConversationSessionCreate, ConversationTurnCreate
-from app.modules.conversation.service import acreate_conversation_turn, create_conversation_session
+from app.db.utils import new_uuid
+from app.modules.conversation.schemas import ConversationSessionCreate, ConversationMessageRead
+from app.modules.conversation.service import (
+    create_conversation_session,
+    get_conversation_session_detail,
+    run_conversation_realtime_turn,
+)
 from app.modules.voice.identity_service import VoiceIdentityResolution
 from app.modules.voice.registry import VoiceSessionState, VoiceTerminalState
+
+_STREAM_SENTENCE_ENDINGS = frozenset({"。", "！", "？", "!", "?", "；", ";"})
 
 
 class VoiceConversationBridgeResult(BaseModel):
@@ -17,10 +24,45 @@ class VoiceConversationBridgeResult(BaseModel):
     response_text: str
     degraded: bool = False
     error_code: str | None = None
+    streaming_playback: bool = False
+
+
+class _VoiceConversationStreamForwarder:
+    def __init__(self, *, voice_session_id: str, terminal_id: str) -> None:
+        self._voice_session_id = voice_session_id
+        self._terminal_id = terminal_id
+        self._buffer = ""
+        self._streaming_playback = False
+
+    @property
+    def streaming_playback(self) -> bool:
+        return self._streaming_playback
+
+    async def broadcast(self, *, household_id: str, session_id: str, event) -> None:
+        _ = household_id
+        _ = session_id
+        if event.type == "agent.chunk":
+            self._buffer += str(event.payload.text)
+            await self._flush_ready_segments()
+            return
+        if event.type in {"agent.done", "agent.error"}:
+            await self._flush_ready_segments(flush_tail=True)
+
+    async def _flush_ready_segments(self, *, flush_tail: bool = False) -> None:
+        from app.modules.voice.playback_service import voice_playback_service
+
+        segments, self._buffer = _split_tts_segments(self._buffer, flush_tail=flush_tail)
+        for segment in segments:
+            await voice_playback_service.start_text_playback(
+                session_id=self._voice_session_id,
+                terminal_id=self._terminal_id,
+                text=segment,
+            )
+            self._streaming_playback = True
 
 
 class VoiceConversationBridge:
-    """慢路径直接复用现有 conversation 会话和 turn，不再只是挂一个空会话。"""
+    """语音慢路径复用会话系统，并在有句子落地时尽快开始播报。"""
 
     async def bridge(
         self,
@@ -46,15 +88,18 @@ class VoiceConversationBridge:
             )
             conversation_session_id = conversation_session.id
 
+        streamer = _VoiceConversationStreamForwarder(
+            voice_session_id=session.session_id,
+            terminal_id=session.terminal_id,
+        )
         try:
-            turn = await acreate_conversation_turn(
+            await run_conversation_realtime_turn(
                 db,
                 session_id=conversation_session_id,
-                payload=ConversationTurnCreate(
-                    message=transcript_text,
-                    channel="voice_terminal",
-                ),
+                request_id=new_uuid(),
+                user_message=transcript_text,
                 actor=actor,
+                connection_manager=streamer,
             )
         except Exception:
             return VoiceConversationBridgeResult(
@@ -62,25 +107,39 @@ class VoiceConversationBridge:
                 response_text="我先收到你的问题了，但这次慢路径处理没跑通，请稍后再试。",
                 degraded=True,
                 error_code="conversation_bridge_unavailable",
+                streaming_playback=False,
             )
 
-        assistant_message = next(
-            (
-                item
-                for item in reversed(turn.session.messages)
-                if item.role == "assistant" and item.content.strip()
-            ),
-            None,
+        session_detail = get_conversation_session_detail(
+            db,
+            session_id=conversation_session_id,
+            actor=actor,
         )
-        response_text = assistant_message.content if assistant_message is not None else turn.error_message
+        assistant_message = _find_latest_assistant_message(session_detail.messages)
+        if assistant_message is None:
+            return VoiceConversationBridgeResult(
+                conversation_session_id=conversation_session_id,
+                response_text="我已经收到你的请求，但这轮还没有产出可播报的回复。",
+                degraded=True,
+                error_code="conversation_bridge_unavailable",
+                streaming_playback=streamer.streaming_playback,
+            )
+
+        response_text = assistant_message.content.strip()
         if not response_text:
             response_text = "我已经收到你的请求，但这轮还没有产出可播报的回复。"
+
+        error_code = assistant_message.error_code
+        degraded = assistant_message.status != "completed" or assistant_message.degraded
+        if degraded and error_code is None:
+            error_code = "conversation_bridge_unavailable"
 
         return VoiceConversationBridgeResult(
             conversation_session_id=conversation_session_id,
             response_text=response_text,
-            degraded=turn.outcome != "completed",
-            error_code=None if turn.outcome == "completed" else "conversation_bridge_unavailable",
+            degraded=degraded,
+            error_code=error_code,
+            streaming_playback=streamer.streaming_playback,
         )
 
     def _build_actor(
@@ -102,6 +161,38 @@ class VoiceConversationBridge:
             member_role=member_role,
             is_authenticated=True,
         )
+
+
+def _find_latest_assistant_message(messages: list[ConversationMessageRead]) -> ConversationMessageRead | None:
+    for item in reversed(messages):
+        if item.role != "assistant":
+            continue
+        if item.status == "pending":
+            continue
+        return item
+    return None
+
+
+def _split_tts_segments(text: str, *, flush_tail: bool) -> tuple[list[str], str]:
+    normalized = text.strip()
+    if not normalized:
+        return [], ""
+
+    segments: list[str] = []
+    last_index = 0
+    for index, char in enumerate(normalized):
+        if char not in _STREAM_SENTENCE_ENDINGS:
+            continue
+        segment = normalized[last_index : index + 1].strip()
+        if segment:
+            segments.append(segment)
+        last_index = index + 1
+
+    remainder = normalized[last_index:].strip()
+    if flush_tail and remainder:
+        segments.append(remainder)
+        remainder = ""
+    return segments, remainder
 
 
 voice_conversation_bridge = VoiceConversationBridge()

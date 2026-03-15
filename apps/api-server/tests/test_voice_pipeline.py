@@ -322,6 +322,49 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertEqual("conversation", session.lane)
         self.assertEqual("conversation-1", session.conversation_session_id)
 
+    def test_audio_commit_skips_final_playback_when_bridge_already_streamed(self) -> None:
+        event = VoiceGatewayEvent.model_validate(
+            {
+                "type": "audio.commit",
+                "terminal_id": "terminal-1",
+                "session_id": "session-1",
+                "seq": 2,
+                "payload": {"duration_ms": 900, "debug_transcript": "请讲个笑话"},
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+
+        with patch(
+            "app.modules.voice.pipeline.voice_router.route",
+            new=AsyncMock(
+                return_value=VoiceRoutingResult(
+                    decision=VoiceRouteDecision(
+                        route_type="conversation",
+                        reason="回退慢路径",
+                        handoff_to_conversation=True,
+                    ),
+                    identity=VoiceIdentityResolution(
+                        status="anonymous",
+                        reason="没有可信身份候选。",
+                    ),
+                )
+            ),
+        ), patch(
+            "app.modules.voice.pipeline.voice_conversation_bridge.bridge",
+            new=AsyncMock(
+                return_value=VoiceConversationBridgeResult(
+                    conversation_session_id="conversation-1",
+                    response_text="当然可以，先来第一个笑话。",
+                    streaming_playback=True,
+                )
+            ),
+        ):
+            commands = asyncio.run(voice_pipeline_service.handle_inbound_event(_FakeDbSession(), event))
+
+        self.assertEqual([], commands)
+        session = voice_session_registry.get("session-1")
+        self.assertEqual("当然可以，先来第一个笑话。", session.last_response_text)
+
     def test_audio_commit_returns_direct_prompt_for_blocked_fast_action(self) -> None:
         event = VoiceGatewayEvent.model_validate(
             {

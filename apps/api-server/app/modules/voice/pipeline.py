@@ -389,6 +389,8 @@ class VoicePipelineService:
             session_id=session.session_id,
             response_text=bridge_result.response_text,
         )
+        if bridge_result.streaming_playback:
+            return []
         return self._build_route_feedback(session=session, text=bridge_result.response_text)
 
     def _record_identity(self, *, session_id: str, routing_result: VoiceRoutingResult) -> None:
