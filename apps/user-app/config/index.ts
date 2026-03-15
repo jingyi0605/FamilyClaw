@@ -1,0 +1,56 @@
+import path from 'node:path';
+import { defineConfig } from '@tarojs/cli';
+import h5Config from './platform/h5';
+import rnConfig from './platform/rn';
+import harmonyConfig from './platform/harmony';
+
+function resolveTaroEnv() {
+  const envFromProcess = process.env.TARO_ENV;
+  if (envFromProcess) {
+    return envFromProcess.replace('harmony-cpp', 'harmony_cpp');
+  }
+
+  const typeArg = process.argv.find(arg => arg.startsWith('--type'));
+  if (!typeArg) {
+    return 'h5';
+  }
+
+  if (typeArg.includes('=')) {
+    return (typeArg.split('=')[1] ?? 'h5').replace('harmony-cpp', 'harmony_cpp');
+  }
+
+  const typeIndex = process.argv.indexOf(typeArg);
+  return (process.argv[typeIndex + 1] ?? 'h5').replace('harmony-cpp', 'harmony_cpp');
+}
+
+export default defineConfig(async merge => {
+  const taroEnv = resolveTaroEnv();
+  const platformConfig =
+    taroEnv === 'rn'
+      ? rnConfig
+      : taroEnv === 'harmony_cpp'
+        ? harmonyConfig
+        : h5Config;
+
+  return merge(
+    {
+      projectName: 'familyclaw-user-app',
+      date: '2026-03-15',
+      sourceRoot: 'src',
+      outputRoot: 'dist',
+      framework: 'react',
+      compiler: {
+        type: 'webpack5',
+        prebundle: {
+          enable: false,
+        },
+      },
+      plugins: taroEnv === 'harmony_cpp' ? ['@tarojs/plugin-platform-harmony-cpp'] : [],
+      alias: {
+        '@': path.resolve(process.cwd(), 'src'),
+      },
+      appPath: 'src/app.ts',
+    },
+    platformConfig,
+  );
+});
