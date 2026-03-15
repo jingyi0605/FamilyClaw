@@ -62,7 +62,7 @@ class ActionPluginPermissionTests(unittest.TestCase):
             household_id=household.id,
             agent_id=agent.id,
             request=AgentActionPluginInvokeRequest(
-                plugin_id="homeassistant-device-action",
+                plugin_id="homeassistant",
                 payload={"resource_type": "device", "resource_scope": "family", "target_ref": "living-room-light"},
             ),
             actor=actor,
@@ -109,7 +109,7 @@ class ActionPluginPermissionTests(unittest.TestCase):
         self.db.commit()
 
         self.assertFalse(result.success)
-        self.assertIn("不是动作插件", result.error_message or "")
+        self.assertIn("action", result.error_message or "")
 
     def test_action_plugin_runs_after_permission_check(self) -> None:
         household, member, agent, actor = self._create_agent_context("Action Home", "妈妈", "小管家")
@@ -134,7 +134,7 @@ class ActionPluginPermissionTests(unittest.TestCase):
             household_id=household.id,
             agent_id=agent.id,
             request=AgentActionPluginInvokeRequest(
-                plugin_id="homeassistant-device-action",
+                plugin_id="homeassistant",
                 payload={
                     "resource_type": "device",
                     "resource_scope": "family",
@@ -151,15 +151,15 @@ class ActionPluginPermissionTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual("allowed", result.authorization_status)
         self.assertEqual("medium", result.risk_level)
-        self.assertIsInstance(result.output, dict)
-        assert isinstance(result.output, dict)
-        self.assertTrue(result.output["executed"])
-        self.assertEqual("turn_on", result.output["action_name"])
+        self.assertTrue(result.queued)
+        self.assertIsNotNone(result.job_id)
+        self.assertEqual("queued", result.job_status)
+        self.assertIsNone(result.output)
 
         audit_stmt = select(AuditLog).where(
             AuditLog.action == "agent.plugin.invoke_action",
             AuditLog.target_type == "plugin",
-            AuditLog.target_id == "homeassistant-device-action",
+            AuditLog.target_id == "homeassistant",
         )
         audit_row = self.db.scalar(audit_stmt)
         assert audit_row is not None
@@ -191,7 +191,7 @@ class ActionPluginPermissionTests(unittest.TestCase):
             household_id=household.id,
             agent_id=agent.id,
             request=AgentActionPluginInvokeRequest(
-                plugin_id="homeassistant-door-lock-action",
+                plugin_id="homeassistant",
                 payload={
                     "resource_type": "device",
                     "resource_scope": "family",
@@ -225,9 +225,10 @@ class ActionPluginPermissionTests(unittest.TestCase):
         self.assertEqual("allowed", confirmed_result.authorization_status)
         self.assertEqual("high", confirmed_result.risk_level)
         self.assertEqual(first_result.confirmation_request_id, confirmed_result.confirmation_request_id)
-        self.assertIsInstance(confirmed_result.output, dict)
-        assert isinstance(confirmed_result.output, dict)
-        self.assertEqual("unlock", confirmed_result.output["action_name"])
+        self.assertTrue(confirmed_result.queued)
+        self.assertIsNotNone(confirmed_result.job_id)
+        self.assertEqual("queued", confirmed_result.job_status)
+        self.assertIsNone(confirmed_result.output)
 
         request_audit_stmt = select(AuditLog).where(
             AuditLog.action == "agent.plugin.request_action_confirmation",
@@ -296,10 +297,10 @@ class ActionPluginPermissionTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual("allowed", result.authorization_status)
-        self.assertIsInstance(result.output, dict)
-        assert isinstance(result.output, dict)
-        self.assertEqual("third-party-device-action", result.output["source"])
-        self.assertTrue(result.output["executed"])
+        self.assertTrue(result.queued)
+        self.assertIsNotNone(result.job_id)
+        self.assertEqual("queued", result.job_status)
+        self.assertIsNone(result.output)
 
     def _create_agent_context(self, household_name: str, member_name: str, agent_name: str):
         household = create_household(

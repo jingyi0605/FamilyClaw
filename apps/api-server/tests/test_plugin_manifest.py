@@ -362,7 +362,7 @@ class PluginManifestTests(unittest.TestCase):
 
         manifest_ids = {item.id for item in manifests}
         self.assertGreaterEqual(len(manifests), 2)
-        self.assertIn("homeassistant-device-sync", manifest_ids)
+        self.assertIn("homeassistant", manifest_ids)
         self.assertIn("health-basic-reader", manifest_ids)
         self.assertIn("locale-zh-tw", manifest_ids)
         self.assertIn("channel-telegram", manifest_ids)

@@ -13,6 +13,7 @@ from app.modules.audit.models import AuditLog
 from app.modules.audit.service import write_audit_log
 from app.modules.household.service import get_household_or_404
 from app.modules.permission.models import MemberPermission
+from app.modules.device_control.protocol import device_control_protocol_registry
 from app.modules.plugin.schemas import (
     AgentActionConfirmationRead,
     AgentActionPluginInvokeRequest,
@@ -23,6 +24,7 @@ from app.modules.plugin.schemas import (
     PluginExecutionResult,
     PluginJobRead,
     PluginRegistryItem,
+    RiskLevel,
 )
 from app.modules.plugin.service import (
     aexecute_household_plugin,
@@ -246,7 +248,9 @@ def invoke_agent_action_plugin(
             queued=False,
         )
 
-    if plugin.risk_level == "high":
+    effective_risk_level = _resolve_agent_action_risk_level(plugin, request.payload)
+
+    if effective_risk_level == "high":
         confirmation = request_agent_action_confirmation(
             db,
             household_id=household_id,
@@ -262,7 +266,7 @@ def invoke_agent_action_plugin(
             run_id=confirmation.confirmation_request_id,
             success=False,
             trigger=request.trigger,
-            risk_level=plugin.risk_level,
+            risk_level=effective_risk_level,
             authorization_status="confirmation_required",
             confirmation_request_id=confirmation.confirmation_request_id,
             started_at=confirmation.created_at,
@@ -271,15 +275,35 @@ def invoke_agent_action_plugin(
             error_message="高风险动作需要人工确认后才能执行",
         )
 
-    queued = _enqueue_agent_action_request(
-        db,
-        household_id=household_id,
-        actor=actor,
-        plugin=plugin,
-        request=request,
-    )
+    try:
+        queued = _enqueue_agent_action_request(
+            db,
+            household_id=household_id,
+            actor=actor,
+            plugin=plugin,
+            request=request,
+        )
+    except ValueError as exc:
+        started_at = utc_now_iso()
+        return AgentActionPluginInvokeResult(
+            agent_id=agent.id,
+            agent_name=agent.display_name,
+            plugin_id=request.plugin_id,
+            run_id=new_uuid(),
+            success=False,
+            trigger=request.trigger,
+            risk_level=effective_risk_level,
+            authorization_status="denied",
+            confirmation_request_id=None,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            output=None,
+            error_code="agent_action_plugin_denied",
+            error_message=str(exc),
+            queued=False,
+        )
     authorization_status = "allowed"
-    risk_level = plugin.risk_level if plugin is not None else "high"
+    risk_level = effective_risk_level
 
     write_audit_log(
         db,
@@ -390,7 +414,7 @@ def request_agent_action_confirmation(
             "agent_id": agent_id,
             "plugin_id": request.plugin_id,
             "plugin_type": "action",
-            "risk_level": plugin.risk_level,
+            "risk_level": _resolve_agent_action_risk_level(plugin, request.payload),
             "trigger": request.trigger,
             "payload": request.payload,
         },
@@ -400,7 +424,7 @@ def request_agent_action_confirmation(
         confirmation_request_id=confirmation_log.target_id or confirmation_log.id,
         household_id=household_id,
         plugin_id=request.plugin_id,
-        risk_level=plugin.risk_level,
+        risk_level=_resolve_agent_action_risk_level(plugin, request.payload),
         status="pending",
         trigger=request.trigger,
         payload=request.payload,
@@ -434,15 +458,35 @@ def confirm_agent_action_plugin(
         payload=confirmation.payload,
         trigger=f"{confirmation.trigger}:confirmed",
     )
-    queued = _enqueue_agent_action_request(
-        db,
-        household_id=household_id,
-        actor=actor,
-        plugin=plugin,
-        request=request,
-    )
+    try:
+        queued = _enqueue_agent_action_request(
+            db,
+            household_id=household_id,
+            actor=actor,
+            plugin=plugin,
+            request=request,
+        )
+    except ValueError as exc:
+        started_at = utc_now_iso()
+        return AgentActionPluginInvokeResult(
+            agent_id=agent.id,
+            agent_name=agent.display_name,
+            plugin_id=confirmation.plugin_id,
+            run_id=new_uuid(),
+            success=False,
+            trigger=request.trigger,
+            risk_level=_resolve_agent_action_risk_level(plugin, confirmation.payload),
+            authorization_status="denied",
+            confirmation_request_id=confirmation_request_id,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            output=None,
+            error_code="agent_action_plugin_denied",
+            error_message=str(exc),
+            queued=False,
+        )
     authorization_status = "allowed"
-    risk_level = plugin.risk_level if plugin is not None else "high"
+    risk_level = _resolve_agent_action_risk_level(plugin, confirmation.payload)
 
     write_audit_log(
         db,
@@ -513,17 +557,18 @@ async def ainvoke_agent_action_plugin(
         started_at = utc_now_iso()
         return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=new_uuid(), success=False, trigger=request.trigger, risk_level="high", authorization_status="denied", confirmation_request_id=None, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_action_plugin_denied", error_message=str(exc), queued=False)
 
-    if plugin.risk_level == "high":
+    effective_risk_level = _resolve_agent_action_risk_level(plugin, request.payload)
+    if effective_risk_level == "high":
         confirmation = request_agent_action_confirmation(db, household_id=household_id, agent_id=agent.id, request=request, actor=actor, plugin=plugin)
-        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=confirmation.confirmation_request_id, success=False, trigger=request.trigger, risk_level=plugin.risk_level, authorization_status="confirmation_required", confirmation_request_id=confirmation.confirmation_request_id, started_at=confirmation.created_at, finished_at=confirmation.created_at, error_code="agent_action_confirmation_required", error_message="高风险动作需要人工确认后才能执行")
+        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=confirmation.confirmation_request_id, success=False, trigger=request.trigger, risk_level=effective_risk_level, authorization_status="confirmation_required", confirmation_request_id=confirmation.confirmation_request_id, started_at=confirmation.created_at, finished_at=confirmation.created_at, error_code="agent_action_confirmation_required", error_message="高风险动作需要人工确认后才能执行")
 
     try:
         queued = _enqueue_agent_action_request(db, household_id=household_id, actor=actor, plugin=plugin, request=request)
     except ValueError as exc:
         started_at = utc_now_iso()
-        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=new_uuid(), success=False, trigger=request.trigger, risk_level=plugin.risk_level if plugin is not None else "high", authorization_status="denied", confirmation_request_id=None, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_action_plugin_denied", error_message=str(exc), queued=False)
+        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=new_uuid(), success=False, trigger=request.trigger, risk_level=effective_risk_level, authorization_status="denied", confirmation_request_id=None, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_action_plugin_denied", error_message=str(exc), queued=False)
     authorization_status = "allowed"
-    risk_level = plugin.risk_level if plugin is not None else "high"
+    risk_level = effective_risk_level
     write_audit_log(db, household_id=household_id, actor=actor, action="agent.plugin.invoke_action", target_type="plugin", target_id=request.plugin_id, result="success", details={"agent_id": agent.id, "agent_name": agent.display_name, "plugin_id": request.plugin_id, "plugin_type": "action", "job_id": queued.id, "trigger": request.trigger, "risk_level": risk_level, "authorization_status": authorization_status, "job_status": queued.status})
     db.flush()
     return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=queued.id, success=True, trigger=request.trigger, risk_level=risk_level, authorization_status=authorization_status, confirmation_request_id=None, started_at=queued.created_at, finished_at=queued.created_at, output=None, error_code=None, error_message=None, queued=True, job_id=queued.id, job_status=queued.status)
@@ -548,12 +593,25 @@ async def aconfirm_agent_action_plugin(
         queued = _enqueue_agent_action_request(db, household_id=household_id, actor=actor, plugin=plugin, request=request)
     except ValueError as exc:
         started_at = utc_now_iso()
-        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=confirmation.plugin_id, run_id=new_uuid(), success=False, trigger=request.trigger, risk_level=plugin.risk_level if plugin is not None else "high", authorization_status="denied", confirmation_request_id=confirmation_request_id, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_action_plugin_denied", error_message=str(exc), queued=False)
+        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=confirmation.plugin_id, run_id=new_uuid(), success=False, trigger=request.trigger, risk_level=_resolve_agent_action_risk_level(plugin, confirmation.payload), authorization_status="denied", confirmation_request_id=confirmation_request_id, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_action_plugin_denied", error_message=str(exc), queued=False)
     authorization_status = "allowed"
-    risk_level = plugin.risk_level if plugin is not None else "high"
+    risk_level = _resolve_agent_action_risk_level(plugin, confirmation.payload)
     write_audit_log(db, household_id=household_id, actor=actor, action="agent.plugin.confirm_action", target_type="plugin_action_confirmation", target_id=confirmation_request_id, result="success", details={"agent_id": agent.id, "agent_name": agent.display_name, "plugin_id": confirmation.plugin_id, "plugin_type": "action", "risk_level": risk_level, "trigger": confirmation.trigger, "job_id": queued.id, "authorization_status": authorization_status, "job_status": queued.status})
     db.flush()
     return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=confirmation.plugin_id, run_id=queued.id, success=True, trigger=request.trigger, risk_level=risk_level, authorization_status=authorization_status, confirmation_request_id=confirmation_request_id, started_at=queued.created_at, finished_at=queued.created_at, output=None, error_code=None, error_message=None, queued=True, job_id=queued.id, job_status=queued.status)
+
+
+def _resolve_agent_action_risk_level(plugin: PluginRegistryItem | None, payload: dict) -> RiskLevel:
+    plugin_risk_level = plugin.risk_level if plugin is not None else "high"
+    action_name = payload.get("action_name") if isinstance(payload, dict) else None
+    if not isinstance(action_name, str) or not action_name.strip():
+        return plugin_risk_level
+    try:
+        action_risk_level = device_control_protocol_registry.get_definition(action_name.strip()).risk_level
+    except ValueError:
+        return plugin_risk_level
+    risk_order = {"low": 0, "medium": 1, "high": 2}
+    return action_risk_level if risk_order[action_risk_level] > risk_order[plugin_risk_level] else plugin_risk_level
 
 
 def _load_pending_action_confirmation(

@@ -33,10 +33,7 @@ def upgrade() -> None:
             """
             UPDATE device_bindings
             SET plugin_id = (
-                SELECT CASE
-                    WHEN devices.device_type = 'lock' THEN 'homeassistant-door-lock-action'
-                    ELSE 'homeassistant-device-action'
-                END
+                SELECT 'homeassistant'
                 FROM devices
                 WHERE devices.id = device_bindings.device_id
             )

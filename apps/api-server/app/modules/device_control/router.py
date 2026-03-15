@@ -8,8 +8,7 @@ from sqlalchemy.orm import Session
 from app.modules.device.models import Device, DeviceBinding
 
 
-HOME_ASSISTANT_ACTION_PLUGIN_ID = "homeassistant-device-action"
-HOME_ASSISTANT_DOOR_LOCK_PLUGIN_ID = "homeassistant-door-lock-action"
+HOME_ASSISTANT_PLUGIN_ID = "homeassistant"
 
 
 @dataclass(slots=True)
@@ -27,9 +26,8 @@ class DevicePluginRoutingError(ValueError):
 
 
 def resolve_home_assistant_action_plugin_id(device_type: str) -> str:
-    if device_type == "lock":
-        return HOME_ASSISTANT_DOOR_LOCK_PLUGIN_ID
-    return HOME_ASSISTANT_ACTION_PLUGIN_ID
+    _ = device_type
+    return HOME_ASSISTANT_PLUGIN_ID
 
 
 def get_device_binding(db: Session, *, device_id: str) -> DeviceBinding | None:

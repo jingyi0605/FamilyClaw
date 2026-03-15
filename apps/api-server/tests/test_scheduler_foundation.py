@@ -350,25 +350,24 @@ class SchedulerFoundationTests(unittest.TestCase):
         self.assertEqual("succeeded", dispatched.status)
         self.assertEqual("schedule", plugin_job.trigger)
 
-    def test_schedule_dispatch_rejects_plugin_without_schedule_trigger(self) -> None:
-        with self.assertRaises(HTTPException) as context:
-            create_task_definition(
-                self.db,
-                actor=self.admin_actor,
-                payload=ScheduledTaskDefinitionCreate(
-                    household_id=self.household.id,
-                    owner_scope="household",
-                    code="plugin-schedule-rejected",
-                    name="不支持计划触发的插件",
-                    trigger_type="schedule",
-                    schedule_type="interval",
-                    schedule_expr="60",
-                    target_type="plugin_job",
-                    target_ref_id="homeassistant-device-action",
-                ),
-                now_iso="2026-03-14T12:00:00Z",
-            )
-        self.assertEqual(400, context.exception.status_code)
+    def test_schedule_dispatch_accepts_homeassistant_connector_plugin(self) -> None:
+        task = create_task_definition(
+            self.db,
+            actor=self.admin_actor,
+            payload=ScheduledTaskDefinitionCreate(
+                household_id=self.household.id,
+                owner_scope="household",
+                code="plugin-schedule-homeassistant",
+                name="HA 计划同步",
+                trigger_type="schedule",
+                schedule_type="interval",
+                schedule_expr="60",
+                target_type="plugin_job",
+                target_ref_id="homeassistant",
+            ),
+            now_iso="2026-03-14T12:00:00Z",
+        )
+        self.assertEqual("homeassistant", task.target_ref_id)
 
     def test_scheduled_task_api_filters_member_private_tasks(self) -> None:
         own_task = create_task_definition(

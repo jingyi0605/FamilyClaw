@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
@@ -11,9 +12,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import app.db.models  # noqa: F401
 from app.core.config import settings
+from app.db.utils import utc_now_iso
 from app.modules.audit.models import AuditLog
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.ha_integration.models import HouseholdHaConfig
 from app.modules.memory.service import list_memory_cards
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
@@ -196,18 +199,20 @@ class PluginRunTests(unittest.TestCase):
             self.db,
             HouseholdCreate(name="Device Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
         )
-        self.db.flush()
+        self._seed_homeassistant_config(household_id=household.id)
+        self.db.commit()
 
-        result = run_plugin_sync_pipeline(
-            self.db,
-            household_id=household.id,
-            request=PluginExecutionRequest(
-                plugin_id="homeassistant-device-sync",
-                plugin_type="connector",
-                payload={"room_id": "living-room"},
-            ),
-            root_dir=self.builtin_root,
-        )
+        with self._mock_homeassistant_registry_payloads():
+            result = run_plugin_sync_pipeline(
+                self.db,
+                household_id=household.id,
+                request=PluginExecutionRequest(
+                    plugin_id="homeassistant",
+                    plugin_type="connector",
+                    payload=self._build_homeassistant_sync_payload(household_id=household.id),
+                ),
+                root_dir=self.builtin_root,
+            )
         self.db.commit()
 
         self.assertEqual("success", result.run.status)
@@ -240,18 +245,21 @@ class PluginRunTests(unittest.TestCase):
             self.db,
             MemberCreate(household_id=household.id, name="妈妈", role="adult"),
         )
+        self._seed_homeassistant_config(household_id=household.id)
         self.db.flush()
+        self.db.commit()
 
-        smart_home_result = run_plugin_sync_pipeline(
-            self.db,
-            household_id=household.id,
-            request=PluginExecutionRequest(
-                plugin_id="homeassistant-device-sync",
-                plugin_type="connector",
-                payload={"room_id": "living-room"},
-            ),
-            root_dir=self.builtin_root,
-        )
+        with self._mock_homeassistant_registry_payloads():
+            smart_home_result = run_plugin_sync_pipeline(
+                self.db,
+                household_id=household.id,
+                request=PluginExecutionRequest(
+                    plugin_id="homeassistant",
+                    plugin_type="connector",
+                    payload=self._build_homeassistant_sync_payload(household_id=household.id),
+                ),
+                root_dir=self.builtin_root,
+            )
         health_result = run_plugin_sync_pipeline(
             self.db,
             household_id=household.id,
@@ -298,7 +306,7 @@ class PluginRunTests(unittest.TestCase):
             {card.content["category"] for card in cards if isinstance(card.content, dict)},
         )
         self.assertEqual(
-            {"homeassistant-device-sync", "health-basic-reader"},
+            {"homeassistant", "health-basic-reader"},
             {card.source_plugin_id for card in cards},
         )
 
@@ -306,6 +314,77 @@ class PluginRunTests(unittest.TestCase):
         audit_rows = list(self.db.scalars(audit_stmt).all())
         self.assertEqual(2, len(audit_rows))
         self.assertTrue(all(row.result == "success" for row in audit_rows))
+
+    def _seed_homeassistant_config(self, *, household_id: str) -> None:
+        self.db.add(
+            HouseholdHaConfig(
+                household_id=household_id,
+                base_url="http://ha.local:8123",
+                access_token="demo-token",
+                sync_rooms_enabled=True,
+                updated_at=utc_now_iso(),
+            )
+        )
+
+    def _build_homeassistant_sync_payload(self, *, household_id: str) -> dict:
+        return {
+            "household_id": household_id,
+            "plugin_id": "homeassistant",
+            "sync_scope": "device_sync",
+            "selected_external_ids": [],
+            "options": {},
+            "_system_context": {
+                "device_integration": {
+                    "database_url": settings.database_url,
+                }
+            },
+        }
+
+    def _mock_homeassistant_registry_payloads(self):
+        return patch.multiple(
+            "app.modules.ha_integration.client.HomeAssistantClient",
+            get_device_registry=lambda self: [
+                {
+                    "id": "ha-device-light-1",
+                    "name": "客厅主灯",
+                    "name_by_user": None,
+                    "manufacturer": "Philips",
+                    "model": "Hue",
+                    "area_id": "area-living-room",
+                }
+            ],
+            get_entity_registry=lambda self: [
+                {
+                    "entity_id": "light.living_room_main",
+                    "device_id": "ha-device-light-1",
+                    "area_id": "area-living-room",
+                    "name": "客厅主灯",
+                    "original_name": "Living Room Main",
+                    "disabled_by": None,
+                }
+            ],
+            get_area_registry=lambda self: [{"area_id": "area-living-room", "name": "客厅"}],
+            get_states=lambda self: [
+                {
+                    "entity_id": "light.living_room_main",
+                    "state": "on",
+                    "attributes": {"friendly_name": "客厅主灯", "area_name": "客厅"},
+                    "last_updated": "2026-03-15T12:00:00Z",
+                },
+                {
+                    "entity_id": "sensor.living_room_temperature",
+                    "state": "23.5",
+                    "attributes": {"unit_of_measurement": "°C"},
+                    "last_updated": "2026-03-15T12:00:00Z",
+                },
+                {
+                    "entity_id": "sensor.living_room_humidity",
+                    "state": "48",
+                    "attributes": {"unit_of_measurement": "%", "device_class": "humidity"},
+                    "last_updated": "2026-03-15T12:00:00Z",
+                },
+            ],
+        )
 
     def test_run_plugin_sync_pipeline_supports_third_party_runner_for_memory_ingestor(self) -> None:
         household = create_household(

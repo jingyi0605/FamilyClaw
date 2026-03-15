@@ -1,14 +1,19 @@
 {
-  "id": "homeassistant-device-action",
-  "name": "HomeAssistant 设备动作插件",
+  "id": "homeassistant",
+  "name": "Home Assistant 插件",
   "version": "0.1.0",
-  "types": ["action"],
+  "types": ["action", "connector", "memory-ingestor"],
   "permissions": [
-    "device.control"
+    "device.control",
+    "device.read",
+    "memory.write.device",
+    "memory.write.observation"
   ],
   "risk_level": "medium",
-  "triggers": ["manual"],
+  "triggers": ["manual", "schedule"],
   "entrypoints": {
-    "action": "app.plugins.builtin.homeassistant_device_action.executor.run"
+    "action": "app.plugins.builtin.homeassistant_device_action.executor.run",
+    "connector": "app.plugins.builtin.homeassistant_device_action.connector.sync",
+    "memory_ingestor": "app.plugins.builtin.homeassistant_device_action.ingestor.transform"
   }
 }

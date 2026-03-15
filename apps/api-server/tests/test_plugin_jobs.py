@@ -213,7 +213,7 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             payload=PluginJobCreate(
                 household_id=self.household.id,
-                plugin_id="homeassistant-device-action",
+                plugin_id="homeassistant",
                 plugin_type="action",
                 trigger="agent-action",
                 request_payload={"target_ref": "door-lock"},
@@ -303,20 +303,11 @@ class PluginJobTests(unittest.TestCase):
         self.db.expire_all()
         first_round = repository.get_plugin_job(self.db, job.id)
         assert first_round is not None
-        self.assertEqual("retry_waiting", first_round.status)
-        self.assertIsNotNone(first_round.retry_after_at)
-
-        first_round.retry_after_at = "2000-01-01T00:00:00Z"
-        self.db.commit()
-
-        asyncio.run(run_plugin_job_worker_cycle(worker_id="worker-r2"))
-        self.db.expire_all()
-        final_job = repository.get_plugin_job(self.db, job.id)
-        assert final_job is not None
+        self.assertEqual("failed", first_round.status)
+        self.assertEqual("plugin_not_visible_in_household", first_round.last_error_code)
         attempts = repository.list_plugin_job_attempts(self.db, job_id=job.id)
-        self.assertEqual("failed", final_job.status)
-        self.assertEqual(2, final_job.current_attempt)
-        self.assertEqual(2, len(attempts))
+        self.assertEqual(1, first_round.current_attempt)
+        self.assertEqual(1, len(attempts))
 
     def test_recovery_marks_stale_running_job_for_retry(self) -> None:
         job = enqueue_plugin_execution_job(
@@ -427,7 +418,7 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             payload=PluginJobCreate(
                 household_id=self.household.id,
-                plugin_id="homeassistant-device-action",
+                plugin_id="homeassistant",
                 plugin_type="action",
                 trigger="agent-action",
                 request_payload={"target_ref": "door-lock"},

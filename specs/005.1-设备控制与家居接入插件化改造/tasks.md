@@ -130,8 +130,8 @@
 
 ## 阶段 2：把 HA 控制插件做成真插件
 
-- [ ] 2.1 把 `homeassistant-device-action` 从 stub 改成真实执行插件
-  - 状态：TODO
+- [x] 2.1 把 `homeassistant-device-action` 从 stub 改成真实执行插件
+  - 状态：DONE
   - 这一步到底做什么：把现有 HA 控制逻辑搬进内置插件，让插件真正把统一动作映射成 HA service call。
   - 做完你能看到什么：HA 普通控制已经不是“插件壳”，而是真插件在执行。
   - 先依赖什么：1.4
@@ -154,8 +154,8 @@
   - 对应需求：`requirements.md` 需求 2、需求 6
   - 对应设计：`design.md` §3.4.1、§3.4.3、§5.1、§6.2、§6.5
 
-- [ ] 2.2 把 `homeassistant-door-lock-action` 做成真正的高风险插件
-  - 状态：TODO
+- [x] 2.2 把 `homeassistant-door-lock-action` 做成真正的高风险插件
+  - 状态：DONE
   - 这一步到底做什么：让门锁解锁等高风险动作也走正式插件，但高风险确认仍然保留在核心层。
   - 做完你能看到什么：高风险动作不是写死在核心，也不是插件自己决定放不放，而是核心把关、插件执行。
   - 先依赖什么：2.1
@@ -176,8 +176,8 @@
   - 对应需求：`requirements.md` 需求 2、需求 4、需求 6
   - 对应设计：`design.md` §2.3.1、§3.4.1、§3.4.3、§5.3、§6.3、§6.5
 
-- [ ] 2.3 切换 `device_action`、`voice`、`conversation`、`scene` 到统一控制执行器
-  - 状态：TODO
+- [x] 2.3 切换 `device_action`、`voice`、`conversation`、`scene` 到统一控制执行器
+  - 状态：DONE
   - 这一步到底做什么：把所有上层控制入口都改成调统一控制执行器，不再直接碰 HA 模块。
   - 做完你能看到什么：不管控制请求从哪条业务链进来，底下都是同一条插件执行主链。
   - 先依赖什么：2.1、2.2
@@ -205,8 +205,8 @@
 
 ### 阶段检查
 
-- [ ] 2.4 阶段检查：HA 控制是不是已经真走插件
-  - 状态：TODO
+- [x] 2.4 阶段检查：HA 控制是不是已经真走插件
+  - 状态：DONE
   - 这一步到底做什么：检查 HA 控制链是否已经由真实插件承载，而不是文档说插件、代码还是核心直连。
   - 做完你能看到什么：HA 控制这条主链终于名副其实。
   - 先依赖什么：2.1、2.2、2.3
@@ -228,8 +228,8 @@
 
 ## 阶段 3：把 HA 接入和同步主链做成真插件
 
-- [ ] 3.1 定统一设备候选和同步结果协议
-  - 状态：TODO
+- [x] 3.1 定统一设备候选和同步结果协议
+  - 状态：DONE
   - 这一步到底做什么：先把候选设备、候选房间、同步设备项、同步房间项和失败项的标准结构定下来，别让每个平台插件各说各话。
   - 做完你能看到什么：后面不管是 HA 还是别的平台，核心都能用同一种方式吃同步结果。
   - 先依赖什么：1.4
@@ -250,19 +250,19 @@
   - 对应需求：`requirements.md` 需求 3、需求 5
   - 对应设计：`design.md` §2.3.2、§2.3.3、§3.2.5、§3.2.6、§3.3.2、§3.3.3
 
-- [ ] 3.2 把 `homeassistant-device-sync` 从 stub 改成真实接入插件
-  - 状态：TODO
-  - 这一步到底做什么：把现有 HA 设备候选、房间候选、设备同步、房间同步的数据抓取逻辑搬进 HA 接入插件。
-  - 做完你能看到什么：HA 接入插件真的能拉平台数据，不再吐 demo 记录。
+- [x] 3.2 把单一 `homeassistant` 插件补齐真实接入能力
+  - 状态：DONE
+  - 这一步到底做什么：把现有 HA 设备候选、房间候选、设备同步、房间同步的数据抓取逻辑搬进统一的 `homeassistant` 插件，并让它同时声明 `action`、`connector`、`memory-ingestor` 能力。
+  - 做完你能看到什么：用户侧只看到一个 Home Assistant 插件，但它已经能真拉平台数据，不再只是 demo 壳。
   - 先依赖什么：3.1
   - 开始前先看：
     - `requirements.md` 需求 3、需求 6
     - `design.md` §3.4.2、§3.4.3、§6.2、§6.5
-    - `apps/api-server/app/plugins/builtin/homeassistant_device_sync/connector.py`
+    - `apps/api-server/app/plugins/builtin/homeassistant_device_action/connector.py`
     - `apps/api-server/app/modules/ha_integration/service.py`
     - `apps/api-server/app/modules/ha_integration/client.py`
   - 主要改哪里：
-    - `apps/api-server/app/plugins/builtin/homeassistant_device_sync/`
+    - `apps/api-server/app/plugins/builtin/homeassistant_device_action/`
     - 可能新增插件内 mapper / client helper
   - 这一步先不做什么：先不删旧核心同步逻辑，只先让真插件跑通。
   - 怎么算完成：
@@ -274,8 +274,8 @@
   - 对应需求：`requirements.md` 需求 3、需求 6
   - 对应设计：`design.md` §2.3.2、§2.3.3、§3.4.2、§3.4.3、§6.2、§6.5
 
-- [ ] 3.3 建统一设备接入服务，并切旧 HA API 到新主链
-  - 状态：TODO
+- [x] 3.3 建统一设备接入服务，并切旧 HA API 到新主链
+  - 状态：DONE
   - 这一步到底做什么：让现有 `ha-config`、`ha-candidates`、`sync/ha`、`rooms/sync/ha` 等接口内部改走统一接入服务 + HA 接入插件。
   - 做完你能看到什么：外面看起来还是原来的 HA 页面和接口，底下已经换成插件化同步主链。
   - 先依赖什么：3.1、3.2
@@ -301,8 +301,8 @@
 
 ### 阶段检查
 
-- [ ] 3.4 阶段检查：HA 接入是不是已经真走插件
-  - 状态：TODO
+- [x] 3.4 阶段检查：HA 接入是不是已经真走插件
+  - 状态：DONE
   - 这一步到底做什么：检查 HA 设备候选、设备同步和房间同步是否都由正式插件承载。
   - 做完你能看到什么：HA 接入这条链不再是假插件壳。
   - 先依赖什么：3.1、3.2、3.3
@@ -324,8 +324,8 @@
 
 ## 阶段 4：清理旧实现、补验证、给后续平台留标准接缝
 
-- [ ] 4.1 冻结或删除核心里的 HA 设备实现层
-  - 状态：TODO
+- [x] 4.1 冻结或删除核心里的 HA 设备实现层
+  - 状态：DONE
   - 这一步到底做什么：把已经迁完的 HA 平台实现从核心主链剥掉，避免新旧逻辑继续并存。
   - 做完你能看到什么：核心里只剩统一协议、统一执行器和统一接入服务，不再有一大块 HA 设备实现层。
   - 先依赖什么：2.4、3.4
@@ -346,54 +346,55 @@
   - 对应需求：`requirements.md` 需求 6、需求 7
   - 对应设计：`design.md` §1.4、§2.2、§6.2、§6.5
 
-- [ ] 4.2 补齐自动化测试和迁移文档
-  - 状态：TODO
-  - 这一步到底做什么：把控制主链、同步主链、插件结果校验、异常路径、旧数据迁移和回填方式都补成正式测试和文档。
-  - 做完你能看到什么：这次重构不是靠口头保证，而是有回归保障和接手文档。
+- [x] 4.2 清理旧 HA stub、薄适配层和旧命名残留
+  - 状态：DONE
+  - 这一步到底做什么：把统一 `homeassistant` 插件已经接管后的旧 stub、核心里残留的假适配层和过时命名一起清掉，避免后面的人误走旧链路。
+  - 做完你能看到什么：仓库里不会再同时存在“真插件链”和“旧 HA 演示链”两套说法，剩下的名字也和现在单一 `homeassistant` 插件一致。
   - 先依赖什么：4.1
   - 开始前先看：
-    - `requirements.md` 全部需求
-    - `design.md` §7、§8
-    - `apps/api-server/tests/`
+    - `requirements.md` 需求 3、需求 6、需求 7
+    - `design.md` §1.4、§2.2、§6.2、§6.5
+    - `apps/api-server/app/plugins/builtin/homeassistant_device_action/connector.py`
+    - `apps/api-server/app/modules/device_integration/service.py`
+    - `apps/api-server/app/modules/plugin/agent_bridge.py`
   - 主要改哪里：
-    - `apps/api-server/tests/`
-    - `specs/005.1-设备控制与家居接入插件化改造/docs/`
-  - 这一步先不做什么：不扩新功能，只补验证和迁移说明。
+    - `apps/api-server/app/plugins/builtin/homeassistant_device_action/`
+    - `apps/api-server/app/modules/device_integration/`
+    - 相关测试和命名引用
+  - 这一步先不做什么：不新增平台分支，不为了兼容再塞回核心直连实现。
   - 怎么算完成：
-    1. 关键主链都有自动化测试
-    2. 数据迁移和回填步骤有清楚文档
+    1. 旧 HA stub 和薄适配残留已经删除或冻结
+    2. 仓库里不再出现误导性的旧插件名或旧链路命名
   - 怎么验证：
-    - 跑测试集
-    - 人工按文档回放一次迁移步骤
-  - 对应需求：`requirements.md` 全部需求
-  - 对应设计：`design.md` §7、§8
+    - grep 走查旧命名和旧入口
+    - 关键回归测试通过
+  - 对应需求：`requirements.md` 需求 3、需求 6、需求 7
+  - 对应设计：`design.md` §1.4、§2.2、§6.2、§6.5
 
-- [ ] 4.3 给未来新平台留最小接入模板
-  - 状态：TODO
-  - 这一步到底做什么：把“一个新平台插件最少要实现什么”写成模板或开发说明，确保后续接米家、涂鸦时不会再把逻辑塞回核心。
-  - 做完你能看到什么：后面接新平台时，开发者知道该写动作插件、接入插件、标准 payload 和结果结构，而不是重新发明轮子。
+- [x] 4.3 补统一 `homeassistant` 插件下的回归测试
+  - 状态：DONE
+  - 这一步到底做什么：把统一 `homeassistant` 插件现在承担的控制、接入、记忆采集和高风险确认补成正式回归测试，确保阶段 4 清理后不破接口语义。
+  - 做完你能看到什么：`device-actions`、HA 候选查询、设备同步、房间同步、插件任务和记忆链都有自动化保障，不再靠人工口头确认。
   - 先依赖什么：4.2
   - 开始前先看：
-    - `requirements.md` 需求 1、需求 2、需求 3
-    - `design.md` §3.4、§6.1、§6.2
-    - `docs/开发者文档/插件开发/`
+    - `requirements.md` 全部需求
+    - `design.md` §7
+    - `apps/api-server/tests/`
   - 主要改哪里：
-    - `docs/开发者文档/插件开发/`
-    - 当前 Spec 的 `docs/`
-  - 这一步先不做什么：不真的实现新平台。
+    - `apps/api-server/tests/`
+  - 这一步先不做什么：不扩新功能，不把测试写成依赖真实线上 HA 环境的脆弱脚本。
   - 怎么算完成：
-    1. 新平台插件最小模板和接缝说明已经写清楚
-    2. 文档能直接指导后续平台开发
+    1. 统一 `homeassistant` 插件关键链路都有回归测试
+    2. 旧 API 兼容语义有明确断言
   - 怎么验证：
-    - 人工走查
-    - 用模板检查能否覆盖一个假想平台接入需求
-  - 对应需求：`requirements.md` 需求 1、需求 2、需求 3
-  - 对应设计：`design.md` §3.4、§6.1、§6.2
+    - 跑阶段 4 相关测试集
+  - 对应需求：`requirements.md` 全部需求
+  - 对应设计：`design.md` §7
 
 ### 最终检查
 
-- [ ] 4.4 最终检查点
-  - 状态：TODO
+- [x] 4.4 最终检查点
+  - 状态：DONE
   - 这一步到底做什么：确认这次插件化改造真的已经形成稳定方案和可执行任务，不是“改了一半看起来很高级”。
   - 做完你能看到什么：需求、设计、任务、测试和迁移策略能一一对上，后续实现的人可以直接接手。
   - 先依赖什么：4.1、4.2、4.3

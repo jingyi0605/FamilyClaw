@@ -117,7 +117,7 @@ class DeviceControlPhase1Tests(unittest.TestCase):
                         id=new_uuid(),
                         device_id=self.light_device_id,
                         platform="home_assistant",
-                        plugin_id="homeassistant-device-action",
+                        plugin_id="homeassistant",
                         binding_version=1,
                         external_entity_id="light.living_room_main",
                         external_device_id="ha-device-light-1",
@@ -126,7 +126,7 @@ class DeviceControlPhase1Tests(unittest.TestCase):
                         id=new_uuid(),
                         device_id=self.lock_device_id,
                         platform="home_assistant",
-                        plugin_id="homeassistant-door-lock-action",
+                        plugin_id="homeassistant",
                         binding_version=1,
                         external_entity_id="lock.front_door",
                         external_device_id="ha-device-lock-1",
@@ -174,7 +174,7 @@ class DeviceControlPhase1Tests(unittest.TestCase):
             device = db.get(Device, self.light_device_id)
             assert device is not None
             route = route_device_plugin(db, device=device)
-            self.assertEqual("homeassistant-device-action", route.plugin_id)
+            self.assertEqual("homeassistant", route.plugin_id)
 
     def test_high_risk_action_requires_confirmation_before_plugin_execution(self) -> None:
         with self.SessionLocal() as db:
@@ -299,7 +299,7 @@ class DeviceBindingMigrationTests(unittest.TestCase):
                     text("SELECT plugin_id, binding_version FROM device_bindings WHERE id = :id"),
                     {"id": binding_id},
                 ).mappings().one()
-            self.assertEqual("homeassistant-door-lock-action", row["plugin_id"])
+            self.assertEqual("homeassistant", row["plugin_id"])
             self.assertEqual(1, row["binding_version"])
         finally:
             engine.dispose()

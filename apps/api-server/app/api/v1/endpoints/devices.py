@@ -19,6 +19,13 @@ from app.db.utils import utc_now_iso
 from app.modules.audit.service import write_audit_log
 from app.modules.device.schemas import DeviceListResponse, DeviceRead, DeviceStatus, DeviceType, DeviceUpdate
 from app.modules.device.service import get_device_or_404, list_devices, update_device
+from app.modules.device_integration.service import (
+    DeviceIntegrationServiceError,
+    async_list_home_assistant_device_candidates_via_plugin,
+    async_list_home_assistant_room_candidates_via_plugin,
+    async_sync_home_assistant_devices_via_plugin,
+    async_sync_home_assistant_rooms_via_plugin,
+)
 from app.modules.ha_integration.client import HomeAssistantClientError
 from app.modules.ha_integration.schemas import (
     HomeAssistantConfigRead,
@@ -33,18 +40,7 @@ from app.modules.ha_integration.schemas import (
     HomeAssistantSyncRequest,
     HomeAssistantSyncResponse,
 )
-from app.modules.ha_integration.service import (
-    async_list_home_assistant_device_candidates,
-    async_list_home_assistant_room_candidates,
-    async_sync_home_assistant_devices,
-    async_sync_home_assistant_rooms,
-    get_home_assistant_config_view,
-    list_home_assistant_device_candidates,
-    list_home_assistant_room_candidates,
-    sync_home_assistant_devices,
-    sync_home_assistant_rooms,
-    upsert_household_ha_config,
-)
+from app.modules.ha_integration.service import get_home_assistant_config_view, upsert_household_ha_config
 from app.modules.household.service import get_household_or_404
 from app.modules.voice.discovery_registry import (
     VoiceTerminalBindingSnapshot,
@@ -323,7 +319,7 @@ async def sync_home_assistant_devices_endpoint(
 ) -> HomeAssistantSyncResponse:
     ensure_actor_can_access_household(actor, payload.household_id)
     try:
-        summary = await async_sync_home_assistant_devices(
+        summary = await async_sync_home_assistant_devices_via_plugin(
             db,
             household_id=payload.household_id,
             external_device_ids=payload.external_device_ids,
@@ -366,6 +362,9 @@ async def sync_home_assistant_devices_endpoint(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+    except DeviceIntegrationServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     except IntegrityError as exc:
         db.rollback()
         write_audit_log(
@@ -406,9 +405,11 @@ async def list_home_assistant_device_candidates_endpoint(
 ) -> HomeAssistantDeviceCandidatesResponse:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        items = await async_list_home_assistant_device_candidates(db, household_id=household_id)
+        items = await async_list_home_assistant_device_candidates_via_plugin(db, household_id=household_id)
     except HomeAssistantClientError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except DeviceIntegrationServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     return HomeAssistantDeviceCandidatesResponse(
         household_id=household_id,
@@ -480,7 +481,7 @@ async def sync_home_assistant_rooms_endpoint(
 ) -> HomeAssistantRoomSyncResponse:
     ensure_actor_can_access_household(actor, payload.household_id)
     try:
-        summary = await async_sync_home_assistant_rooms(
+        summary = await async_sync_home_assistant_rooms_via_plugin(
             db,
             household_id=payload.household_id,
             room_names=payload.room_names,
@@ -504,6 +505,9 @@ async def sync_home_assistant_rooms_endpoint(
     except HomeAssistantClientError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except DeviceIntegrationServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -525,9 +529,11 @@ async def list_home_assistant_room_candidates_endpoint(
 ) -> HomeAssistantRoomCandidatesResponse:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        items = await async_list_home_assistant_room_candidates(db, household_id=household_id)
+        items = await async_list_home_assistant_room_candidates_via_plugin(db, household_id=household_id)
     except HomeAssistantClientError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except DeviceIntegrationServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     return HomeAssistantRoomCandidatesResponse(
         household_id=household_id,

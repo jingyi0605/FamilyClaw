@@ -48,9 +48,7 @@ class PluginSystemFinalCheckpointTests(unittest.TestCase):
     def test_final_checkpoint_runs_full_v1_chain(self) -> None:
         registry = list_registered_plugins(root_dir=self.builtin_root, state_file=self.state_file)
         self.assertTrue(any(item.id == "health-basic-reader" for item in registry.items))
-        self.assertTrue(any(item.id == "homeassistant-device-sync" for item in registry.items))
-        self.assertTrue(any(item.id == "homeassistant-device-action" for item in registry.items))
-        self.assertTrue(any(item.id == "homeassistant-door-lock-action" for item in registry.items))
+        self.assertTrue(any(item.id == "homeassistant" for item in registry.items))
 
         household = create_household(
             self.db,
@@ -108,15 +106,16 @@ class PluginSystemFinalCheckpointTests(unittest.TestCase):
                 payload={"member_id": member.id},
             ),
         )
-        self.assertTrue(stage4_result.pipeline_success)
-        self.assertTrue(stage4_result.insight.used_plugins)
+        self.assertTrue(stage4_result.queued)
+        self.assertEqual("queued", stage4_result.job_status)
+        self.assertIsNotNone(stage4_result.job_id)
 
         medium_action_result = invoke_agent_action_plugin(
             self.db,
             household_id=household.id,
             agent_id=agent.id,
             request=AgentActionPluginInvokeRequest(
-                plugin_id="homeassistant-device-action",
+                plugin_id="homeassistant",
                 payload={
                     "resource_type": "device",
                     "resource_scope": "family",
@@ -129,13 +128,15 @@ class PluginSystemFinalCheckpointTests(unittest.TestCase):
             state_file=self.state_file,
         )
         self.assertTrue(medium_action_result.success)
+        self.assertTrue(medium_action_result.queued)
+        self.assertEqual("queued", medium_action_result.job_status)
 
         high_risk_request = invoke_agent_action_plugin(
             self.db,
             household_id=household.id,
             agent_id=agent.id,
             request=AgentActionPluginInvokeRequest(
-                plugin_id="homeassistant-door-lock-action",
+                plugin_id="homeassistant",
                 payload={
                     "resource_type": "device",
                     "resource_scope": "family",
@@ -163,6 +164,8 @@ class PluginSystemFinalCheckpointTests(unittest.TestCase):
 
         self.assertTrue(high_risk_confirmed.success)
         self.assertEqual("allowed", high_risk_confirmed.authorization_status)
+        self.assertTrue(high_risk_confirmed.queued)
+        self.assertEqual("queued", high_risk_confirmed.job_status)
 
 
 if __name__ == "__main__":
