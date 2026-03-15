@@ -1,0 +1,48 @@
+.home-rn-page {
+  min-height: 100vh;
+  padding: 16px;
+  background: #f7f5f2;
+}
+
+.home-rn-banner,
+.home-rn-card {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid #f0ece7;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.home-rn-banner {
+  background-color: #fdf0eb;
+}
+
+.home-rn-banner__title {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 28px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.home-rn-banner__sub,
+.home-rn-banner__error,
+.home-rn-line {
+  display: block;
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 22px;
+  color: #5a5a5a;
+}
+
+.home-rn-banner__error {
+  color: #999999;
+}
+
+.home-rn-card__title {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
