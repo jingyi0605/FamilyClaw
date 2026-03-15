@@ -45,6 +45,7 @@ from app.modules.household.service import get_household_or_404
 from app.modules.voice.discovery_registry import (
     VoiceTerminalBindingSnapshot,
     VoiceTerminalDiscoveryRecord,
+    build_minimal_discovery,
     claim_voice_terminal_discovery,
     get_voice_terminal_binding,
     voice_terminal_discovery_registry,
@@ -114,6 +115,9 @@ class VoiceDiscoveryClaimPayload(BaseModel):
     household_id: str
     room_id: str = Field(min_length=1)
     terminal_name: str = Field(min_length=1, max_length=100)
+    model: str | None = Field(default=None, min_length=1)
+    sn: str | None = Field(default=None, min_length=1)
+    connection_status: Literal["online", "offline", "unknown"] | None = None
 
 
 def require_voice_gateway_token(
@@ -200,6 +204,13 @@ def claim_voice_terminal_discovery_endpoint(
 ) -> VoiceDiscoveryBindingRead:
     ensure_actor_can_access_household(actor, payload.household_id)
     discovery = voice_terminal_discovery_registry.get(fingerprint)
+    if discovery is None and payload.model and payload.sn:
+        discovery = build_minimal_discovery(
+            fingerprint=fingerprint,
+            model=payload.model,
+            sn=payload.sn,
+            connection_status=payload.connection_status or "unknown",
+        )
     if discovery is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="voice discovery not found")
 

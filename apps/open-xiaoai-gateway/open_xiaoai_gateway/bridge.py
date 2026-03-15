@@ -151,8 +151,10 @@ class OpenXiaoAIGateway:
         await self._server.wait_closed()
 
     async def _handle_terminal_connection(self, websocket) -> None:
-        remote_addr = websocket.client.host if websocket.client else None
+        remote_addr = extract_remote_addr(websocket)
         terminal_rpc = TerminalRpcClient(websocket)
+        incoming_queue: asyncio.Queue[str | bytes | None] = asyncio.Queue()
+        reader_task = asyncio.create_task(self._pump_terminal_messages(websocket, terminal_rpc, incoming_queue))
         context = TerminalBridgeContext()
         state = GatewayRuntimeState(
             context=context,
@@ -174,7 +176,10 @@ class OpenXiaoAIGateway:
             if not state.is_active():
                 claim_poll_task = asyncio.create_task(self._poll_until_claimed(state, api_client))
 
-            async for message in websocket:
+            while True:
+                message = await incoming_queue.get()
+                if message is None:
+                    break
                 if isinstance(message, bytes):
                     if not state.is_active():
                         continue
@@ -184,9 +189,6 @@ class OpenXiaoAIGateway:
                     continue
 
                 frame = parse_open_xiaoai_text_message(message)
-                if frame.Response is not None:
-                    terminal_rpc.resolve(frame.Response)
-                    continue
                 if frame.Request is not None:
                     logger.warning("ignore unexpected client request command=%s", frame.Request.command)
                     continue
@@ -215,6 +217,10 @@ class OpenXiaoAIGateway:
                 claim_poll_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await claim_poll_task
+            if reader_task is not None:
+                reader_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reader_task
 
             await self._report_offline_discovery(api_client, state)
 
@@ -231,6 +237,26 @@ class OpenXiaoAIGateway:
                     await state.api_reader_task
             if state.api_websocket is not None:
                 await state.api_websocket.close()
+
+    async def _pump_terminal_messages(
+        self,
+        websocket,
+        terminal_rpc: TerminalRpcClient,
+        incoming_queue: asyncio.Queue[str | bytes | None],
+    ) -> None:
+        try:
+            async for message in websocket:
+                if isinstance(message, bytes):
+                    await incoming_queue.put(message)
+                    continue
+
+                frame = parse_open_xiaoai_text_message(message)
+                if frame.Response is not None:
+                    terminal_rpc.resolve(frame.Response)
+                    continue
+                await incoming_queue.put(message)
+        finally:
+            await incoming_queue.put(None)
 
     async def _discover_terminal(self, terminal_rpc: TerminalRpcClient) -> TerminalDiscoveryInfo:
         version_response = await terminal_rpc.call(command="get_version")
@@ -264,7 +290,20 @@ class OpenXiaoAIGateway:
                         ),
                     )
                 else:
-                    status = await asyncio.to_thread(api_client.get_binding, state.context.fingerprint)
+                    try:
+                        status = await asyncio.to_thread(api_client.get_binding, state.context.fingerprint)
+                    except GatewayApiError as exc:
+                        if exc.status_code != 404:
+                            raise
+                        # 某些后端实例还没带 binding 轮询路由，先回退到 report，别让网关卡死在空转 404。
+                        status = await asyncio.to_thread(
+                            api_client.report_discovery,
+                            build_discovery_report_payload(
+                                state.context,
+                                remote_addr=state.remote_addr,
+                                connection_status="online",
+                            ),
+                        )
             except GatewayApiError as exc:
                 logger.warning("claim poll failed status=%s detail=%s", exc.status_code, exc.detail)
                 continue
@@ -522,3 +561,19 @@ def _coerce_optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def extract_remote_addr(websocket: Any) -> str | None:
+    client = getattr(websocket, "client", None)
+    host = getattr(client, "host", None)
+    if isinstance(host, str) and host.strip():
+        return host.strip()
+
+    remote_address = getattr(websocket, "remote_address", None)
+    if isinstance(remote_address, tuple) and remote_address:
+        host = remote_address[0]
+        if isinstance(host, str) and host.strip():
+            return host.strip()
+    if isinstance(remote_address, str) and remote_address.strip():
+        return remote_address.strip()
+    return None

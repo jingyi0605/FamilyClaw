@@ -251,7 +251,14 @@ export const api = {
   },
   claimVoiceTerminalDiscovery(
     fingerprint: string,
-    payload: { household_id: string; room_id: string; terminal_name: string },
+    payload: {
+      household_id: string;
+      room_id: string;
+      terminal_name: string;
+      model?: string;
+      sn?: string;
+      connection_status?: 'online' | 'offline' | 'unknown';
+    },
   ) {
     return request<VoiceDiscoveryBinding>(
       `/devices/voice-terminals/discoveries/${encodeURIComponent(fingerprint)}/claim`,

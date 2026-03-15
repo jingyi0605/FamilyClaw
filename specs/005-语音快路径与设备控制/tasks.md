@@ -130,6 +130,7 @@
     - 已新增前端“发现到的新音箱”区块，用户可直接填写设备名称、选择房间并完成接入
     - 已改为未认领终端不会连接 `/api/v1/realtime/voice`、不会上报 `terminal.online`、不会启动正式录音；认领后才进入实时语音链路
     - 已改为消费官方 `kws / instruction / playing / record` 消息，并翻译成内部 `session.start / audio.append / audio.commit / playback.receipt`
+    - 已修复 `websockets 16` 下 `ServerConnection` 无 `.client` 导致的连接即崩溃问题，并把 discovery 阶段的终端 `Response` 提前接入后台读循环，避免 `get_version` 自己把自己卡超时
     - 还没做实机联调和断线重连幂等校正，所以先不标 DONE
 
 - [ ] 1.4 实现 `内部 play/stop/abort -> open-xiaoai WS commands`
@@ -177,6 +178,9 @@
     - 已确认 `api-server` 不直接理解 `open-xiaoai` 私有发现协议，只接收网关整理后的统一发现上报和正式语音事件
     - 已通过 `x-voice-gateway-token` 继续保护网关发现上报、绑定查询和 realtime voice 接入，未认领终端也会被正式链路拒绝
     - 已补后端接口测试、realtime 拒绝未认领终端测试、gateway 翻译器测试，并完成 `user-web` 构建校验
+    - 已在 `apps/user-web/src/pages/SettingsPage.tsx` 修复待认领音箱表单的 `room_id` 归一化，避免原生 `<select>` 因空值回显成第一项、界面看起来选了房间但提交值仍是空串
+    - 已给 gateway claim 轮询补 404 回退到 `report_discovery`，避免旧后端实例缺少 `binding` 轮询路由时持续空转告警
+    - 已把认领接口改为在内存 discovery 短暂丢失时，仍可根据 `open_xiaoai:<model>:<sn>` 指纹重建最小记录继续认领，避免页面刚看到音箱、点击添加就返回 404
     - 还没做实机认领联调和断线重连场景复核，所以先维持 IN_REVIEW
 
 ## 阶段 2：接 `voice_pipeline`，打通快路径主链

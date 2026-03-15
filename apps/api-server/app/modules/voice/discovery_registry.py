@@ -104,6 +104,35 @@ class VoiceTerminalDiscoveryRegistry:
         return pending
 
 
+def build_minimal_discovery(
+    *,
+    fingerprint: str,
+    model: str,
+    sn: str,
+    connection_status: VoiceDiscoveryConnectionStatus = "unknown",
+) -> VoiceTerminalDiscoveryRecord | None:
+    adapter_type, parsed_model, parsed_sn = _parse_open_xiaoai_fingerprint(fingerprint)
+    if adapter_type is None or parsed_model is None or parsed_sn is None:
+        return None
+    if parsed_model != model.strip() or parsed_sn != sn.strip():
+        return None
+
+    now = utc_now_iso()
+    return VoiceTerminalDiscoveryRecord(
+        adapter_type=adapter_type,
+        fingerprint=fingerprint,
+        model=model.strip(),
+        sn=sn.strip(),
+        runtime_version="unknown",
+        capabilities=[],
+        remote_addr=None,
+        discovered_at=now,
+        last_seen_at=now,
+        connection_status=connection_status,
+        claimed_binding=None,
+    )
+
+
 def get_voice_terminal_binding(db: Session, *, fingerprint: str) -> VoiceTerminalBindingSnapshot | None:
     statement = (
         select(DeviceBinding, Device)
@@ -221,6 +250,17 @@ def _map_device_status(connection_status: VoiceDiscoveryConnectionStatus) -> str
     if connection_status == "online":
         return "active"
     return "offline"
+
+
+def _parse_open_xiaoai_fingerprint(fingerprint: str) -> tuple[str | None, str | None, str | None]:
+    parts = fingerprint.split(":", 2)
+    if len(parts) != 3:
+        return None, None, None
+
+    adapter_type, model, sn = (part.strip() for part in parts)
+    if adapter_type != OPEN_XIAOAI_BINDING_PLATFORM or not model or not sn:
+        return None, None, None
+    return adapter_type, model, sn
 
 
 voice_terminal_discovery_registry = VoiceTerminalDiscoveryRegistry()

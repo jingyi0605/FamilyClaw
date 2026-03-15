@@ -1,7 +1,7 @@
 /* ============================================================
  * 设置页 - 二级导航 + 6 个子页面
  * ============================================================ */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useMatch, Navigate } from 'react-router-dom';
 import { formatLocaleOptionLabel, useI18n, type LocaleId } from '../i18n';
 import { useTheme, themeList, type ThemeId } from '../theme';
@@ -22,6 +22,8 @@ import type {
   VoiceDiscoveryTerminal,
 } from '../lib/types';
 export { SettingsAiPage as SettingsAi } from './SettingsAiPage';
+
+type VoiceDiscoveryDraft = { terminal_name: string; room_id: string };
 
 function useContextConfigSettings() {
   const { currentHouseholdId } = useHouseholdContext();
@@ -446,21 +448,34 @@ export function SettingsIntegrations() {
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [roomModalLoading, setRoomModalLoading] = useState(false);
   const [voiceDiscoveries, setVoiceDiscoveries] = useState<VoiceDiscoveryTerminal[]>([]);
-  const [voiceDiscoveryDrafts, setVoiceDiscoveryDrafts] = useState<Record<string, { terminal_name: string; room_id: string }>>({});
+  const [voiceDiscoveryDrafts, setVoiceDiscoveryDrafts] = useState<Record<string, VoiceDiscoveryDraft>>({});
   const [voiceDiscoveryError, setVoiceDiscoveryError] = useState('');
   const [voiceClaimingFingerprint, setVoiceClaimingFingerprint] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const roomsRef = useRef<Room[]>([]);
 
-  function mergeVoiceDiscoveryDrafts(items: VoiceDiscoveryTerminal[], previous: Record<string, { terminal_name: string; room_id: string }>) {
+  function normalizeVoiceDiscoveryDraft(draft: Partial<VoiceDiscoveryDraft> | undefined, availableRooms: Room[]): VoiceDiscoveryDraft {
+    const fallbackRoomId = availableRooms[0]?.id ?? '';
+    const roomId = draft?.room_id ?? '';
+    const roomExists = roomId !== '' && availableRooms.some(room => room.id === roomId);
+
+    return {
+      terminal_name: draft?.terminal_name ?? '小爱音箱',
+      room_id: availableRooms.length === 0 ? '' : (roomExists ? roomId : fallbackRoomId),
+    };
+  }
+
+  function mergeVoiceDiscoveryDrafts(
+    items: VoiceDiscoveryTerminal[],
+    previous: Record<string, VoiceDiscoveryDraft>,
+    availableRooms: Room[],
+  ) {
     return Object.fromEntries(
       items.map(item => [
         item.fingerprint,
-        previous[item.fingerprint] ?? {
-          terminal_name: '小爱音箱',
-          room_id: '',
-        },
+        normalizeVoiceDiscoveryDraft(previous[item.fingerprint], availableRooms),
       ]),
     );
   }
@@ -480,11 +495,12 @@ export function SettingsIntegrations() {
     }
   }
 
-  async function loadVoiceDiscoveries(householdId: string, options?: { silent?: boolean }) {
+  async function loadVoiceDiscoveries(householdId: string, options?: { silent?: boolean; rooms?: Room[] }) {
     try {
       const result = await api.listVoiceTerminalDiscoveries(householdId);
+      const availableRooms = options?.rooms ?? roomsRef.current;
       setVoiceDiscoveries(result.items);
-      setVoiceDiscoveryDrafts(current => mergeVoiceDiscoveryDrafts(result.items, current));
+      setVoiceDiscoveryDrafts(current => mergeVoiceDiscoveryDrafts(result.items, current, availableRooms));
       if (!options?.silent) {
         setVoiceDiscoveryError('');
       }
@@ -525,6 +541,7 @@ export function SettingsIntegrations() {
       const nextConfig = configResult.status === 'fulfilled' ? configResult.value : null;
       setDevices(devicesResult.status === 'fulfilled' ? devicesResult.value.items : []);
       setRooms(roomsResult.status === 'fulfilled' ? roomsResult.value.items : []);
+      roomsRef.current = roomsResult.status === 'fulfilled' ? roomsResult.value.items : [];
       setHaConfig(nextConfig);
       setHaForm({
         base_url: nextConfig?.base_url ?? '',
@@ -533,7 +550,7 @@ export function SettingsIntegrations() {
         clear_access_token: false,
       });
       setDeviceDrafts(Object.fromEntries((devicesResult.status === 'fulfilled' ? devicesResult.value.items : []).map(device => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
-      await loadVoiceDiscoveries(currentHouseholdId);
+      await loadVoiceDiscoveries(currentHouseholdId, { rooms: roomsRef.current });
 
       const hasHaConfig = Boolean(nextConfig?.base_url && nextConfig?.token_configured);
       if (hasHaConfig) {
@@ -583,16 +600,14 @@ export function SettingsIntegrations() {
   }, [currentHouseholdId]);
 
   useEffect(() => {
+    roomsRef.current = rooms;
     if (rooms.length === 0) {
       return;
     }
     setVoiceDiscoveryDrafts(current => Object.fromEntries(
       Object.entries(current).map(([fingerprint, draft]) => [
         fingerprint,
-        {
-          ...draft,
-          room_id: draft.room_id || rooms[0].id,
-        },
+        normalizeVoiceDiscoveryDraft(draft, rooms),
       ]),
     ));
   }, [rooms]);
@@ -617,8 +632,9 @@ export function SettingsIntegrations() {
     setOverview(hasHaConfig ? await api.getContextOverview(currentHouseholdId).catch(() => null) : null);
     setDevices(nextDevices.items);
     setRooms(nextRooms.items);
+    roomsRef.current = nextRooms.items;
     setDeviceDrafts(Object.fromEntries(nextDevices.items.map(device => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
-    await loadVoiceDiscoveries(currentHouseholdId, { silent: true });
+    await loadVoiceDiscoveries(currentHouseholdId, { silent: true, rooms: nextRooms.items });
   }
 
   async function runAction(action: () => Promise<void>) {
@@ -763,20 +779,20 @@ export function SettingsIntegrations() {
 
   function updateVoiceDiscoveryDraft(
     fingerprint: string,
-    patch: Partial<{ terminal_name: string; room_id: string }>,
+    patch: Partial<VoiceDiscoveryDraft>,
   ) {
     setVoiceDiscoveryDrafts(current => ({
       ...current,
-      [fingerprint]: {
-        terminal_name: current[fingerprint]?.terminal_name ?? '小爱音箱',
-        room_id: current[fingerprint]?.room_id ?? (rooms[0]?.id ?? ''),
-        ...patch,
-      },
+      [fingerprint]: normalizeVoiceDiscoveryDraft(
+        { ...current[fingerprint], ...patch },
+        roomsRef.current,
+      ),
     }));
   }
 
-  async function handleClaimVoiceDiscovery(fingerprint: string) {
-    const draft = voiceDiscoveryDrafts[fingerprint];
+  async function handleClaimVoiceDiscovery(item: VoiceDiscoveryTerminal) {
+    const { fingerprint } = item;
+    const draft = normalizeVoiceDiscoveryDraft(voiceDiscoveryDrafts[fingerprint], rooms);
     if (!currentHouseholdId) {
       setVoiceDiscoveryError('还没有选中家庭，暂时无法添加音箱。');
       return;
@@ -790,6 +806,11 @@ export function SettingsIntegrations() {
       return;
     }
 
+    setVoiceDiscoveryDrafts(current => ({
+      ...current,
+      [fingerprint]: draft,
+    }));
+
     setVoiceClaimingFingerprint(fingerprint);
     setVoiceDiscoveryError('');
     try {
@@ -797,6 +818,9 @@ export function SettingsIntegrations() {
         household_id: currentHouseholdId,
         room_id: draft.room_id,
         terminal_name: draft.terminal_name.trim(),
+        model: item.model,
+        sn: item.sn,
+        connection_status: item.connection_status,
       });
       await reloadWorkspace();
       setStatus('新音箱已经添加到当前家庭。');
@@ -938,10 +962,7 @@ export function SettingsIntegrations() {
             {voiceDiscoveries.length === 0 ? (
               <div className="integration-status__detail">暂时没有发现新的音箱。</div>
             ) : voiceDiscoveries.map(item => {
-              const draft = voiceDiscoveryDrafts[item.fingerprint] ?? {
-                terminal_name: '小爱音箱',
-                room_id: rooms[0]?.id ?? '',
-              };
+              const draft = normalizeVoiceDiscoveryDraft(voiceDiscoveryDrafts[item.fingerprint], rooms);
               const isClaiming = voiceClaimingFingerprint === item.fingerprint;
               return (
                 <Card key={item.fingerprint} className="device-card device-card--editor">
@@ -978,7 +999,7 @@ export function SettingsIntegrations() {
                     <button
                       className="btn btn--outline btn--sm"
                       type="button"
-                      onClick={() => void handleClaimVoiceDiscovery(item.fingerprint)}
+                      onClick={() => void handleClaimVoiceDiscovery(item)}
                       disabled={isClaiming || rooms.length === 0}
                     >
                       {isClaiming ? '添加中...' : '添加到家庭'}

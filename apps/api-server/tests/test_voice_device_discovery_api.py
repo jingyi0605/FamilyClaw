@@ -163,6 +163,35 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             self.assertEqual("xiaomi", device.vendor)
             self.assertEqual(self.room_id, device.room_id)
 
+    def test_claim_still_succeeds_when_registry_temporarily_loses_discovery(self) -> None:
+        fingerprint = "open_xiaoai:LX06:SN001"
+        self._report_terminal(fingerprint, "LX06", "SN001")
+        voice_terminal_discovery_registry.reset()
+
+        claim_response = self.client.post(
+            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/claim",
+            json={
+                "household_id": self.household_id,
+                "room_id": self.room_id,
+                "terminal_name": "书房音箱",
+                "model": "LX06",
+                "sn": "SN001",
+                "connection_status": "online",
+            },
+        )
+
+        self.assertEqual(200, claim_response.status_code)
+        self.assertEqual("书房音箱", claim_response.json()["terminal_name"])
+
+        with self.SessionLocal() as db:
+            binding = db.scalar(
+                select(DeviceBinding).where(
+                    DeviceBinding.platform == "open_xiaoai",
+                    DeviceBinding.external_entity_id == fingerprint,
+                )
+            )
+            self.assertIsNotNone(binding)
+
     def test_claim_missing_discovery_returns_404(self) -> None:
         response = self.client.post(
             f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/open_xiaoai%3ALX06%3AMISSING/claim",
