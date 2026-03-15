@@ -151,7 +151,7 @@ input, select, textarea {
   align-items: center;
   gap: calc(var(--spacing-sm) * 1.3);
   min-height: 73px;
-  padding: calc(var(--spacing-md) * 1.3) calc(var(--spacing-md) * 1.3);
+  padding: 0 calc(var(--spacing-md) * 1.3);
   border-bottom: 1px solid var(--border-light);
   line-height: 1;
 }
@@ -444,7 +444,7 @@ input, select, textarea {
 
 .shell-nav--collapsed .shell-nav__brand {
   justify-content: center;
-  padding: calc(var(--spacing-md) * 1.3) var(--spacing-sm);
+  padding: 0 var(--spacing-sm);
 }
 
 .shell-nav--collapsed .shell-nav__link {
@@ -478,7 +478,7 @@ input, select, textarea {
 
 .shell-nav--collapsed:hover .shell-nav__brand {
   justify-content: flex-start;
-  padding: calc(var(--spacing-md) * 1.3) calc(var(--spacing-md) * 1.3);
+  padding: 0 calc(var(--spacing-md) * 1.3);
 }
 
 .shell-nav--collapsed:hover .shell-nav__link {
@@ -2173,7 +2173,7 @@ input, select, textarea {
 /* 气泡框 - PC端默认样式 */
 .assistant-popover {
   position: absolute;
-  top: 50px;
+  top: calc(var(--assistant-header-bar-height) - 4px);
   left: var(--spacing-md);
   width: 320px;
   min-height: 200px;
