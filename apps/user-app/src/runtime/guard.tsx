@@ -259,13 +259,18 @@ export function GuardedPage(props: PropsWithChildren<{ mode: GuardMode; path: st
   if (IS_H5) {
     return (
       <div className="setup-guard">
-        <div className="setup-guard__card">
+        <div className={`setup-guard__content ${guardResult.kind === 'error' ? 'setup-guard__content--error' : ''}`.trim()}>
           <h2>{guardResult.kind === 'error' ? '运行时壳初始化失败' : '正在校验访问资格'}</h2>
-          <p>{guardResult.message}</p>
+          <span className="setup-guard__eyebrow">
+            {guardResult.kind === 'error' ? '页面初始化失败' : '正在准备页面'}
+          </span>
+          <p className="setup-guard__message">{guardResult.message}</p>
           {guardResult.kind === 'error' && guardResult.onRetry ? (
-            <button className="btn btn--primary" type="button" onClick={() => guardResult.onRetry?.()}>
+            <div className="setup-guard__actions">
+              <button className="btn btn--primary" type="button" onClick={() => guardResult.onRetry?.()}>
               重试
-            </button>
+              </button>
+            </div>
           ) : null}
         </div>
       </div>

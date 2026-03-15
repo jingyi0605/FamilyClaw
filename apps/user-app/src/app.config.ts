@@ -1,4 +1,5 @@
 export default {
+  animation: false,
   pages: [
     'pages/entry/index',
     'pages/login/index',

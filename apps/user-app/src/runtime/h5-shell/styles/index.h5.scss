@@ -42,6 +42,16 @@ page {
   background: var(--bg-app);
 }
 
+.taro_router > .taro_page,
+.taro_router > .taro_page.taro_page_show,
+.taro_router > .taro_page.taro_page_show.taro_page_stationed,
+.taro_router > .taro_page.taro_tabbar_page,
+.taro_router > .taro_page.taro_page_shade {
+  transform: none !important;
+  transition: none !important;
+  animation: none !important;
+}
+
 .taro_page {
   background: var(--bg-app);
 }
