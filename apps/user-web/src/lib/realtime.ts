@@ -11,4 +11,4 @@ export {
   type BootstrapRealtimeEventType,
   type BootstrapRealtimePayloadByType,
   type BootstrapRealtimeSessionSnapshot,
-} from '@familyclaw/user-platform';
+} from '@familyclaw/user-platform/web';

@@ -1,4 +1,4 @@
-import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealtimeEvent } from '@familyclaw/user-platform';
+import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealtimeEvent } from '@familyclaw/user-platform/web';
 
 type ConnectOptions = {
   householdId: string;

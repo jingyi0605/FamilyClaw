@@ -8,11 +8,25 @@ export { createBrowserStorageAdapter } from './storage/browser';
 export { createMemoryStorage } from './storage/memory';
 export type { KeyValueStorage } from './storage/types';
 
-// 实时连接（占位实现，无 Taro 依赖）
+// 实时连接（浏览器实现，无 Taro 依赖）
 export {
+  BOOTSTRAP_REALTIME_EVENT_TYPES,
+  DISPLAY_TEXT_EVENT_TYPES,
+  FORBIDDEN_TEXT_PROTOCOL_MARKERS,
+  STATE_PATCH_EVENT_TYPES,
+  assertBootstrapRealtimeEvent,
+  buildBootstrapRealtimeUrl,
+  buildConversationRealtimeUrl,
+  createBrowserRealtimeClient,
+  newRealtimeRequestId,
+  parseBootstrapRealtimeEvent,
   createUnavailableRealtimeConnection,
   type RealtimeConnection,
   type RealtimeConnectionState,
+  type BootstrapRealtimeEvent,
+  type BootstrapRealtimeEventType,
+  type BootstrapRealtimePayloadByType,
+  type BootstrapRealtimeSessionSnapshot,
 } from './realtime';
 
 // Web 平台能力类型（本地定义，避免循环依赖）

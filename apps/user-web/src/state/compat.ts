@@ -6,7 +6,7 @@ import {
   toHouseholdSummary,
   type HouseholdSummary,
 } from '@familyclaw/user-core';
-import { createBrowserStorageAdapter } from '@familyclaw/user-platform';
+import { createBrowserStorageAdapter } from '@familyclaw/user-platform/web';
 import type { HouseholdSetupStatus } from '../lib/types';
 
 interface SetupStatusClient {
