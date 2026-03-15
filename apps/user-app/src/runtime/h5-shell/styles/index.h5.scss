@@ -1845,31 +1845,36 @@ input, select, textarea {
 
   .member-detail-grid {
     grid-template-columns: 1fr;
-    gap: 0.75rem;
+    gap: 8px;
   }
 
   .family-members .member-detail-card {
-    padding: 0.75rem 0.875rem;
-  }
-
-  .member-detail-card__avatar {
-    width: 40px;
-    height: 40px;
-    font-size: 1.5rem;
+    padding: 10px;
+    gap: 8px;
   }
 
   .member-detail-card__top {
-    gap: 0.625rem;
-    margin-bottom: 0.625rem;
+    grid-template-columns: 50px minmax(0, 1fr) max-content;
+    column-gap: 8px;
+    row-gap: 4px;
+    margin-bottom: 0;
   }
 
-  .member-detail-card__meta,
-  .member-detail-card__prefs {
-    margin-bottom: 0.625rem;
+  .family-members .member-detail-card__avatar {
+    width: 50px;
+    height: 50px;
+    font-size: 28px;
+  }
+
+  .member-detail-card__meta {
+    column-gap: 10px;
+    row-gap: 5px;
   }
 
   .family-members .card-action-btn {
-    padding: 0.4rem 0.75rem;
+    min-height: 28px;
+    padding: 0 6px;
+    font-size: 10px;
   }
 }
 
@@ -6960,6 +6965,23 @@ body::before {
   width: auto;
 }
 
+.scheduled-tasks-tab .btn--primary,
+.task-form-drawer .btn--primary,
+.dialog-content .btn--primary {
+  background: var(--brand-primary);
+  background-color: var(--brand-primary);
+  color: var(--text-inverse);
+  border-color: transparent;
+}
+
+.scheduled-tasks-tab .btn--primary:hover,
+.task-form-drawer .btn--primary:hover,
+.dialog-content .btn--primary:hover {
+  background: var(--brand-primary-hover);
+  background-color: var(--brand-primary-hover);
+  color: var(--text-inverse);
+}
+
 .page--memories .btn::after,
 .page--memories .close-btn::after,
 .page--memories .memory-main-tab::after,
@@ -7008,7 +7030,8 @@ body::before {
 }
 
 .page--memories .memory-layout {
-  grid-template-columns: 160px minmax(0, 1fr) minmax(300px, 320px);
+  grid-template-columns: 160px minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--spacing-md);
   align-items: start;
 }
 
@@ -7028,6 +7051,9 @@ body::before {
 .page--memories .memory-cat-btn {
   display: flex;
   width: 100%;
+  min-height: 44px;
+  gap: calc(var(--spacing-sm) * 1.2);
+  font-size: calc(var(--font-size-sm) * 1.2);
   justify-content: flex-start;
 }
 
@@ -7035,8 +7061,9 @@ body::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.25rem;
+  width: 1.5rem;
   flex-shrink: 0;
+  font-size: 1.1em;
 }
 
 .page--memories .memory-list,
@@ -7046,8 +7073,12 @@ body::before {
   min-width: 0;
 }
 
+.page--memories .memory-list {
+  gap: calc(var(--spacing-sm) + 2px);
+}
+
 .page--memories .memory-item-card {
-  padding: var(--spacing-md);
+  padding: calc(var(--spacing-sm) + 2px) var(--spacing-md);
 }
 
 .page--memories .memory-item-card__top,
@@ -7055,15 +7086,33 @@ body::before {
   align-items: flex-start;
 }
 
+.page--memories .memory-item-card__top {
+  gap: calc(var(--spacing-xs) + 2px);
+  margin-bottom: var(--spacing-xs);
+}
+
+.page--memories .memory-item-card__icon {
+  font-size: 1.125rem;
+  line-height: 1;
+}
+
 .page--memories .memory-item-card__title,
 .scheduled-task-card__name {
   min-width: 0;
+}
+
+.page--memories .memory-item-card__title {
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
 }
 
 .page--memories .memory-item-card__content {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  margin-bottom: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
   overflow: hidden;
 }
 
@@ -7073,7 +7122,14 @@ body::before {
   row-gap: var(--spacing-xs);
 }
 
+.page--memories .memory-item-card__meta {
+  gap: var(--spacing-md);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .page--memories .memory-detail {
+  padding: calc(var(--spacing-md) + 2px);
   min-height: 100%;
 }
 
@@ -7081,9 +7137,26 @@ body::before {
   display: flex;
 }
 
+.page--memories .memory-detail__header {
+  margin-bottom: var(--spacing-md);
+}
+
+.page--memories .memory-detail__header h2 {
+  font-size: var(--font-size-md);
+}
+
 .page--memories .memory-detail__body,
 .scheduled-tasks-detail__body {
   min-width: 0;
+}
+
+.page--memories .detail-field {
+  margin-bottom: calc(var(--spacing-sm) + 2px);
+}
+
+.page--memories .detail-field label {
+  margin-bottom: 4px;
+  font-size: 11px;
 }
 
 .page--memories .detail-field p,
@@ -7092,9 +7165,23 @@ body::before {
   overflow-wrap: anywhere;
 }
 
+.page--memories .detail-field p {
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.page--memories .detail-field .form-input {
+  font-size: var(--font-size-sm);
+}
+
 .page--memories .memory-detail__actions,
 .scheduled-tasks-detail__actions {
   align-items: stretch;
+}
+
+.page--memories .memory-detail__actions {
+  gap: var(--spacing-xs);
+  padding-top: var(--spacing-sm);
 }
 
 .page--memories .memory-revision-item,
@@ -7102,9 +7189,58 @@ body::before {
   overflow: hidden;
 }
 
+.page--memories .memory-revision-item {
+  padding: var(--spacing-sm);
+}
+
+.page--memories .memory-revision-item__top {
+  gap: var(--spacing-sm);
+}
+
+.page--memories .memory-revision-item__summary strong {
+  font-size: var(--font-size-xs);
+}
+
+.page--memories .memory-revision-item__summary span {
+  font-size: 11px;
+}
+
+.page--memories .memory-revision-list {
+  gap: var(--spacing-sm);
+}
+
+.page--memories .memory-revision-diff__row {
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: start;
+  column-gap: var(--spacing-sm);
+}
+
+.page--memories .memory-revision-diff__label {
+  padding-top: 6px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .page--memories .memory-revision-diff__card,
 .page--memories .memory-revision-diff__empty {
   min-width: 0;
+}
+
+.page--memories .memory-revision-diff {
+  gap: var(--spacing-xs);
+}
+
+.page--memories .memory-revision-diff__values {
+  gap: var(--spacing-xs);
+}
+
+.page--memories .memory-revision-diff__card {
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.page--memories .memory-revision-diff__caption {
+  margin-bottom: 2px;
+  font-size: 11px;
 }
 
 .page--memories .memory-revision-diff__card p {
@@ -7337,6 +7473,10 @@ body::before {
   .page--memories .memory-detail,
   .scheduled-tasks-detail {
     margin-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .page--memories .memory-revision-diff__row {
+    grid-template-columns: 1fr;
   }
 
   .page--memories .memory-detail__actions .btn,
