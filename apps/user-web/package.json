@@ -9,6 +9,8 @@
     "preview": "vite preview --host 0.0.0.0 --port 4174"
   },
   "dependencies": {
+    "@familyclaw/user-core": "file:../../packages/user-core",
+    "@familyclaw/user-platform": "file:../../packages/user-platform",
     "lucide-react": "^0.577.0",
     "pinyin-pro": "^3.28.0",
     "react": "^18.3.1",

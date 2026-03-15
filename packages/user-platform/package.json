@@ -13,8 +13,8 @@
     },
     "./web": {
       "types": "./src/index.web.ts",
-      "import": "./src/index.web.ts",
-      "default": "./src/index.web.ts"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "dependencies": {
