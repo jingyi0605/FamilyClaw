@@ -358,6 +358,21 @@ class PluginRegistryStateEntry(BaseModel):
     updated_at: str | None = None
 
 
+class PluginStateOverrideRead(BaseModel):
+    id: str
+    household_id: str
+    plugin_id: str
+    enabled: bool
+    source_type: PluginSourceType
+    updated_by: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class PluginStateUpdateRequest(BaseModel):
+    enabled: bool
+
+
 class PluginRunnerConfig(BaseModel):
     plugin_root: str | None = None
     python_path: str | None = None
@@ -375,7 +390,10 @@ class PluginRegistryItem(BaseModel):
     permissions: list[str]
     risk_level: RiskLevel
     triggers: list[str]
+    base_enabled: bool = True
+    household_enabled: bool | None = None
     enabled: bool
+    disabled_reason: str | None = None
     manifest_path: str
     entrypoints: PluginManifestEntrypoints
     capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)

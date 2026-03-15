@@ -20,6 +20,8 @@ from app.modules.channel.schemas import ChannelDeliveryCreate, ChannelInboundEve
 from app.modules.channel.service import create_channel_delivery, record_channel_inbound_event
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.plugin.schemas import PluginStateUpdateRequest
+from app.modules.plugin.service import set_household_plugin_enabled
 
 
 class _MockHttpResponse:
@@ -220,6 +222,98 @@ class ChannelAccountsApiTests(unittest.TestCase):
         inbound_payload = inbound_response.json()
         self.assertEqual(1, len(inbound_payload))
         self.assertEqual("evt-fail-001", inbound_payload[0]["external_event_id"])
+
+    def test_create_channel_account_rejects_disabled_channel_plugin(self) -> None:
+        with self.SessionLocal() as db:
+            set_household_plugin_enabled(
+                db,
+                household_id=self.household_id,
+                plugin_id="channel-dingtalk",
+                payload=PluginStateUpdateRequest(enabled=False),
+            )
+            db.commit()
+
+        response = self.client.post(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts",
+            json={
+                "plugin_id": "channel-dingtalk",
+                "account_code": "dingtalk-main",
+                "display_name": "钉钉主账号",
+                "connection_mode": "webhook",
+                "config": {
+                    "app_key": "ding-app-key",
+                },
+                "status": "draft",
+            },
+        )
+
+        self.assertEqual(400, response.status_code)
+        self.assertEqual("channel plugin is disabled for current household", response.json()["detail"])
+
+    def test_probe_channel_account_rejects_disabled_channel_plugin(self) -> None:
+        create_response = self.client.post(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts",
+            json={
+                "plugin_id": "channel-telegram",
+                "account_code": "telegram-main",
+                "display_name": "Telegram 主账号",
+                "connection_mode": "webhook",
+                "config": {
+                    "bot_token": "telegram-token-001",
+                },
+                "status": "draft",
+            },
+        )
+        self.assertEqual(201, create_response.status_code)
+        account_id = create_response.json()["id"]
+
+        with self.SessionLocal() as db:
+            set_household_plugin_enabled(
+                db,
+                household_id=self.household_id,
+                plugin_id="channel-telegram",
+                payload=PluginStateUpdateRequest(enabled=False),
+            )
+            db.commit()
+
+        probe_response = self.client.post(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts/{account_id}/probe"
+        )
+        self.assertEqual(400, probe_response.status_code)
+        self.assertEqual("channel plugin is disabled for current household", probe_response.json()["detail"])
+
+    def test_update_channel_account_rejects_disabled_channel_plugin(self) -> None:
+        create_response = self.client.post(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts",
+            json={
+                "plugin_id": "channel-telegram",
+                "account_code": "telegram-main",
+                "display_name": "Telegram 主账号",
+                "connection_mode": "webhook",
+                "config": {
+                    "bot_token": "telegram-token-001",
+                },
+                "status": "draft",
+            },
+        )
+        self.assertEqual(201, create_response.status_code)
+        account_id = create_response.json()["id"]
+
+        with self.SessionLocal() as db:
+            set_household_plugin_enabled(
+                db,
+                household_id=self.household_id,
+                plugin_id="channel-telegram",
+                payload=PluginStateUpdateRequest(enabled=False),
+            )
+            db.commit()
+
+        update_response = self.client.put(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts/{account_id}",
+            json={"status": "active"},
+        )
+        self.assertEqual(404, update_response.status_code)
+        self.assertEqual("channel plugin is disabled for current household", update_response.json()["detail"])
 
 
 if __name__ == "__main__":

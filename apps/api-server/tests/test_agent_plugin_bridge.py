@@ -19,7 +19,8 @@ from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
-from app.modules.plugin import AgentPluginInvokeRequest, PluginMountCreate, disable_plugin, invoke_agent_plugin, register_plugin_mount
+from app.modules.plugin import AgentPluginInvokeRequest, PluginMountCreate, disable_plugin, invoke_agent_plugin, register_plugin_mount, set_household_plugin_enabled
+from app.modules.plugin.schemas import PluginStateUpdateRequest
 
 
 class AgentPluginBridgeTests(unittest.TestCase):
@@ -100,9 +101,10 @@ class AgentPluginBridgeTests(unittest.TestCase):
         self.assertEqual("笨笨", result.agent_name)
         self.assertEqual("health-basic-reader", result.plugin_id)
         self.assertEqual("connector", result.plugin_type)
-        self.assertIsInstance(result.output, dict)
-        assert isinstance(result.output, dict)
-        self.assertEqual(3, len(result.output.get("records", [])))
+        self.assertTrue(result.queued)
+        self.assertEqual("queued", result.job_status)
+        self.assertIsNotNone(result.job_id)
+        self.assertIsNone(result.output)
 
         audit_stmt = select(AuditLog).where(
             AuditLog.action == "agent.plugin.invoke",
@@ -169,7 +171,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual("agent_plugin_invoke_failed", result.error_code)
-        self.assertIn("插件已禁用", result.error_message or "")
+        self.assertIn("当前家庭停用", result.error_message or "")
 
         audit_stmt = select(AuditLog).where(
             AuditLog.action == "agent.plugin.invoke",
@@ -242,10 +244,81 @@ class AgentPluginBridgeTests(unittest.TestCase):
             self.db.commit()
 
         self.assertTrue(result.success)
-        self.assertIsInstance(result.output, dict)
-        assert isinstance(result.output, dict)
-        self.assertEqual("third-party-agent-plugin", result.output["source"])
-        self.assertEqual(member.id, result.output["echo"]["member_id"])
+        self.assertTrue(result.queued)
+        self.assertEqual("queued", result.job_status)
+        self.assertIsNotNone(result.job_id)
+
+    def test_invoke_agent_plugin_returns_failure_when_household_override_disables_third_party_plugin(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Third Party Disabled Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        member = create_member(
+            self.db,
+            MemberCreate(household_id=household.id, name="妈妈", role="adult"),
+        )
+        agent = create_agent(
+            self.db,
+            household_id=household.id,
+            payload=AgentCreate(
+                display_name="外部助手",
+                agent_type="butler",
+                self_identity="我是外部助手",
+                role_summary="第三方插件测试 Agent",
+                created_by="test",
+            ),
+        )
+        actor = ActorContext(
+            role="member",
+            actor_type="member",
+            actor_id=member.id,
+            account_id="account-4",
+            account_type="member",
+            account_status="active",
+            household_id=household.id,
+            member_id=member.id,
+            member_role=member.role,
+            is_authenticated=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            plugin_root = self._create_third_party_connector_plugin(Path(tempdir), plugin_id="third-party-agent-plugin")
+            register_plugin_mount(
+                self.db,
+                household_id=household.id,
+                payload=PluginMountCreate(
+                    source_type="third_party",
+                    plugin_root=str(plugin_root),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_root),
+                    timeout_seconds=10,
+                ),
+            )
+            set_household_plugin_enabled(
+                self.db,
+                household_id=household.id,
+                plugin_id="third-party-agent-plugin",
+                payload=PluginStateUpdateRequest(enabled=False),
+                updated_by="tester",
+            )
+            self.db.flush()
+
+            result = invoke_agent_plugin(
+                self.db,
+                household_id=household.id,
+                agent_id=agent.id,
+                request=AgentPluginInvokeRequest(
+                    plugin_id="third-party-agent-plugin",
+                    plugin_type="connector",
+                    payload={"member_id": member.id},
+                ),
+                actor=actor,
+            )
+            self.db.commit()
+
+        self.assertFalse(result.success)
+        self.assertEqual("agent_plugin_invoke_failed", result.error_code)
+        self.assertIn("当前家庭停用", result.error_message or "")
 
     def _create_third_party_connector_plugin(self, root: Path, *, plugin_id: str) -> Path:
         plugin_root = root / plugin_id

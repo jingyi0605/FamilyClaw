@@ -155,9 +155,16 @@ class MountedPluginRegionProvider(RegionProvider):
 
 
 def sync_household_plugin_region_providers(db: Session, household_id: str) -> None:
+    from app.modules.plugin.service import list_registered_plugins_for_household
+
     region_provider_registry.clear_scope(household_id)
+    plugin_map = {
+        item.id: item
+        for item in list_registered_plugins_for_household(db, household_id=household_id).items
+    }
     for mount in plugin_repository.list_plugin_mounts(db, household_id=household_id):
-        if not mount.enabled:
+        plugin = plugin_map.get(mount.plugin_id)
+        if plugin is None or not plugin.enabled:
             continue
         manifest = _load_plugin_manifest(mount.manifest_path)
         spec = get_runtime_region_provider_spec(manifest)

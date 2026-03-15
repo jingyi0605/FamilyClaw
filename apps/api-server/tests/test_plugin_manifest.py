@@ -6,16 +6,27 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+import app.db.models  # noqa: F401
+from app.core.config import settings
+from app.modules.household.schemas import HouseholdCreate
+from app.modules.household.service import create_household
 from app.modules.plugin.service import (
     PluginManifestValidationError,
     disable_plugin,
     discover_plugin_manifests,
     enable_plugin,
     execute_plugin,
+    list_registered_plugins_for_household,
     list_registered_plugins,
     load_plugin_manifest,
+    set_household_plugin_enabled,
 )
-from app.modules.plugin.schemas import PluginExecutionRequest
+from app.modules.plugin.schemas import PluginExecutionRequest, PluginStateUpdateRequest
 from app.modules.plugin.schemas import PluginRunnerConfig
 
 
@@ -877,3 +888,84 @@ class PluginManifestTests(unittest.TestCase):
         self.assertFalse(failure_result.success)
         self.assertEqual("plugin_execution_failed", failure_result.error_code)
         self.assertIn("插件不存在", failure_result.error_message or "")
+
+
+class PluginEffectiveStateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        self._previous_database_url = settings.database_url
+        self.builtin_root = Path(__file__).resolve().parents[1] / "app" / "plugins" / "builtin"
+        self.state_file = Path(self._tempdir.name) / "plugin_registry_state.json"
+
+        db_path = Path(self._tempdir.name) / "test.db"
+        settings.database_url = f"sqlite:///{db_path}"
+
+        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
+        command.upgrade(alembic_config, "head")
+
+        self.engine = create_engine(settings.database_url, future=True)
+        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        self.db: Session = self.SessionLocal()
+
+    def tearDown(self) -> None:
+        self.db.close()
+        self.engine.dispose()
+        settings.database_url = self._previous_database_url
+        self._tempdir.cleanup()
+
+    def test_household_override_can_disable_builtin_plugin(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="状态家庭", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        updated = set_household_plugin_enabled(
+            self.db,
+            household_id=household.id,
+            plugin_id="health-basic-reader",
+            payload=PluginStateUpdateRequest(enabled=False),
+            updated_by="tester",
+            root_dir=self.builtin_root,
+            state_file=self.state_file,
+        )
+        self.db.commit()
+
+        self.assertTrue(updated.base_enabled)
+        self.assertFalse(updated.enabled)
+        self.assertEqual(False, updated.household_enabled)
+        self.assertIn("当前家庭", updated.disabled_reason or "")
+
+        snapshot = list_registered_plugins_for_household(
+            self.db,
+            household_id=household.id,
+            root_dir=self.builtin_root,
+            state_file=self.state_file,
+        )
+        plugin = next(item for item in snapshot.items if item.id == "health-basic-reader")
+        self.assertFalse(plugin.enabled)
+        self.assertEqual(False, plugin.household_enabled)
+
+    def test_effective_enabled_uses_base_and_household_state(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="状态合并家庭", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+        disable_plugin("health-basic-reader", root_dir=self.builtin_root, state_file=self.state_file)
+
+        updated = set_household_plugin_enabled(
+            self.db,
+            household_id=household.id,
+            plugin_id="health-basic-reader",
+            payload=PluginStateUpdateRequest(enabled=True),
+            updated_by="tester",
+            root_dir=self.builtin_root,
+            state_file=self.state_file,
+        )
+
+        self.assertFalse(updated.base_enabled)
+        self.assertEqual(True, updated.household_enabled)
+        self.assertFalse(updated.enabled)
+        self.assertIn("基础状态", updated.disabled_reason or "")

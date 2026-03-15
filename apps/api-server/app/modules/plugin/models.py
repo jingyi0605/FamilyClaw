@@ -76,6 +76,27 @@ class PluginMount(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
 
 
+class PluginStateOverride(Base):
+    __tablename__ = "plugin_state_overrides"
+    __table_args__ = (
+        UniqueConstraint("household_id", "plugin_id", name="uq_plugin_state_overrides_household_plugin"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    household_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    plugin_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    updated_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+
+
 class PluginJob(Base):
     __tablename__ = "plugin_jobs"
     __table_args__ = (

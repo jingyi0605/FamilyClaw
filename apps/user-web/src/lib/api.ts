@@ -64,6 +64,8 @@ import type {
   ScheduledTaskDefinitionUpdate,
   ScheduledTaskRun,
   PluginRegistrySnapshot,
+  PluginRegistryItem,
+  PluginStateUpdateRequest,
   PluginMountRead,
   PluginMountCreate,
   PluginMountUpdate,
@@ -766,6 +768,16 @@ export const api = {
   // 获取所有已注册插件（包括内置、官方、第三方）
   listRegisteredPlugins(householdId: string) {
     return request<PluginRegistrySnapshot>(`/ai-config/${encodeURIComponent(householdId)}/plugins`);
+  },
+
+  updatePluginState(householdId: string, pluginId: string, payload: PluginStateUpdateRequest) {
+    return request<PluginRegistryItem>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/state`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
   },
 
   listPluginMounts(householdId: string) {

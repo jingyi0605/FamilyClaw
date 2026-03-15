@@ -14,7 +14,7 @@ from app.modules.account.models import Account, AccountMemberBinding
 from app.modules.account.service import AuthenticatedActor
 from app.modules.household.models import Household
 from app.modules.member.models import Member
-from app.modules.plugin.service import PluginExecutionError, list_registered_plugins_for_household
+from app.modules.plugin.service import PluginExecutionError, require_available_household_plugin
 from app.modules.scheduler.models import ScheduledTaskDefinition, ScheduledTaskRun
 from app.modules.scheduler.rules import evaluate_heartbeat_rule
 from app.modules.scheduler.runtime import finalize_task_run
@@ -678,18 +678,16 @@ def _validate_target_dependency(db: Session, *, household_id: str, target_type: 
     if target_type != "plugin_job":
         return
     try:
-        registry = list_registered_plugins_for_household(db, household_id=household_id)
+        plugin = require_available_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=target_ref_id,
+            trigger="schedule",
+        )
     except PluginExecutionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    plugin = next((item for item in registry.items if item.id == target_ref_id), None)
-    if plugin is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scheduled task plugin target not found")
-    if not plugin.enabled:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scheduled task plugin target is disabled")
     if plugin.risk_level == "high":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scheduled task plugin target is high risk and cannot be scheduled by default")
-    if "schedule" not in plugin.triggers:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scheduled task plugin target does not support schedule trigger")
 
 
 def _validate_definition_snapshot(row: ScheduledTaskDefinition) -> None:

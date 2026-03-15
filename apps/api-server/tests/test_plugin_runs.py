@@ -20,8 +20,8 @@ from app.modules.member.service import create_member
 from app.modules.plugin.models import PluginRawRecord
 from app.modules.plugin.models import PluginRun
 from app.modules.plugin.schemas import PluginExecutionRequest
-from app.modules.plugin.schemas import PluginRunnerConfig
-from app.modules.plugin.service import run_plugin_sync_pipeline
+from app.modules.plugin.schemas import PluginMountCreate, PluginRunnerConfig, PluginStateUpdateRequest
+from app.modules.plugin.service import register_plugin_mount, run_plugin_sync_pipeline, set_household_plugin_enabled
 
 
 class PluginRunTests(unittest.TestCase):
@@ -108,7 +108,7 @@ class PluginRunTests(unittest.TestCase):
         self.assertEqual("failed", result.run.status)
         self.assertEqual(0, result.run.raw_record_count)
         self.assertEqual(0, result.run.memory_card_count)
-        self.assertEqual("plugin_execution_failed", result.run.error_code)
+        self.assertEqual("plugin_not_visible_in_household", result.run.error_code)
 
         audit_stmt = select(AuditLog).where(AuditLog.target_type == "plugin_run", AuditLog.target_id == result.run.id)
         audit_row = self.db.scalar(audit_stmt)
@@ -181,7 +181,7 @@ class PluginRunTests(unittest.TestCase):
         self.db.commit()
 
         self.assertEqual("failed", failed_result.run.status)
-        self.assertEqual("plugin_execution_failed", failed_result.run.error_code)
+        self.assertEqual("plugin_not_visible_in_household", failed_result.run.error_code)
 
         failed_audit_stmt = select(AuditLog).where(
             AuditLog.target_type == "plugin_run",
@@ -346,6 +346,52 @@ class PluginRunTests(unittest.TestCase):
         self.assertEqual(1, result.run.memory_card_count)
         self.assertEqual(1, len(result.written_memory_cards))
         self.assertEqual("daily_steps", result.written_memory_cards[0]["content"]["category"])
+
+    def test_run_plugin_sync_pipeline_stops_when_household_override_disables_plugin(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Disabled Third Party Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        member = create_member(
+            self.db,
+            MemberCreate(household_id=household.id, name="妈妈", role="adult"),
+        )
+        self.db.flush()
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            plugin_root = self._create_third_party_sync_plugin(Path(tempdir), plugin_id="third-party-sync-plugin")
+            register_plugin_mount(
+                self.db,
+                household_id=household.id,
+                payload=PluginMountCreate(
+                    source_type="third_party",
+                    plugin_root=str(plugin_root),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_root),
+                    timeout_seconds=10,
+                ),
+            )
+            set_household_plugin_enabled(
+                self.db,
+                household_id=household.id,
+                plugin_id="third-party-sync-plugin",
+                payload=PluginStateUpdateRequest(enabled=False),
+                updated_by="tester",
+            )
+
+            result = run_plugin_sync_pipeline(
+                self.db,
+                household_id=household.id,
+                request=PluginExecutionRequest(
+                    plugin_id="third-party-sync-plugin",
+                    plugin_type="connector",
+                    payload={"member_id": member.id},
+                ),
+            )
+
+        self.assertEqual("failed", result.run.status)
+        self.assertEqual("plugin_disabled", result.run.error_code)
+        self.assertIn("当前家庭停用", result.run.error_message or "")
 
     def _create_third_party_sync_plugin(self, root: Path, *, plugin_id: str) -> Path:
         plugin_root = root / plugin_id

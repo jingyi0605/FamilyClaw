@@ -21,8 +21,8 @@ from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
-from app.modules.plugin.schemas import PluginMountCreate
-from app.modules.plugin.service import register_plugin_mount
+from app.modules.plugin.schemas import PluginMountCreate, PluginStateUpdateRequest
+from app.modules.plugin.service import register_plugin_mount, set_household_plugin_enabled
 
 
 class PluginLocalesApiTests(unittest.TestCase):
@@ -151,6 +151,29 @@ class PluginLocalesApiTests(unittest.TestCase):
                     self.assertEqual("儲存", zh_tw["messages"]["common.save"])
 
             asyncio.run(run_case())
+
+    def test_disabled_builtin_locale_pack_is_filtered_out(self) -> None:
+        set_household_plugin_enabled(
+            self.db,
+            household_id=self.household.id,
+            plugin_id="locale-zh-tw",
+            payload=PluginStateUpdateRequest(enabled=False),
+            updated_by="tester",
+        )
+        self.db.commit()
+
+        transport = httpx.ASGITransport(app=app)
+
+        async def run_case() -> None:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                client.cookies.set(settings.auth_session_cookie_name, self.session_token)
+                response = await client.get(f"/api/v1/ai-config/{self.household.id}/locales")
+                self.assertEqual(200, response.status_code)
+                payload = response.json()
+                locale_ids = {item["locale_id"] for item in payload["items"]}
+                self.assertNotIn("zh-TW", locale_ids)
+
+        asyncio.run(run_case())
 
     def _create_locale_pack_plugin(
         self,

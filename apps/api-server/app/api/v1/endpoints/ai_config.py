@@ -76,7 +76,9 @@ from app.modules.plugin import (
     PluginMountCreate,
     PluginMountRead,
     PluginMountUpdate,
+    PluginRegistryItem,
     PluginRegistrySnapshot,
+    PluginStateUpdateRequest,
     confirm_agent_action_plugin,
     delete_plugin_mount,
     invoke_agent_action_plugin,
@@ -84,6 +86,8 @@ from app.modules.plugin import (
     list_plugin_mounts,
     list_registered_plugins_for_household,
     register_plugin_mount,
+    set_household_plugin_enabled,
+    PluginServiceError,
     update_plugin_mount,
 )
 
@@ -526,6 +530,43 @@ def list_household_plugins_endpoint(
 ) -> PluginRegistrySnapshot:
     ensure_actor_can_access_household(actor, household_id)
     return list_registered_plugins_for_household(db, household_id=household_id)
+
+
+@router.put("/{household_id}/plugins/{plugin_id}/state", response_model=PluginRegistryItem)
+def update_household_plugin_state_endpoint(
+    household_id: str,
+    plugin_id: str,
+    payload: PluginStateUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> PluginRegistryItem:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = set_household_plugin_enabled(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            payload=payload,
+            updated_by=actor.actor_id,
+        )
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="plugin.state.update",
+            target_type="plugin_state_override",
+            target_id=plugin_id,
+            result="success",
+            details={"plugin_id": plugin_id, **payload.model_dump(mode="json")},
+        )
+        db.commit()
+        return result
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
 
 
 @router.get("/{household_id}/locales", response_model=PluginLocaleListRead)

@@ -14,11 +14,19 @@ import type {
   ChannelDeliveryRead,
   ChannelInboundEventRead,
   Member,
+  PluginRegistryItem,
 } from '../lib/types';
 import { ChannelAccountBindingsPanel } from '../components/ChannelAccountBindingsPanel';
 
 type PlatformInfo = {
   code: string;
+  name: string;
+  icon: string;
+};
+
+type ChannelPluginOption = {
+  pluginId: string;
+  platformCode: string;
   name: string;
   icon: string;
 };
@@ -121,6 +129,7 @@ export function SettingsChannelAccess() {
 
   const [accounts, setAccounts] = useState<ChannelAccountRead[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [channelPlugins, setChannelPlugins] = useState<PluginRegistryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -157,6 +166,7 @@ export function SettingsChannelAccess() {
     if (!currentHouseholdId) {
       setAccounts([]);
       setMembers([]);
+      setChannelPlugins([]);
       return;
     }
 
@@ -166,11 +176,13 @@ export function SettingsChannelAccess() {
       setLoading(true);
       setError('');
       try {
-        const [accountsResult, membersResult] = await Promise.all([
+        const [pluginsResult, accountsResult, membersResult] = await Promise.all([
+          api.listRegisteredPlugins(currentHouseholdId),
           api.listChannelAccounts(currentHouseholdId),
           api.listMembers(currentHouseholdId),
         ]);
         if (!cancelled) {
+          setChannelPlugins(pluginsResult.items.filter(plugin => plugin.types.includes('channel')));
           setAccounts(accountsResult);
           setMembers(membersResult.items);
         }
@@ -192,6 +204,26 @@ export function SettingsChannelAccess() {
     };
   }, [currentHouseholdId]);
 
+  const channelPluginMap = useMemo(() => {
+    return new Map(channelPlugins.map(plugin => [plugin.id, plugin]));
+  }, [channelPlugins]);
+
+  const availableChannelPlugins = useMemo<ChannelPluginOption[]>(() => {
+    return channelPlugins
+      .filter(plugin => plugin.enabled && !!plugin.capabilities.channel?.platform_code)
+      .map(plugin => {
+        const platformCode = plugin.capabilities.channel?.platform_code ?? plugin.id.replace(/^channel-/, '');
+        const platform = getPlatformInfo(platformCode);
+        return {
+          pluginId: plugin.id,
+          platformCode,
+          name: plugin.name,
+          icon: platform.icon,
+        };
+      })
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
+  }, [channelPlugins]);
+
   // 加载账号详情
   async function loadAccountDetail(accountId: string) {
     if (!currentHouseholdId) return;
@@ -211,6 +243,14 @@ export function SettingsChannelAccess() {
     } finally {
       setDetailLoading(false);
     }
+  }
+
+  function getAccountPluginState(account: ChannelAccountRead): PluginRegistryItem | null {
+    return channelPluginMap.get(account.plugin_id) ?? null;
+  }
+
+  function isAccountPluginDisabled(account: ChannelAccountRead): boolean {
+    return getAccountPluginState(account)?.enabled === false;
   }
 
   // 展开/收起账号详情
@@ -367,7 +407,7 @@ export function SettingsChannelAccess() {
               title="还没有配置平台账号"
               description="点击下方按钮添加第一个通讯平台机器人。"
               action={
-                <button className="btn btn--primary" onClick={openCreateModal}>
+                <button className="btn btn--primary" onClick={openCreateModal} disabled={availableChannelPlugins.length === 0}>
                   新增平台账号
                 </button>
               }
@@ -376,7 +416,7 @@ export function SettingsChannelAccess() {
             <>
               <div className="channel-account-list__header">
                 <span>已配置 {accounts.length} 个平台账号</span>
-                <button className="btn btn--primary btn--sm" onClick={openCreateModal}>
+                <button className="btn btn--primary btn--sm" onClick={openCreateModal} disabled={availableChannelPlugins.length === 0}>
                   新增平台账号
                 </button>
               </div>
@@ -386,6 +426,9 @@ export function SettingsChannelAccess() {
                 const statusInfo = formatStatus(account.status);
                 const probeInfo = formatProbeStatus(account.last_probe_status);
                 const isExpanded = expandedAccountId === account.id;
+                const pluginState = getAccountPluginState(account);
+                const pluginDisabled = isAccountPluginDisabled(account);
+                const pluginDisabledReason = pluginState?.disabled_reason ?? '当前家庭已停用该通道插件';
 
                 return (
                   <Card key={account.id} className="channel-account-card">
@@ -400,25 +443,42 @@ export function SettingsChannelAccess() {
                         </div>
                         <div className="channel-account-card__meta">
                           {platform.name} · {account.connection_mode}
+                          {pluginDisabled && (
+                            <span className="channel-account-card__error"> · 插件已停用</span>
+                          )}
                           {account.last_error_message && (
                             <span className="channel-account-card__error"> · {account.last_error_message}</span>
                           )}
                         </div>
+                        {pluginDisabled && (
+                          <div className="channel-account-card__times">{pluginDisabledReason}</div>
+                        )}
                         <div className="channel-account-card__times">
                           最近入站：{formatTimestamp(account.last_inbound_at)} · 最近出站：{formatTimestamp(account.last_outbound_at)}
                         </div>
                       </div>
                       <div className="channel-account-card__actions">
-                        <button className="btn btn--outline btn--sm" onClick={() => openEditModal(account)} disabled={loading}>
+                        <button
+                          className="btn btn--outline btn--sm"
+                          onClick={() => openEditModal(account)}
+                          disabled={loading || pluginDisabled}
+                          title={pluginDisabled ? '对应插件已停用，不能编辑账号配置' : undefined}
+                        >
                           编辑
                         </button>
-                        <button className="btn btn--outline btn--sm" onClick={() => void handleProbeAccount(account.id)} disabled={loading}>
+                        <button
+                          className="btn btn--outline btn--sm"
+                          onClick={() => void handleProbeAccount(account.id)}
+                          disabled={loading || pluginDisabled}
+                          title={pluginDisabled ? '对应插件已停用，不能继续探测' : undefined}
+                        >
                           立即探测
                         </button>
                         <button
                           className="btn btn--outline btn--sm"
                           onClick={() => void handleToggleAccountStatus(account)}
-                          disabled={loading}
+                          disabled={loading || pluginDisabled}
+                          title={pluginDisabled ? '对应插件已停用，不能单独切换账号状态' : undefined}
                         >
                           {account.status === 'disabled' ? '启用' : '停用'}
                         </button>
@@ -541,13 +601,20 @@ export function SettingsChannelAccess() {
                   required
                 >
                   <option value="">请选择平台</option>
-                  {PLATFORMS.map(p => (
-                    <option key={p.code} value={`builtin/channel_${p.code}`}>
-                      {p.icon} {p.name}
+                  {availableChannelPlugins.map(plugin => (
+                    <option key={plugin.pluginId} value={plugin.pluginId}>
+                      {plugin.icon} {plugin.name}
                     </option>
                   ))}
                 </select>
-                {!editingAccount && <div className="form-help">选择后将自动填充 plugin_id，例如：builtin/channel_telegram</div>}
+                {!editingAccount && (
+                  <div className="form-help">
+                    这里只显示当前家庭仍然启用的通讯通道插件；已在插件管理里停用的插件不会出现在这里。
+                  </div>
+                )}
+                {!editingAccount && availableChannelPlugins.length === 0 && (
+                  <div className="form-help">当前没有可用的通讯通道插件，请先去插件管理里启用对应插件。</div>
+                )}
               </div>
               <div className="form-group">
                 <label>账号代码</label>
@@ -599,7 +666,8 @@ export function SettingsChannelAccess() {
 
               {/* 平台专属配置字段 */}
               {(() => {
-                const platformCode = PLATFORMS.find(p => `builtin/channel_${p.code}` === accountForm.plugin_id)?.code;
+                const platformCode = editingAccount?.platform_code
+                  ?? availableChannelPlugins.find(plugin => plugin.pluginId === accountForm.plugin_id)?.platformCode;
                 const configFields = platformCode ? PLATFORM_CONFIG_FIELDS[platformCode] : null;
                 if (!configFields || configFields.length === 0) return null;
                 return (

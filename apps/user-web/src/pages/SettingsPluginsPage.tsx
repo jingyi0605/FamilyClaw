@@ -7,7 +7,7 @@ import { Card, Section, EmptyState } from '../components/base';
 import { useHouseholdContext } from '../state/household';
 import { api, ApiError } from '../lib/api';
 import { PluginDetailDrawer } from '../components/PluginDetailDrawer';
-import type { PluginRegistryItem, PluginMountRead, PluginJobListRead, PluginManifestType } from '../lib/types';
+import type { PluginRegistryItem, PluginJobListRead, PluginManifestType } from '../lib/types';
 
 // 视图模式类型
 type ViewMode = 'card' | 'list';
@@ -108,11 +108,10 @@ function formatTimestamp(ts: string | null): string {
 }
 
 export function SettingsPluginsPage() {
-  const { t } = useI18n();
+  const { t, replacePluginLocales } = useI18n();
   const { currentHouseholdId } = useHouseholdContext();
 
   const [plugins, setPlugins] = useState<PluginRegistryItem[]>([]);
-  const [mounts, setMounts] = useState<PluginMountRead[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -163,7 +162,6 @@ export function SettingsPluginsPage() {
   useEffect(() => {
     if (!currentHouseholdId) {
       setPlugins([]);
-      setMounts([]);
       return;
     }
 
@@ -173,14 +171,9 @@ export function SettingsPluginsPage() {
       setLoading(true);
       setError('');
       try {
-        // 并行加载已注册插件列表和已挂载插件列表
-        const [registryResult, mountsResult] = await Promise.all([
-          api.listRegisteredPlugins(currentHouseholdId),
-          api.listPluginMounts(currentHouseholdId).catch(() => []),
-        ]);
+        const registryResult = await api.listRegisteredPlugins(currentHouseholdId);
         if (!cancelled) {
           setPlugins(registryResult.items);
-          setMounts(mountsResult);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -199,12 +192,6 @@ export function SettingsPluginsPage() {
       cancelled = true;
     };
   }, [currentHouseholdId]);
-
-  // 获取插件的启用状态（从 mounts 中查找）
-  const getPluginEnabledState = (pluginId: string): boolean => {
-    const mount = mounts.find(m => m.plugin_id === pluginId);
-    return mount?.enabled ?? true; // 内置插件默认启用
-  };
 
   // 加载选中插件的最近任务
   useEffect(() => {
@@ -256,32 +243,46 @@ export function SettingsPluginsPage() {
     setTimeout(() => setDetailPlugin(null), 300);
   }
 
-  async function handleTogglePlugin(plugin: PluginRegistryItem) {
-    if (!currentHouseholdId) return;
-
-    // 内置插件不支持禁用
-    if (plugin.source_type === 'builtin') {
-      setError('内置插件不支持禁用操作');
+  const refreshPluginLocales = useCallback(async () => {
+    if (!currentHouseholdId) {
+      replacePluginLocales([]);
       return;
     }
 
-    const currentEnabled = getPluginEnabledState(plugin.id);
+    try {
+      const response = await api.listHouseholdLocales(currentHouseholdId);
+      replacePluginLocales(
+        response.items.map(item => ({
+          id: item.locale_id,
+          label: item.label,
+          nativeLabel: item.native_label,
+          fallback: item.fallback ?? undefined,
+          messages: item.messages,
+          source: 'plugin' as const,
+          sourceType: item.source_type,
+          pluginId: item.plugin_id,
+          overriddenPluginIds: item.overridden_plugin_ids,
+        })),
+      );
+    } catch {
+      replacePluginLocales([]);
+    }
+  }, [currentHouseholdId, replacePluginLocales]);
+
+  async function handleTogglePlugin(plugin: PluginRegistryItem) {
+    if (!currentHouseholdId) return;
     setTogglingPluginId(plugin.id);
     setError('');
     setStatus('');
 
     try {
-      if (currentEnabled) {
-        await api.disablePluginMount(currentHouseholdId, plugin.id);
-        setStatus(t('plugins.disableSuccess'));
-      } else {
-        await api.enablePluginMount(currentHouseholdId, plugin.id);
-        setStatus(t('plugins.enableSuccess'));
+      const updated = await api.updatePluginState(currentHouseholdId, plugin.id, { enabled: !plugin.enabled });
+      setPlugins(prev => prev.map(item => item.id === updated.id ? updated : item));
+      setDetailPlugin(prev => prev && prev.id === updated.id ? updated : prev);
+      if (updated.types.includes('locale-pack')) {
+        await refreshPluginLocales();
       }
-
-      // 刷新挂载列表
-      const mountsResult = await api.listPluginMounts(currentHouseholdId);
-      setMounts(mountsResult);
+      setStatus(updated.enabled ? t('plugins.enableSuccess') : t('plugins.disableSuccess'));
     } catch (toggleError) {
       setError(toggleError instanceof ApiError ? toggleError.message : '操作失败');
     } finally {
@@ -290,10 +291,10 @@ export function SettingsPluginsPage() {
   }
 
   const pluginStats = useMemo(() => {
-    const enabled = filteredPlugins.filter(p => getPluginEnabledState(p.id)).length;
+    const enabled = filteredPlugins.filter(p => p.enabled).length;
     const total = filteredPlugins.length;
     return { enabled, total, disabled: total - enabled };
-  }, [filteredPlugins, mounts]);
+  }, [filteredPlugins]);
 
   return (
     <div className="settings-page">
@@ -412,10 +413,9 @@ export function SettingsPluginsPage() {
             {filteredPlugins.map(plugin => {
               const sourceInfo = formatSourceType(plugin.source_type);
               const riskInfo = formatRiskLevel(plugin.risk_level);
-              const isEnabled = getPluginEnabledState(plugin.id);
+              const isEnabled = plugin.enabled;
               const isToggling = togglingPluginId === plugin.id;
               const isSelected = selectedPluginId === plugin.id;
-              const isBuiltin = plugin.source_type === 'builtin';
 
               // 根据来源类型选择图标
               const iconClass = `plugin-card__icon plugin-card__icon--${plugin.source_type}`;
@@ -442,9 +442,9 @@ export function SettingsPluginsPage() {
                     {/* 快捷启停开关 */}
                     <div className="plugin-card__toggle">
                       <div
-                        className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isBuiltin ? 'toggle-switch--disabled' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`}
-                        onClick={() => !isBuiltin && !isToggling && handleTogglePlugin(plugin)}
-                        title={isBuiltin ? '内置插件不支持禁用' : isEnabled ? t('plugins.action.disable') : t('plugins.action.enable')}
+                        className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`}
+                        onClick={() => !isToggling && handleTogglePlugin(plugin)}
+                        title={isEnabled ? t('plugins.action.disable') : t('plugins.action.enable')}
                       >
                         <div className="toggle-switch__thumb" />
                       </div>
@@ -554,9 +554,8 @@ export function SettingsPluginsPage() {
                 {filteredPlugins.map(plugin => {
                   const sourceInfo = formatSourceType(plugin.source_type);
                   const riskInfo = formatRiskLevel(plugin.risk_level);
-                  const isEnabled = getPluginEnabledState(plugin.id);
+                  const isEnabled = plugin.enabled;
                   const isToggling = togglingPluginId === plugin.id;
-                  const isBuiltin = plugin.source_type === 'builtin';
 
                   return (
                     <tr key={plugin.id} className="plugin-table__row">
@@ -577,9 +576,9 @@ export function SettingsPluginsPage() {
                       </td>
                       <td className="plugin-table__td plugin-table__td--status">
                         <div
-                          className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isBuiltin ? 'toggle-switch--disabled' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`}
-                          onClick={() => !isBuiltin && !isToggling && handleTogglePlugin(plugin)}
-                          title={isBuiltin ? '内置插件不支持禁用' : isEnabled ? t('plugins.action.disable') : t('plugins.action.enable')}
+                          className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`}
+                          onClick={() => !isToggling && handleTogglePlugin(plugin)}
+                          title={isEnabled ? t('plugins.action.disable') : t('plugins.action.enable')}
                         >
                           <div className="toggle-switch__thumb" />
                         </div>
@@ -619,7 +618,7 @@ export function SettingsPluginsPage() {
         householdId={currentHouseholdId}
         isOpen={drawerOpen}
         onClose={closePluginDetail}
-        isEnabled={detailPlugin ? getPluginEnabledState(detailPlugin.id) : false}
+        isEnabled={detailPlugin?.enabled ?? false}
         onToggle={(plugin) => {
           handleTogglePlugin(plugin);
           // 操作后关闭抽屉

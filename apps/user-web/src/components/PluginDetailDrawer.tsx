@@ -150,7 +150,6 @@ export function PluginDetailDrawer({
 
   const sourceInfo = formatSourceType(plugin.source_type);
   const riskInfo = formatRiskLevel(plugin.risk_level);
-  const isBuiltin = plugin.source_type === 'builtin';
 
   // 获取最近一次失败或等待响应的任务
   const latestFailedJob = jobs.find(j => j.job.status === 'failed');
@@ -222,6 +221,20 @@ export function PluginDetailDrawer({
                 {latestFailedJob.job.last_error_message && (
                   <p>{latestFailedJob.job.last_error_message}</p>
                 )}
+              </div>
+            </div>
+          )}
+
+          {!isEnabled && (
+            <div className="plugin-detail-drawer__alert plugin-detail-drawer__alert--info">
+              <span className="plugin-detail-drawer__alert-icon">⏸️</span>
+              <div>
+                <strong>{plugin.disabled_reason || '插件当前已停用'}</strong>
+                <p>
+                  {plugin.source_type === 'builtin'
+                    ? '这个家庭里已经不会继续使用该内置插件能力。'
+                    : '配置仍存在，但插件已停用；重新启用后会继续使用现有配置。'}
+                </p>
               </div>
             </div>
           )}
@@ -370,19 +383,17 @@ export function PluginDetailDrawer({
           <button className="btn btn--ghost" onClick={onClose}>
             {t('common.cancel')}
           </button>
-          {!isBuiltin && (
-            <button
-              className={`btn ${isEnabled ? 'btn--outline' : 'btn--primary'}`}
-              onClick={() => onToggle(plugin)}
-              disabled={isToggling}
-            >
-              {isToggling
-                ? t('common.loading')
-                : isEnabled
-                  ? t('plugins.action.disable')
-                  : t('plugins.action.enable')}
-            </button>
-          )}
+          <button
+            className={`btn ${isEnabled ? 'btn--outline' : 'btn--primary'}`}
+            onClick={() => onToggle(plugin)}
+            disabled={isToggling}
+          >
+            {isToggling
+              ? t('common.loading')
+              : isEnabled
+                ? t('plugins.action.disable')
+                : t('plugins.action.enable')}
+          </button>
         </div>
       </div>
     </div>

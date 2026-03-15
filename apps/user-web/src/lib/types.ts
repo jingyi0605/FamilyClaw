@@ -913,7 +913,10 @@ export type PluginRegistryItem = {
   permissions: string[];
   risk_level: PluginRiskLevel;
   triggers: string[];
+  base_enabled: boolean;
+  household_enabled: boolean | null;
   enabled: boolean;
+  disabled_reason: string | null;
   manifest_path: string;
   entrypoints: PluginManifestEntrypoints;
   capabilities: PluginManifestCapabilities;
@@ -945,6 +948,10 @@ export type PluginRegistryItem = {
 
 export type PluginRegistrySnapshot = {
   items: PluginRegistryItem[];
+};
+
+export type PluginStateUpdateRequest = {
+  enabled: boolean;
 };
 
 export type PluginMountRead = {

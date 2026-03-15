@@ -51,7 +51,9 @@ async def create_plugin_job_endpoint(
         return get_plugin_job_detail(db, household_id=household_id, job_id=job.id)
     except PluginExecutionError as exc:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        detail = exc.to_detail() if hasattr(exc, "to_detail") else str(exc)
+        status_code = exc.status_code if hasattr(exc, "status_code") else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.get("/{job_id}", response_model=PluginJobDetailRead)

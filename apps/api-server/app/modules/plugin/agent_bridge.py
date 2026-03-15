@@ -28,7 +28,8 @@ from app.modules.plugin.service import (
     aexecute_household_plugin,
     enqueue_household_plugin_job,
     execute_household_plugin,
-    list_registered_plugins_for_household,
+    get_household_plugin,
+    require_available_household_plugin,
 )
 
 
@@ -45,11 +46,49 @@ def invoke_agent_plugin(
     get_household_or_404(db, household_id)
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
 
-    queued = _enqueue_agent_plugin_request(
-        db,
-        request=request,
-        household_id=household_id,
-    )
+    try:
+        queued = _enqueue_agent_plugin_request(
+            db,
+            request=request,
+            household_id=household_id,
+            root_dir=root_dir,
+            state_file=state_file,
+        )
+    except ValueError as exc:
+        started_at = utc_now_iso()
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="agent.plugin.invoke",
+            target_type="plugin",
+            target_id=request.plugin_id,
+            result="fail",
+            details={
+                "agent_id": agent.id,
+                "agent_name": agent.display_name,
+                "plugin_id": request.plugin_id,
+                "plugin_type": request.plugin_type,
+                "trigger": request.trigger,
+                "error_message": str(exc),
+            },
+        )
+        db.flush()
+        return AgentPluginInvokeResult(
+            agent_id=agent.id,
+            agent_name=agent.display_name,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            run_id=new_uuid(),
+            success=False,
+            trigger=request.trigger,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            output=None,
+            error_code="agent_plugin_invoke_failed",
+            error_message=str(exc),
+            queued=False,
+        )
 
     write_audit_log(
         db,
@@ -103,7 +142,13 @@ async def ainvoke_agent_plugin(
     get_household_or_404(db, household_id)
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
     try:
-        queued = _enqueue_agent_plugin_request(db, request=request, household_id=household_id)
+        queued = _enqueue_agent_plugin_request(
+            db,
+            request=request,
+            household_id=household_id,
+            root_dir=root_dir,
+            state_file=state_file,
+        )
     except ValueError as exc:
         started_at = utc_now_iso()
         return AgentPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, plugin_type=request.plugin_type, run_id=new_uuid(), success=False, trigger=request.trigger, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_plugin_invoke_failed", error_message=str(exc), queued=False)
@@ -127,19 +172,19 @@ def _enqueue_agent_plugin_request(
     request: AgentPluginInvokeRequest,
     *,
     household_id: str,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
 ) -> PluginJobRead:
     try:
-        registry = list_registered_plugins_for_household(
+        plugin = require_available_household_plugin(
             db,
             household_id=household_id,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            trigger=request.trigger,
+            root_dir=root_dir,
+            state_file=state_file,
         )
-        plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
-        if plugin is None:
-            raise ValueError(f"插件不存在: {request.plugin_id}")
-        if not plugin.enabled:
-            raise ValueError(f"插件已禁用: {request.plugin_id}")
-        if request.plugin_type not in plugin.types:
-            raise ValueError(f"插件 {request.plugin_id} 没有声明 {request.plugin_type} 能力")
         if request.plugin_type not in {"connector", "agent-skill"}:
             raise ValueError("Agent 统一入口当前只允许 connector 或 agent-skill")
 
@@ -171,14 +216,37 @@ def invoke_agent_action_plugin(
     get_household_or_404(db, household_id)
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
 
-    registry = list_registered_plugins_for_household(
-        db,
-        household_id=household_id,
-        root_dir=root_dir,
-        state_file=state_file,
-    )
-    plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
-    if plugin is not None and plugin.risk_level == "high":
+    try:
+        plugin = require_available_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=request.plugin_id,
+            plugin_type="action",
+            trigger=request.trigger,
+            root_dir=root_dir,
+            state_file=state_file,
+        )
+    except ValueError as exc:
+        started_at = utc_now_iso()
+        return AgentActionPluginInvokeResult(
+            agent_id=agent.id,
+            agent_name=agent.display_name,
+            plugin_id=request.plugin_id,
+            run_id=new_uuid(),
+            success=False,
+            trigger=request.trigger,
+            risk_level="high",
+            authorization_status="denied",
+            confirmation_request_id=None,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            output=None,
+            error_code="agent_action_plugin_denied",
+            error_message=str(exc),
+            queued=False,
+        )
+
+    if plugin.risk_level == "high":
         confirmation = request_agent_action_confirmation(
             db,
             household_id=household_id,
@@ -353,13 +421,13 @@ def confirm_agent_action_plugin(
     get_household_or_404(db, household_id)
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
     confirmation = _load_pending_action_confirmation(db, household_id=household_id, confirmation_request_id=confirmation_request_id)
-    registry = list_registered_plugins_for_household(
+    plugin = get_household_plugin(
         db,
         household_id=household_id,
+        plugin_id=confirmation.plugin_id,
         root_dir=root_dir,
         state_file=state_file,
     )
-    plugin = next((item for item in registry.items if item.id == confirmation.plugin_id), None)
 
     request = AgentActionPluginInvokeRequest(
         plugin_id=confirmation.plugin_id,
@@ -431,9 +499,21 @@ async def ainvoke_agent_action_plugin(
 ) -> AgentActionPluginInvokeResult:
     get_household_or_404(db, household_id)
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
-    registry = list_registered_plugins_for_household(db, household_id=household_id, root_dir=root_dir, state_file=state_file)
-    plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
-    if plugin is not None and plugin.risk_level == "high":
+    try:
+        plugin = require_available_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=request.plugin_id,
+            plugin_type="action",
+            trigger=request.trigger,
+            root_dir=root_dir,
+            state_file=state_file,
+        )
+    except ValueError as exc:
+        started_at = utc_now_iso()
+        return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=new_uuid(), success=False, trigger=request.trigger, risk_level="high", authorization_status="denied", confirmation_request_id=None, started_at=started_at, finished_at=utc_now_iso(), output=None, error_code="agent_action_plugin_denied", error_message=str(exc), queued=False)
+
+    if plugin.risk_level == "high":
         confirmation = request_agent_action_confirmation(db, household_id=household_id, agent_id=agent.id, request=request, actor=actor, plugin=plugin)
         return AgentActionPluginInvokeResult(agent_id=agent.id, agent_name=agent.display_name, plugin_id=request.plugin_id, run_id=confirmation.confirmation_request_id, success=False, trigger=request.trigger, risk_level=plugin.risk_level, authorization_status="confirmation_required", confirmation_request_id=confirmation.confirmation_request_id, started_at=confirmation.created_at, finished_at=confirmation.created_at, error_code="agent_action_confirmation_required", error_message="高风险动作需要人工确认后才能执行")
 
@@ -462,8 +542,7 @@ async def aconfirm_agent_action_plugin(
     get_household_or_404(db, household_id)
     agent = resolve_effective_agent(db, household_id=household_id, agent_id=agent_id)
     confirmation = _load_pending_action_confirmation(db, household_id=household_id, confirmation_request_id=confirmation_request_id)
-    registry = list_registered_plugins_for_household(db, household_id=household_id, root_dir=root_dir, state_file=state_file)
-    plugin = next((item for item in registry.items if item.id == confirmation.plugin_id), None)
+    plugin = get_household_plugin(db, household_id=household_id, plugin_id=confirmation.plugin_id, root_dir=root_dir, state_file=state_file)
     request = AgentActionPluginInvokeRequest(plugin_id=confirmation.plugin_id, payload=confirmation.payload, trigger=f"{confirmation.trigger}:confirmed")
     try:
         queued = _enqueue_agent_action_request(db, household_id=household_id, actor=actor, plugin=plugin, request=request)

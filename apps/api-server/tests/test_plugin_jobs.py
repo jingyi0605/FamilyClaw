@@ -45,8 +45,8 @@ from app.modules.plugin.job_service import (
     requeue_plugin_job,
     start_plugin_job_attempt,
 )
-from app.modules.plugin.schemas import AgentPluginInvokeRequest, PluginExecutionRequest, PluginJobCreate, PluginJobResponseCreate, PluginMountCreate
-from app.modules.plugin.service import register_plugin_mount
+from app.modules.plugin.schemas import AgentPluginInvokeRequest, PluginExecutionRequest, PluginJobCreate, PluginJobResponseCreate, PluginMountCreate, PluginStateUpdateRequest
+from app.modules.plugin.service import register_plugin_mount, set_household_plugin_enabled
 
 
 class _FakeWebSocket:
@@ -588,6 +588,38 @@ class PluginJobTests(unittest.TestCase):
                 )
 
             self.assertTrue(any(message["type"] == "plugin.job.updated" for message in websocket.sent_messages))
+
+        asyncio.run(run_case())
+
+    def test_create_plugin_job_endpoint_returns_structured_error_when_plugin_disabled(self) -> None:
+        set_household_plugin_enabled(
+            self.db,
+            household_id=self.household.id,
+            plugin_id="health-basic-reader",
+            payload=PluginStateUpdateRequest(enabled=False),
+            updated_by="tester",
+        )
+        self.db.commit()
+
+        transport = httpx.ASGITransport(app=app)
+
+        async def run_case() -> None:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                client.cookies.set(settings.auth_session_cookie_name, self.session_token)
+                response = await client.post(
+                    "/api/v1/plugin-jobs",
+                    params={"household_id": self.household.id},
+                    json={
+                        "plugin_id": "health-basic-reader",
+                        "plugin_type": "connector",
+                        "payload": {"member_id": self.member.id},
+                        "trigger": "manual",
+                    },
+                )
+                self.assertEqual(409, response.status_code)
+                payload = response.json()
+                self.assertEqual("plugin_disabled", payload["detail"]["error_code"])
+                self.assertEqual("plugin_id", payload["detail"]["field"])
 
         asyncio.run(run_case())
 

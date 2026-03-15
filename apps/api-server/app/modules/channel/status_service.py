@@ -18,7 +18,7 @@ from app.modules.channel.service import (
     _to_channel_inbound_event_read,
 )
 from app.modules.plugin.schemas import PluginExecutionRequest
-from app.modules.plugin.service import execute_household_plugin
+from app.modules.plugin.service import get_household_plugin, execute_household_plugin
 
 
 class ChannelStatusServiceError(ValueError):
@@ -57,6 +57,10 @@ def get_channel_account_status(
     account_id: str,
 ) -> ChannelAccountStatusRead:
     account = get_channel_account_or_404(db, household_id=household_id, account_id=account_id)
+    try:
+        plugin = get_household_plugin(db, household_id=household_id, plugin_id=account.plugin_id)
+    except ValueError as exc:
+        raise ChannelStatusServiceError(str(exc)) from exc
     deliveries = repository.list_channel_deliveries_by_account(
         db,
         household_id=household_id,
@@ -69,8 +73,14 @@ def get_channel_account_status(
     ]
     failed_inbound = next((item for item in inbound_events if item.status == "failed"), None)
 
+    account_read = _to_channel_account_read(account)
+    if not plugin.enabled:
+        account_read.status = "degraded"
+        account_read.last_error_code = "plugin_disabled"
+        account_read.last_error_message = plugin.disabled_reason or "当前家庭已停用该通道插件"
+
     return ChannelAccountStatusRead(
-        account=_to_channel_account_read(account),
+        account=account_read,
         recent_failure_summary=summarize_recent_delivery_failures(
             db,
             household_id=household_id,
@@ -91,6 +101,13 @@ def probe_channel_account(
     account_id: str,
 ) -> ChannelAccountStatusRead:
     account = get_channel_account_or_404(db, household_id=household_id, account_id=account_id)
+    try:
+        plugin = get_household_plugin(db, household_id=household_id, plugin_id=account.plugin_id)
+    except ValueError as exc:
+        raise ChannelStatusServiceError(str(exc)) from exc
+    if not plugin.enabled:
+        raise ChannelStatusServiceError("channel plugin is disabled for current household")
+
     execution = execute_household_plugin(
         db,
         household_id=household_id,

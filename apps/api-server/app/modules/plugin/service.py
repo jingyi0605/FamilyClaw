@@ -21,7 +21,7 @@ from app.modules.region.plugin_runtime import get_runtime_region_provider_spec, 
 from app.modules.region.service import resolve_household_region_context
 from app.modules.plugin.executors import get_executor, load_entrypoint_callable, resolve_execution_backend
 from . import repository
-from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun
+from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun, PluginStateOverride
 from app.modules.plugin.runner_errors import PLUGIN_EXECUTION_FAILED, PluginRunnerError
 from app.modules.plugin.schemas import PluginManifest
 from app.modules.plugin.schemas import PluginRegistryItem, PluginRegistrySnapshot, PluginRegistryStateEntry
@@ -36,6 +36,7 @@ from app.modules.plugin.schemas import (
     PluginMountCreate,
     PluginMountRead,
     PluginMountUpdate,
+    PluginStateUpdateRequest,
     PluginRawRecordCreate,
     PluginRawRecordRead,
     PluginRunnerConfig,
@@ -55,6 +56,10 @@ LOCALE_SOURCE_PRIORITY: dict[PluginSourceType, int] = {
     "official": 2,
     "third_party": 1,
 }
+PLUGIN_DISABLED_ERROR_CODE = "plugin_disabled"
+PLUGIN_NOT_VISIBLE_ERROR_CODE = "plugin_not_visible_in_household"
+PLUGIN_STATE_OVERRIDE_INVALID_ERROR_CODE = "plugin_state_override_invalid"
+PLUGIN_EFFECTIVE_STATE_UNRESOLVED_ERROR_CODE = "plugin_effective_state_unresolved"
 
 
 @dataclass(slots=True)
@@ -69,8 +74,42 @@ class PluginManifestValidationError(ValueError):
     pass
 
 
-class PluginExecutionError(RuntimeError):
-    pass
+class PluginServiceError(ValueError):
+    def __init__(
+        self,
+        detail: str,
+        *,
+        error_code: str,
+        field: str | None = None,
+        status_code: int = 400,
+    ) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.error_code = error_code
+        self.field = field
+        self.status_code = status_code
+
+    def to_detail(self) -> dict[str, str]:
+        payload = {
+            "detail": self.detail,
+            "error_code": self.error_code,
+            "timestamp": utc_now_iso(),
+        }
+        if self.field is not None:
+            payload["field"] = self.field
+        return payload
+
+
+class PluginExecutionError(PluginServiceError):
+    def __init__(
+        self,
+        detail: str,
+        *,
+        error_code: str = PLUGIN_EXECUTION_FAILED,
+        field: str | None = None,
+        status_code: int = 400,
+    ) -> None:
+        super().__init__(detail, error_code=error_code, field=field, status_code=status_code)
 
 
 def load_plugin_manifest(manifest_path: str | Path) -> PluginManifest:
@@ -120,7 +159,10 @@ def list_registered_plugins(
                 permissions=manifest.permissions,
                 risk_level=manifest.risk_level,
                 triggers=manifest.triggers,
+                base_enabled=state_map.get(manifest.id, PluginRegistryStateEntry()).enabled,
+                household_enabled=None,
                 enabled=state_map.get(manifest.id, PluginRegistryStateEntry()).enabled,
+                disabled_reason=None,
                 manifest_path=str(manifest_path),
                 entrypoints=manifest.entrypoints,
                 capabilities=manifest.capabilities,
@@ -153,7 +195,10 @@ def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest
             "permissions": manifest.permissions,
             "risk_level": manifest.risk_level,
             "triggers": manifest.triggers,
+            "base_enabled": mount.enabled,
+            "household_enabled": None,
             "enabled": mount.enabled,
+            "disabled_reason": None,
             "manifest_path": mount.manifest_path,
             "entrypoints": manifest.entrypoints.model_dump(mode="json"),
             "capabilities": manifest.capabilities.model_dump(mode="json"),
@@ -162,6 +207,61 @@ def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest
             "source_type": mount.source_type,
             "execution_backend": mount.execution_backend,
             "runner_config": _build_runner_config_from_mount(mount).model_dump(mode="json"),
+        }
+    )
+
+
+def _build_disabled_reason(*, base_enabled: bool, household_enabled: bool | None) -> str | None:
+    if not base_enabled:
+        return "插件基础状态已关闭，当前家庭不能继续启用。"
+    if household_enabled is False:
+        return "当前家庭已停用该插件。"
+    return None
+
+
+def _merge_effective_plugin_state(
+    item: PluginRegistryItem,
+    override: PluginStateOverride | None,
+) -> PluginRegistryItem:
+    base_enabled = item.base_enabled
+    household_enabled = override.enabled if override is not None else None
+    enabled = base_enabled and (household_enabled if household_enabled is not None else True)
+    disabled_reason = _build_disabled_reason(base_enabled=base_enabled, household_enabled=household_enabled)
+    return item.model_copy(
+        update={
+            "base_enabled": base_enabled,
+            "household_enabled": household_enabled,
+            "enabled": enabled,
+            "disabled_reason": disabled_reason,
+        }
+    )
+
+
+def _list_plugin_state_override_map(db: Session, *, household_id: str) -> dict[str, PluginStateOverride]:
+    return {
+        row.plugin_id: row
+        for row in repository.list_plugin_state_overrides(db, household_id=household_id)
+    }
+
+
+def _resolve_plugin_from_snapshot(snapshot: PluginRegistrySnapshot, *, plugin_id: str) -> PluginRegistryItem | None:
+    return next((item for item in snapshot.items if item.id == plugin_id), None)
+
+
+def _apply_execution_overrides(
+    plugin: PluginRegistryItem,
+    *,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
+) -> PluginRegistryItem:
+    if source_type == "builtin" and execution_backend is None and runner_config is None:
+        return plugin
+    return plugin.model_copy(
+        update={
+            "source_type": source_type,
+            "execution_backend": execution_backend,
+            "runner_config": runner_config,
         }
     )
 
@@ -249,15 +349,139 @@ def list_registered_plugins_for_household(
 ) -> PluginRegistrySnapshot:
     builtin_snapshot = list_registered_plugins(root_dir=root_dir, state_file=state_file)
     builtin_by_id = {item.id: item for item in builtin_snapshot.items}
+    override_map = _list_plugin_state_override_map(db, household_id=household_id)
 
     mounted_items: list[PluginRegistryItem] = []
     for mount in repository.list_plugin_mounts(db, household_id=household_id):
         manifest = load_plugin_manifest(mount.manifest_path)
         if manifest.id in builtin_by_id:
             raise PluginManifestValidationError(f"第三方插件 id 与内置插件冲突: {manifest.id}")
-        mounted_items.append(_build_registry_item_from_mount(mount, manifest))
+        mounted_items.append(
+            _merge_effective_plugin_state(
+                _build_registry_item_from_mount(mount, manifest),
+                override_map.get(manifest.id),
+            )
+        )
 
-    return PluginRegistrySnapshot(items=[*builtin_snapshot.items, *mounted_items])
+    builtin_items = [
+        _merge_effective_plugin_state(item, override_map.get(item.id))
+        for item in builtin_snapshot.items
+    ]
+    return PluginRegistrySnapshot(items=[*builtin_items, *mounted_items])
+
+
+def get_household_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> PluginRegistryItem:
+    snapshot = list_registered_plugins_for_household(
+        db,
+        household_id=household_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
+    plugin = _resolve_plugin_from_snapshot(snapshot, plugin_id=plugin_id)
+    if plugin is None:
+        raise PluginServiceError(
+            f"当前家庭看不到插件 {plugin_id}。",
+            error_code=PLUGIN_NOT_VISIBLE_ERROR_CODE,
+            field="plugin_id",
+            status_code=404,
+        )
+    return plugin
+
+
+def require_available_household_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    plugin_type: str | None = None,
+    trigger: str | None = None,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> PluginRegistryItem:
+    plugin = get_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
+    if not plugin.enabled:
+        raise PluginExecutionError(
+            f"插件 {plugin_id} 已在当前家庭停用，不能继续执行。",
+            error_code=PLUGIN_DISABLED_ERROR_CODE,
+            field="plugin_id",
+            status_code=409,
+        )
+    if plugin_type is not None and plugin_type not in plugin.types:
+        raise PluginExecutionError(
+            f"插件 {plugin_id} 没有声明 {plugin_type} 能力。",
+            error_code="plugin_type_not_supported",
+            field="plugin_type",
+        )
+    if trigger == "schedule" and "schedule" not in plugin.triggers:
+        raise PluginExecutionError(
+            f"插件 {plugin_id} 不支持计划触发。",
+            error_code="plugin_trigger_not_supported",
+            field="trigger",
+        )
+    return plugin
+
+
+def set_household_plugin_enabled(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    payload: PluginStateUpdateRequest,
+    updated_by: str | None = None,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> PluginRegistryItem:
+    from app.modules.household.service import get_household_or_404
+
+    get_household_or_404(db, household_id)
+    current = get_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
+    now = utc_now_iso()
+    row = repository.get_plugin_state_override(db, household_id=household_id, plugin_id=plugin_id)
+    if row is None:
+        row = PluginStateOverride(
+            id=new_uuid(),
+            household_id=household_id,
+            plugin_id=plugin_id,
+            enabled=payload.enabled,
+            source_type=current.source_type,
+            updated_by=updated_by,
+            created_at=now,
+            updated_at=now,
+        )
+        repository.add_plugin_state_override(db, row)
+    else:
+        row.enabled = payload.enabled
+        row.source_type = current.source_type
+        row.updated_by = updated_by
+        row.updated_at = now
+    db.flush()
+    sync_household_plugin_region_providers(db, household_id)
+    return get_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
 
 
 def list_plugin_mounts(db: Session, *, household_id: str) -> list[PluginMountRead]:
@@ -476,6 +700,99 @@ def resolve_plugin_execution_context(
     )
 
 
+def _execute_registered_plugin(
+    plugin: PluginRegistryItem,
+    request: PluginExecutionRequest,
+    *,
+    runtime_context: dict[str, object] | None = None,
+) -> PluginExecutionResult:
+    started_at = utc_now_iso()
+    run_id = new_uuid()
+    try:
+        if not plugin.enabled:
+            raise PluginExecutionError(
+                f"插件 {request.plugin_id} 已在当前家庭停用，不能继续执行。",
+                error_code=PLUGIN_DISABLED_ERROR_CODE,
+                field="plugin_id",
+                status_code=409,
+            )
+
+        execution_backend = resolve_execution_backend(plugin, request)
+        executor = get_executor(execution_backend)
+        runtime_request = PluginExecutionRequest.model_validate(
+            {
+                **request.model_dump(mode="json"),
+                "payload": _merge_plugin_payload_with_runtime_context(request.payload, runtime_context),
+                "execution_backend": execution_backend,
+            }
+        )
+        output = executor.execute(plugin, runtime_request)
+        return PluginExecutionResult(
+            run_id=run_id,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            execution_backend=execution_backend,
+            success=True,
+            trigger=request.trigger,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            output=output,
+        )
+    except PluginRunnerError as exc:
+        execution_backend = request.execution_backend or plugin.execution_backend or "subprocess_runner"
+        return PluginExecutionResult(
+            run_id=run_id,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            execution_backend=execution_backend,
+            success=False,
+            trigger=request.trigger,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            error_code=exc.error_code,
+            error_message=str(exc),
+        )
+    except PluginServiceError as exc:
+        return PluginExecutionResult(
+            run_id=run_id,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            execution_backend=request.execution_backend or plugin.execution_backend,
+            success=False,
+            trigger=request.trigger,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            error_code=exc.error_code,
+            error_message=str(exc),
+        )
+    except (PluginManifestValidationError, ModuleNotFoundError, AttributeError, TypeError, ValueError) as exc:
+        return PluginExecutionResult(
+            run_id=run_id,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            execution_backend=request.execution_backend or plugin.execution_backend,
+            success=False,
+            trigger=request.trigger,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            error_code=PLUGIN_EXECUTION_FAILED,
+            error_message=str(exc),
+        )
+    except Exception as exc:
+        return PluginExecutionResult(
+            run_id=run_id,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            execution_backend=request.execution_backend or plugin.execution_backend,
+            success=False,
+            trigger=request.trigger,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            error_code=PLUGIN_EXECUTION_FAILED,
+            error_message=str(exc),
+        )
+
+
 def execute_household_plugin(
     db: Session,
     *,
@@ -487,27 +804,45 @@ def execute_household_plugin(
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
 ) -> PluginExecutionResult:
-    context = resolve_plugin_execution_context(
-        db,
-        household_id=household_id,
-        plugin_id=request.plugin_id,
-        root_dir=root_dir,
-        source_type=source_type,
-        execution_backend=execution_backend,
-        runner_config=runner_config,
-    )
-    return execute_plugin(
+    try:
+        plugin = require_available_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            trigger=request.trigger,
+            root_dir=root_dir,
+            state_file=state_file,
+        )
+        plugin = _apply_execution_overrides(
+            plugin,
+            source_type=source_type,
+            execution_backend=execution_backend,
+            runner_config=runner_config,
+        )
+    except PluginServiceError as exc:
+        started_at = utc_now_iso()
+        return PluginExecutionResult(
+            run_id=new_uuid(),
+            plugin_id=request.plugin_id,
+            plugin_type=request.plugin_type,
+            execution_backend=execution_backend,
+            success=False,
+            trigger=request.trigger,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            error_code=exc.error_code,
+            error_message=str(exc),
+        )
+
+    return _execute_registered_plugin(
+        plugin,
         request,
-        root_dir=context.root_dir,
-        state_file=state_file,
-        source_type=context.source_type,
-        execution_backend=context.execution_backend,
-        runner_config=context.runner_config,
         runtime_context=_build_plugin_runtime_context(
             db,
             household_id=household_id,
             plugin_id=request.plugin_id,
-            root_dir=context.root_dir,
+            root_dir=root_dir,
             state_file=state_file,
         ),
     )
@@ -526,16 +861,13 @@ def enqueue_household_plugin_job(
 ) -> PluginJobRead:
     from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
-    registry = list_registered_plugins_for_household(db, household_id=household_id)
-    plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
-    if plugin is None:
-        raise PluginExecutionError(f"插件不存在: {request.plugin_id}")
-    if not plugin.enabled:
-        raise PluginExecutionError(f"插件已禁用: {request.plugin_id}")
-    if request.plugin_type not in plugin.types:
-        raise PluginExecutionError(f"插件 {request.plugin_id} 没有声明 {request.plugin_type} 能力")
-    if request.trigger == "schedule" and "schedule" not in plugin.triggers:
-        raise PluginExecutionError(f"插件 {request.plugin_id} 不支持计划触发")
+    require_available_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=request.plugin_id,
+        plugin_type=request.plugin_type,
+        trigger=request.trigger,
+    )
 
     return create_plugin_job(
         db,
@@ -585,7 +917,14 @@ def _merge_plugin_payload_with_runtime_context(
     merged_payload = dict(payload)
     if runtime_context is None:
         return merged_payload
-    merged_payload[PLUGIN_SYSTEM_CONTEXT_KEY] = runtime_context
+    existing_context = merged_payload.get(PLUGIN_SYSTEM_CONTEXT_KEY)
+    if isinstance(existing_context, dict):
+        merged_payload[PLUGIN_SYSTEM_CONTEXT_KEY] = {
+            **existing_context,
+            **runtime_context,
+        }
+    else:
+        merged_payload[PLUGIN_SYSTEM_CONTEXT_KEY] = runtime_context
     return merged_payload
 
 
@@ -597,15 +936,13 @@ def resolve_plugin_household_region_context(
     root_dir: str | Path | None = None,
     state_file: str | Path | None = None,
 ):
-    registry = list_registered_plugins_for_household(
+    plugin = get_household_plugin(
         db,
         household_id=household_id,
+        plugin_id=plugin_id,
         root_dir=root_dir,
         state_file=state_file,
     )
-    plugin = next((item for item in registry.items if item.id == plugin_id), None)
-    if plugin is None:
-        raise PluginExecutionError(f"插件不存在: {plugin_id}")
     if not plugin.capabilities.context_reads.household_region_context:
         return None
     return resolve_household_region_context(db, household_id)
@@ -622,32 +959,18 @@ async def aexecute_household_plugin(
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
 ) -> PluginExecutionResult:
-    context = resolve_plugin_execution_context(
-        db,
-        household_id=household_id,
-        plugin_id=request.plugin_id,
-        root_dir=root_dir,
-        source_type=source_type,
-        execution_backend=execution_backend,
-        runner_config=runner_config,
-    )
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         PLUGIN_EXECUTOR_POOL,
-        lambda: execute_plugin(
-            request,
-            root_dir=context.root_dir,
+        lambda: execute_household_plugin(
+            db,
+            household_id=household_id,
+            request=request,
+            root_dir=root_dir,
             state_file=state_file,
-            source_type=context.source_type,
-            execution_backend=context.execution_backend,
-            runner_config=context.runner_config,
-            runtime_context=_build_plugin_runtime_context(
-                db,
-                household_id=household_id,
-                plugin_id=request.plugin_id,
-                root_dir=context.root_dir,
-                state_file=state_file,
-            ),
+            source_type=source_type,
+            execution_backend=execution_backend,
+            runner_config=runner_config,
         ),
     )
 def enable_plugin(
@@ -831,15 +1154,6 @@ def ingest_plugin_raw_records_to_memory(
 ) -> list[dict]:
     from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
-    context = resolve_plugin_execution_context(
-        db,
-        household_id=household_id,
-        plugin_id=plugin_id,
-        root_dir=root_dir,
-        source_type=source_type,
-        execution_backend=execution_backend,
-        runner_config=runner_config,
-    )
     raw_records = list_saved_plugin_raw_records(
         db,
         household_id=household_id,
@@ -849,20 +1163,20 @@ def ingest_plugin_raw_records_to_memory(
     if not raw_records:
         return []
 
-    registry = list_registered_plugins(root_dir=context.root_dir, state_file=state_file)
-    plugin = next((item for item in registry.items if item.id == plugin_id), None)
-    if plugin is None:
-        raise PluginExecutionError(f"插件不存在: {plugin_id}")
-    plugin = PluginRegistryItem.model_validate(
-        {
-            **plugin.model_dump(mode="json"),
-            "source_type": context.source_type,
-            "execution_backend": context.execution_backend,
-            "runner_config": context.runner_config.model_dump(mode="json") if context.runner_config is not None else None,
-        }
+    plugin = require_available_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        plugin_type="memory-ingestor",
+        root_dir=root_dir,
+        state_file=state_file,
     )
-    if not plugin.enabled:
-        raise PluginExecutionError(f"插件已禁用: {plugin_id}")
+    plugin = _apply_execution_overrides(
+        plugin,
+        source_type=source_type,
+        execution_backend=execution_backend,
+        runner_config=runner_config,
+    )
 
     memory_request = PluginExecutionRequest(
         plugin_id=plugin_id,
@@ -871,7 +1185,7 @@ def ingest_plugin_raw_records_to_memory(
             "records": [item.model_dump(mode="json") for item in raw_records],
         },
         trigger="memory-ingestion",
-        execution_backend=context.execution_backend,
+        execution_backend=plugin.execution_backend,
     )
     backend = resolve_execution_backend(plugin, memory_request)
     executor = get_executor(backend)
@@ -919,30 +1233,15 @@ def run_plugin_sync_pipeline(
 ) -> PluginSyncPipelineResult:
     from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
-    context = resolve_plugin_execution_context(
+    execution = execute_household_plugin(
         db,
         household_id=household_id,
-        plugin_id=request.plugin_id,
+        request=request,
         root_dir=root_dir,
+        state_file=state_file,
         source_type=source_type,
         execution_backend=execution_backend,
         runner_config=runner_config,
-    )
-
-    execution = execute_plugin(
-        request,
-        root_dir=context.root_dir,
-        state_file=state_file,
-        source_type=context.source_type,
-        execution_backend=context.execution_backend,
-        runner_config=context.runner_config,
-        runtime_context=_build_plugin_runtime_context(
-            db,
-            household_id=household_id,
-            plugin_id=request.plugin_id,
-            root_dir=context.root_dir,
-            state_file=state_file,
-        ),
     )
     run_row = PluginRun(
         id=execution.run_id,
@@ -978,11 +1277,11 @@ def run_plugin_sync_pipeline(
             household_id=household_id,
             plugin_id=execution.plugin_id,
             run_id=execution.run_id,
-            root_dir=context.root_dir,
+            root_dir=root_dir,
             state_file=state_file,
-            source_type=context.source_type,
-            execution_backend=context.execution_backend,
-            runner_config=context.runner_config,
+            source_type=source_type,
+            execution_backend=execution_backend,
+            runner_config=runner_config,
         )
         run_row.status = "success"
         run_row.raw_record_count = len(raw_records)
@@ -1037,32 +1336,18 @@ async def arun_plugin_sync_pipeline(
 ) -> PluginSyncPipelineResult:
     from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
-    context = resolve_plugin_execution_context(
-        db,
-        household_id=household_id,
-        plugin_id=request.plugin_id,
-        root_dir=root_dir,
-        source_type=source_type,
-        execution_backend=execution_backend,
-        runner_config=runner_config,
-    )
     loop = asyncio.get_running_loop()
     execution = await loop.run_in_executor(
         PLUGIN_EXECUTOR_POOL,
-        lambda: execute_plugin(
-            request,
-            root_dir=context.root_dir,
+        lambda: execute_household_plugin(
+            db,
+            household_id=household_id,
+            request=request,
+            root_dir=root_dir,
             state_file=state_file,
-            source_type=context.source_type,
-            execution_backend=context.execution_backend,
-            runner_config=context.runner_config,
-            runtime_context=_build_plugin_runtime_context(
-                db,
-                household_id=household_id,
-                plugin_id=request.plugin_id,
-                root_dir=context.root_dir,
-                state_file=state_file,
-            ),
+            source_type=source_type,
+            execution_backend=execution_backend,
+            runner_config=runner_config,
         ),
     )
     run_row = PluginRun(
@@ -1093,11 +1378,11 @@ async def arun_plugin_sync_pipeline(
                 household_id=household_id,
                 plugin_id=execution.plugin_id,
                 run_id=execution.run_id,
-                root_dir=context.root_dir,
+                root_dir=root_dir,
                 state_file=state_file,
-                source_type=context.source_type,
-                execution_backend=context.execution_backend,
-                runner_config=context.runner_config,
+                source_type=source_type,
+                execution_backend=execution_backend,
+                runner_config=runner_config,
             )
         run_row.status = "success"
         run_row.raw_record_count = len(raw_records)

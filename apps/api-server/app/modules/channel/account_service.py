@@ -100,6 +100,8 @@ def _resolve_channel_plugin(db: Session, *, household_id: str, plugin_id: str):
     plugin = next((item for item in snapshot.items if item.id == plugin_id), None)
     if plugin is None:
         raise ChannelAccountServiceError("channel plugin not found")
+    if not plugin.enabled:
+        raise ChannelAccountServiceError("channel plugin is disabled for current household")
     if "channel" not in plugin.types:
         raise ChannelAccountServiceError("plugin is not a channel plugin")
     spec = plugin.capabilities.channel

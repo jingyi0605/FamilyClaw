@@ -17,8 +17,7 @@ from app.modules.channel.schemas import (
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import (
     PluginExecutionError,
-    execute_plugin,
-    resolve_plugin_execution_context,
+    execute_household_plugin,
 )
 
 
@@ -114,13 +113,10 @@ def _dispatch_delivery(
             provider_message_ref=None,
         )
 
-    execution_context = resolve_plugin_execution_context(
+    execution = execute_household_plugin(
         db,
         household_id=account.household_id,
-        plugin_id=account.plugin_id,
-    )
-    execution = execute_plugin(
-        PluginExecutionRequest(
+        request=PluginExecutionRequest(
             plugin_id=account.plugin_id,
             plugin_type="channel",
             payload={
@@ -146,10 +142,6 @@ def _dispatch_delivery(
             },
             trigger="channel-delivery",
         ),
-        root_dir=execution_context.root_dir,
-        source_type=execution_context.source_type,
-        execution_backend=execution_context.execution_backend,
-        runner_config=execution_context.runner_config,
     )
 
     if not execution.success:

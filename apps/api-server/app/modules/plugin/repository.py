@@ -11,6 +11,7 @@ from app.modules.plugin.models import (
     PluginMount,
     PluginRawRecord,
     PluginRun,
+    PluginStateOverride,
 )
 
 
@@ -68,6 +69,11 @@ def list_plugin_raw_records(
 
 
 def add_plugin_mount(db: Session, row: PluginMount) -> PluginMount:
+    db.add(row)
+    return row
+
+
+def add_plugin_state_override(db: Session, row: PluginStateOverride) -> PluginStateOverride:
     db.add(row)
     return row
 
@@ -301,11 +307,28 @@ def get_plugin_mount(db: Session, *, household_id: str, plugin_id: str) -> Plugi
     return db.scalar(stmt)
 
 
+def get_plugin_state_override(db: Session, *, household_id: str, plugin_id: str) -> PluginStateOverride | None:
+    stmt: Select[tuple[PluginStateOverride]] = select(PluginStateOverride).where(
+        PluginStateOverride.household_id == household_id,
+        PluginStateOverride.plugin_id == plugin_id,
+    )
+    return db.scalar(stmt)
+
+
 def list_plugin_mounts(db: Session, *, household_id: str) -> list[PluginMount]:
     stmt: Select[tuple[PluginMount]] = (
         select(PluginMount)
         .where(PluginMount.household_id == household_id)
         .order_by(PluginMount.created_at.desc(), PluginMount.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def list_plugin_state_overrides(db: Session, *, household_id: str) -> list[PluginStateOverride]:
+    stmt: Select[tuple[PluginStateOverride]] = (
+        select(PluginStateOverride)
+        .where(PluginStateOverride.household_id == household_id)
+        .order_by(PluginStateOverride.updated_at.desc(), PluginStateOverride.id.desc())
     )
     return list(db.scalars(stmt).all())
 

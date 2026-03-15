@@ -14,8 +14,8 @@ from app.core.config import settings
 from app.modules.household.schemas import HouseholdCreate, HouseholdUpdate
 from app.modules.household.service import build_household_read, create_household, update_household
 from app.modules.plugin.service import PluginManifestValidationError
-from app.modules.plugin.schemas import PluginMountCreate, PluginMountUpdate
-from app.modules.plugin.service import register_plugin_mount, update_plugin_mount
+from app.modules.plugin.schemas import PluginMountCreate, PluginMountUpdate, PluginStateUpdateRequest
+from app.modules.plugin.service import register_plugin_mount, set_household_plugin_enabled, update_plugin_mount
 from app.modules.region.schemas import RegionSelection
 from app.modules.region.service import (
     RegionServiceError,
@@ -204,6 +204,51 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
                         timeout_seconds=20,
                     ),
                 )
+
+    def test_household_override_disables_region_provider_without_changing_mount_base_state(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="覆盖禁用家庭", timezone="Asia/Tokyo", locale="ja-JP"),
+        )
+        self.db.flush()
+
+        with tempfile.TemporaryDirectory() as plugin_tempdir:
+            plugin_root = self._create_region_provider_plugin(Path(plugin_tempdir), plugin_id="jp-region-provider")
+            register_plugin_mount(
+                self.db,
+                household_id=household.id,
+                payload=PluginMountCreate(
+                    source_type="third_party",
+                    plugin_root=str(plugin_root),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_root),
+                    timeout_seconds=20,
+                ),
+            )
+            update_household(
+                self.db,
+                household,
+                HouseholdUpdate(
+                    region_selection=RegionSelection(
+                        provider_code="plugin.jp-sample",
+                        country_code="JP",
+                        region_code="131004",
+                    )
+                ),
+            )
+            self.db.flush()
+
+            set_household_plugin_enabled(
+                self.db,
+                household_id=household.id,
+                plugin_id="jp-region-provider",
+                payload=PluginStateUpdateRequest(enabled=False),
+                updated_by="tester",
+            )
+
+            unavailable_context = resolve_household_region_context(self.db, household.id)
+
+        self.assertEqual("provider_unavailable", unavailable_context.status)
 
     def _create_region_provider_plugin(self, root: Path, *, plugin_id: str) -> Path:
         plugin_root = root / plugin_id
