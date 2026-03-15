@@ -427,10 +427,22 @@
 }
 
 .weather-sun {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   position: absolute;
   top: 0;
   left: 0;
+  color: var(--color-warning);
+  line-height: 0;
   animation: sunPulse 3s ease-in-out infinite;
+}
+
+.weather-sun__icon {
+  display: block;
+  width: 48px;
+  height: 48px;
+  color: inherit;
 }
 
 @keyframes sunPulse {
@@ -439,10 +451,22 @@
 }
 
 .weather-cloud {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   position: absolute;
-  bottom: -4px;
-  right: -8px;
+  bottom: 10px;
+  right: -4px;
+  color: var(--text-primary);
+  line-height: 0;
   animation: cloudDrift 6s ease-in-out infinite;
+}
+
+.weather-cloud__icon {
+  display: block;
+  width: 32px;
+  height: 32px;
+  color: inherit;
 }
 
 @keyframes cloudDrift {

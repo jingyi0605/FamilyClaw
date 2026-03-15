@@ -95,8 +95,8 @@ function WeatherCard({ data }: { data: DashboardData }) {
       <div className="weather-card__main">
         <div className="weather-card__icon-area">
           <span className="weather-icon-animated">
-            <span className="weather-sun"><Sun size={48} className="text-warning" /></span>
-            <span className="weather-cloud"><CloudSun size={32} /></span>
+            <span className="weather-sun"><Sun size={48} className="weather-sun__icon" /></span>
+            <span className="weather-cloud"><CloudSun size={32} className="weather-cloud__icon" /></span>
           </span>
         </div>
         <div className="weather-card__temp">
