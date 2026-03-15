@@ -15,6 +15,11 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./web": {
+      "types": "./src/index.web.ts",
+      "import": "./src/index.web.ts",
+      "default": "./src/index.web.ts"
     }
   },
   "dependencies": {
