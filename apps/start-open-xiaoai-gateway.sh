@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+GATEWAY_DIR="${PROJECT_ROOT}/apps/open-xiaoai-gateway"
+VENV_DIR="${GATEWAY_DIR}/.venv"
+ENV_FILE="${GATEWAY_DIR}/.env"
+DEPS_HASH_FILE="${VENV_DIR}/.deps.sha256"
+DRY_RUN="${DRY_RUN:-0}"
+
+# Windows 使用 Scripts 目录，Unix 使用 bin 目录
+if [[ "${OSTYPE}" == "msys" || "${OSTYPE}" == "win32" ]]; then
+  VENV_BIN_DIR="Scripts"
+else
+  VENV_BIN_DIR="bin"
+fi
+
+# 默认优先找 python3.11，找不到再回退到 python
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if command -v python3.11 >/dev/null 2>&1; then
+    PYTHON_BIN="python3.11"
+  else
+    PYTHON_BIN="python"
+  fi
+fi
+
+log() {
+  printf '[gateway-start] %s\n' "$1"
+}
+
+fail() {
+  printf '[gateway-start] ERROR: %s\n' "$1" >&2
+  exit 1
+}
+
+ensure_python() {
+  if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    fail "未找到 ${PYTHON_BIN}，请先安装 Python 3.11，或通过 PYTHON_BIN 指定解释器。"
+  fi
+}
+
+ensure_env_file() {
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    fail "未找到 ${ENV_FILE}。先把网关参数补齐，再启动。"
+  fi
+}
+
+ensure_venv() {
+  if [[ ! -x "${VENV_DIR}/${VENV_BIN_DIR}/python" && ! -x "${VENV_DIR}/${VENV_BIN_DIR}/python.exe" ]]; then
+    log "创建虚拟环境 ${VENV_DIR}"
+    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+  fi
+}
+
+activate_venv() {
+  # shellcheck disable=SC1091
+  source "${VENV_DIR}/${VENV_BIN_DIR}/activate"
+}
+
+current_dep_hash() {
+  python - <<'PY'
+from pathlib import Path
+import hashlib
+
+content = Path("pyproject.toml").read_bytes()
+print(hashlib.sha256(content).hexdigest())
+PY
+}
+
+dependencies_need_install() {
+  local current_hash
+  current_hash="$(current_dep_hash)"
+
+  if [[ ! -f "${DEPS_HASH_FILE}" ]]; then
+    echo "${current_hash}"
+    return 0
+  fi
+
+  if [[ "$(<"${DEPS_HASH_FILE}")" != "${current_hash}" ]]; then
+    echo "${current_hash}"
+    return 0
+  fi
+
+  if ! python -c "import open_xiaoai_gateway" >/dev/null 2>&1; then
+    echo "${current_hash}"
+    return 0
+  fi
+
+  return 1
+}
+
+install_dependencies() {
+  local current_hash="$1"
+  log "检测到新依赖或环境未初始化，正在安装依赖"
+  python -m pip install --upgrade pip
+  python -m pip install -e .
+  printf '%s' "${current_hash}" > "${DEPS_HASH_FILE}"
+}
+
+validate_settings() {
+  python - <<'PY'
+from open_xiaoai_gateway.settings import settings
+
+print(f"listen={settings.listen_host}:{settings.listen_port}")
+print(f"api_server_http_url={settings.api_server_http_url}")
+print(f"api_server_ws_url={settings.api_server_ws_url}")
+print(f"invocation_mode={settings.invocation_mode}")
+print(f"log_level={settings.log_level}")
+PY
+}
+
+start_gateway() {
+  log "启动 open-xiaoai-gateway"
+  exec python -m open_xiaoai_gateway.main
+}
+
+main() {
+  ensure_python
+  ensure_env_file
+  ensure_venv
+  activate_venv
+  cd "${GATEWAY_DIR}"
+
+  local dep_hash=""
+  if dep_hash="$(dependencies_need_install)"; then
+    install_dependencies "${dep_hash}"
+  else
+    log "依赖未变化，复用现有虚拟环境"
+  fi
+
+  log "校验网关配置"
+  validate_settings
+
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    log "DRY_RUN=1，仅完成初始化与配置校验，不启动网关"
+    return 0
+  fi
+
+  start_gateway
+}
+
+main "$@"
