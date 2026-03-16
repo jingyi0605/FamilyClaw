@@ -7,6 +7,7 @@ from . import repository
 from .account_service import (
     ChannelAccountServiceError,
     create_channel_account,
+    delete_channel_account,
     get_channel_account_or_404,
     list_channel_accounts,
     update_channel_account,
@@ -196,6 +197,7 @@ __all__ = [
     "create_channel_account",
     "create_channel_delivery",
     "create_member_binding",
+    "delete_channel_account",
     "delete_channel_account_binding",
     "get_channel_account_or_404",
     "list_channel_accounts",

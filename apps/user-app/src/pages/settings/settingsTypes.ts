@@ -373,7 +373,7 @@ export type ChannelAccountRead = {
 
 export type ChannelAccountCreate = {
   plugin_id: string;
-  account_code: string;
+  account_code?: string | null;
   display_name: string;
   connection_mode: ChannelConnectionMode;
   config?: Record<string, unknown>;
@@ -415,6 +415,19 @@ export type MemberChannelBindingUpdate = {
   external_chat_id?: string | null;
   display_hint?: string | null;
   binding_status?: ChannelBindingStatus;
+};
+
+export type ChannelBindingCandidateRead = {
+  external_user_id: string;
+  external_chat_id: string | null;
+  sender_display_name: string | null;
+  username: string | null;
+  chat_type: 'direct' | 'group';
+  last_message_text: string | null;
+  last_seen_at: string;
+  inbound_event_id: string;
+  platform_code: string;
+  channel_account_id: string;
 };
 
 export type ChannelDeliveryFailureSummaryRead = {
@@ -484,6 +497,67 @@ export type PluginManifestType =
   | 'channel'
   | 'locale-pack'
   | 'region-provider';
+export type PluginConfigScopeType = 'plugin' | 'channel_account';
+export type PluginConfigFieldType = 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'enum' | 'multi_enum' | 'secret' | 'json';
+export type PluginConfigWidgetType = 'input' | 'password' | 'textarea' | 'switch' | 'select' | 'multi_select' | 'json_editor';
+export type PluginConfigVisibleOperator = 'equals' | 'not_equals' | 'in' | 'truthy';
+
+export type PluginConfigEnumOption = {
+  label: string;
+  value: string;
+};
+
+export type PluginManifestConfigField = {
+  key: string;
+  label: string;
+  type: PluginConfigFieldType;
+  required: boolean;
+  description?: string | null;
+  default?: unknown;
+  enum_options?: PluginConfigEnumOption[];
+  min_length?: number | null;
+  max_length?: number | null;
+  minimum?: number | null;
+  maximum?: number | null;
+  pattern?: string | null;
+  nullable?: boolean;
+};
+
+export type PluginManifestVisibilityRule = {
+  field: string;
+  operator: PluginConfigVisibleOperator;
+  value?: unknown;
+};
+
+export type PluginManifestFieldUiSchema = {
+  widget?: PluginConfigWidgetType | null;
+  placeholder?: string | null;
+  help_text?: string | null;
+  visible_when?: PluginManifestVisibilityRule[];
+};
+
+export type PluginManifestUiSection = {
+  id: string;
+  title: string;
+  description?: string | null;
+  fields: string[];
+};
+
+export type PluginManifestConfigSpec = {
+  scope_type: PluginConfigScopeType;
+  title: string;
+  description?: string | null;
+  schema_version: number;
+  config_schema: {
+    fields: PluginManifestConfigField[];
+  };
+  ui_schema: {
+    sections: PluginManifestUiSection[];
+    field_order?: string[];
+    submit_text?: string | null;
+    widgets?: Record<string, PluginManifestFieldUiSchema>;
+  };
+};
 
 export type PluginRegistryItem = {
   id: string;
@@ -511,6 +585,26 @@ export type PluginRegistryItem = {
       household_region_context?: boolean;
     } | null;
     channel?: {
+      ui?: {
+        account_config_fields?: Array<{
+          key: string;
+          label: string;
+          type: 'text' | 'password';
+          required: boolean;
+          placeholder?: string | null;
+          help_text?: string | null;
+        }>;
+        binding?: {
+          identity_label?: string | null;
+          identity_placeholder?: string | null;
+          identity_help_text?: string | null;
+          chat_label?: string | null;
+          chat_placeholder?: string | null;
+          chat_help_text?: string | null;
+          candidate_title?: string | null;
+          candidate_help_text?: string | null;
+        } | null;
+      } | null;
       platform_code?: string | null;
       inbound_modes?: string[];
       delivery_modes?: string[];
@@ -523,6 +617,7 @@ export type PluginRegistryItem = {
       country_codes?: string[];
     } | null;
   };
+  config_specs?: PluginManifestConfigSpec[];
   locales: Array<{
     id: string;
     label: string;

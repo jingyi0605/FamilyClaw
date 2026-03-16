@@ -101,10 +101,9 @@ class ChannelAccountsApiTests(unittest.TestCase):
                 "plugin_id": "channel-telegram",
                 "account_code": "telegram-main",
                 "display_name": "Telegram 主账号",
-                "connection_mode": "webhook",
+                "connection_mode": "polling",
                 "config": {
                     "bot_token": "telegram-token-001",
-                    "webhook_secret": "secret-001",
                 },
                 "status": "draft",
             },
@@ -200,7 +199,8 @@ class ChannelAccountsApiTests(unittest.TestCase):
         )
         self.assertEqual(200, status_response.status_code)
         status_payload = status_response.json()
-        self.assertEqual("msg-ok-001", status_payload["latest_delivery"]["provider_message_ref"])
+        self.assertEqual("failed", status_payload["latest_delivery"]["status"])
+        self.assertEqual("network-error", status_payload["latest_delivery"]["last_error_message"])
         self.assertEqual("evt-fail-001", status_payload["latest_failed_inbound_event"]["external_event_id"])
         self.assertEqual(2, status_payload["recent_delivery_count"])
         self.assertEqual(2, status_payload["recent_inbound_count"])
@@ -239,7 +239,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
                 "plugin_id": "channel-dingtalk",
                 "account_code": "dingtalk-main",
                 "display_name": "钉钉主账号",
-                "connection_mode": "webhook",
+                "connection_mode": "polling",
                 "config": {
                     "app_key": "ding-app-key",
                 },
@@ -257,7 +257,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
                 "plugin_id": "channel-telegram",
                 "account_code": "telegram-main",
                 "display_name": "Telegram 主账号",
-                "connection_mode": "webhook",
+                "connection_mode": "polling",
                 "config": {
                     "bot_token": "telegram-token-001",
                 },
@@ -289,7 +289,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
                 "plugin_id": "channel-telegram",
                 "account_code": "telegram-main",
                 "display_name": "Telegram 主账号",
-                "connection_mode": "webhook",
+                "connection_mode": "polling",
                 "config": {
                     "bot_token": "telegram-token-001",
                 },

@@ -12,6 +12,7 @@ import type {
   ChannelAccountRead,
   ChannelAccountStatusRead,
   ChannelAccountUpdate,
+  ChannelBindingCandidateRead,
   ChannelDeliveryRead,
   ChannelInboundEventRead,
   ContextOverviewRead,
@@ -303,6 +304,14 @@ export const settingsApi = {
       },
     );
   },
+  deleteChannelAccount(householdId: string, accountId: string) {
+    return request<void>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}`,
+      {
+        method: 'DELETE',
+      },
+    );
+  },
   probeChannelAccount(householdId: string, accountId: string) {
     return request<ChannelAccountStatusRead>(
       `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/probe`,
@@ -345,6 +354,11 @@ export const settingsApi = {
       `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/bindings`,
     );
   },
+  listChannelAccountBindingCandidates(householdId: string, accountId: string) {
+    return request<ChannelBindingCandidateRead[]>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/binding-candidates`,
+    );
+  },
   createChannelAccountBinding(householdId: string, accountId: string, payload: MemberChannelBindingCreate) {
     return request<MemberChannelBindingRead>(
       `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/bindings`,
@@ -365,6 +379,14 @@ export const settingsApi = {
       {
         method: 'PUT',
         body: JSON.stringify(payload),
+      },
+    );
+  },
+  deleteChannelAccountBinding(householdId: string, accountId: string, bindingId: string) {
+    return request<void>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/bindings/${encodeURIComponent(bindingId)}`,
+      {
+        method: 'DELETE',
       },
     );
   },

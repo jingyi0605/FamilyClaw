@@ -29,7 +29,7 @@ from app.modules.channel.binding_service import (
     list_channel_account_bindings,
     update_channel_account_binding,
 )
-from app.modules.channel.service import create_channel_account, list_channel_accounts, update_channel_account
+from app.modules.channel.service import create_channel_account, delete_channel_account, list_channel_accounts, update_channel_account
 from app.modules.channel.status_service import (
     ChannelStatusServiceError,
     get_channel_account_status,
@@ -116,6 +116,41 @@ def update_channel_account_endpoint(
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
+
+
+@router.delete("/{household_id}/channel-accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_channel_account_endpoint(
+    household_id: str,
+    account_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> None:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        deleted_account = delete_channel_account(
+            db,
+            household_id=household_id,
+            account_id=account_id,
+        )
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="channel_account.delete",
+            target_type="channel_plugin_account",
+            target_id=account_id,
+            result="success",
+            details={
+                "platform_code": deleted_account.platform_code,
+                "account_code": deleted_account.account_code,
+                "display_name": deleted_account.display_name,
+            },
+        )
+        db.commit()
+        return None
+    except ChannelAccountServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post("/{household_id}/channel-accounts/{account_id}/probe", response_model=ChannelAccountStatusRead)

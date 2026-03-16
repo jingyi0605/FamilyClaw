@@ -12,14 +12,62 @@
   "entrypoints": {
     "channel": "app.plugins.builtin.channel_telegram.channel.handle"
   },
+  "config_specs": [
+    {
+      "scope_type": "channel_account",
+      "title": "Telegram 账号配置",
+      "description": "给当前 Telegram Bot 填入轮询所需的连接参数。",
+      "schema_version": 1,
+      "config_schema": {
+        "fields": [
+          {
+            "key": "bot_token",
+            "label": "Bot Token",
+            "type": "secret",
+            "required": true
+          }
+        ]
+      },
+      "ui_schema": {
+        "sections": [
+          {
+            "id": "basic",
+            "title": "连接参数",
+            "fields": ["bot_token"]
+          }
+        ],
+        "field_order": ["bot_token"],
+        "submit_text": "保存配置",
+        "widgets": {
+          "bot_token": {
+            "widget": "password",
+            "placeholder": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+            "help_text": "从 @BotFather 获取的机器人令牌，系统会用它主动轮询 Telegram 消息。"
+          }
+        }
+      }
+    }
+  ],
   "capabilities": {
     "channel": {
       "platform_code": "telegram",
-      "inbound_modes": ["webhook"],
+      "inbound_modes": ["polling"],
       "delivery_modes": ["reply", "push"],
       "supports_member_binding": true,
       "supports_group_chat": true,
       "supports_threading": true,
+      "ui": {
+        "binding": {
+          "identity_label": "TG-ID",
+          "identity_placeholder": "例如：123456789",
+          "identity_help_text": "Telegram 用户的 user_id。",
+          "chat_label": "Chat ID",
+          "chat_placeholder": "例如：987654321",
+          "chat_help_text": "Telegram 会话 chat_id，私聊和群聊都可以记录。",
+          "candidate_title": "待绑定 Telegram 用户",
+          "candidate_help_text": "这里只显示最近给当前 Bot 发过消息、但还没有在当前账号下绑定的用户。"
+        }
+      },
       "reserved": false
     }
   }

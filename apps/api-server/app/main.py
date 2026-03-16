@@ -8,6 +8,7 @@ from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.session import SessionLocal
+from app.modules.channel.polling_worker import ChannelPollingWorker
 from app.modules.account.service import ensure_bootstrap_admin_account, ensure_pending_household_bootstrap_accounts
 from app.modules.plugin.job_worker import PluginJobWorker
 from app.modules.scheduler.worker import ScheduledTaskWorker
@@ -19,6 +20,7 @@ setup_logging(
 logger = logging.getLogger(__name__)
 plugin_job_worker = PluginJobWorker()
 scheduler_worker = ScheduledTaskWorker()
+channel_polling_worker = ChannelPollingWorker()
 
 
 @asynccontextmanager
@@ -34,7 +36,11 @@ async def lifespan(_: FastAPI):
         await plugin_job_worker.start()
     if settings.scheduler_worker_enabled:
         await scheduler_worker.start()
+    if settings.channel_polling_worker_enabled:
+        await channel_polling_worker.start()
     yield
+    if settings.channel_polling_worker_enabled:
+        await channel_polling_worker.stop()
     if settings.plugin_job_worker_enabled:
         await plugin_job_worker.stop()
     if settings.scheduler_worker_enabled:

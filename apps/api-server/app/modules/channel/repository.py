@@ -1,4 +1,4 @@
-from sqlalchemy import Select, select
+from sqlalchemy import Select, delete, select
 from sqlalchemy.orm import Session
 
 from app.modules.channel.models import (
@@ -13,6 +13,10 @@ from app.modules.channel.models import (
 def add_channel_plugin_account(db: Session, row: ChannelPluginAccount) -> ChannelPluginAccount:
     db.add(row)
     return row
+
+
+def delete_channel_plugin_account(db: Session, row: ChannelPluginAccount) -> None:
+    db.delete(row)
 
 
 def get_channel_plugin_account(db: Session, account_id: str) -> ChannelPluginAccount | None:
@@ -67,6 +71,14 @@ def delete_member_channel_binding(db: Session, row: MemberChannelBinding) -> Non
     db.delete(row)
 
 
+def delete_member_channel_bindings_by_account(db: Session, *, channel_account_id: str) -> None:
+    db.execute(
+        delete(MemberChannelBinding).where(
+            MemberChannelBinding.channel_account_id == channel_account_id,
+        )
+    )
+
+
 def list_member_channel_bindings(db: Session, *, member_id: str) -> list[MemberChannelBinding]:
     stmt: Select[tuple[MemberChannelBinding]] = (
         select(MemberChannelBinding)
@@ -109,6 +121,14 @@ def add_channel_conversation_binding(
     return row
 
 
+def delete_channel_conversation_bindings_by_account(db: Session, *, channel_account_id: str) -> None:
+    db.execute(
+        delete(ChannelConversationBinding).where(
+            ChannelConversationBinding.channel_account_id == channel_account_id,
+        )
+    )
+
+
 def get_channel_conversation_binding_by_external_key(
     db: Session,
     *,
@@ -127,6 +147,14 @@ def get_channel_conversation_binding_by_external_key(
 def add_channel_inbound_event(db: Session, row: ChannelInboundEvent) -> ChannelInboundEvent:
     db.add(row)
     return row
+
+
+def delete_channel_inbound_events_by_account(db: Session, *, channel_account_id: str) -> None:
+    db.execute(
+        delete(ChannelInboundEvent).where(
+            ChannelInboundEvent.channel_account_id == channel_account_id,
+        )
+    )
 
 
 def get_channel_inbound_event(db: Session, inbound_event_id: str) -> ChannelInboundEvent | None:
@@ -200,6 +228,14 @@ def list_channel_account_unbound_inbound_events(
 def add_channel_delivery(db: Session, row: ChannelDelivery) -> ChannelDelivery:
     db.add(row)
     return row
+
+
+def delete_channel_deliveries_by_account(db: Session, *, channel_account_id: str) -> None:
+    db.execute(
+        delete(ChannelDelivery).where(
+            ChannelDelivery.channel_account_id == channel_account_id,
+        )
+    )
 
 
 def get_channel_delivery(db: Session, delivery_id: str) -> ChannelDelivery | None:

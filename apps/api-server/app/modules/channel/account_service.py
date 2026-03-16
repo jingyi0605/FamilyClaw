@@ -101,6 +101,23 @@ def update_channel_account(
     return _to_channel_account_read(row)
 
 
+def delete_channel_account(
+    db: Session,
+    *,
+    household_id: str,
+    account_id: str,
+) -> ChannelAccountRead:
+    row = get_channel_account_or_404(db, household_id=household_id, account_id=account_id)
+    deleted_snapshot = _to_channel_account_read(row)
+    repository.delete_member_channel_bindings_by_account(db, channel_account_id=row.id)
+    repository.delete_channel_conversation_bindings_by_account(db, channel_account_id=row.id)
+    repository.delete_channel_inbound_events_by_account(db, channel_account_id=row.id)
+    repository.delete_channel_deliveries_by_account(db, channel_account_id=row.id)
+    repository.delete_channel_plugin_account(db, row)
+    db.flush()
+    return deleted_snapshot
+
+
 def _resolve_channel_plugin(db: Session, *, household_id: str, plugin_id: str):
     snapshot = list_registered_plugins_for_household(db, household_id=household_id)
     plugin = next((item for item in snapshot.items if item.id == plugin_id), None)

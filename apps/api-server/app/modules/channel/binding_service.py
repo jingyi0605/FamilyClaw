@@ -252,17 +252,23 @@ def list_channel_account_binding_candidates(
         limit=CANDIDATE_EVENT_SCAN_LIMIT,
     )
 
-    candidates: list[ChannelBindingCandidateRead] = []
-    seen_external_user_ids: set[str] = set()
+    latest_events_by_user: dict[str, ChannelInboundEvent] = {}
     for inbound_event in inbound_events:
         external_user_id = _normalize_optional_text(inbound_event.external_user_id)
         if external_user_id is None:
             continue
-        if external_user_id in bound_external_user_ids or external_user_id in seen_external_user_ids:
+        if external_user_id in bound_external_user_ids:
             continue
-        seen_external_user_ids.add(external_user_id)
-        candidates.append(_to_binding_candidate_read(inbound_event))
-    return candidates
+        current = latest_events_by_user.get(external_user_id)
+        if current is None or _is_inbound_event_newer(inbound_event, current):
+            latest_events_by_user[external_user_id] = inbound_event
+
+    ordered_events = sorted(
+        latest_events_by_user.values(),
+        key=_build_inbound_event_sort_key,
+        reverse=True,
+    )
+    return [_to_binding_candidate_read(item) for item in ordered_events]
 
 
 def _ensure_external_user_not_conflicted(
@@ -347,3 +353,25 @@ def _first_non_empty_text(*values: object) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _is_inbound_event_newer(left: ChannelInboundEvent, right: ChannelInboundEvent) -> bool:
+    return _build_inbound_event_sort_key(left) > _build_inbound_event_sort_key(right)
+
+
+def _build_inbound_event_sort_key(inbound_event: ChannelInboundEvent) -> tuple[str, int, str]:
+    return (
+        inbound_event.received_at or "",
+        _coerce_event_sequence(inbound_event.external_event_id),
+        inbound_event.id,
+    )
+
+
+def _coerce_event_sequence(external_event_id: str | None) -> int:
+    normalized = _normalize_optional_text(external_event_id)
+    if normalized is None:
+        return -1
+    try:
+        return int(normalized)
+    except ValueError:
+        return -1
