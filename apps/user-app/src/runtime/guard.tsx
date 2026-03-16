@@ -257,14 +257,35 @@ export function GuardedPage(props: PropsWithChildren<{ mode: GuardMode; path: st
   }
 
   if (IS_H5) {
+    const isBusyState = guardResult.kind !== 'error';
     return (
       <div className="setup-guard">
-        <div className={`setup-guard__content ${guardResult.kind === 'error' ? 'setup-guard__content--error' : ''}`.trim()}>
+        <div
+          className={`setup-guard__content ${
+            guardResult.kind === 'error' ? 'setup-guard__content--error' : 'setup-guard__content--loading'
+          }`.trim()}
+        >
+          {isBusyState ? (
+            <div className="setup-guard__visual" aria-hidden="true">
+              <div className="setup-guard__halo" />
+              <div className="setup-guard__spinner">
+                <span className="setup-guard__spinner-core" />
+              </div>
+              <div className="setup-guard__dots">
+                <span className="setup-guard__dot" />
+                <span className="setup-guard__dot" />
+                <span className="setup-guard__dot" />
+              </div>
+            </div>
+          ) : null}
           <h2>{guardResult.kind === 'error' ? '运行时壳初始化失败' : '正在校验访问资格'}</h2>
           <span className="setup-guard__eyebrow">
             {guardResult.kind === 'error' ? '页面初始化失败' : '正在准备页面'}
           </span>
           <p className="setup-guard__message">{guardResult.message}</p>
+          {isBusyState ? (
+            <p className="setup-guard__hint">正在同步登录、家庭与初始化上下文，请稍候片刻。</p>
+          ) : null}
           {guardResult.kind === 'error' && guardResult.onRetry ? (
             <div className="setup-guard__actions">
               <button className="btn btn--primary" type="button" onClick={() => guardResult.onRetry?.()}>

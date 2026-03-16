@@ -5772,7 +5772,11 @@ body::before {
 .setup-guard {
   min-height: 100vh;
   justify-content: center;
-  background: var(--bg-app);
+  align-items: center;
+  background:
+    radial-gradient(circle at top center, color-mix(in srgb, var(--glow-color) 34%, transparent), transparent 416px),
+    linear-gradient(180deg, color-mix(in srgb, var(--brand-primary-light) 18%, transparent), transparent 384px),
+    var(--bg-app);
 }
 
 .setup-guard__card,
@@ -5782,49 +5786,209 @@ body::before {
 }
 
 .setup-guard__content {
-  width: 100%;
-  max-width: 680px;
+  /* 这里不用 rem，避免 Taro H5 根字号放大后把加载态整体撑大。 */
+  width: min(100%, 608px);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
-  animation: none;
-  transform: none;
+  align-items: center;
+  gap: 12px;
+  margin: 0 auto;
+  padding: 32px 32px 28px;
+  border: 1px solid color-mix(in srgb, var(--border-light) 88%, transparent);
+  border-radius: calc(var(--radius-xl) + 4px);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 94%, white 6%), color-mix(in srgb, var(--bg-card) 98%, transparent));
+  box-shadow:
+    0 28px 70px color-mix(in srgb, var(--text-primary) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 65%, transparent);
+  backdrop-filter: blur(18px);
+  animation: setupGuardFloat 3.6s ease-in-out infinite;
+  transform-origin: center;
+  text-align: center;
 }
 
 .setup-guard__content h2 {
   margin: 0;
-  font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-size: clamp(24px, 2vw, 32px);
+  font-weight: 700;
   color: var(--text-primary);
 }
 
-.setup-guard__content:not(.setup-guard__content--error) h2 {
-  display: none;
+.setup-guard__content--loading h2 {
+  display: block;
 }
 
 .setup-guard__content--error {
-  padding: var(--spacing-lg);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
+  align-items: flex-start;
+  text-align: left;
+  animation: none;
 }
 
 .setup-guard__eyebrow {
-  font-size: var(--font-size-xs);
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--text-tertiary);
+  color: var(--brand-primary);
+  font-weight: 700;
 }
 
 .setup-guard__message {
   margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-md);
-  line-height: 1.7;
+  max-width: 480px;
+  color: var(--text-primary);
+  font-size: clamp(16px, 1.05vw, 18px);
+  line-height: 1.8;
 }
 
 .setup-guard__actions {
   margin-top: var(--spacing-sm);
+}
+
+.setup-guard__hint {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.setup-guard__visual {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  margin-bottom: 4px;
+}
+
+.setup-guard__halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--brand-primary-light) 66%, white 34%), transparent 68%);
+  filter: blur(6px);
+  animation: setupGuardHalo 2.8s ease-in-out infinite;
+}
+
+.setup-guard__spinner {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--brand-primary) 16%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 86%, white 14%), color-mix(in srgb, var(--brand-primary-light) 48%, white 52%));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 70%, transparent),
+    0 18px 36px color-mix(in srgb, var(--brand-primary) 14%, transparent);
+}
+
+.setup-guard__spinner::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  border: 3px solid color-mix(in srgb, var(--brand-primary) 14%, transparent);
+  border-top-color: var(--brand-primary);
+  border-right-color: color-mix(in srgb, var(--color-info) 70%, var(--brand-primary));
+  animation: setupGuardSpin 1.2s linear infinite;
+}
+
+.setup-guard__spinner-core {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--brand-primary), color-mix(in srgb, var(--color-info) 72%, var(--brand-primary)));
+  box-shadow: 0 0 0 7px color-mix(in srgb, var(--brand-primary-light) 62%, transparent);
+}
+
+.setup-guard__dots {
+  position: absolute;
+  bottom: -2px;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.setup-guard__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--brand-primary) 84%, white 16%);
+  animation: setupGuardDotPulse 1.25s ease-in-out infinite;
+}
+
+.setup-guard__dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.setup-guard__dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes setupGuardSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes setupGuardHalo {
+  0%, 100% {
+    transform: scale(0.92);
+    opacity: 0.52;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.86;
+  }
+}
+
+@keyframes setupGuardDotPulse {
+  0%, 80%, 100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  40% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+@keyframes setupGuardFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@media (max-width: 768px) {
+  .setup-guard {
+    padding: var(--spacing-lg);
+  }
+
+  .setup-guard__content {
+    width: 100%;
+    padding: 24px 20px;
+    border-radius: var(--radius-xl);
+  }
+
+  .setup-guard__visual {
+    width: 96px;
+    height: 96px;
+  }
+
+  .setup-guard__spinner {
+    width: 70px;
+    height: 70px;
+  }
+
+  .setup-guard__message {
+    max-width: none;
+    font-size: 16px;
+  }
 }
 
 .setup-page__household,
