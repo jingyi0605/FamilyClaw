@@ -33,8 +33,8 @@
 
 ## 阶段 1：先把标准源和基础规则立起来
 
-- [ ] 1.1 盘点现有 token、单位体系和硬编码样式，明确唯一标准源
-  - 状态：IN_PROGRESS
+- [x] 1.1 盘点现有 token、单位体系和硬编码样式，明确唯一标准源
+  - 状态：DONE
   - 这一 step 到底做什么：把 `user-app` 现有 H5 token、`user-ui` token、`designWidth`、Taro H5 尺寸换算方式、手写 `rem` 和高频硬编码样式一起清点，定出以后到底以哪套为准。
   - 做完你能看到什么：团队不再争论“应该跟 `ThemeProvider` 走还是跟 `user-ui` 走”“这里该写 `rem` 还是 `px`”，文档里有明确答案。
   - 先依赖什么：无
@@ -58,11 +58,16 @@
     - 人工走查文档和目录结构
     - 参考 `docs/20260316-user-app现状样式审计清单.md`
     - 参考 `docs/20260316-H5单位策略与designWidth边界.md`
+  - 本轮结果（2026-03-16）：
+    1. 已补充手写 `rem` 热点清单，确认 `runtime/h5-shell/styles/index.h5.scss`、`pages/setup/index.h5.scss`、`pages/home/index.h5.scss`、`pages/setup/WelcomeStep.css` 是当前主要集中区。
+    2. 已补充 JSX/TS 行内固定尺寸清单，确认 `AppUi.tsx`、`AuthShellPage.tsx`、`MainShellPage.tsx`、`AppShellPage.tsx`、`runtime/guard.tsx`、`setup/index.h5.tsx` 仍在继续走固定像素链路。
+    3. 已补充 token 来源审计，确认当前实际存在三套来源：`packages/user-ui/src/theme/tokens.ts` 的薄 token、`apps/user-app/src/runtime/h5-shell/theme/tokens.ts` 的完整主题 token、`apps/user-app/src/pages/login/theme-presets.ts` 的登录页 preset。
+    4. 已把职责边界写清楚：`packages/user-ui` 作为唯一上游标准源，`apps/user-app/src/runtime/h5-shell/theme` 只保留 H5 主题选择和 CSS 变量映射职责，不再作为 canonical token 定义位置。
   - 对应需求：`requirements.md` 需求 1、需求 5、需求 7
   - 对应设计：`design.md` 2.2、2.3、2.4、3.1、3.5
 
-- [ ] 1.2 建立共享 token 分层，并把 H5 变量映射和单位策略一起收口
-  - 状态：TODO
+- [x] 1.2 建立共享 token 分层，并把 H5 变量映射和单位策略一起收口
+  - 状态：DONE
   - 这一 step 到底做什么：把设计 token、语义 token、H5 变量映射和 H5 单位规则接起来，让共享层真正变成上游。
   - 做完你能看到什么：H5 壳层不再偷偷维护另一套值，页面也不再混着三套尺寸语义写样式。
   - 先依赖什么：1.1
@@ -85,6 +90,16 @@
     - 类型检查
     - 手工检查主题切换
     - 人工检查单位策略说明
+  - 本轮结果（2026-03-16）：
+    1. `packages/user-ui/src/theme/themes.ts` 已承接完整主题定义和 CSS 变量映射 helper，完整主题值不再只留在 H5 私有目录。
+    2. `packages/user-ui/src/theme/tokens.ts` 已拆出 foundation token、semantic token、component token，并保留 `userAppTokens` 兼容出口，避免第一轮就打碎现有页面。
+    3. `apps/user-app/src/runtime/h5-shell/theme/ThemeProvider.tsx` 已改为消费共享主题定义和共享 CSS 变量映射，不再手写一份 H5 专属变量表。
+    4. `apps/user-app/src/runtime/h5-shell/theme/tokens.ts` 已降级为兼容导出层，H5 主题层只保留适配职责。
+    5. `apps/user-app/src/pages/login/theme-presets.ts` 已改为从共享主题派生，第三套登录页 preset 不再手抄 token 值。
+    6. `packages/user-ui/src/components/PageSection.tsx` 与 `packages/user-ui/src/components/StatusCard.tsx` 已改为消费 component token，开始建立共享组件变体链路。
+  - 本轮验证补充：
+    - 已对本轮改动文件执行定向 TypeScript 编译，改动链路本身通过。
+    - 全量 `npm.cmd --prefix apps/user-app run typecheck` 仍被仓库已有的 `apps/user-app/src/pages/family/LegacyFamilyPage.tsx` 语法错误阻断，这不是本轮引入的问题。
   - 对应需求：`requirements.md` 需求 1、需求 5、需求 6
   - 对应设计：`design.md` 2.3、2.4、3.1、3.4、3.5、7
 

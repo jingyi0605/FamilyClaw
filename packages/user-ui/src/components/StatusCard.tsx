@@ -1,12 +1,12 @@
 import { Text, View } from '@tarojs/components';
-import { userAppTokens } from '../theme/tokens';
+import { userAppComponentTokens, userAppSemanticTokens } from '../theme/tokens';
 
 type StatusTone = 'info' | 'success' | 'warning';
 
 const TONE_COLOR: Record<StatusTone, string> = {
-  info: userAppTokens.colorPrimary,
-  success: userAppTokens.colorSuccess,
-  warning: userAppTokens.colorWarning,
+  info: userAppSemanticTokens.action.primary,
+  success: userAppSemanticTokens.state.success,
+  warning: userAppSemanticTokens.state.warning,
 };
 
 type StatusCardProps = {
@@ -16,18 +16,20 @@ type StatusCardProps = {
 };
 
 export function StatusCard({ label, value, tone = 'info' }: StatusCardProps) {
+  const tokens = userAppComponentTokens.statusCard;
+
   return (
     <View
       style={{
-        background: userAppTokens.colorSurfaceMuted,
-        border: `1px solid ${userAppTokens.colorBorder}`,
-        borderRadius: userAppTokens.radiusMd,
-        marginBottom: userAppTokens.spacingXs,
-        padding: userAppTokens.spacingSm,
+        background: tokens.background,
+        border: `1px solid ${tokens.borderColor}`,
+        borderRadius: tokens.radius,
+        marginBottom: tokens.marginBottom,
+        padding: tokens.padding,
       }}
     >
-      <Text style={{ color: userAppTokens.colorMuted, display: 'block', fontSize: '22px' }}>{label}</Text>
-      <Text style={{ color: TONE_COLOR[tone], display: 'block', fontSize: '28px', fontWeight: '600', marginTop: '4px' }}>
+      <Text style={{ color: tokens.labelColor, display: 'block', fontSize: tokens.labelFontSize }}>{label}</Text>
+      <Text style={{ color: TONE_COLOR[tone], display: 'block', fontSize: tokens.valueFontSize, fontWeight: '600', marginTop: tokens.valueMarginTop }}>
         {value}
       </Text>
     </View>

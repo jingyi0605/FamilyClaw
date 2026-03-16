@@ -1,6 +1,6 @@
 import { PropsWithChildren } from 'react';
 import { Text, View } from '@tarojs/components';
-import { userAppTokens } from '../theme/tokens';
+import { userAppComponentTokens } from '../theme/tokens';
 
 type PageSectionProps = PropsWithChildren<{
   title: string;
@@ -8,25 +8,27 @@ type PageSectionProps = PropsWithChildren<{
 }>;
 
 export function PageSection({ title, description, children }: PageSectionProps) {
+  const tokens = userAppComponentTokens.pageSection;
+
   return (
     <View
       style={{
-        background: userAppTokens.colorSurface,
-        border: `1px solid ${userAppTokens.colorBorder}`,
-        borderRadius: userAppTokens.radiusLg,
-        marginBottom: userAppTokens.spacingSm,
-        padding: userAppTokens.spacingMd,
+        background: tokens.background,
+        border: `1px solid ${tokens.borderColor}`,
+        borderRadius: tokens.radius,
+        marginBottom: tokens.marginBottom,
+        padding: tokens.padding,
       }}
     >
-      <Text style={{ color: userAppTokens.colorText, display: 'block', fontSize: '32px', fontWeight: '600' }}>
+      <Text style={{ color: tokens.titleColor, display: 'block', fontSize: tokens.titleFontSize, fontWeight: '600' }}>
         {title}
       </Text>
       {description ? (
-        <Text style={{ color: userAppTokens.colorMuted, display: 'block', fontSize: '24px', marginTop: '8px' }}>
+        <Text style={{ color: tokens.descriptionColor, display: 'block', fontSize: tokens.descriptionFontSize, marginTop: tokens.descriptionMarginTop }}>
           {description}
         </Text>
       ) : null}
-      <View style={{ marginTop: userAppTokens.spacingSm }}>{children}</View>
+      <View style={{ marginTop: tokens.contentMarginTop }}>{children}</View>
     </View>
   );
 }

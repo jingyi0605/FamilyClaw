@@ -60,6 +60,47 @@
 
 这两个看起来都叫 `px`，其实根本不是一回事。
 
+### 5. 手写 `rem` 已经能看出主要集中区
+
+按当前样式文件直接匹配结果，至少有这些热点：
+
+- `apps/user-app/src/runtime/h5-shell/styles/index.h5.scss`
+  - 261 处
+  - 壳层历史样式最大集中区
+- `apps/user-app/src/pages/setup/index.h5.scss`
+  - 41 处
+  - setup H5 页面布局区
+- `apps/user-app/src/pages/home/index.h5.scss`
+  - 24 处
+  - 主要是 `clamp(rem, vw, rem)` 和响应式间距
+- `apps/user-app/src/pages/setup/WelcomeStep.css`
+  - 11 处
+  - 欢迎页动效和按钮字号
+
+这说明一个很直接的事实：
+
+- 现在不是“偶尔有人手滑写了几个 `rem`”
+- 而是壳层和高可见页面里还存在成片的 `rem` 心智
+
+### 6. JSX/TS 固定像素已经形成第二条尺寸链路
+
+当前至少能确认这些入口：
+
+- `apps/user-app/src/components/AppUi.tsx`
+- `apps/user-app/src/components/AuthShellPage.tsx`
+- `apps/user-app/src/components/MainShellPage.tsx`
+- `apps/user-app/src/components/AppShellPage.tsx`
+- `apps/user-app/src/pages/login/index.tsx`
+- `apps/user-app/src/pages/setup/index.h5.tsx`
+- `apps/user-app/src/runtime/guard.tsx`
+
+这类 `'24px'`、`'40px'` 和样式文件里的 `24px` 最大的区别是：
+
+- 样式文件里的 `px` 走设计稿尺寸语义
+- JSX/TS 里的 `'24px'` 是浏览器固定像素
+
+如果不把这条链路单独管住，页面永远会同时吃两套比例。
+
 ## 先回答结论
 
 ### 结论 1：长期继续把问题改成硬编码固定 `px`，不是好路子
@@ -194,13 +235,38 @@
 
 前者至少语义还和当前设计稿尺寸体系一致，后者会继续绑定根字号。
 
+### 规则 5：当前阶段先清边界，不靠改 `designWidth` 救火
+
+基于这轮审计，当前执行顺序必须固定成：
+
+1. 先收口共享 token 和基础组件来源
+2. 先回收新增入口里的手写 `rem` 和行内固定像素
+3. 让 H5 样式文件默认回到“设计稿 `px`”语义
+4. 最后才讨论是否真的存在 `designWidth` 配错
+
+谁要是跳过前 3 步，直接想改 `designWidth`，本质上就是拿全局缩放去掩盖局部语义混乱。
+
+### 规则 6：允许保留的例外必须能说清楚，不许装默认写法
+
+当前可以接受的临时例外只有三类：
+
+- 壳层历史包袱，已经确认短期迁不掉，但必须留注释
+- 第三方 DOM 或浏览器行为强绑定，确实需要固定浏览器像素
+- 明确的响应式视口表达，用 `clamp(px, vw, px)` 这类可解释写法
+
+当前不再接受的伪例外：
+
+- “这个页面以前就是这么写的，所以继续写 `rem`”
+- “这里只是几个 `'24px'`，先凑合”
+- “先把 `designWidth` 改了看看”
+
 ## 对后续实现的直接影响
 
 接下来真要开始改代码，优先顺序应该是：
 
 1. 先审计手写 `rem`
 2. 再审计 JSX/TS 里的固定像素
-3. 先把共享 token 和基础组件收口
+3. 先把共享 token 和基础组件收口，并明确 `packages/user-ui` 与 H5 主题层边界
 4. 再迁移 `AppUi.tsx`、壳层和高频页面
 5. 最后再决定要不要动 `designWidth`
 
