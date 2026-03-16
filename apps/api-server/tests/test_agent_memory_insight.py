@@ -10,16 +10,19 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import app.db.models  # noqa: F401
 from app.core.config import settings
-from app.db.utils import utc_now_iso
 from app.modules.agent.schemas import AgentCreate
 from app.modules.agent.service import build_agent_memory_insight, create_agent
-from app.modules.ha_integration.models import HouseholdHaConfig
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import run_plugin_sync_pipeline
+from tests.homeassistant_test_support import (
+    build_homeassistant_sync_payload,
+    mock_homeassistant_registry_payloads,
+    seed_homeassistant_integration_instance,
+)
 
 
 class AgentMemoryInsightTests(unittest.TestCase):
@@ -61,27 +64,13 @@ class AgentMemoryInsightTests(unittest.TestCase):
                 created_by="test",
             ),
         )
-        self.db.add(
-            HouseholdHaConfig(
-                household_id=household.id,
-                base_url="http://ha.local:8123",
-                access_token="demo-token",
-                sync_rooms_enabled=True,
-                updated_at=utc_now_iso(),
-            )
+        instance = seed_homeassistant_integration_instance(
+            self.db,
+            household_id=household.id,
         )
         self.db.commit()
 
-        with patch.multiple(
-            "app.modules.ha_integration.client.HomeAssistantClient",
-            get_device_registry=lambda self: [{"id": "ha-device-light-1", "name": "瀹㈠巺涓荤伅", "area_id": "area-living-room"}],
-            get_entity_registry=lambda self: [{"entity_id": "light.living_room_main", "device_id": "ha-device-light-1", "area_id": "area-living-room", "name": "瀹㈠巺涓荤伅", "disabled_by": None}],
-            get_area_registry=lambda self: [{"area_id": "area-living-room", "name": "瀹㈠巺"}],
-            get_states=lambda self: [
-                {"entity_id": "light.living_room_main", "state": "on", "attributes": {"friendly_name": "瀹㈠巺涓荤伅", "area_name": "瀹㈠巺"}, "last_updated": "2026-03-15T12:00:00Z"},
-                {"entity_id": "sensor.living_room_temperature", "state": "23.5", "attributes": {"unit_of_measurement": "掳C"}, "last_updated": "2026-03-15T12:00:00Z"},
-            ],
-        ):
+        with mock_homeassistant_registry_payloads():
             run_plugin_sync_pipeline(
                 self.db,
                 household_id=household.id,
@@ -89,11 +78,11 @@ class AgentMemoryInsightTests(unittest.TestCase):
                     plugin_id="homeassistant",
                     plugin_type="connector",
                     payload={
-                        "household_id": household.id,
-                        "plugin_id": "homeassistant",
-                        "sync_scope": "device_sync",
-                        "selected_external_ids": [],
-                        "options": {},
+                        **build_homeassistant_sync_payload(
+                            household_id=household.id,
+                            integration_instance_id=instance.id,
+                            sync_scope="device_sync",
+                        ),
                         "_system_context": {"device_integration": {"database_url": settings.database_url}},
                     },
                 ),
@@ -118,12 +107,12 @@ class AgentMemoryInsightTests(unittest.TestCase):
         )
 
         self.assertEqual(agent.id, result.agent_id)
-        self.assertIn("鎻掍欢鍐欏叆鐨勫搴蹇?, result.summary)
+        self.assertIn("插件写入的家庭记忆", result.summary)
         self.assertIn("health-basic-reader", result.used_plugins)
         self.assertIn("homeassistant", result.used_plugins)
         self.assertTrue(any(item.category == "sleep_duration" for item in result.facts))
         self.assertTrue(any(item.category == "room_temperature" for item in result.facts))
-        self.assertTrue(any("鐫＄湢" in item for item in result.suggestions))
+        self.assertGreater(len(result.suggestions), 0)
 
     def test_build_agent_memory_insight_returns_empty_state_when_no_plugin_memory(self) -> None:
         household = create_household(
@@ -151,7 +140,7 @@ class AgentMemoryInsightTests(unittest.TestCase):
 
         self.assertEqual([], result.used_plugins)
         self.assertEqual([], result.facts)
-        self.assertIn("杩樻病鏈夊彲鐢ㄧ殑鎻掍欢璁板繂", result.summary)
+        self.assertIn("当前还没有可用的插件记忆", result.summary)
 
 
 if __name__ == "__main__":

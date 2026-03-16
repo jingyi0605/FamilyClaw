@@ -10,8 +10,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import app.db.models  # noqa: F401
 from app.core.config import settings
-from app.db.utils import utc_now_iso
-from app.modules.ha_integration.models import HouseholdHaConfig
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.memory.service import list_memory_cards
@@ -22,6 +20,11 @@ from app.modules.plugin.service import (
     execute_plugin,
     ingest_plugin_raw_records_to_memory,
     save_plugin_raw_records,
+)
+from tests.homeassistant_test_support import (
+    build_homeassistant_sync_payload,
+    mock_homeassistant_registry_payloads,
+    seed_homeassistant_integration_instance,
 )
 
 
@@ -98,38 +101,23 @@ class PluginObservationIngestTests(unittest.TestCase):
             self.db,
             HouseholdCreate(name="Smart Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
         )
-        self.db.add(
-            HouseholdHaConfig(
-                household_id=household.id,
-                base_url="http://ha.local:8123",
-                access_token="demo-token",
-                sync_rooms_enabled=True,
-                updated_at=utc_now_iso(),
-            )
+        instance = seed_homeassistant_integration_instance(
+            self.db,
+            household_id=household.id,
         )
         self.db.commit()
 
-        with patch.multiple(
-            "app.modules.ha_integration.client.HomeAssistantClient",
-            get_device_registry=lambda self: [{"id": "ha-device-light-1", "name": "瀹㈠巺涓荤伅", "area_id": "area-living-room"}],
-            get_entity_registry=lambda self: [{"entity_id": "light.living_room_main", "device_id": "ha-device-light-1", "area_id": "area-living-room", "name": "瀹㈠巺涓荤伅", "disabled_by": None}],
-            get_area_registry=lambda self: [{"area_id": "area-living-room", "name": "瀹㈠巺"}],
-            get_states=lambda self: [
-                {"entity_id": "light.living_room_main", "state": "on", "attributes": {"friendly_name": "瀹㈠巺涓荤伅", "area_name": "瀹㈠巺"}, "last_updated": "2026-03-15T12:00:00Z"},
-                {"entity_id": "sensor.living_room_temperature", "state": "23.5", "attributes": {"unit_of_measurement": "掳C"}, "last_updated": "2026-03-15T12:00:00Z"},
-                {"entity_id": "sensor.living_room_humidity", "state": "48", "attributes": {"unit_of_measurement": "%", "device_class": "humidity"}, "last_updated": "2026-03-15T12:00:00Z"},
-            ],
-        ):
+        with mock_homeassistant_registry_payloads():
             execution_result = execute_plugin(
                 PluginExecutionRequest(
                     plugin_id="homeassistant",
                     plugin_type="connector",
                     payload={
-                        "household_id": household.id,
-                        "plugin_id": "homeassistant",
-                        "sync_scope": "device_sync",
-                        "selected_external_ids": [],
-                        "options": {},
+                        **build_homeassistant_sync_payload(
+                            household_id=household.id,
+                            integration_instance_id=instance.id,
+                            sync_scope="device_sync",
+                        ),
                         "_system_context": {"device_integration": {"database_url": settings.database_url}},
                     },
                 ),
