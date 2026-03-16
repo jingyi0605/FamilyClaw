@@ -126,6 +126,11 @@ input, select, textarea {
   z-index: 1;
 }
 
+/* 助手页特殊处理：只移除底部 padding */
+.app-layout__main:has(.page--assistant) {
+  padding-bottom: 0;
+}
+
 /* 导航收起模式 */
 .app-layout--nav-collapsed .app-layout__main {
   padding-left: calc(60px + var(--app-main-gutter));
@@ -2194,7 +2199,7 @@ input, select, textarea {
   flex-direction: column;
   max-width: var(--page-content-max-width);
   margin: 0 auto;
-  height: calc(100vh - 60px);
+  height: calc(100vh - clamp(1.25rem, 2vw, 2rem));
   overflow: hidden;
   --assistant-header-bar-height: 70px;
 
@@ -5511,6 +5516,7 @@ body::before {
   .page--assistant {
     margin: calc(-1 * var(--spacing-md));
     height: calc(100vh - 60px);
+    max-height: calc(100vh - 60px);
     /* Adjust for bottom nav */
     position: relative;
     overflow: hidden;

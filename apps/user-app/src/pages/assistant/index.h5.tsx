@@ -366,7 +366,13 @@ function AssistantPageContent() {
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
-    container.scrollTop = container.scrollHeight;
+    // 使用平滑滚动，并在下一帧执行确保 DOM 已更新
+    requestAnimationFrame(() => {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'smooth',
+      });
+    });
   }, [activeSessionDetail?.messages, activeSessionDetail?.action_records]);
 
   useEffect(() => {
