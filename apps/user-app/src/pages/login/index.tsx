@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Button, Form, Input, Text, View } from '@tarojs/components';
+import { Form, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import { PageSection } from '@familyclaw/user-ui';
+import { FormField, PageSection, UiButton, UiInput, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
 import { AppShellPage } from '../../components/AppShellPage';
 import { GuardedPage, useAuthContext, useI18n } from '../../runtime';
 
@@ -26,48 +26,30 @@ function NativeLoginPageContent() {
     <AppShellPage>
       <PageSection title={t('login.title')} description={t('login.formSubtitle')}>
         <Form onSubmit={handleSubmit}>
-          <View style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-            <Text style={{ color: '#1f2937', fontSize: '14px', fontWeight: '600' }}>
-              {t('login.username')}
-            </Text>
-            <Input
-              value={username}
-              type="text"
-              placeholder={t('login.usernamePlaceholder')}
-              onInput={event => setUsername(event.detail.value)}
-              style={{
-                background: '#ffffff',
-                border: '1px solid #d8dee9',
-                borderRadius: '12px',
-                padding: '14px 16px',
-                fontSize: '16px',
-              }}
-            />
-            <Text style={{ color: '#1f2937', fontSize: '14px', fontWeight: '600' }}>
-              {t('login.password')}
-            </Text>
-            <Input
-              value={password}
-              type="text"
-              password
-              placeholder={t('login.passwordPlaceholder')}
-              onInput={event => setPassword(event.detail.value)}
-              style={{
-                background: '#ffffff',
-                border: '1px solid #d8dee9',
-                borderRadius: '12px',
-                padding: '14px 16px',
-                fontSize: '16px',
-              }}
-            />
+          <View style={{ display: 'flex', flexDirection: 'column', gap: userAppFoundationTokens.spacing.md }}>
+            <FormField label={t('login.username')}>
+              <UiInput
+                value={username}
+                placeholder={t('login.usernamePlaceholder')}
+                onInput={setUsername}
+              />
+            </FormField>
+            <FormField label={t('login.password')}>
+              <UiInput
+                value={password}
+                password
+                placeholder={t('login.passwordPlaceholder')}
+                onInput={setPassword}
+              />
+            </FormField>
             {loginError ? (
-              <Text style={{ color: '#c2410c', display: 'block', fontSize: '24px' }}>
+              <UiText tone="warning">
                 {loginError}
-              </Text>
+              </UiText>
             ) : null}
-            <Button formType="submit" loading={loginPending} disabled={loginPending || !username.trim() || !password}>
+            <UiButton formType="submit" loading={loginPending} disabled={loginPending || !username.trim() || !password}>
               {loginPending ? t('login.loggingIn') : t('login.submit')}
-            </Button>
+            </UiButton>
           </View>
         </Form>
       </PageSection>

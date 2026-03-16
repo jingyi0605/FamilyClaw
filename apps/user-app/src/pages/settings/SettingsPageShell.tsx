@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
+import { PageHeader } from '@familyclaw/user-ui';
 import { useI18n } from '../../runtime/h5-shell';
-import { PageHeader } from '../family/base';
 import { SettingsNav, type SettingsNavKey } from './SettingsNav';
 
 export function SettingsPageShell(props: {

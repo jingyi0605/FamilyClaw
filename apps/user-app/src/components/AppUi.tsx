@@ -3,6 +3,7 @@ import { type CSSProperties, type PropsWithChildren } from 'react';
 import {
   EmptyStateCard as SharedEmptyStateCard,
   FormField as SharedFormField,
+  userAppFoundationTokens,
   UiButton,
   UiInput,
   UiText,
@@ -36,7 +37,7 @@ export function SectionNote({
   };
 
   return (
-    <UiText variant="body" tone={toneMap[tone]} style={{ fontSize: '24px' }}>
+    <UiText variant="body" tone={toneMap[tone]}>
       {children}
     </UiText>
   );
@@ -62,26 +63,12 @@ export function TextInput(props: {
   onInput: (value: string) => void;
   style?: CSSProperties;
 }) {
-  return (
-    <UiInput
-      value={props.value}
-      placeholder={props.placeholder}
-      password={props.password}
-      disabled={props.disabled}
-      onInput={props.onInput}
-      style={{
-        fontSize: '26px',
-        minHeight: '44px',
-        padding: '10px 14px',
-        ...props.style,
-      }}
-    />
-  );
+  return <UiInput value={props.value} placeholder={props.placeholder} password={props.password} disabled={props.disabled} onInput={props.onInput} style={props.style} />;
 }
 
 export function OptionPills<T extends string>({ value, options, disabled, onChange }: OptionPillsProps<T>) {
   return (
-    <View style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '10px' }}>
+    <View style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: userAppFoundationTokens.spacing.xs }}>
       {options.map(option => {
         const active = option.value === value;
         return (
@@ -91,10 +78,6 @@ export function OptionPills<T extends string>({ value, options, disabled, onChan
             onClick={() => onChange(option.value)}
             size="sm"
             variant={active ? 'primary' : 'secondary'}
-            style={{
-              fontSize: '22px',
-              padding: '0 10px',
-            }}
           >
             {option.label}
           </UiButton>
@@ -106,7 +89,7 @@ export function OptionPills<T extends string>({ value, options, disabled, onChan
 
 export function ActionRow({ children }: PropsWithChildren) {
   return (
-    <View style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
+    <View style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: userAppFoundationTokens.spacing.sm }}>
       {children}
     </View>
   );
@@ -117,11 +100,7 @@ export function PrimaryButton({
   disabled,
   onClick,
 }: PropsWithChildren<{ disabled?: boolean; onClick?: () => void }>) {
-  return (
-    <UiButton disabled={disabled} onClick={onClick} style={{ fontSize: '24px' }}>
-      {children}
-    </UiButton>
-  );
+  return <UiButton disabled={disabled} onClick={onClick}>{children}</UiButton>;
 }
 
 export function SecondaryButton({
@@ -129,11 +108,7 @@ export function SecondaryButton({
   disabled,
   onClick,
 }: PropsWithChildren<{ disabled?: boolean; onClick?: () => void }>) {
-  return (
-    <UiButton variant="secondary" disabled={disabled} onClick={onClick} style={{ fontSize: '24px' }}>
-      {children}
-    </UiButton>
-  );
+  return <UiButton variant="secondary" disabled={disabled} onClick={onClick}>{children}</UiButton>;
 }
 
 export function EmptyStateCard(props: EmptyStateCardProps) {

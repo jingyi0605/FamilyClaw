@@ -1,6 +1,7 @@
 import { PropsWithChildren, useEffect, useMemo, useRef } from 'react';
-import { Button, Text, View } from '@tarojs/components';
+import { View } from '@tarojs/components';
 import Taro, { useRouter } from '@tarojs/taro';
+import { UiButton, UiCard, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
 import { AppShellPage } from '../components/AppShellPage';
 import { useAuthContext } from './auth';
 import { AppLayoutShell } from './h5-shell';
@@ -300,23 +301,24 @@ export function GuardedPage(props: PropsWithChildren<{ mode: GuardMode; path: st
 
   return (
     <AppShellPage>
-      <View
+      <UiCard
         style={{
           minHeight: '60vh',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
-          gap: '16px',
-          padding: '24px',
+          gap: userAppFoundationTokens.spacing.md,
         }}
       >
-        <Text style={{ fontSize: '28px', color: '#1f2937', lineHeight: '1.7' }}>
+        <UiText variant="body">
           {guardResult.message}
-        </Text>
+        </UiText>
         {guardResult.kind === 'error' && guardResult.onRetry ? (
-          <Button onClick={() => guardResult.onRetry?.()}>重试</Button>
+          <View>
+            <UiButton onClick={() => guardResult.onRetry?.()}>重试</UiButton>
+          </View>
         ) : null}
-      </View>
+      </UiCard>
     </AppShellPage>
   );
 }

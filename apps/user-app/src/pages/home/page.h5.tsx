@@ -1,344 +1,689 @@
-import { useCallback, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useRef, useState, type DragEvent, type ReactNode } from 'react';
 import Taro from '@tarojs/taro';
+import { EmptyStateCard, UiCard } from '@familyclaw/user-ui';
 import {
-  Airplay,
-  BarChart2,
+  Activity,
+  AlertTriangle,
+  ArrowRight,
   BookOpenText,
   Bot,
-  ClipboardList,
+  CalendarClock,
+  CheckCircle2,
   CloudSun,
-  Droplets,
+  ClipboardList,
+  GripVertical,
   Home,
-  Lightbulb,
-  Lock,
+  Info,
+  LayoutGrid,
+  ListChecks,
   MessageSquareText,
+  Plus,
   Settings,
   ShieldCheck,
   Smartphone,
+  Sparkles,
   Sun,
-  Thermometer,
-  Umbrella,
+  TriangleAlert,
   User,
   Users,
   Wind,
-  Zap,
+  X,
 } from 'lucide-react';
 import './index.h5.scss';
 import { useI18n } from '../../runtime/h5-shell';
 import type { ShellMessageKey } from '../../runtime/h5-shell/i18n/I18nProvider';
 import {
-  DEFAULT_LAYOUT,
-  STORAGE_KEY,
-  type CardType,
-  type DashboardData,
-  formatAutomationLevel,
-  formatHomeAssistantStatus,
-  formatMode,
-  formatPrivacyMode,
+  buildCardMap,
+  buildVisibleLayoutItems,
   formatRelativeTime,
-  getMemberCards,
-  getRoomCards,
+  resolveCardLabel,
   useHomeDashboardData,
+  type HomeDashboardCardActionRead,
+  type HomeDashboardCardRead,
+  type MemberDashboardLayoutItem,
 } from './page.shared';
 
-type DashboardCard = {
-  type: CardType;
-  label: string;
-  icon: React.ReactNode;
-  width: 'half' | 'full';
+type DashboardPayloadItem = Record<string, unknown>;
+type MemberBadgeTone = 'home' | 'away' | 'resting';
+type DashboardLayoutOption<T extends string> = {
+  value: T;
+  labelKey: ShellMessageKey;
 };
 
-function getStoredLayout(): CardType[] {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return JSON.parse(stored) as CardType[];
-  } catch {
-    // noop
-  }
-  return DEFAULT_LAYOUT;
-}
+const DASHBOARD_WIDTH_OPTIONS: Array<DashboardLayoutOption<MemberDashboardLayoutItem['size']>> = [
+  { value: 'half', labelKey: 'home.cardWidth.half' },
+  { value: 'full', labelKey: 'home.cardWidth.full' },
+];
+
+const DASHBOARD_HEIGHT_OPTIONS: Array<DashboardLayoutOption<MemberDashboardLayoutItem['height']>> = [
+  { value: 'compact', labelKey: 'home.cardHeight.compact' },
+  { value: 'regular', labelKey: 'home.cardHeight.regular' },
+  { value: 'tall', labelKey: 'home.cardHeight.tall' },
+];
 
 function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`card ${className}`}>{children}</div>;
-}
-
-function StatCard({ icon, label, value, color }: { icon: ReactNode; label: string; value: string | number; color?: string }) {
-  return (
-    <div className="stat-card" style={color ? ({ ['--stat-accent' as string]: color }) : undefined}>
-      <div className="stat-card__icon">{icon}</div>
-      <div className="stat-card__info">
-        <span className="stat-card__value">{value}</span>
-        <span className="stat-card__label">{label}</span>
-      </div>
-    </div>
-  );
+  return <UiCard className={`card ${className}`.trim()}>{children}</UiCard>;
 }
 
 function EmptyState({ icon, title, description, action }: { icon?: ReactNode; title: string; description?: string; action?: ReactNode }) {
+  return <EmptyStateCard className="empty-state" icon={icon} title={title} description={description ?? ''} action={action} />;
+}
+
+function getTemplateIcon(card: HomeDashboardCardRead) {
+  switch (card.template_type) {
+    case 'metric':
+      return <Activity size={18} />;
+    case 'status_list':
+      return <LayoutGrid size={18} />;
+    case 'timeline':
+      return <CalendarClock size={18} />;
+    case 'insight':
+      return <Sparkles size={18} />;
+    case 'action_group':
+      return <ListChecks size={18} />;
+    default:
+      return <Info size={18} />;
+  }
+}
+
+function getStateToneClass(state: HomeDashboardCardRead['state']) {
+  switch (state) {
+    case 'ready':
+      return 'is-ready';
+    case 'stale':
+      return 'is-stale';
+    case 'error':
+      return 'is-error';
+    case 'empty':
+      return 'is-empty';
+    default:
+      return 'is-empty';
+  }
+}
+
+function getStateLabel(state: HomeDashboardCardRead['state'], t: (key: ShellMessageKey) => string) {
+  switch (state) {
+    case 'ready':
+      return t('home.cardState.ready');
+    case 'stale':
+      return t('home.cardState.stale');
+    case 'error':
+      return t('home.cardState.error');
+    case 'empty':
+      return t('home.cardState.empty');
+  }
+}
+
+function isBuiltinCard(card: HomeDashboardCardRead) {
+  return card.source_type === 'builtin' && card.card_ref.startsWith('builtin:');
+}
+
+function getPayloadItems(card: HomeDashboardCardRead): DashboardPayloadItem[] {
+  return Array.isArray(card.payload.items) ? card.payload.items.filter(item => typeof item === 'object' && item !== null) as DashboardPayloadItem[] : [];
+}
+
+function getPayloadText(value: unknown, fallback = '') {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  return fallback;
+}
+
+function resolveActionByKey(card: HomeDashboardCardRead, actionKey: string | undefined) {
+  if (!actionKey) {
+    return null;
+  }
+  return card.actions.find(item => item.action_key === actionKey) ?? null;
+}
+
+async function handleCardAction(action: HomeDashboardCardActionRead, t: (key: ShellMessageKey) => string) {
+  if (action.action_type === 'navigate' && action.target) {
+    await Taro.navigateTo({ url: action.target });
+    return;
+  }
+
+  if (action.action_type === 'open_plugin_detail') {
+    await Taro.navigateTo({ url: '/pages/settings/index' });
+    return;
+  }
+
+  await Taro.showToast({
+    title: t('home.pluginActionPending'),
+    icon: 'none',
+  });
+}
+
+function getBuiltinStatIcon(title: string) {
+  if (title.includes('成员')) {
+    return <Users size={20} />;
+  }
+  if (title.includes('房间')) {
+    return <Home size={20} />;
+  }
+  if (title.includes('设备')) {
+    return <Smartphone size={20} />;
+  }
+  if (title.includes('提醒') || title.includes('事件')) {
+    return <ClipboardList size={20} />;
+  }
+  return <Activity size={20} />;
+}
+
+function getQuickActionIcon(actionKey: string, label: string) {
+  if (actionKey === 'assistant' || label.includes('对话')) {
+    return <MessageSquareText size={16} />;
+  }
+  if (actionKey === 'memories' || label.includes('记忆')) {
+    return <BookOpenText size={16} />;
+  }
+  if (actionKey === 'settings' || label.includes('设置')) {
+    return <Settings size={16} />;
+  }
+  if (actionKey === 'family' || label.includes('家庭')) {
+    return <Users size={16} />;
+  }
+  return <ArrowRight size={16} />;
+}
+
+function getWeatherDetailIcon(detail: string) {
+  if (detail.includes('隐私')) {
+    return <ShieldCheck size={16} />;
+  }
+  if (detail.includes('自动化')) {
+    return <Wind size={16} />;
+  }
+  if (detail.includes('安静')) {
+    return <CalendarClock size={16} />;
+  }
+  if (detail.includes('提醒')) {
+    return <ClipboardList size={16} />;
+  }
+  return <Info size={16} />;
+}
+
+function splitHighlight(detail: string) {
+  const parts = detail.split(/[:：]/);
+  if (parts.length >= 2) {
+    return {
+      label: parts[0]?.trim() ?? '',
+      value: parts.slice(1).join('：').trim(),
+    };
+  }
+  return {
+    label: detail,
+    value: '',
+  };
+}
+
+function getMemberBadgeTone(value: string): MemberBadgeTone {
+  if (value.includes('在家')) {
+    return 'home';
+  }
+  if (value.includes('休息') || value.includes('睡')) {
+    return 'resting';
+  }
+  return 'away';
+}
+
+function DashboardCardState({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  if (card.state === 'ready') {
+    return null;
+  }
+
+  const Icon = card.state === 'error' ? TriangleAlert : card.state === 'stale' ? AlertTriangle : Info;
+  const messageKey =
+    card.state === 'error'
+      ? 'home.cardHint.error'
+      : card.state === 'stale'
+        ? 'home.cardHint.stale'
+        : 'home.cardHint.empty';
+
   return (
-    <div className="empty-state">
-      {icon && <div className="empty-state__icon">{icon}</div>}
-      <h3 className="empty-state__title">{title}</h3>
-      {description && <p className="empty-state__desc">{description}</p>}
-      {action && <div className="empty-state__action">{action}</div>}
+    <div className={`dashboard-card__state ${getStateToneClass(card.state)}`}>
+      <Icon size={16} />
+      <span>{t(messageKey)}</span>
     </div>
   );
 }
 
-function WeatherCard({ data }: { data: DashboardData }) {
-  const membersAtHome = data.overview?.member_states.filter(item => item.presence === 'home').length ?? 0;
-  const onlineDevices = data.overview?.device_summary.active ?? data.devices.filter(item => item.status === 'active').length;
-  const reminderCount = data.reminders?.pending_runs ?? 0;
+function DashboardCardHeader({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  return (
+    <div className="dashboard-card__header">
+      <div>
+        <div className="dashboard-card__title">
+          {getTemplateIcon(card)}
+          <span>{card.title}</span>
+        </div>
+        {card.subtitle ? <p className="dashboard-card__subtitle">{card.subtitle}</p> : null}
+      </div>
+      <span className={`dashboard-state-chip ${getStateToneClass(card.state)}`}>{getStateLabel(card.state, t)}</span>
+    </div>
+  );
+}
+
+function DashboardTemplateBody({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  if (card.template_type === 'metric') {
+    return (
+      <div className="dashboard-metric">
+        <div className="dashboard-metric__value">
+          <span>{getPayloadText(card.payload.value, '-')}</span>
+          {card.payload.unit ? <small>{getPayloadText(card.payload.unit)}</small> : null}
+        </div>
+        {card.payload.context ? <p className="dashboard-card__hint">{getPayloadText(card.payload.context)}</p> : null}
+        {card.payload.trend && typeof card.payload.trend === 'object' ? (
+          <div className="dashboard-card__meta">
+            <CheckCircle2 size={14} />
+            <span>{getPayloadText((card.payload.trend as Record<string, unknown>).label)}</span>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (card.template_type === 'insight') {
+    const highlights = Array.isArray(card.payload.highlights) ? card.payload.highlights : [];
+    return (
+      <div className="dashboard-insight">
+        <p className="dashboard-insight__message">{getPayloadText(card.payload.message, t('home.cardHint.empty'))}</p>
+        {highlights.length > 0 ? (
+          <div className="dashboard-tag-list">
+            {highlights.map(item => (
+              <span key={String(item)} className="dashboard-tag">
+                {String(item)}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (card.template_type === 'action_group') {
+    const items = getPayloadItems(card);
+    return (
+      <div className="dashboard-action-list">
+        {items.map(item => {
+          const action = resolveActionByKey(card, getPayloadText(item.action_key));
+          return (
+            <button
+              key={`${card.card_ref}-${getPayloadText(item.label)}`}
+              className="dashboard-action-button"
+              type="button"
+              disabled={!action}
+              onClick={() => action ? void handleCardAction(action, t) : undefined}
+            >
+              <div>
+                <strong>{getPayloadText(item.label)}</strong>
+                {item.description ? <span>{getPayloadText(item.description)}</span> : null}
+              </div>
+              <ArrowRight size={16} />
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const items = getPayloadItems(card);
+  if (card.template_type === 'timeline') {
+    return (
+      <div className="dashboard-list">
+        {items.map(item => (
+          <div key={`${card.card_ref}-${getPayloadText(item.title)}`} className="dashboard-list__item">
+            <div>
+              <strong>{getPayloadText(item.title)}</strong>
+              {item.description ? <p>{getPayloadText(item.description)}</p> : null}
+            </div>
+            <span>{formatRelativeTime(getPayloadText(item.timestamp))}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
-    <Card className="dashboard-card weather-card animate-card">
+    <div className="dashboard-list">
+      {items.map(item => (
+        <div key={`${card.card_ref}-${getPayloadText(item.title)}`} className="dashboard-list__item">
+          <div>
+            <strong>{getPayloadText(item.title)}</strong>
+            {item.subtitle ? <p>{getPayloadText(item.subtitle)}</p> : null}
+          </div>
+          {item.value ? <span>{getPayloadText(item.value)}</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BuiltinWeatherCard({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  const message = getPayloadText(card.payload.message, t('home.cardHint.empty'));
+  const messageParts = message
+    .split(/[，。]/)
+    .map(part => part.trim())
+    .filter(Boolean);
+  const headline = messageParts[0] ?? card.title;
+  const description = messageParts.slice(1).join('，') || card.subtitle || t('home.cardHint.empty');
+  const highlights = Array.isArray(card.payload.highlights) ? card.payload.highlights.map(item => String(item)) : [];
+
+  return (
+    <Card className={`dashboard-card weather-card ${getStateToneClass(card.state)}`}>
       <div className="weather-card__main">
         <div className="weather-card__icon-area">
           <span className="weather-icon-animated">
-            <span className="weather-sun"><Sun size={48} className="weather-sun__icon" /></span>
-            <span className="weather-cloud"><CloudSun size={32} className="weather-cloud__icon" /></span>
+            <span className="weather-sun"><Sun size={48} className="text-warning" /></span>
+            <span className="weather-cloud"><CloudSun size={32} /></span>
           </span>
         </div>
-        <div className="weather-card__temp">
-          <span className="weather-temp-value">{formatMode(data.overview?.home_mode)}</span>
-          <span className="weather-temp-desc">{formatHomeAssistantStatus(data.overview?.home_assistant_status)}</span>
+        <div className="weather-card__summary">
+          <span className="weather-temp-value">{headline}</span>
+          <span className="weather-temp-desc">{description}</span>
         </div>
       </div>
-      <div className="weather-card__details">
-        <div className="weather-detail">
-          <span className="weather-detail__icon"><Droplets size={16} /></span>
-          <span>隐私 {formatPrivacyMode(data.overview?.privacy_mode)}</span>
+      <DashboardCardState card={card} t={t} />
+      {highlights.length > 0 ? (
+        <div className="weather-card__details">
+          {highlights.slice(0, 4).map(detail => (
+            <div key={detail} className="weather-detail">
+              <span className="weather-detail__icon">{getWeatherDetailIcon(detail)}</span>
+              <span>{detail}</span>
+            </div>
+          ))}
         </div>
-        <div className="weather-detail">
-          <span className="weather-detail__icon"><Wind size={16} /></span>
-          <span>自动化 {formatAutomationLevel(data.overview?.automation_level)}</span>
+      ) : null}
+      {highlights.length > 0 ? (
+        <div className="weather-card__forecast">
+          {highlights.slice(0, 3).map(detail => {
+            const { label, value } = splitHighlight(detail);
+            return (
+              <div key={`forecast-${detail}`} className="weather-forecast-item">
+                <span className="weather-forecast-day">{label}</span>
+                <span className="weather-forecast-temp">{value || label}</span>
+              </div>
+            );
+          })}
         </div>
-        <div className="weather-detail">
-          <span className="weather-detail__icon"><Thermometer size={16} /></span>
-          <span>{data.overview?.quiet_hours_enabled ? `安静时段 ${data.overview.quiet_hours_start}-${data.overview.quiet_hours_end}` : '未开启安静时段'}</span>
-        </div>
-        <div className="weather-detail">
-          <span className="weather-detail__icon"><Umbrella size={16} /></span>
-          <span>{data.overview?.guest_mode_enabled ? '访客模式已开启' : '访客模式未开启'}</span>
-        </div>
-      </div>
-      <div className="weather-card__forecast">
-        <div className="weather-forecast-item">
-          <span className="weather-forecast-day">在家成员</span>
-          <div className="weather-forecast-value">
-            <span className="weather-forecast-icon"><Users size={18} /></span>
-            <span className="weather-forecast-temp">{membersAtHome}</span>
-          </div>
-        </div>
-        <div className="weather-forecast-item">
-          <span className="weather-forecast-day">在线设备</span>
-          <div className="weather-forecast-value">
-            <span className="weather-forecast-icon"><Smartphone size={18} /></span>
-            <span className="weather-forecast-temp">{onlineDevices}</span>
-          </div>
-        </div>
-        <div className="weather-forecast-item">
-          <span className="weather-forecast-day">待处理提醒</span>
-          <div className="weather-forecast-value">
-            <span className="weather-forecast-icon"><ClipboardList size={18} /></span>
-            <span className="weather-forecast-temp">{reminderCount}</span>
-          </div>
-        </div>
-      </div>
+      ) : null}
     </Card>
   );
 }
 
-function AiSummaryCard({ data }: { data: DashboardData }) {
-  const insightMessages = data.overview?.insights.slice(0, 2).map(item => item.message) ?? [];
-  const summaryText = insightMessages.length > 0
-    ? insightMessages.join(' ')
-    : '当前还没有新的家庭洞察，系统会在拿到更多上下文后更新这里。';
+function BuiltinStatsCard({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  const items = getPayloadItems(card);
 
   return (
-    <Card className="dashboard-card ai-summary-card animate-card">
-      <div className="ai-summary-card__header">
-        <span className="ai-summary-card__icon pulse-glow"><Bot size={24} className="text-brand-primary" /></span>
-        <h3>AI 今日摘要</h3>
+    <div className="stats-section">
+      <div className="stats-section__header">
+        <div>
+          <h3 className="stats-section__title">{card.title}</h3>
+          {card.subtitle ? <p className="stats-section__subtitle">{card.subtitle}</p> : null}
+        </div>
+        <span className={`dashboard-state-chip ${getStateToneClass(card.state)}`}>{getStateLabel(card.state, t)}</span>
       </div>
-      <p className="ai-summary-card__text">{summaryText}</p>
-      <div className="ai-summary-card__tags">
-        <span className="ai-tag flex items-center gap-1"><ClipboardList size={12} /> {data.reminders?.pending_runs ?? 0} 条待处理提醒</span>
-        <span className="ai-tag flex items-center gap-1"><BookOpenText size={12} /> {data.overview?.member_states.length ?? 0} 位成员已纳入上下文</span>
-        <span className="ai-tag flex items-center gap-1"><ShieldCheck size={12} /> {data.overview?.insights.filter(item => item.tone === 'warning' || item.tone === 'danger').length ?? 0} 条需关注洞察</span>
+      <DashboardCardState card={card} t={t} />
+      <div className="stats-grid">
+        {items.map(item => (
+          <div key={`${card.card_ref}-${getPayloadText(item.title)}`} className="dashboard-stat-card">
+            <span className={`dashboard-stat-card__icon dashboard-stat-card__icon--${getPayloadText(item.tone, 'info')}`}>
+              {getBuiltinStatIcon(getPayloadText(item.title))}
+            </span>
+            <div className="dashboard-stat-card__content">
+              <strong>{getPayloadText(item.value, '0')}</strong>
+              <span>{getPayloadText(item.title)}</span>
+            </div>
+          </div>
+        ))}
       </div>
-    </Card>
+    </div>
   );
 }
 
-function DevicesCard({ data }: { data: DashboardData }) {
-  const topDevices = data.devices.slice(0, 4);
-
+function BuiltinRoomsCard({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  const items = getPayloadItems(card);
   return (
-    <Card className="dashboard-card animate-card">
-      <h3 className="dashboard-card__title flex items-center gap-2"><Smartphone size={20} /> 设备状态</h3>
-      <div className="device-status-grid">
-        {topDevices.length > 0 ? topDevices.map(device => {
-          const isOff = device.status !== 'active';
-          const icon = device.device_type === 'lock'
-            ? <Lock size={16} />
-            : device.device_type === 'ac'
-              ? <Airplay size={16} />
-              : device.device_type === 'light'
-                ? <Lightbulb size={16} />
-                : <Bot size={16} />;
-
+    <Card className="dashboard-card dashboard-card--builtin">
+      <div className="dashboard-card__title">
+        <Home size={20} />
+        <span>{card.title}</span>
+      </div>
+      {card.subtitle ? <p className="dashboard-card__subtitle">{card.subtitle}</p> : null}
+      <DashboardCardState card={card} t={t} />
+      <div className="room-cards">
+        {items.map(item => {
+          const tone = getPayloadText(item.tone);
           return (
-            <div key={device.id} className={`device-status-item ${isOff ? 'device-status-item--off' : ''}`}>
-              <span className="device-status-icon">{icon}</span>
-              <span className="device-status-name">{device.name}</span>
-              <span className={`device-status-dot ${!isOff ? 'device-status-dot--on' : ''}`} />
+            <div key={`${card.card_ref}-${getPayloadText(item.title)}`} className="mini-room-card">
+              <div className="mini-room-card__header">
+                <span className="mini-room-card__name">{getPayloadText(item.title)}</span>
+                <span className={`status-dot ${tone === 'success' ? 'status-dot--active' : ''}`} />
+              </div>
+              <div className="mini-room-card__meta">
+                <span>{getPayloadText(item.subtitle)}</span>
+              </div>
+              <div className="mini-room-card__value">{getPayloadText(item.value)}</div>
             </div>
           );
-        }) : <div className="text-text-secondary">当前家庭还没有可展示的设备。</div>}
+        })}
       </div>
     </Card>
   );
 }
 
-function renderDashboardCard(type: CardType, data: DashboardData, loading: boolean, t: (key: ShellMessageKey) => string) {
-  switch (type) {
-    case 'weather':
-      return <WeatherCard data={data} />;
-    case 'stats':
-      return (
-        <div className="stats-grid animate-card">
-          <StatCard icon={<Users size={24} />} label={t('home.membersAtHome')} value={data.overview?.member_states.filter(item => item.presence === 'home').length ?? 0} color="var(--brand-primary)" />
-          <StatCard icon={<Home size={24} />} label={t('home.activeRooms')} value={data.overview?.room_occupancy.filter(item => item.occupant_count > 0 || item.online_device_count > 0).length ?? data.rooms.length} color="var(--color-success)" />
-          <StatCard icon={<Smartphone size={24} />} label={t('home.devicesOnline')} value={data.overview?.device_summary.active ?? data.devices.filter(item => item.status === 'active').length} color="var(--color-info)" />
-          <StatCard icon={<ShieldCheck size={24} />} label={t('home.alerts')} value={(data.reminders?.pending_runs ?? 0) + (data.overview?.insights.filter(item => item.tone === 'warning' || item.tone === 'danger').length ?? 0)} color="var(--color-warning)" />
-        </div>
-      );
-    case 'rooms': {
-      const roomCards = getRoomCards(data).slice(0, 4);
+function BuiltinMembersCard({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  const items = getPayloadItems(card);
 
-      return (
-        <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title flex items-center gap-2"><Home size={20} /> {t('home.roomStatus')}</h3>
-          <div className="room-cards">
-            {loading ? <div className="text-text-secondary">正在加载房间状态...</div> : roomCards.map(room => (
-              <div key={room.id} className="mini-room-card">
-                <div className="mini-room-card__header">
-                  <span className="mini-room-card__name">{room.name}</span>
-                  <span className={`status-dot ${room.isActive ? 'status-dot--active' : ''}`} />
-                </div>
-                <div className="mini-room-card__meta">
-                  <span>{room.secondary}</span>
-                  <span>{room.deviceCount} 设备</span>
-                </div>
+  return (
+    <Card className="dashboard-card dashboard-card--builtin">
+      <div className="dashboard-card__title">
+        <Users size={20} />
+        <span>{card.title}</span>
+      </div>
+      {card.subtitle ? <p className="dashboard-card__subtitle">{card.subtitle}</p> : null}
+      <DashboardCardState card={card} t={t} />
+      <div className="member-cards">
+        {items.map(item => {
+          const badgeText = getPayloadText(item.value);
+          const badgeTone = getMemberBadgeTone(badgeText);
+          return (
+            <div key={`${card.card_ref}-${getPayloadText(item.title)}`} className="mini-member-card">
+              <span className="mini-member-card__avatar"><User size={18} /></span>
+              <div className="mini-member-card__info">
+                <span className="mini-member-card__name">{getPayloadText(item.title)}</span>
+                <span className="mini-member-card__role">{getPayloadText(item.subtitle)}</span>
               </div>
-            ))}
-          </div>
-        </Card>
-      );
-    }
-    case 'members': {
-      const memberCards = getMemberCards(data).slice(0, 4);
+              <span className={`member-status-badge member-status-badge--${badgeTone}`}>{badgeText}</span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
 
-      return (
-        <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title flex items-center gap-2"><Users size={20} /> {t('home.memberStatus')}</h3>
-          <div className="member-cards">
-            {loading ? <div className="text-text-secondary">正在加载成员状态...</div> : memberCards.map(member => (
-              <div key={member.id} className="mini-member-card">
-                <span className="mini-member-card__avatar"><User size={20} /></span>
-                <div className="mini-member-card__info">
-                  <span className="mini-member-card__name">{member.name}</span>
-                  <span className="mini-member-card__role">{member.roleLabel}</span>
-                </div>
-                <span className={`member-status-badge member-status-badge--${member.badgeStatus}`}>
-                  {member.badgeStatus === 'resting' ? t('member.resting') : member.badgeStatus === 'home' ? t('member.atHome') : t('member.away')}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      );
-    }
-    case 'events': {
-      const reminderEvents = data.reminders?.items.slice(0, 3).map(item => ({
-        id: item.task_id,
-        time: formatRelativeTime(item.latest_run_planned_at ?? item.next_trigger_at),
-        icon: <ClipboardList size={16} />,
-        text: item.latest_ack_action === 'done' ? `${item.title} 已完成` : `${item.title} 待处理`,
-      })) ?? [];
-      const insightEvents = data.overview?.insights.slice(0, 3).map(item => ({
-        id: item.code,
-        time: formatRelativeTime(data.overview?.generated_at),
-        icon: item.tone === 'danger' ? <ShieldCheck size={16} /> : <Lightbulb size={16} />,
-        text: item.message,
-      })) ?? [];
-      const recentEvents = [...insightEvents, ...reminderEvents].slice(0, 5);
+function BuiltinEventsCard({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  const items = getPayloadItems(card);
 
-      return (
-        <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title flex items-center gap-2"><ClipboardList size={20} /> {t('home.recentEvents')}</h3>
-          <div className="event-list">
-            {loading ? <div className="text-text-secondary">正在加载最近事件...</div> : recentEvents.length > 0 ? recentEvents.map(ev => (
-              <div key={ev.id} className="event-item">
-                <span className="event-item__icon">{ev.icon}</span>
-                <span className="event-item__text">{ev.text}</span>
-                <span className="event-item__time">{ev.time}</span>
-              </div>
-            )) : <div className="text-text-secondary">{t('home.noEventsHint')}</div>}
+  return (
+    <Card className="dashboard-card dashboard-card--builtin">
+      <div className="dashboard-card__title">
+        <ClipboardList size={20} />
+        <span>{card.title}</span>
+      </div>
+      {card.subtitle ? <p className="dashboard-card__subtitle">{card.subtitle}</p> : null}
+      <DashboardCardState card={card} t={t} />
+      <div className="event-list">
+        {items.map(item => (
+          <div key={`${card.card_ref}-${getPayloadText(item.title)}`} className="event-item">
+            <span className={`event-item__icon event-item__icon--${getPayloadText(item.tone, 'neutral')}`}>
+              {getPayloadText(item.tone) === 'danger' ? <ShieldCheck size={16} /> : <CalendarClock size={16} />}
+            </span>
+            <div className="event-item__content">
+              <span className="event-item__text">{getPayloadText(item.title)}</span>
+              {item.description ? <span className="event-item__desc">{getPayloadText(item.description)}</span> : null}
+            </div>
+            <span className="event-item__time">{formatRelativeTime(getPayloadText(item.timestamp))}</span>
           </div>
-        </Card>
-      );
-    }
-    case 'quickActions':
-      return (
-        <Card className="dashboard-card animate-card">
-          <h3 className="dashboard-card__title flex items-center gap-2"><Zap size={20} /> {t('home.quickActions')}</h3>
-          <div className="quick-actions">
-            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/assistant/index' })}><MessageSquareText size={16} /> {t('nav.assistant')}</button>
-            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/memories/index' })}><BookOpenText size={16} /> {t('nav.memories')}</button>
-            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/settings/index' })}><Settings size={16} /> {t('nav.settings')}</button>
-            <button className="quick-action-btn hover-lift flex items-center gap-2" type="button" onClick={() => void Taro.navigateTo({ url: '/pages/family/index' })}><Users size={16} /> {t('nav.family')}</button>
-          </div>
-        </Card>
-      );
-    case 'aiSummary':
-      return <AiSummaryCard data={data} />;
-    case 'devices':
-      return <DevicesCard data={data} />;
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function BuiltinQuickActionsCard({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  const items = getPayloadItems(card);
+
+  return (
+    <Card className="dashboard-card dashboard-card--builtin">
+      <div className="dashboard-card__title">
+        <ListChecks size={20} />
+        <span>{card.title}</span>
+      </div>
+      {card.subtitle ? <p className="dashboard-card__subtitle">{card.subtitle}</p> : null}
+      <DashboardCardState card={card} t={t} />
+      <div className="quick-actions">
+        {items.map(item => {
+          const actionKey = getPayloadText(item.action_key);
+          const action = resolveActionByKey(card, actionKey);
+          const label = getPayloadText(item.label);
+          return (
+            <button
+              key={`${card.card_ref}-${label}`}
+              className="quick-action-btn"
+              type="button"
+              disabled={!action}
+              onClick={() => action ? void handleCardAction(action, t) : undefined}
+            >
+              <span className="quick-action-btn__icon">{getQuickActionIcon(actionKey, label)}</span>
+              <span className="quick-action-btn__copy">
+                <strong>{label}</strong>
+                {item.description ? <span>{getPayloadText(item.description)}</span> : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function BuiltinDashboardCardPanel({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  switch (card.card_ref) {
+    case 'builtin:weather':
+      return <BuiltinWeatherCard card={card} t={t} />;
+    case 'builtin:stats':
+      return <BuiltinStatsCard card={card} t={t} />;
+    case 'builtin:rooms':
+      return <BuiltinRoomsCard card={card} t={t} />;
+    case 'builtin:members':
+      return <BuiltinMembersCard card={card} t={t} />;
+    case 'builtin:events':
+      return <BuiltinEventsCard card={card} t={t} />;
+    case 'builtin:quick-actions':
+      return <BuiltinQuickActionsCard card={card} t={t} />;
     default:
-      return null;
+      return (
+        <Card className={`dashboard-card dashboard-card--template ${getStateToneClass(card.state)}`}>
+          <DashboardCardHeader card={card} t={t} />
+          <DashboardCardState card={card} t={t} />
+          <DashboardTemplateBody card={card} t={t} />
+        </Card>
+      );
   }
+}
+
+function DashboardCardPanel({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  if (isBuiltinCard(card)) {
+    return <BuiltinDashboardCardPanel card={card} t={t} />;
+  }
+
+  return (
+    <Card className={`dashboard-card dashboard-card--template ${getStateToneClass(card.state)}`}>
+      <DashboardCardHeader card={card} t={t} />
+      <DashboardCardState card={card} t={t} />
+      <DashboardTemplateBody card={card} t={t} />
+    </Card>
+  );
+}
+
+function DashboardItemControls({
+  item,
+  t,
+  onHide,
+  onResize,
+}: {
+  item: MemberDashboardLayoutItem;
+  t: (key: ShellMessageKey) => string;
+  onHide: () => void;
+  onResize: (patch: Partial<Pick<MemberDashboardLayoutItem, 'size' | 'height'>>) => void;
+}) {
+  return (
+    <div className="dashboard-item-controls">
+      <div className="dashboard-item-controls__top">
+        <span className="drag-handle">
+          <GripVertical size={18} />
+          <span>{t('home.dragCard')}</span>
+        </span>
+        <button className="remove-card-btn" type="button" onClick={onHide}>
+          <X size={14} />
+          <span>{t('home.hideCard')}</span>
+        </button>
+      </div>
+      <div className="dashboard-layout-editor">
+        <div className="dashboard-layout-editor__group">
+          <span className="dashboard-layout-editor__label">{t('home.cardWidth')}</span>
+          <div className="dashboard-segmented-control">
+            {DASHBOARD_WIDTH_OPTIONS.map(option => (
+              <button
+                key={`${item.card_ref}-width-${option.value}`}
+                className={`dashboard-segmented-control__item ${item.size === option.value ? 'is-active' : ''}`}
+                type="button"
+                onClick={() => onResize({ size: option.value })}
+              >
+                {t(option.labelKey)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="dashboard-layout-editor__group">
+          <span className="dashboard-layout-editor__label">{t('home.cardHeight')}</span>
+          <div className="dashboard-segmented-control">
+            {DASHBOARD_HEIGHT_OPTIONS.map(option => (
+              <button
+                key={`${item.card_ref}-height-${option.value}`}
+                className={`dashboard-segmented-control__item ${item.height === option.value ? 'is-active' : ''}`}
+                type="button"
+                onClick={() => onResize({ height: option.value })}
+              >
+                {t(option.labelKey)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function HomePage() {
   const { t } = useI18n();
-  const { familyName, dashboardData, loading } = useHomeDashboardData();
-  const [layout, setLayout] = useState<CardType[]>(getStoredLayout);
+  const { familyName, dashboard, layoutItems, loading, savingLayout, error, saveLayout } = useHomeDashboardData();
   const [editMode, setEditMode] = useState(false);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const dragRef = useRef<number | null>(null);
+  const cardMap = buildCardMap(dashboard?.cards ?? []);
+  const visibleItems = buildVisibleLayoutItems(layoutItems, cardMap);
+  const hiddenItems = layoutItems.filter(item => !item.visible);
 
-  const ALL_CARDS: Record<CardType, DashboardCard> = {
-    weather: { type: 'weather', label: '天气状态', icon: <CloudSun size={18} />, width: 'half' },
-    stats: { type: 'stats', label: '关键指标', icon: <BarChart2 size={18} />, width: 'full' },
-    rooms: { type: 'rooms', label: t('home.roomStatus'), icon: <Home size={18} />, width: 'half' },
-    members: { type: 'members', label: t('home.memberStatus'), icon: <Users size={18} />, width: 'half' },
-    events: { type: 'events', label: t('home.recentEvents'), icon: <ClipboardList size={18} />, width: 'half' },
-    quickActions: { type: 'quickActions', label: t('home.quickActions'), icon: <Zap size={18} />, width: 'half' },
-    aiSummary: { type: 'aiSummary', label: 'AI 今日摘要', icon: <Bot size={18} />, width: 'full' },
-    devices: { type: 'devices', label: '设备状态', icon: <Smartphone size={18} />, width: 'half' },
-  };
-
-  const saveLayout = useCallback((newLayout: CardType[]) => {
-    setLayout(newLayout);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newLayout));
-    } catch {
-      // noop
+  const persistLayout = async (nextItems: MemberDashboardLayoutItem[]) => {
+    const success = await saveLayout(nextItems);
+    if (!success) {
+      void Taro.showToast({ title: t('home.layoutSaveFailed'), icon: 'none' });
     }
-  }, []);
+  };
 
   const handleDragStart = (idx: number) => (event: DragEvent<HTMLDivElement>) => {
     dragRef.current = idx;
@@ -351,17 +696,20 @@ export default function HomePage() {
     setDragOverIdx(idx);
   };
 
-  const handleDrop = (dropIdx: number) => (event: DragEvent<HTMLDivElement>) => {
+  const handleDrop = (dropIdx: number) => async (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     const fromIdx = dragRef.current;
     if (fromIdx === null || fromIdx === dropIdx) {
       return;
     }
 
-    const newLayout = [...layout];
-    const [moved] = newLayout.splice(fromIdx, 1);
-    newLayout.splice(dropIdx, 0, moved);
-    saveLayout(newLayout);
+    const reorderedVisible = [...visibleItems];
+    const [moved] = reorderedVisible.splice(fromIdx, 1);
+    reorderedVisible.splice(dropIdx, 0, moved);
+    const nextVisible = reorderedVisible.map((item, index) => ({ ...item, order: (index + 1) * 10 }));
+    const nextVisibleMap = new Map(nextVisible.map(item => [item.card_ref, item]));
+    const nextItems = layoutItems.map(item => nextVisibleMap.get(item.card_ref) ?? item);
+    await persistLayout(nextItems);
     setDragIdx(null);
     setDragOverIdx(null);
   };
@@ -371,102 +719,109 @@ export default function HomePage() {
     setDragOverIdx(null);
   };
 
-  const removeCard = (idx: number) => {
-    const newLayout = layout.filter((_, index) => index !== idx);
-    saveLayout(newLayout);
+  const hideCard = async (cardRef: string) => {
+    const nextItems = layoutItems.map(item => item.card_ref === cardRef ? { ...item, visible: false } : item);
+    await persistLayout(nextItems);
   };
 
-  const addCard = (type: CardType) => {
-    if (!layout.includes(type)) {
-      saveLayout([...layout, type]);
-    }
+  const showCard = async (cardRef: string) => {
+    const nextOrder = visibleItems.length > 0 ? Math.max(...visibleItems.map(item => item.order)) + 10 : 10;
+    const nextItems = layoutItems.map(item => (
+      item.card_ref === cardRef ? { ...item, visible: true, order: nextOrder } : item
+    ));
+    await persistLayout(nextItems);
   };
 
-  const unusedCards = (Object.keys(ALL_CARDS) as CardType[]).filter(key => !layout.includes(key));
+  const resizeCard = async (
+    cardRef: string,
+    patch: Partial<Pick<MemberDashboardLayoutItem, 'size' | 'height'>>,
+  ) => {
+    const nextItems = layoutItems.map(item => item.card_ref === cardRef ? { ...item, ...patch } : item);
+    await persistLayout(nextItems);
+  };
 
   return (
     <div className="page page--home">
-      {/* 欢迎区 */}
       <div className="welcome-banner">
-            <div className="welcome-banner__text">
-              <h1 className="welcome-banner__title animate-slide-in flex items-center gap-3">
-                {t('home.welcome')}，{familyName} <Home size={32} className="text-brand-primary" />
-              </h1>
-              <p className="welcome-banner__sub">{t('home.greeting')}</p>
-              {dashboardData.errors.length > 0 && (
-                <p className="text-text-secondary">部分卡片加载失败，页面已自动降级显示可用数据。</p>
-              )}
-            </div>
-            <div className="welcome-banner__right">
-              <div className="welcome-banner__time">
-                {new Date().toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' })}
-              </div>
-              <button
-                className={`edit-dashboard-btn ${editMode ? 'edit-dashboard-btn--active' : ''}`}
-                type="button"
-                onClick={() => setEditMode(!editMode)}
-              >
-                {editMode ? '✓ 完成编辑' : '✏️ 编辑仪表盘'}
+        <div className="welcome-banner__text">
+          <h1 className="welcome-banner__title animate-slide-in flex items-center gap-3">
+            {t('home.welcome')}，{familyName} <Home size={32} className="text-brand-primary" />
+          </h1>
+          <p className="welcome-banner__sub">{t('home.greeting')}</p>
+          {dashboard?.warnings.length ? <p className="text-text-secondary">{t('home.partialDegraded')}</p> : null}
+          {error ? <p className="text-text-secondary">{error}</p> : null}
+        </div>
+        <div className="welcome-banner__right">
+          <div className="welcome-banner__time">
+            {new Date().toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' })}
+          </div>
+          <button
+            className={`edit-dashboard-btn ${editMode ? 'edit-dashboard-btn--active' : ''}`}
+            type="button"
+            disabled={savingLayout}
+            onClick={() => setEditMode(!editMode)}
+          >
+            {editMode ? t('home.finishEditDashboard') : t('home.editDashboard')}
+          </button>
+        </div>
+      </div>
+
+      {editMode && hiddenItems.length > 0 ? (
+        <div className="add-cards-bar animate-slide-down">
+          <span className="add-cards-bar__label">{t('home.addCards')}</span>
+          <div className="add-cards-bar__list">
+            {hiddenItems.map(item => (
+              <button key={item.card_ref} className="add-card-chip" type="button" onClick={() => void showCard(item.card_ref)}>
+                <Plus size={14} />
+                <span>{resolveCardLabel(item.card_ref, cardMap)}</span>
               </button>
-            </div>
+            ))}
           </div>
+        </div>
+      ) : null}
 
-          {editMode && unusedCards.length > 0 && (
-            <div className="add-cards-bar animate-slide-down">
-              <span className="add-cards-bar__label">添加卡片：</span>
-              <div className="add-cards-bar__list">
-                {unusedCards.map(type => (
-                  <button key={type} className="add-card-chip hover-lift" type="button" onClick={() => addCard(type)}>
-                    <span>{ALL_CARDS[type].icon}</span>
-                    <span>{ALL_CARDS[type].label}</span>
-                    <span className="add-card-chip__plus">+</span>
-                  </button>
-                ))}
-              </div>
+      <div className="dashboard-grid">
+        {visibleItems.map((item, idx) => {
+          const card = cardMap[item.card_ref];
+          if (!card) {
+            return null;
+          }
+          return (
+            <div
+              key={item.card_ref}
+              className={`dashboard-grid__item dashboard-grid__item--${item.size} dashboard-grid__item--${item.height} ${editMode ? 'dashboard-grid__item--editing' : ''} ${dragIdx === idx ? 'dashboard-grid__item--dragging' : ''} ${dragOverIdx === idx ? 'dashboard-grid__item--drag-over' : ''}`}
+              draggable={editMode}
+              onDragStart={editMode ? handleDragStart(idx) : undefined}
+              onDragOver={editMode ? handleDragOver(idx) : undefined}
+              onDrop={editMode ? handleDrop(idx) : undefined}
+              onDragEnd={editMode ? handleDragEnd : undefined}
+            >
+              {editMode ? (
+                <DashboardItemControls
+                  item={item}
+                  t={t}
+                  onHide={() => void hideCard(item.card_ref)}
+                  onResize={patch => void resizeCard(item.card_ref, patch)}
+                />
+              ) : null}
+              <DashboardCardPanel card={card} t={t} />
             </div>
-          )}
+          );
+        })}
+      </div>
 
-          <div className="dashboard-grid">
-            {layout.map((type, idx) => {
-              const card = ALL_CARDS[type];
-              if (!card) {
-                return null;
-              }
-
-              return (
-                <div
-                  key={type}
-                  className={`dashboard-grid__item dashboard-grid__item--${card.width} ${editMode ? 'dashboard-grid__item--editing' : ''} ${dragIdx === idx ? 'dashboard-grid__item--dragging' : ''} ${dragOverIdx === idx ? 'dashboard-grid__item--drag-over' : ''}`}
-                  draggable={editMode}
-                  onDragStart={editMode ? handleDragStart(idx) : undefined}
-                  onDragOver={editMode ? handleDragOver(idx) : undefined}
-                  onDrop={editMode ? handleDrop(idx) : undefined}
-                  onDragEnd={editMode ? handleDragEnd : undefined}
-                >
-                  {editMode && (
-                    <div className="dashboard-item-controls">
-                      <span className="drag-handle">⠿</span>
-                      <button className="remove-card-btn" type="button" onClick={() => removeCard(idx)}>✕</button>
-                    </div>
-                  )}
-                  {renderDashboardCard(type, dashboardData, loading, t)}
-                </div>
-              );
-            })}
-          </div>
-
-      {layout.length === 0 && (
+      {!loading && visibleItems.length === 0 ? (
         <EmptyState
-          icon={<Home size={64} className="text-text-tertiary opacity-50" />}
-          title="仪表盘是空的"
-          description={'点击"编辑仪表盘"来添加卡片'}
+          icon={<Bot size={56} className="text-text-tertiary opacity-50" />}
+          title={t('home.emptyDashboard')}
+          description={t('home.emptyDashboardDesc')}
           action={
             <button className="btn btn--primary" type="button" onClick={() => setEditMode(true)}>
-              编辑仪表盘
+              {t('home.editDashboard')}
             </button>
           }
         />
-      )}
+      ) : null}
     </div>
   );
 }

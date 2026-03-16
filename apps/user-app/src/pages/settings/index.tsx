@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { useRouter } from '@tarojs/taro';
+import Taro, { useRouter } from '@tarojs/taro';
 import { getLocaleSourceLabel } from '@familyclaw/user-core';
+import { PageSection, ToggleSwitch, UiCard, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
 import { GuardedPage, useHouseholdContext } from '../../runtime';
 import { useI18n, useTheme } from '../../runtime/h5-shell';
-import { Card, Section, ToggleSwitch } from '../family/base';
 import { SettingsPageShell } from './SettingsPageShell';
 import { settingsApi } from './settingsApi';
 import type { ContextConfigRead } from './settingsTypes';
@@ -19,53 +19,50 @@ function resolveSection(value?: string | string[]): SettingsSection {
   return 'appearance';
 }
 
-function getLocalizedThemeMeta(themeId: string, locale: string | undefined) {
-  const pick = (values: { zhCN: string; zhTW: string; enUS: string }) => {
-    if (locale?.toLowerCase().startsWith('en')) return values.enUS;
-    if (locale?.toLowerCase().startsWith('zh-tw')) return values.zhTW;
-    return values.zhCN;
-  };
-
+function getLocalizedThemeMeta(
+  themeId: string,
+  t: (key: string, params?: Record<string, string | number>) => string,
+) {
   switch (themeId) {
     case 'chun-he-jing-ming':
       return {
-        label: pick({ zhCN: '春和景明', zhTW: '春和景明', enUS: 'Spring Light' }),
-        description: pick({ zhCN: '温暖宁静，适合日常使用', zhTW: '溫暖寧靜，適合日常使用', enUS: 'Warm and calm for everyday use' }),
+        label: t('theme.chunHeJingMing.label'),
+        description: t('theme.chunHeJingMing.description'),
       };
     case 'yue-lang-xing-xi':
       return {
-        label: pick({ zhCN: '月朗星稀', zhTW: '月朗星稀', enUS: 'Moonlit Night' }),
-        description: pick({ zhCN: '沉静夜色，更适合专注浏览', zhTW: '沉靜夜色，更適合專注瀏覽', enUS: 'Quiet night tones for focused browsing' }),
+        label: t('theme.yueLangXingXi.label'),
+        description: t('theme.yueLangXingXi.description'),
       };
     case 'ming-cha-qiu-hao':
       return {
-        label: pick({ zhCN: '明察秋毫', zhTW: '明察秋毫', enUS: 'Clear Insight' }),
-        description: pick({ zhCN: '高对比老花主题，字更稳更清楚', zhTW: '高對比熟齡主題，文字更穩更清楚', enUS: 'High-contrast elder-friendly theme with clearer text' }),
+        label: t('theme.mingChaQiuHao.label'),
+        description: t('theme.mingChaQiuHao.description'),
       };
     case 'wan-zi-qian-hong':
       return {
-        label: pick({ zhCN: '万紫千红', zhTW: '萬紫千紅', enUS: 'Bloom Burst' }),
-        description: pick({ zhCN: '明快热闹，适合喜欢鲜艳配色', zhTW: '明快熱鬧，適合喜歡鮮豔配色', enUS: 'Bright and lively for vivid color lovers' }),
+        label: t('theme.wanZiQianHong.label'),
+        description: t('theme.wanZiQianHong.description'),
       };
     case 'feng-chi-dian-che':
       return {
-        label: pick({ zhCN: '风驰电掣', zhTW: '風馳電掣', enUS: 'Velocity' }),
-        description: pick({ zhCN: '冷感速度系，适合喜欢锐利科技感', zhTW: '冷調速度系，適合喜歡銳利科技感', enUS: 'Cool, sharp, and more technical' }),
+        label: t('theme.fengChiDianChe.label'),
+        description: t('theme.fengChiDianChe.description'),
       };
     case 'xing-he-wan-li':
       return {
-        label: pick({ zhCN: '星河万里', zhTW: '星河萬里', enUS: 'Galaxy' }),
-        description: pick({ zhCN: '深邃星空风格，层次感更强', zhTW: '深邃星空風格，層次感更強', enUS: 'Deep space style with stronger layering' }),
+        label: t('theme.xingHeWanLi.label'),
+        description: t('theme.xingHeWanLi.description'),
       };
     case 'qing-shan-lv-shui':
       return {
-        label: pick({ zhCN: '青山绿水', zhTW: '青山綠水', enUS: 'Verdant Hills' }),
-        description: pick({ zhCN: '清爽自然，适合长时间阅读', zhTW: '清爽自然，適合長時間閱讀', enUS: 'Fresh and natural for long reading sessions' }),
+        label: t('theme.qingShanLvShui.label'),
+        description: t('theme.qingShanLvShui.description'),
       };
     case 'jin-xiu-qian-cheng':
       return {
-        label: pick({ zhCN: '锦绣前程', zhTW: '錦繡前程', enUS: 'Golden Prospect' }),
-        description: pick({ zhCN: '金色暖调，适合偏正式和稳重风格', zhTW: '金色暖調，適合偏正式和穩重風格', enUS: 'Warm golden tones with a formal, steady feel' }),
+        label: t('theme.jinXiuQianCheng.label'),
+        description: t('theme.jinXiuQianCheng.description'),
       };
     default:
       return null;
@@ -178,14 +175,14 @@ function useContextConfigSettings() {
 
 function SettingsAppearanceSection() {
   const { themeId, themeList, setTheme } = useTheme();
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
 
   return (
     <div className="settings-page">
-      <Section title={t('settings.appearance.title')}>
+      <PageSection title={t('settings.appearance.title')} contentStyle={{ marginTop: 0 }}>
         <div className="theme-grid">
           {themeList.map((theme) => {
-            const localizedTheme = getLocalizedThemeMeta(theme.id, locale);
+            const localizedTheme = getLocalizedThemeMeta(theme.id, t);
             return (
             <div
               key={theme.id}
@@ -223,7 +220,7 @@ function SettingsAppearanceSection() {
             );
           })}
         </div>
-      </Section>
+      </PageSection>
     </div>
   );
 }
@@ -325,7 +322,7 @@ function SettingsLanguageSection() {
 
   return (
     <div className="settings-page">
-      <Section title={t('settings.language.title')}>
+      <PageSection title={t('settings.language.title')} contentStyle={{ marginTop: 0 }}>
         <div className="settings-form">
           <div className="form-group">
             <label>{t('settings.language.interface')}</label>
@@ -368,7 +365,7 @@ function SettingsLanguageSection() {
         </div>
         {error ? <SettingsNotice tone="error" icon="⚠️">{error}</SettingsNotice> : null}
         {status ? <SettingsNotice tone="success" icon="✓">{status}</SettingsNotice> : null}
-      </Section>
+      </PageSection>
     </div>
   );
 }
@@ -382,7 +379,7 @@ function SettingsNotificationsSection() {
 
   return (
     <div className="settings-page">
-      <Section title={t('settings.notifications.title')}>
+      <PageSection title={t('settings.notifications.title')} contentStyle={{ marginTop: 0 }}>
         <div className="settings-form">
           <div className="form-group">
             <label>{t('settings.notifications.channel')}</label>
@@ -420,7 +417,7 @@ function SettingsNotificationsSection() {
         {error ? <SettingsNotice tone="error" icon="⚠️">{error}</SettingsNotice> : null}
         {status ? <SettingsNotice tone="success" icon="✓">{status}</SettingsNotice> : null}
         {loading ? <SettingsNotice icon="⏳">{t('settings.notifications.loading')}</SettingsNotice> : null}
-      </Section>
+      </PageSection>
     </div>
   );
 }
@@ -432,7 +429,7 @@ function SettingsAccessibilitySection() {
 
   return (
     <div className="settings-page">
-      <Section title={t('settings.accessibility.title')}>
+      <PageSection title={t('settings.accessibility.title')} contentStyle={{ marginTop: 0 }}>
         <div className="settings-toggles">
           <ToggleSwitch
             checked={isElder}
@@ -443,21 +440,26 @@ function SettingsAccessibilitySection() {
         </div>
 
         <div className="elder-preview">
-          <Card className="elder-preview-card">
-            <h3>{t('settings.accessibility.previewTitle')}</h3>
-            <p style={{ fontSize: isElder ? '1.125rem' : '0.9375rem' }}>
+          <UiCard className="elder-preview-card">
+            <UiText variant="label">{t('settings.accessibility.previewTitle')}</UiText>
+            <UiText style={{ fontSize: isElder ? userAppFoundationTokens.fontSize.lg : userAppFoundationTokens.fontSize.md }}>
               {isElder ? t('settings.accessibility.previewEnabled') : t('settings.accessibility.previewDisabled')}
-            </p>
-          </Card>
+            </UiText>
+          </UiCard>
         </div>
-      </Section>
+      </PageSection>
     </div>
   );
 }
 
 function SettingsIndexContent() {
   const router = useRouter();
+  const { t, locale } = useI18n();
   const section = resolveSection(router.params?.section);
+
+  useEffect(() => {
+    void Taro.setNavigationBarTitle({ title: t('nav.settings') }).catch(() => undefined);
+  }, [t, locale]);
 
   return (
     <SettingsPageShell activeKey={section}>

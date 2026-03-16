@@ -2,6 +2,14 @@
  * 基础组件集合 - PageHeader / Card / Section / EmptyState
  * ============================================================ */
 import type { ReactNode, CSSProperties } from 'react';
+import {
+  EmptyStateCard,
+  PageHeader as SharedPageHeader,
+  PageSection,
+  ToggleSwitch as SharedToggleSwitch,
+  UiCard,
+  UiText,
+} from '@familyclaw/user-ui';
 
 /* ---- PageHeader ---- */
 export function PageHeader({
@@ -13,15 +21,7 @@ export function PageHeader({
   description?: string;
   actions?: ReactNode;
 }) {
-  return (
-    <div className="page-header">
-      <div className="page-header__text">
-        <h1 className="page-header__title">{title}</h1>
-        {description && <p className="page-header__desc">{description}</p>}
-      </div>
-      {actions && <div className="page-header__actions">{actions}</div>}
-    </div>
-  );
+  return <SharedPageHeader title={title} description={description} actions={actions} className="page-header" />;
 }
 
 /* ---- Card ---- */
@@ -37,15 +37,13 @@ export function Card({
   onClick?: () => void;
 }) {
   return (
-    <div
-      className={`card ${onClick ? 'card--clickable' : ''} ${className}`}
+    <UiCard
+      className={`card ${onClick ? 'card--clickable' : ''} ${className}`.trim()}
       style={style}
       onClick={onClick}
-      role={onClick ? 'button' : undefined}
-      tabIndex={onClick ? 0 : undefined}
     >
       {children}
-    </div>
+    </UiCard>
   );
 }
 
@@ -62,13 +60,14 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section className={`section ${className}`}>
-      <div className="section__header">
-        <h2 className="section__title">{title}</h2>
-        {actions && <div className="section__actions">{actions}</div>}
-      </div>
-      <div className="section__content">{children}</div>
-    </section>
+    <PageSection
+      title={title}
+      actions={actions}
+      className={`section ${className}`.trim()}
+      contentStyle={{ marginTop: 0 }}
+    >
+      {children}
+    </PageSection>
   );
 }
 
@@ -85,12 +84,13 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="empty-state">
-      {icon && <div className="empty-state__icon">{icon}</div>}
-      <h3 className="empty-state__title">{title}</h3>
-      {description && <p className="empty-state__desc">{description}</p>}
-      {action && <div className="empty-state__action">{action}</div>}
-    </div>
+    <EmptyStateCard
+      className="empty-state"
+      icon={icon}
+      title={title}
+      description={description ?? ''}
+      action={action}
+    />
   );
 }
 
@@ -107,13 +107,13 @@ export function StatCard({
   color?: string;
 }) {
   return (
-    <div className="stat-card" style={color ? { '--stat-accent': color } as CSSProperties : undefined}>
+    <UiCard className="stat-card" style={color ? { '--stat-accent': color } as CSSProperties : undefined}>
       <div className="stat-card__icon">{icon}</div>
       <div className="stat-card__info">
-        <span className="stat-card__value">{value}</span>
-        <span className="stat-card__label">{label}</span>
+        <UiText className="stat-card__value" variant="title">{value}</UiText>
+        <UiText className="stat-card__label" variant="caption">{label}</UiText>
       </div>
-    </div>
+    </UiCard>
   );
 }
 
@@ -132,22 +132,13 @@ export function ToggleSwitch({
   disabled?: boolean;
 }) {
   return (
-    <label className={`toggle-row ${disabled ? 'toggle-row--disabled' : ''}`}>
-      <div className="toggle-row__text">
-        <span className="toggle-row__label">{label}</span>
-        {description && <span className="toggle-row__desc">{description}</span>}
-      </div>
-      <div
-        className={`toggle-switch ${checked ? 'toggle-switch--on' : ''} ${disabled ? 'toggle-switch--disabled' : ''}`}
-        onClick={() => {
-          if (!disabled) {
-            onChange?.(!checked);
-          }
-        }}
-        aria-disabled={disabled}
-      >
-        <div className="toggle-switch__thumb" />
-      </div>
-    </label>
+    <SharedToggleSwitch
+      className={`toggle-row ${disabled ? 'toggle-row--disabled' : ''}`.trim()}
+      checked={checked}
+      label={label}
+      description={description}
+      onChange={onChange}
+      disabled={disabled}
+    />
   );
 }

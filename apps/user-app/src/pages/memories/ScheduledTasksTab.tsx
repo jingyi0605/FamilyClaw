@@ -9,26 +9,27 @@ import type { Member, ScheduledTaskDefinition, ScheduledTaskRun, TaskStatus } fr
 type ViewScope = 'my' | 'family';
 type TaskFilterStatus = 'all' | 'enabled' | 'paused' | 'needsAttention';
 type FormMode = 'create' | 'edit' | 'copy';
+type TranslateFn = (key: string, params?: Record<string, string | number>) => string;
 
-function formatRelativeTime(value: string | null | undefined): string {
+function formatRelativeTime(value: string | null | undefined, t: TranslateFn): string {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
 
   const diffMinutes = Math.max(1, Math.round((Date.now() - date.getTime()) / 60000));
-  if (diffMinutes < 60) return `${diffMinutes} 分钟前`;
+  if (diffMinutes < 60) return t('scheduledTasks.time.minutesAgo', { count: diffMinutes });
   const diffHours = Math.round(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours} 小时前`;
+  if (diffHours < 24) return t('scheduledTasks.time.hoursAgo', { count: diffHours });
   const diffDays = Math.round(diffHours / 24);
-  if (diffDays < 7) return `${diffDays} 天前`;
+  if (diffDays < 7) return t('scheduledTasks.time.daysAgo', { count: diffDays });
 
   return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
 }
 
-function formatNextTime(task: ScheduledTaskDefinition): string {
+function formatNextTime(task: ScheduledTaskDefinition, t: TranslateFn): string {
   return task.trigger_type === 'schedule'
-    ? (task.next_run_at ? formatRelativeTime(task.next_run_at) : '-')
-    : (task.next_heartbeat_at ? formatRelativeTime(task.next_heartbeat_at) : '-');
+    ? (task.next_run_at ? formatRelativeTime(task.next_run_at, t) : '-')
+    : (task.next_heartbeat_at ? formatRelativeTime(task.next_heartbeat_at, t) : '-');
 }
 
 function getStatusBadgeClass(status: TaskStatus): string {
@@ -49,9 +50,8 @@ function DeleteConfirmDialog(props: {
   onConfirm: () => void;
   onCancel: () => void;
   loading: boolean;
+  t: TranslateFn;
 }) {
-  const t = useMemoriesText();
-
   if (!props.isOpen) {
     return null;
   }
@@ -59,12 +59,12 @@ function DeleteConfirmDialog(props: {
   return (
     <div className="dialog-overlay" onClick={props.onCancel}>
       <div className="dialog-content" onClick={event => event.stopPropagation()}>
-        <h3 className="dialog-title">{t('scheduledTasks.delete.title')}</h3>
-        <p className="dialog-message">{t('scheduledTasks.delete.message').replace('{name}', props.taskName)}</p>
+        <h3 className="dialog-title">{props.t('scheduledTasks.delete.title')}</h3>
+        <p className="dialog-message">{props.t('scheduledTasks.delete.message', { name: props.taskName })}</p>
         <div className="dialog-actions">
-          <button className="btn btn--outline" type="button" onClick={props.onCancel} disabled={props.loading}>{t('common.cancel')}</button>
+          <button className="btn btn--outline" type="button" onClick={props.onCancel} disabled={props.loading}>{props.t('common.cancel')}</button>
           <button className="btn btn--danger" type="button" onClick={props.onConfirm} disabled={props.loading}>
-            {props.loading ? t('common.loading') : t('scheduledTasks.delete.confirm')}
+            {props.loading ? props.t('common.loading') : props.t('scheduledTasks.delete.confirm')}
           </button>
         </div>
       </div>
@@ -279,7 +279,7 @@ export function ScheduledTasksTab() {
           <button className={`filter-btn ${filterStatus === 'paused' ? 'filter-btn--active' : ''}`} type="button" onClick={() => setFilterStatus('paused')}>{t('scheduledTasks.filter.paused')}</button>
         </div>
         {isAdmin && viewScope === 'my' ? (
-          <select className="form-select" value={adminViewMemberId ?? ''} onChange={event => setAdminViewMemberId(event.target.value || null)} disabled={membersLoading} title={viewingMemberName ? `正在查看：${viewingMemberName}` : '查看自己的任务'}>
+          <select className="form-select" value={adminViewMemberId ?? ''} onChange={event => setAdminViewMemberId(event.target.value || null)} disabled={membersLoading} title={viewingMemberName ? t('scheduledTasks.adminView.viewingMember', { name: viewingMemberName }) : t('scheduledTasks.adminView.viewOwnTasks')}>
             <option value="">{t('scheduledTasks.myTasks')}</option>
             {members.map(member => <option key={member.id} value={member.id}>{member.name}</option>)}
           </select>
@@ -298,7 +298,7 @@ export function ScheduledTasksTab() {
               <p className="scheduled-task-card__desc">{task.description || task.name}</p>
               <div className="scheduled-task-card__meta">
                 <span className="scheduled-task-card__item">{task.trigger_type === 'schedule' ? t('scheduledTasks.trigger.schedule') : t('scheduledTasks.trigger.heartbeat')}</span>
-                <span className="scheduled-task-card__item">{t('scheduledTasks.list.nextTime')}：{formatNextTime(task)}</span>
+                <span className="scheduled-task-card__item">{t('scheduledTasks.list.nextTime')}：{formatNextTime(task, t)}</span>
               </div>
             </Card>
           )) : <EmptyState icon="📋" title={viewScope === 'my' ? t('scheduledTasks.emptyMyTasks') : t('scheduledTasks.emptyFamilyTasks')} description={viewScope === 'my' ? t('scheduledTasks.emptyMyTasksHint') : t('scheduledTasks.emptyFamilyTasksHint')} action={<button className="btn btn--primary" type="button" onClick={() => { setFormMode('create'); setFormTask(null); setFormOpen(true); }}>{t('scheduledTasks.newTask')}</button>} />}
@@ -312,16 +312,16 @@ export function ScheduledTasksTab() {
                 <button className="close-btn" type="button" onClick={() => setSelectedTaskId(null)}>✕</button>
               </div>
               <div className="scheduled-tasks-detail__body">
-                <div className="detail-field"><label>{t('scheduledTasks.detail.description')}</label><p>{selectedTask.description || '暂无描述'}</p></div>
+                <div className="detail-field"><label>{t('scheduledTasks.detail.description')}</label><p>{selectedTask.description || t('scheduledTasks.detail.noDescription')}</p></div>
                 <div className="detail-field"><label>{t('scheduledTasks.detail.triggerType')}</label><p>{selectedTask.trigger_type === 'schedule' ? t('scheduledTasks.trigger.schedule') : t('scheduledTasks.trigger.heartbeat')}</p></div>
                 <div className="detail-field"><label>{t('scheduledTasks.detail.status')}</label><p><span className={`badge ${getStatusBadgeClass(selectedTask.status)}`}>{selectedTask.status === 'active' ? t('scheduledTasks.status.enabled') : selectedTask.status === 'paused' ? t('scheduledTasks.status.paused') : selectedTask.status === 'error' ? t('scheduledTasks.status.error') : t('scheduledTasks.status.invalid')}</span></p></div>
                 <div className="detail-field"><label>{t('scheduledTasks.detail.owner')}</label><p>{selectedTask.owner_scope === 'household' ? t('scheduledTasks.owner.household') : t('scheduledTasks.owner.member')}</p></div>
-                <div className="detail-field"><label>{selectedTask.trigger_type === 'schedule' ? t('scheduledTasks.detail.nextRun') : t('scheduledTasks.detail.nextCheck')}</label><p>{formatNextTime(selectedTask)}</p></div>
-                {selectedTask.last_run_at ? <div className="detail-field"><label>{t('scheduledTasks.detail.lastRun')}</label><p>{formatRelativeTime(selectedTask.last_run_at)}</p></div> : null}
+                <div className="detail-field"><label>{selectedTask.trigger_type === 'schedule' ? t('scheduledTasks.detail.nextRun') : t('scheduledTasks.detail.nextCheck')}</label><p>{formatNextTime(selectedTask, t)}</p></div>
+                {selectedTask.last_run_at ? <div className="detail-field"><label>{t('scheduledTasks.detail.lastRun')}</label><p>{formatRelativeTime(selectedTask.last_run_at, t)}</p></div> : null}
                 {selectedTask.last_result ? <div className="detail-field"><label>{t('scheduledTasks.detail.lastResult')}</label><p>{selectedTask.last_result === 'succeeded' ? t('scheduledTasks.result.succeeded') : selectedTask.last_result === 'suppressed' ? t('scheduledTasks.result.suppressed') : selectedTask.last_result === 'failed' ? t('scheduledTasks.result.failed') : selectedTask.last_result === 'skipped' ? t('scheduledTasks.result.skipped') : selectedTask.last_result === 'queued' ? t('scheduledTasks.result.queued') : selectedTask.last_result === 'dispatching' ? t('scheduledTasks.result.dispatching') : selectedTask.last_result}</p></div> : null}
                 <div className="detail-field">
                   <label>{t('scheduledTasks.detail.runHistory')}</label>
-                  {runs.length > 0 ? <div className="scheduled-tasks-runs">{runs.slice(0, 5).map(run => <div key={run.id} className="scheduled-tasks-run-item"><div className="scheduled-tasks-run-item__time">{formatRelativeTime(run.created_at)}</div><div className={`scheduled-tasks-run-item__status scheduled-tasks-run-item__status--${run.status}`}>{run.status === 'succeeded' ? t('scheduledTasks.result.succeeded') : run.status === 'suppressed' ? t('scheduledTasks.result.suppressed') : run.status === 'failed' ? t('scheduledTasks.result.failed') : run.status === 'skipped' ? t('scheduledTasks.result.skipped') : run.status === 'queued' ? t('scheduledTasks.result.queued') : run.status === 'dispatching' ? t('scheduledTasks.result.dispatching') : run.status}</div></div>)}</div> : <p>暂无运行记录</p>}
+                  {runs.length > 0 ? <div className="scheduled-tasks-runs">{runs.slice(0, 5).map(run => <div key={run.id} className="scheduled-tasks-run-item"><div className="scheduled-tasks-run-item__time">{formatRelativeTime(run.created_at, t)}</div><div className={`scheduled-tasks-run-item__status scheduled-tasks-run-item__status--${run.status}`}>{run.status === 'succeeded' ? t('scheduledTasks.result.succeeded') : run.status === 'suppressed' ? t('scheduledTasks.result.suppressed') : run.status === 'failed' ? t('scheduledTasks.result.failed') : run.status === 'skipped' ? t('scheduledTasks.result.skipped') : run.status === 'queued' ? t('scheduledTasks.result.queued') : run.status === 'dispatching' ? t('scheduledTasks.result.dispatching') : run.status}</div></div>)}</div> : <p>{t('scheduledTasks.runHistory.noRecords')}</p>}
                 </div>
               </div>
               <div className="scheduled-tasks-detail__actions">
@@ -331,12 +331,12 @@ export function ScheduledTasksTab() {
                 <button className="btn btn--outline btn--danger" type="button" onClick={() => { setDeleteTask(selectedTask); setDeleteOpen(true); }} disabled={actionPending}>{t('scheduledTasks.action.delete')}</button>
               </div>
             </>
-          ) : <div className="scheduled-tasks-detail__empty"><p>点击左侧任务查看详情</p></div>}
+          ) : <div className="scheduled-tasks-detail__empty"><p>{t('scheduledTasks.detail.clickToView')}</p></div>}
         </div>
       </div>
 
       <ScheduledTaskForm mode={formMode} task={formTask} isOpen={formOpen} onClose={() => setFormOpen(false)} onSuccess={handleFormSuccess} />
-      <DeleteConfirmDialog isOpen={deleteOpen} taskName={deleteTask?.name ?? ''} onConfirm={() => void handleConfirmDelete()} onCancel={() => { setDeleteOpen(false); setDeleteTask(null); }} loading={deleteLoading} />
+      <DeleteConfirmDialog isOpen={deleteOpen} taskName={deleteTask?.name ?? ''} onConfirm={() => void handleConfirmDelete()} onCancel={() => { setDeleteOpen(false); setDeleteTask(null); }} loading={deleteLoading} t={t} />
     </div>
   );
 

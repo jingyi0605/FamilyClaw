@@ -234,6 +234,15 @@ export const userAppComponentTokens = {
     titleFontSize: userAppFoundationTokens.fontSize.xxl,
     actionMarginTop: userAppFoundationTokens.spacing.xs,
   },
+  pageHeader: {
+    gap: userAppFoundationTokens.spacing.sm,
+    titleGap: userAppFoundationTokens.spacing.xs,
+    actionGap: userAppFoundationTokens.spacing.xs,
+    marginBottom: userAppFoundationTokens.spacing.sm,
+    titleFontSize: userAppFoundationTokens.fontSize.hero,
+    descriptionFontSize: userAppFoundationTokens.fontSize.md,
+    descriptionColor: userAppSemanticTokens.text.secondary,
+  },
   pageSection: {
     background: userAppSemanticTokens.surface.card,
     borderColor: userAppSemanticTokens.border.subtle,
@@ -258,6 +267,22 @@ export const userAppComponentTokens = {
     labelFontSize: userAppFoundationTokens.fontSize.sm,
     valueFontSize: userAppFoundationTokens.fontSize.lg,
     valueMarginTop: userAppFoundationTokens.spacing.xs,
+  },
+  toggleSwitch: {
+    gap: userAppFoundationTokens.spacing.sm,
+    trackWidth: '52px',
+    trackHeight: '30px',
+    trackRadius: userAppFoundationTokens.radius.full,
+    trackPadding: '3px',
+    trackBackground: userAppSemanticTokens.border.default,
+    trackBackgroundActive: userAppSemanticTokens.action.primary,
+    trackBackgroundDisabled: userAppSemanticTokens.border.subtle,
+    thumbSize: '24px',
+    thumbRadius: userAppFoundationTokens.radius.full,
+    thumbBackground: userAppSemanticTokens.surface.card,
+    thumbShadow: userAppFoundationTokens.shadow.sm,
+    descriptionMarginTop: userAppFoundationTokens.spacing.xs,
+    opacityDisabled: '0.6',
   },
 } as const;
 

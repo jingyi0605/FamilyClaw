@@ -195,8 +195,8 @@
   - 对应需求：`requirements.md` 需求 2、需求 7
   - 对应设计：`design.md` 4.1、4.4
 
-- [ ] 2.3 阶段检查：确认共享基础件已经能支撑页面迁移
-  - 状态：TODO
+- [x] 2.3 阶段检查：确认共享基础件已经能支撑页面迁移
+  - 状态：DONE
   - 这一 step 到底做什么：检查共享层是不是已经够用，别一边迁页面一边再回头补基础轮子。
   - 做完你能看到什么：后面的页面迁移有稳定底座，不会改三页就发现基础件不够。
   - 先依赖什么：2.1、2.2
@@ -211,6 +211,11 @@
     2. 重复样式模式已经能被共享件覆盖
   - 怎么验证：
     - 人工走查
+  - 本轮结果（2026-03-16）：
+    1. 已完成 `home/setup/assistant/settings/login` 与公共壳层的重复块盘点，确认当前最缺的是统一页头和统一开关行，而不是继续扩一套新的页面私有基础件。
+    2. 已在 `packages/user-ui` 新增 `PageHeader`、`ToggleSwitch`，并增强 `UiCard`、`EmptyStateCard`、`PageSection` 的扩展能力，足以接住设置页、setup、home、assistant 的第一轮迁移。
+    3. 已把 `apps/user-app/src/pages/family/base.tsx` 和 `apps/user-app/src/pages/setup/base.tsx` 降成兼容层，后续页面迁移优先吃共享层，不再继续往页面目录补新的 `Card / EmptyState / PageHeader / Toggle` 私货。
+    4. 已知仍未收口的部分集中在业务专有块：`home` 仪表盘卡片、`assistant` 对话动作卡、`settings/channel-access` 等重业务区块；这些属于页面业务块，不再误判成共享基础件缺口。
   - 对应需求：`requirements.md` 需求 2、需求 3、需求 4
   - 对应设计：`design.md` 4、5.1
 
@@ -218,8 +223,8 @@
 
 ## 阶段 3：按优先级迁移公共页面和业务页面
 
-- [ ] 3.1 迁移公共壳层和高频公共区块
-  - 状态：TODO
+- [x] 3.1 迁移公共壳层和高频公共区块
+  - 状态：DONE
   - 这一 step 到底做什么：先把所有页面都会经过的壳层、导航、区块标题、状态卡片和表单区块改到统一标准上。
   - 做完你能看到什么：哪怕业务页没全改完，整体页面基线已经统一，不会继续从壳层开始长歪。
   - 先依赖什么：2.3
@@ -240,11 +245,15 @@
   - 怎么验证：
     - 类型检查
     - 手工验收首页、登录页、主要壳层
+  - 本轮结果（2026-03-16）：
+    1. 已完成 `AppUi.tsx`、`AuthShellPage.tsx`、`MainShellPage.tsx`、`AppShellPage.tsx`、`FeaturePlaceholder.tsx`、`runtime/guard.tsx`、`pages/login/index.tsx` 的第一轮迁移，去掉显眼的固定字号、固定间距和散装按钮/输入框写法。
+    2. 登录页和壳层入口已经统一吃 `FormField`、`UiInput`、`UiButton`、`UiText`、`UiCard`、`PageSection`、`StatusCard`，`AppUi.tsx` 继续降成更薄的兼容层。
+    3. `AuthShellPage.tsx` 里的错误导入已顺手修掉，当前公共壳层链路可以重新参与全量类型检查。
   - 对应需求：`requirements.md` 需求 3、需求 6
   - 对应设计：`design.md` 5.1、5.2、7
 
-- [ ] 3.2 分批迁移设置页和其他高频业务页面
-  - 状态：TODO
+- [x] 3.2 分批迁移设置页和其他高频业务页面
+  - 状态：DONE
   - 这一 step 到底做什么：用共享基础件和 token 分批替换高频页面里的散装样式，把重复实现收掉。
   - 做完你能看到什么：高频业务页不再各长各的，后续新功能也更容易接着写。
   - 先依赖什么：3.1
@@ -267,11 +276,16 @@
   - 怎么验证：
     - 类型检查
     - 手工验收设置页和高频业务页
+  - 本轮结果（2026-03-16）：
+    1. `pages/settings/index.tsx`、`pages/settings/ai/index.tsx`、`pages/settings/SettingsPageShell.tsx` 已直接迁到共享层，开始统一使用 `PageHeader`、`PageSection`、`UiCard`、`ToggleSwitch`、`EmptyStateCard`、`UiButton`、`UiTag`。
+    2. `pages/setup/base.tsx` 与 `pages/family/base.tsx` 已降成共享组件兼容包装层，`setup/index.h5.tsx` 继续走现有页面结构，但公共页头、卡片、空态已经不再维护私有视觉实现。
+    3. `pages/home/page.h5.tsx`、`pages/assistant/index.h5.tsx` 已把高频 `Card / EmptyState` 接到共享层，先收掉最容易继续扩散的私有基础块；保留仪表盘卡片布局、对话动作卡等业务专有结构不做过度重构。
+    4. 本轮明确没有去碰 `LegacyFamilyPage.tsx` 一类重历史页面，范围控制符合 spec 要求。
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 5
   - 对应设计：`design.md` 3.5、5.1、5.2、5.3
 
-- [ ] 3.3 阶段检查：确认第一轮页面迁移已经形成新基线
-  - 状态：TODO
+- [x] 3.3 阶段检查：确认第一轮页面迁移已经形成新基线
+  - 状态：DONE
   - 这一 step 到底做什么：检查这次迁移是不是已经把公共规则立住了，而不是只改了几页截图。
   - 做完你能看到什么：团队后续新增页面时，默认会站在新标准上，而不是回到老路。
   - 先依赖什么：3.1、3.2
@@ -286,6 +300,10 @@
     2. 剩余未迁移区域有明确名单和后续顺序
   - 怎么验证：
     - 人工走查
+  - 本轮结果（2026-03-16）：
+    1. 已形成新基线的区域：公共壳层、登录页、设置页入口与 AI 设置页、setup/family 公共基础块、home/assistant 的高频 `Card / EmptyState`。
+    2. 暂未完全迁移但已明确列为已知旧债的区域：`pages/settings/channel-access` 及其细分配置卡、`pages/settings/components/*` 内重业务配置面板、`pages/setup/index.h5.tsx` 的表单内部样式和 `home`/`assistant` 的业务专有内容卡。
+    3. 上述遗留样式现在被明确归类为历史或业务专有债务，不再被当成新的公共标准继续复制；后续新增页面默认应从 `packages/user-ui` 取公共块。
   - 对应需求：`requirements.md` 需求 3、需求 7
   - 对应设计：`design.md` 5、8
 
@@ -293,8 +311,8 @@
 
 ## 阶段 4：补规则、检查和交接文档
 
-- [ ] 4.1 加入阻止新增散装样式的检查规则
-  - 状态：TODO
+- [x] 4.1 加入阻止新增散装样式的检查规则
+  - 状态：DONE
   - 这一 step 到底做什么：把“不要再写硬编码样式”从口头要求变成能执行的检查点。
   - 做完你能看到什么：后续 PR 不容易再把仓库带回老路。
   - 先依赖什么：3.3
@@ -312,11 +330,16 @@
   - 怎么验证：
     - 运行检查脚本
     - 人工构造典型违规样式验证
+  - 本轮结果（2026-03-16）：
+    1. 已新增 `apps/user-app/scripts/check-style-guard.mjs`，对第一轮已收口的 14 个受保护文件执行样式守卫。
+    2. 规则当前先拦两类高频垃圾：手写 `rem`，以及 JSX/TS 里的固定 `px` 字符串。
+    3. 已把规则接入 `apps/user-app/package.json` 的 `pretypecheck`，后续跑 `npm.cmd --prefix apps/user-app run typecheck` 会先过样式守卫。
+    4. 已实际运行 `npm.cmd --prefix apps/user-app run check:style-guard` 并通过。
   - 对应需求：`requirements.md` 需求 4、需求 5
   - 对应设计：`design.md` 3.5、6.1、6.2、6.3
 
-- [ ] 4.2 补充 token 对照表、迁移清单和验收说明
-  - 状态：TODO
+- [x] 4.2 补充 token 对照表、迁移清单和验收说明
+  - 状态：DONE
   - 这一 step 到底做什么：把“现有 token 对应什么、哪些页面已迁移、哪些还没迁、`designWidth` 和单位规则怎么用”写进补充文档，方便后续接手。
   - 做完你能看到什么：不是只有代码改了，接手的人也知道怎么看、怎么继续、怎么避免再踩单位坑。
   - 先依赖什么：4.1
@@ -334,11 +357,16 @@
     4. 验收口径清楚
   - 怎么验证：
     - 人工走查文档
+  - 本轮结果（2026-03-16）：
+    1. 已新增 `docs/20260316-token对照表.md`，把旧入口、共享 token、H5 变量映射和组件落点写清楚。
+    2. 已新增 `docs/20260316-页面迁移清单.md`，明确哪些页面已迁移、哪些是部分迁移、哪些仍是已知旧债。
+    3. 已新增 `docs/20260316-验收检查表.md`，把命令验证、页面基线检查、已知边界写清楚。
+    4. 已同步更新 `docs/README.md`，不再只是“应该补哪些文档”，而是直接列出现有文档。
   - 对应需求：`requirements.md` 需求 5、需求 7
   - 对应设计：`design.md` 7、8
 
-- [ ] 4.3 最终检查点
-  - 状态：TODO
+- [x] 4.3 最终检查点
+  - 状态：DONE
   - 这一 step 到底做什么：确认这份 Spec 真能指导完整落地，而不是只停在“方向正确”的空话上。
   - 做完你能看到什么：需求、设计、任务、补充文档能一一对上，后面谁接着做都知道怎么推进。
   - 先依赖什么：4.1、4.2
@@ -356,5 +384,9 @@
     3. 剩余边界写明
   - 怎么验证：
     - 按 Spec 清单人工复核
+  - 本轮结果（2026-03-16）：
+    1. 已核对 `requirements.md`、`design.md`、`tasks.md` 和 `docs/` 的主线是否一致，当前 spec 的推进顺序已经从共享层、公共壳层、页面迁移、规则、文档闭合起来。
+    2. 关键风险已明确写入文档：`settings/channel-access` 等重业务区块仍未完全收口，`setup/index.h5.tsx`、`home`、`assistant` 仍有业务专有样式债，但它们现在被明确归类为后续清债范围，不再冒充新的公共标准。
+    3. 最终自动验证已完成：`npm.cmd --prefix apps/user-app run check:style-guard` 通过，`npm.cmd --prefix apps/user-app run typecheck` 通过。
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文

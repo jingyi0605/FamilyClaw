@@ -1,6 +1,5 @@
-import { Button, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import { PageSection, StatusCard } from '@familyclaw/user-ui';
+import { PageSection, StatusCard, UiButton, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
 import { AppShellPage } from './AppShellPage';
 import { useI18n } from '../runtime';
 import { getPageMessage } from '../runtime/h5-shell/i18n/pageMessageUtils';
@@ -19,12 +18,16 @@ export function FeaturePlaceholder(props: FeaturePlaceholderProps) {
     <AppShellPage>
       <PageSection title={props.title} description={props.description}>
         <StatusCard label={getPageMessage(locale, 'featurePlaceholder.migrationStatusLabel')} value={props.parityStatus} tone="warning" />
-        <Text style={{ color: '#5c6b80', display: 'block', fontSize: '24px', lineHeight: '1.6' }}>
+        <UiText tone="secondary">
           {props.blockingReason}
-        </Text>
-        <View style={{ marginTop: '16px' }}>
-          <Button onClick={() => Taro.navigateTo({ url: '/pages/entry/index' })}>{getPageMessage(locale, 'featurePlaceholder.backToEntry')}</Button>
-        </View>
+        </UiText>
+        <UiButton
+          variant="secondary"
+          onClick={() => Taro.navigateTo({ url: '/pages/entry/index' })}
+          style={{ marginTop: userAppFoundationTokens.spacing.sm }}
+        >
+          {getPageMessage(locale, 'featurePlaceholder.backToEntry')}
+        </UiButton>
       </PageSection>
     </AppShellPage>
   );

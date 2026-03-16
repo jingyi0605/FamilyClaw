@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Taro from '@tarojs/taro';
 import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealtimeEvent } from '@familyclaw/user-platform/web';
+import { EmptyStateCard, userAppFoundationTokens } from '@familyclaw/user-ui';
 import { Bot, History, Info, Menu, MessageSquarePlus } from 'lucide-react';
 import { assistantApi } from './assistant.api';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel, isConversationAgent, pickDefaultConversationAgent } from './assistant.agents';
@@ -28,14 +29,7 @@ type EmptyStateProps = {
 type ConversationRealtimeClient = ReturnType<typeof createConversationRealtimeClient>;
 
 function EmptyState({ icon, title, description, action, className = '' }: EmptyStateProps) {
-  return (
-    <div className={`empty-state ${className}`.trim()}>
-      {icon ? <div className="empty-state__icon">{icon}</div> : null}
-      <h3 className="empty-state__title">{title}</h3>
-      {description ? <p className="empty-state__desc">{description}</p> : null}
-      {action ? <div className="empty-state__action">{action}</div> : null}
-    </div>
-  );
+  return <EmptyStateCard className={`empty-state ${className}`.trim()} icon={icon} title={title} description={description ?? ''} action={action} />;
 }
 
 function createConversationRealtimeClient(options: {
@@ -1135,7 +1129,7 @@ function AssistantPageContent() {
             </div>
 
             {error || status ? (
-              <div className="text-text-secondary" style={{ marginTop: '0.75rem' }}>
+              <div className="text-text-secondary" style={{ marginTop: userAppFoundationTokens.spacing.sm }}>
                 {error || status}
               </div>
             ) : null}

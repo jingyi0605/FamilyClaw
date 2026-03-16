@@ -20,6 +20,7 @@ type UiTextProps = PropsWithChildren<{
   variant?: UiTextVariant;
   tone?: UiTextTone;
   block?: boolean;
+  className?: string;
   style?: CSSProperties;
 }>;
 
@@ -28,12 +29,14 @@ export function UiText({
   variant = 'body',
   tone,
   block = true,
+  className,
   style,
 }: UiTextProps) {
   const tokens = userAppComponentTokens.text[variant];
 
   return (
     <Text
+      className={className}
       style={{
         color: tone ? TONE_COLOR[tone] : tokens.color,
         display: block ? 'block' : undefined,

@@ -1,7 +1,7 @@
 import { PropsWithChildren, useEffect } from 'react';
 import { ScrollView, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import { PageSection, StatusCard, UiButton, UiCard, UiText } from '@familyclaw/user-ui';
+import { PageSection, StatusCard, UiButton, UiCard, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
 import {
   APP_ROUTES,
   useAppRuntime,
@@ -46,11 +46,11 @@ export function MainShellPage({ currentNav, title, description, children }: Main
     return (
       <AppShellPage>
         <PageSection title="正在进入主导航壳" description="先校验账号态和 setup 状态，再渲染受保护页面。">
-          <UiText variant="body" tone={error && !bootstrap ? 'warning' : 'secondary'} style={{ fontSize: '24px' }}>
+          <UiText variant="body" tone={error && !bootstrap ? 'warning' : 'secondary'}>
             {error && !bootstrap ? error : '正在检查访问条件...'}
           </UiText>
           {error && !bootstrap ? (
-            <UiButton size="sm" variant="secondary" onClick={() => void refresh()} style={{ marginTop: '12px' }}>
+            <UiButton size="sm" variant="secondary" onClick={() => void refresh()} style={{ marginTop: userAppFoundationTokens.spacing.sm }}>
               重新读取启动摘要
             </UiButton>
           ) : null}
@@ -78,9 +78,9 @@ export function MainShellPage({ currentNav, title, description, children }: Main
           value={bootstrap ? `${bootstrap.platformTarget.supports_share ? '支持' : '不支持'} 分享 / ${bootstrap.platformTarget.supports_deeplink ? '支持' : '不支持'} 深链` : '加载中'}
           tone="info"
         />
-        {error ? <UiText variant="body" tone="warning" style={{ fontSize: '24px' }}>{error}</UiText> : null}
-        {refreshing ? <UiText variant="body" tone="secondary" style={{ fontSize: '24px' }}>正在刷新数据...</UiText> : null}
-        <View style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
+        {error ? <UiText variant="body" tone="warning">{error}</UiText> : null}
+        {refreshing ? <UiText variant="body" tone="secondary">正在刷新数据...</UiText> : null}
+        <View style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: userAppFoundationTokens.spacing.sm }}>
           <UiButton size="sm" variant="secondary" onClick={() => void refresh()}>
             刷新启动摘要
           </UiButton>
@@ -97,7 +97,7 @@ export function MainShellPage({ currentNav, title, description, children }: Main
       {bootstrap?.households?.length ? (
         <PageSection title="家庭切换" description="家庭上下文已经抽到共享层，这里直接消费，不再重写一套浏览器状态。">
           <ScrollView scrollX>
-            <View style={{ display: 'flex', flexDirection: 'row', gap: '12px' }}>
+            <View style={{ display: 'flex', flexDirection: 'row', gap: userAppFoundationTokens.spacing.sm }}>
               {bootstrap.households.map(household => {
                 const active = household.id === bootstrap.currentHousehold?.id;
                 return (
@@ -106,7 +106,6 @@ export function MainShellPage({ currentNav, title, description, children }: Main
                     size="sm"
                     variant={active ? 'primary' : 'secondary'}
                     onClick={() => void switchHousehold(household.id)}
-                    style={{ minWidth: '140px' }}
                   >
                     {household.name}
                   </UiButton>
@@ -119,7 +118,7 @@ export function MainShellPage({ currentNav, title, description, children }: Main
 
       <PageSection title="主导航壳" description="这里就是阶段 3.1 的主壳。以后高频页面都挂在这层，不再各跑各的。">
         <ScrollView scrollX>
-          <View style={{ display: 'flex', flexDirection: 'row', gap: '12px' }}>
+          <View style={{ display: 'flex', flexDirection: 'row', gap: userAppFoundationTokens.spacing.sm }}>
             {MAIN_NAV_ITEMS.map(item => {
               const active = item.key === currentNav;
               return (
@@ -128,7 +127,6 @@ export function MainShellPage({ currentNav, title, description, children }: Main
                   size="sm"
                   variant={active ? 'primary' : 'secondary'}
                   onClick={() => void handleNavigate(item.url)}
-                  style={{ minWidth: '120px' }}
                 >
                   {item.label}
                 </UiButton>
@@ -140,10 +138,10 @@ export function MainShellPage({ currentNav, title, description, children }: Main
 
       {hasDeferredSetupWork(bootstrap?.setupStatus ?? null) ? (
         <UiCard variant="warning">
-          <UiText variant="label" tone="warning" style={{ fontSize: '28px' }}>
+          <UiText variant="label" tone="warning">
             初始化还有后续步骤
           </UiText>
-          <UiText variant="body" style={{ fontSize: '24px', marginTop: '8px' }}>
+          <UiText variant="body" style={{ marginTop: userAppFoundationTokens.spacing.xs }}>
             当前高频页面已经允许进入，但 AI 配置和首位管家创建还没迁到共享主线。这个不再阻塞 3.2，高频链路先走通。
           </UiText>
         </UiCard>

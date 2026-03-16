@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
+import { EmptyStateCard, PageSection, UiCard, UiButton, UiTag } from '@familyclaw/user-ui';
 import { GuardedPage, useHouseholdContext, useI18n, useSetupContext } from '../../../runtime';
-import { EmptyState, Section } from '../../family/base';
 import { SettingsPageShell } from '../SettingsPageShell';
 import { AgentConfigPanel } from '../components/AgentConfigPanel';
 import { AiProviderConfigPanel } from '../components/AiProviderConfigPanel';
@@ -43,13 +43,13 @@ function SettingsAiContent() {
     return (
       <SettingsPageShell activeKey="ai">
         <div className="settings-page">
-          <Section title={t('settings.ai.title')}>
-            <EmptyState
+          <PageSection title={t('settings.ai.title')} contentStyle={{ marginTop: 0 }}>
+            <EmptyStateCard
               icon="AI"
               title={t('settings.ai.emptyHousehold')}
               description={t('settings.ai.emptyHouseholdHint')}
             />
-          </Section>
+          </PageSection>
         </div>
       </SettingsPageShell>
     );
@@ -69,22 +69,22 @@ function SettingsAiContent() {
   return (
     <SettingsPageShell activeKey="ai">
       <div className="settings-page">
-        <Section title={t('settings.ai.title')}>
+        <PageSection title={t('settings.ai.title')} contentStyle={{ marginTop: 0 }}>
           {setupHints.length > 0 ? (
-            <div className="card setup-resume-card">
+            <UiCard className="setup-resume-card">
               <div className="setup-resume-card__header">
                 <div>
                   <h3>{t('settings.ai.setupResume.title')}</h3>
                   <p>{t('settings.ai.setupResume.desc')}</p>
                 </div>
-                <button className="btn btn--outline" type="button" onClick={() => void refreshSetup()}>
+                <UiButton variant="secondary" size="sm" onClick={() => void refreshSetup()}>
                   {t('settings.ai.setupResume.recheck')}
-                </button>
+                </UiButton>
               </div>
               <div className="setup-resume-card__chips">
-                {setupHints.map(item => <span key={item} className="ai-pill">{item}</span>)}
+                {setupHints.map(item => <UiTag key={item} variant="info" label={item} />)}
               </div>
-            </div>
+            </UiCard>
           ) : null}
 
           <div className="memory-main-tabs settings-ai-tabs" role="tablist" aria-label={t('settings.ai.tabs')}>
@@ -115,7 +115,7 @@ function SettingsAiContent() {
               <AiProviderConfigPanel householdId={currentHouseholdId} onChanged={refreshSetup} />
             )}
           </div>
-        </Section>
+        </PageSection>
       </div>
     </SettingsPageShell>
   );
