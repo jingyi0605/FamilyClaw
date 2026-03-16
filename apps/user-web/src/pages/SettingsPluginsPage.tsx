@@ -2,6 +2,7 @@
  * 插件管理设置页
  * ============================================================ */
 import { useEffect, useState, useMemo, useCallback } from 'react';
+import { BadgeCheck, Package, Zap } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { Card, Section, EmptyState } from '../components/base';
 import { useHouseholdContext } from '../state/household';
@@ -104,6 +105,19 @@ function formatTimestamp(ts: string | null): string {
     return new Date(ts).toLocaleString('zh-CN');
   } catch {
     return ts;
+  }
+}
+
+function renderPluginIcon(sourceType: PluginSourceType) {
+  switch (sourceType) {
+    case 'builtin':
+      return <Package aria-hidden="true" />;
+    case 'official':
+      return <BadgeCheck aria-hidden="true" />;
+    case 'third_party':
+      return <Zap aria-hidden="true" />;
+    default:
+      return <Package aria-hidden="true" />;
   }
 }
 
@@ -419,7 +433,6 @@ export function SettingsPluginsPage() {
 
               // 根据来源类型选择图标
               const iconClass = `plugin-card__icon plugin-card__icon--${plugin.source_type}`;
-              const iconEmoji = plugin.source_type === 'builtin' ? '📦' : plugin.source_type === 'official' ? '✓' : '⚡';
 
               return (
                 <Card
@@ -428,7 +441,7 @@ export function SettingsPluginsPage() {
                 >
                   {/* 顶部：图标 + 信息 + 开关 */}
                   <div className="plugin-card__header">
-                    <div className={iconClass}>{iconEmoji}</div>
+                    <div className={iconClass}>{renderPluginIcon(plugin.source_type)}</div>
                     <div className="plugin-card__info">
                       <div className="plugin-card__title-row">
                         <span className="plugin-card__name">{plugin.name}</span>

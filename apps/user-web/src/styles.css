@@ -1123,11 +1123,17 @@ input, select, textarea {
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-lg);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
   font-size: var(--font-size-sm);
   font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
   transition: all var(--transition);
 }
 
@@ -1149,6 +1155,18 @@ input, select, textarea {
 .btn--outline:hover {
   border-color: var(--brand-primary);
   color: var(--brand-primary);
+}
+
+.btn--ghost {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+  color: var(--text-primary);
+}
+
+.btn--ghost:hover {
+  border-color: var(--brand-primary);
+  color: var(--brand-primary);
+  background: color-mix(in srgb, var(--brand-primary) 6%, var(--bg-card));
 }
 
 .btn--warning {
@@ -3112,7 +3130,7 @@ input, select, textarea {
 /* ---- 设置页 ---- */
 .settings-layout {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 210px 1fr;
   gap: var(--spacing-xl);
 }
 
@@ -3302,10 +3320,15 @@ input, select, textarea {
 }
 
 .toggle-switch {
-  width: 44px;
-  height: 24px;
+  --toggle-width: 44px;
+  --toggle-height: 24px;
+  --toggle-padding: 3px;
+  --toggle-thumb-size: 18px;
+  --toggle-thumb-offset: 20px;
+  width: var(--toggle-width);
+  height: var(--toggle-height);
   background: var(--border);
-  border-radius: 12px;
+  border-radius: calc(var(--toggle-height) / 2);
   position: relative;
   transition: background var(--transition);
   flex-shrink: 0;
@@ -3320,19 +3343,19 @@ input, select, textarea {
 }
 
 .toggle-switch__thumb {
-  width: 18px;
-  height: 18px;
+  width: var(--toggle-thumb-size);
+  height: var(--toggle-thumb-size);
   background: white;
   border-radius: 50%;
   position: absolute;
-  top: 3px;
-  left: 3px;
+  top: var(--toggle-padding);
+  left: var(--toggle-padding);
   transition: transform var(--transition);
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
 
 .toggle-switch--on .toggle-switch__thumb {
-  transform: translateX(20px);
+  transform: translateX(var(--toggle-thumb-offset));
 }
 
 .settings-note {
@@ -6948,7 +6971,7 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.25rem;
+  line-height: 0;
   flex-shrink: 0;
 }
 
@@ -6965,6 +6988,12 @@ body::before {
 .plugin-card__icon--third_party {
   background: var(--color-warning-light);
   color: var(--color-warning);
+}
+
+.plugin-card__icon svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.2;
 }
 
 /* 插件信息区 */
@@ -7127,21 +7156,15 @@ body::before {
 }
 
 .toggle-switch--compact {
-  width: 36px;
-  height: 20px;
-  border-radius: 10px;
+  --toggle-width: 36px;
+  --toggle-height: 20px;
+  --toggle-padding: 2px;
+  --toggle-thumb-size: 16px;
+  --toggle-thumb-offset: 16px;
 }
 
 .toggle-switch--compact .toggle-switch__thumb {
-  width: 16px;
-  height: 16px;
-  border-radius: 8px;
-  top: 2px;
-  left: 2px;
-}
-
-.toggle-switch--compact.toggle-switch--on .toggle-switch__thumb {
-  left: 18px;
+  border-radius: 50%;
 }
 
 .toggle-switch--loading {
