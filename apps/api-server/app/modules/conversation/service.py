@@ -36,6 +36,8 @@ from app.modules.conversation.orchestrator import (
 from app.modules.conversation.proposal_pipeline import (
     ProposalPipeline,
     ProposalPipelineResult,
+    TurnProposalContext,
+    aextract_proposal_batch,
     build_turn_proposal_context,
     persist_proposal_batch,
 )
@@ -60,7 +62,7 @@ from app.modules.conversation.schemas import (
 )
 from app.modules.household.models import Household
 from app.modules.llm_task import ainvoke_llm, invoke_llm
-from app.modules.llm_task.output_models import MemoryExtractionOutput
+from app.modules.llm_task.output_models import MemoryExtractionOutput, ProposalBatchExtractionOutput
 from app.modules.memory.schemas import MemoryCardCorrectionPayload, MemoryCardManualCreate
 from app.modules.memory.service import correct_memory_card, create_manual_memory_card
 from app.modules.member import service as member_service
@@ -89,9 +91,15 @@ class ConversationRealtimeTurnSetup:
     requester_member_id: str | None
     session_mode: str
     active_agent_id: str | None
+    last_event_seq: int
     user_message_id: str
     assistant_message_id: str
     conversation_history: list[dict[str, str]]
+
+
+@dataclass(slots=True)
+class ConversationRealtimeProposalPostprocessResult:
+    snapshot: ConversationSessionDetailRead | None
 
 
 def record_conversation_turn_source(
@@ -1692,9 +1700,7 @@ def _run_proposal_pipeline_for_turn(
     result: ConversationOrchestratorResult,
     actor: ActorContext,
 ) -> ProposalPipelineResult | None:
-    if result.intent not in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA}:
-        return None
-    if not (settings.conversation_proposal_shadow_enabled or settings.conversation_proposal_write_enabled):
+    if not _should_run_proposal_pipeline_for_result(result):
         return None
 
     turn_context = build_turn_proposal_context(
@@ -1769,6 +1775,153 @@ def _run_proposal_pipeline_for_turn(
             actor=actor,
         )
     return pipeline_result
+
+
+def _should_run_proposal_pipeline_for_result(result: ConversationOrchestratorResult) -> bool:
+    if result.intent not in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA}:
+        return False
+    return settings.conversation_proposal_shadow_enabled or settings.conversation_proposal_write_enabled
+
+
+def _prepare_realtime_proposal_turn_context_sync(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    result: ConversationOrchestratorResult,
+    actor: ActorContext,
+) -> TurnProposalContext | None:
+    if not _should_run_proposal_pipeline_for_result(result):
+        return None
+
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    user_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.user_message_id)
+    assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
+    if user_message_row is None or assistant_message_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation turn messages not found")
+
+    return build_turn_proposal_context(
+        db=None,
+        session=session,
+        request_id=request_id,
+        authenticated_actor=_to_authenticated_actor(actor),
+        user_message=user_message_row,
+        assistant_message=assistant_message_row,
+        conversation_history_excerpt=turn_setup.conversation_history,
+        lane_result=result.lane_selection.to_payload() if result.lane_selection is not None else {},
+        main_reply_summary=result.text[:300],
+    )
+
+
+def _persist_realtime_proposal_pipeline_sync(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    actor: ActorContext,
+    turn_context: TurnProposalContext,
+    extraction_output: ProposalBatchExtractionOutput,
+    last_event_seq: int,
+) -> ConversationRealtimeProposalPostprocessResult:
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    turn_context.db = db
+    try:
+        pipeline_result = ProposalPipeline().run_with_extraction(
+            db,
+            session=session,
+            request_id=request_id,
+            turn_context=turn_context,
+            extraction_output=extraction_output,
+            persist=settings.conversation_proposal_write_enabled,
+        )
+    except Exception as exc:
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="proposal.pipeline.failed",
+            source="proposal",
+            level="error",
+            message="统一提案分析失败，但本轮主回复保持成功。",
+            payload={"error_message": str(exc)},
+        )
+        return ConversationRealtimeProposalPostprocessResult(snapshot=None)
+
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="proposal.pipeline.completed",
+        source="proposal",
+        message="统一提案分析完成。",
+        payload={
+            "batch_id": pipeline_result.batch_id,
+            "draft_count": len(pipeline_result.drafts),
+            "failure_count": len(pipeline_result.failures),
+            "proposal_kinds": [item.proposal_kind for item in pipeline_result.drafts],
+            "write_enabled": settings.conversation_proposal_write_enabled,
+            "analyzer_failures": [
+                {
+                    "analyzer_name": failure.analyzer_name,
+                    "error_message": failure.error_message,
+                }
+                for failure in pipeline_result.failures
+            ],
+            "extraction_output": (
+                pipeline_result.extraction_output.model_dump(mode="json")
+                if pipeline_result.extraction_output is not None
+                else None
+            ),
+        },
+    )
+    if pipeline_result.batch_id is not None:
+        _apply_policy_to_proposal_batch(
+            db,
+            session=session,
+            batch_id=pipeline_result.batch_id,
+            request_id=request_id,
+            actor=actor,
+        )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="proposal.model.applied",
+        source="proposal",
+        message="本轮实时链路已在主回复完成后执行提案后处理。",
+        payload={
+            "proposal_batch_id": pipeline_result.batch_id,
+            "proposal_count": len(pipeline_result.drafts),
+        },
+    )
+    if pipeline_result.batch_id is None:
+        return ConversationRealtimeProposalPostprocessResult(snapshot=None)
+
+    session.last_event_seq = max(session.last_event_seq, last_event_seq)
+    session.updated_at = utc_now_iso()
+    db.flush()
+    return ConversationRealtimeProposalPostprocessResult(snapshot=_to_session_detail_read(db, session))
+
+
+def _record_realtime_proposal_pipeline_failure_sync(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    actor: ActorContext,
+    error_message: str,
+) -> None:
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="proposal.pipeline.failed",
+        source="proposal",
+        level="error",
+        message="统一提案分析失败，但本轮主回复保持成功。",
+        payload={"error_message": error_message},
+    )
 
 
 def _build_legacy_policy_result_from_proposals(
@@ -2271,15 +2424,17 @@ async def _abroadcast_conversation_event(
     event_type: str,
     payload: dict[str, object],
     request_id: str | None = None,
+    seq: int | None = None,
 ) -> None:
-    seq = await run_blocking_db(
-        lambda db: _claim_next_conversation_event_seq_sync(db, session_id=session_id),
-        session_factory=session_factory,
-        policy=_build_conversation_realtime_policy(label="conversation.realtime.event_seq"),
-        commit=True,
-        logger=logger,
-        context={"session_id": session_id, "event_type": event_type},
-    )
+    if seq is None:
+        seq = await run_blocking_db(
+            lambda db: _claim_next_conversation_event_seq_sync(db, session_id=session_id),
+            session_factory=session_factory,
+            policy=_build_conversation_realtime_policy(label="conversation.realtime.event_seq"),
+            commit=True,
+            logger=logger,
+            context={"session_id": session_id, "event_type": event_type},
+        )
     event = build_bootstrap_realtime_event(
         event_type=event_type,  # type: ignore[arg-type]
         session_id=session_id,
@@ -2333,6 +2488,7 @@ def _prepare_conversation_realtime_turn_sync(
         requester_member_id=session.requester_member_id,
         session_mode=session.session_mode,
         active_agent_id=session.active_agent_id,
+        last_event_seq=session.last_event_seq,
         user_message_id=user_message_row.id,
         assistant_message_id=assistant_message_row.id,
         conversation_history=_build_recent_conversation_history(
@@ -2351,12 +2507,12 @@ def _finish_conversation_realtime_turn_sync(
     result: ConversationOrchestratorResult,
     actor: ActorContext,
     chunk_count: int,
+    last_event_seq: int,
     user_message: str,
 ) -> ConversationSessionDetailRead:
     session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
-    user_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.user_message_id)
     assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
-    if user_message_row is None or assistant_message_row is None:
+    if assistant_message_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation turn messages not found")
 
     _append_debug_log(
@@ -2410,6 +2566,7 @@ def _finish_conversation_realtime_turn_sync(
         },
     )
     session.current_request_id = None
+    session.last_event_seq = max(session.last_event_seq, last_event_seq)
     session.updated_at = utc_now_iso()
     db.flush()
     _append_debug_log(
@@ -2424,6 +2581,128 @@ def _finish_conversation_realtime_turn_sync(
     return _to_session_detail_read(db, session)
 
 
+def _finalize_conversation_realtime_reply_sync(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    result: ConversationOrchestratorResult,
+    actor: ActorContext,
+    chunk_count: int,
+    last_event_seq: int,
+    user_message: str,
+) -> ConversationSessionDetailRead:
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
+    if assistant_message_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation turn messages not found")
+
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="orchestrator.completed",
+        source="orchestrator",
+        message="实时编排层已完成意图识别和主路由。",
+        payload=_build_orchestrator_debug_payload(result),
+    )
+    _complete_assistant_message(
+        db,
+        session=session,
+        assistant_message=assistant_message_row,
+        result=result,
+    )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="assistant.completed",
+        source="service",
+        message="实时助手消息已落库。",
+        payload={
+            "assistant_message_id": assistant_message_row.id,
+            "intent": result.intent.value,
+            "content_preview": result.text[:120],
+            "degraded": result.degraded,
+        },
+    )
+    session.current_request_id = None
+    session.last_event_seq = max(session.last_event_seq, last_event_seq)
+    session.updated_at = utc_now_iso()
+    db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.completed",
+        source="service",
+        message="本轮实时聊天主回复已完成。",
+        payload={"outcome": "completed", "chunk_count": chunk_count, "message": user_message},
+    )
+    return _to_session_detail_read(db, session)
+
+
+def _finalize_conversation_realtime_reply_sync(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    result: ConversationOrchestratorResult,
+    actor: ActorContext,
+    chunk_count: int,
+    last_event_seq: int,
+    user_message: str,
+) -> ConversationSessionDetailRead:
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
+    if assistant_message_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation turn messages not found")
+
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="orchestrator.completed",
+        source="orchestrator",
+        message="实时编排层已完成意图识别和主路由。",
+        payload=_build_orchestrator_debug_payload(result),
+    )
+    _complete_assistant_message(
+        db,
+        session=session,
+        assistant_message=assistant_message_row,
+        result=result,
+    )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="assistant.completed",
+        source="service",
+        message="实时助手消息已落库。",
+        payload={
+            "assistant_message_id": assistant_message_row.id,
+            "intent": result.intent.value,
+            "content_preview": result.text[:120],
+            "degraded": result.degraded,
+        },
+    )
+    session.current_request_id = None
+    session.last_event_seq = max(session.last_event_seq, last_event_seq)
+    session.updated_at = utc_now_iso()
+    db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.completed",
+        source="service",
+        message="本轮实时聊天主回复已完成。",
+        payload={"outcome": "completed", "chunk_count": chunk_count, "message": user_message},
+    )
+    return _to_session_detail_read(db, session)
+
+
 def _fail_conversation_realtime_turn_sync(
     db: Session,
     *,
@@ -2433,6 +2712,7 @@ def _fail_conversation_realtime_turn_sync(
     partial_text: str,
     error_message: str,
     error_code: str,
+    last_event_seq: int,
 ) -> ConversationSessionDetailRead:
     session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
     assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
@@ -2457,6 +2737,7 @@ def _fail_conversation_realtime_turn_sync(
             error_code=error_code,
         )
     session.current_request_id = None
+    session.last_event_seq = max(session.last_event_seq, last_event_seq)
     session.updated_at = utc_now_iso()
     db.flush()
     _append_debug_log(
@@ -2483,6 +2764,7 @@ def _build_realtime_session_stub(turn_setup: ConversationRealtimeTurnSetup) -> C
         requester_member_id=turn_setup.requester_member_id,
         session_mode=turn_setup.session_mode,
         active_agent_id=turn_setup.active_agent_id,
+        last_event_seq=turn_setup.last_event_seq,
         title="",
         status="active",
         last_message_at=utc_now_iso(),
@@ -2525,7 +2807,155 @@ def _build_conversation_realtime_policy(*, label: str) -> BlockingCallPolicy:
     )
 
 
+async def _apostprocess_conversation_realtime_proposals(
+    db: Session,
+    *,
+    session_factory: sessionmaker[Session],
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    result: ConversationOrchestratorResult,
+    actor: ActorContext,
+    last_event_seq: int,
+    session_id: str,
+) -> ConversationSessionDetailRead | None:
+    turn_context = await run_blocking_db(
+        lambda thread_db: _prepare_realtime_proposal_turn_context_sync(
+            thread_db,
+            turn_setup=turn_setup,
+            request_id=request_id,
+            result=result,
+            actor=actor,
+        ),
+        session_factory=session_factory,
+        policy=_build_conversation_realtime_policy(label="conversation.realtime.proposal.prepare"),
+        logger=logger,
+        context={"session_id": session_id, "request_id": request_id},
+    )
+    if turn_context is None:
+        return None
+
+    try:
+        extraction_output = await aextract_proposal_batch(
+            db,
+            turn_context,
+            turn_setup.household_id,
+        )
+    except Exception as exc:
+        await run_blocking_db(
+            lambda thread_db: _record_realtime_proposal_pipeline_failure_sync(
+                thread_db,
+                turn_setup=turn_setup,
+                request_id=request_id,
+                actor=actor,
+                error_message=str(exc),
+            ),
+            session_factory=session_factory,
+            policy=_build_conversation_realtime_policy(label="conversation.realtime.proposal.fail_log"),
+            commit=True,
+            logger=logger,
+            context={"session_id": session_id, "request_id": request_id},
+        )
+        logger.exception(
+            "实时提案后处理失败，但主回复已成功 session_id=%s request_id=%s",
+            turn_setup.session_id,
+            request_id,
+        )
+        return None
+
+    postprocess_result = await run_blocking_db(
+        lambda thread_db: _persist_realtime_proposal_pipeline_sync(
+            thread_db,
+            turn_setup=turn_setup,
+            request_id=request_id,
+            actor=actor,
+            turn_context=turn_context,
+            extraction_output=extraction_output,
+            last_event_seq=last_event_seq,
+        ),
+        session_factory=session_factory,
+        policy=_build_conversation_realtime_policy(label="conversation.realtime.proposal.persist"),
+        commit=True,
+        logger=logger,
+        context={"session_id": session_id, "request_id": request_id},
+    )
+    return postprocess_result.snapshot
+
+
     """
+
+
+async def _apostprocess_conversation_realtime_proposals(
+    db: Session,
+    *,
+    session_factory: sessionmaker[Session],
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    result: ConversationOrchestratorResult,
+    actor: ActorContext,
+    last_event_seq: int,
+    session_id: str,
+) -> ConversationSessionDetailRead | None:
+    turn_context = await run_blocking_db(
+        lambda thread_db: _prepare_realtime_proposal_turn_context_sync(
+            thread_db,
+            turn_setup=turn_setup,
+            request_id=request_id,
+            result=result,
+            actor=actor,
+        ),
+        session_factory=session_factory,
+        policy=_build_conversation_realtime_policy(label="conversation.realtime.proposal.prepare"),
+        logger=logger,
+        context={"session_id": session_id, "request_id": request_id},
+    )
+    if turn_context is None:
+        return None
+
+    try:
+        extraction_output = await aextract_proposal_batch(
+            db,
+            turn_context,
+            turn_setup.household_id,
+        )
+    except Exception as exc:
+        await run_blocking_db(
+            lambda thread_db: _record_realtime_proposal_pipeline_failure_sync(
+                thread_db,
+                turn_setup=turn_setup,
+                request_id=request_id,
+                actor=actor,
+                error_message=str(exc),
+            ),
+            session_factory=session_factory,
+            policy=_build_conversation_realtime_policy(label="conversation.realtime.proposal.fail_log"),
+            commit=True,
+            logger=logger,
+            context={"session_id": session_id, "request_id": request_id},
+        )
+        logger.exception(
+            "实时提案后处理失败，但主回复已成功 session_id=%s request_id=%s",
+            turn_setup.session_id,
+            request_id,
+        )
+        return None
+
+    postprocess_result = await run_blocking_db(
+        lambda thread_db: _persist_realtime_proposal_pipeline_sync(
+            thread_db,
+            turn_setup=turn_setup,
+            request_id=request_id,
+            actor=actor,
+            turn_context=turn_context,
+            extraction_output=extraction_output,
+            last_event_seq=last_event_seq,
+        ),
+        session_factory=session_factory,
+        policy=_build_conversation_realtime_policy(label="conversation.realtime.proposal.persist"),
+        commit=True,
+        logger=logger,
+        context={"session_id": session_id, "request_id": request_id},
+    )
+    return postprocess_result.snapshot
 
 
 async def _abroadcast_conversation_event(
@@ -2537,15 +2967,17 @@ async def _abroadcast_conversation_event(
     event_type: str,
     payload: dict[str, object],
     request_id: str | None = None,
+    seq: int | None = None,
 ) -> None:
-    seq = await run_blocking_db(
-        lambda db: _claim_next_conversation_event_seq_sync(db, session_id=session_id),
-        session_factory=session_factory,
-        policy=_build_conversation_realtime_policy(label="conversation.realtime.event_seq"),
-        commit=True,
-        logger=logger,
-        context={"session_id": session_id, "event_type": event_type},
-    )
+    if seq is None:
+        seq = await run_blocking_db(
+            lambda db: _claim_next_conversation_event_seq_sync(db, session_id=session_id),
+            session_factory=session_factory,
+            policy=_build_conversation_realtime_policy(label="conversation.realtime.event_seq"),
+            commit=True,
+            logger=logger,
+            context={"session_id": session_id, "event_type": event_type},
+        )
     event = build_bootstrap_realtime_event(
         event_type=event_type,  # type: ignore[arg-type]
         session_id=session_id,
@@ -2599,6 +3031,7 @@ def _prepare_conversation_realtime_turn_sync(
         requester_member_id=session.requester_member_id,
         session_mode=session.session_mode,
         active_agent_id=session.active_agent_id,
+        last_event_seq=session.last_event_seq,
         user_message_id=user_message_row.id,
         assistant_message_id=assistant_message_row.id,
         conversation_history=_build_recent_conversation_history(
@@ -2617,6 +3050,7 @@ def _finish_conversation_realtime_turn_sync(
     result: ConversationOrchestratorResult,
     actor: ActorContext,
     chunk_count: int,
+    last_event_seq: int,
     user_message: str,
 ) -> ConversationSessionDetailRead:
     session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
@@ -2676,6 +3110,7 @@ def _finish_conversation_realtime_turn_sync(
         },
     )
     session.current_request_id = None
+    session.last_event_seq = max(session.last_event_seq, last_event_seq)
     session.updated_at = utc_now_iso()
     db.flush()
     _append_debug_log(
@@ -2699,6 +3134,7 @@ def _fail_conversation_realtime_turn_sync(
     partial_text: str,
     error_message: str,
     error_code: str,
+    last_event_seq: int,
 ) -> ConversationSessionDetailRead:
     session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
     assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
@@ -2723,6 +3159,7 @@ def _fail_conversation_realtime_turn_sync(
             error_code=error_code,
         )
     session.current_request_id = None
+    session.last_event_seq = max(session.last_event_seq, last_event_seq)
     session.updated_at = utc_now_iso()
     db.flush()
     _append_debug_log(
@@ -2749,6 +3186,7 @@ def _build_realtime_session_stub(turn_setup: ConversationRealtimeTurnSetup) -> C
         requester_member_id=turn_setup.requester_member_id,
         session_mode=turn_setup.session_mode,
         active_agent_id=turn_setup.active_agent_id,
+        last_event_seq=turn_setup.last_event_seq,
         title="",
         status="active",
         last_message_at=utc_now_iso(),
@@ -3066,6 +3504,67 @@ async def run_conversation_realtime_turn(
         )
 
 
+def _finalize_conversation_realtime_reply_sync_active(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    result: ConversationOrchestratorResult,
+    actor: ActorContext,
+    chunk_count: int,
+    last_event_seq: int,
+    user_message: str,
+) -> ConversationSessionDetailRead:
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
+    if assistant_message_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation turn messages not found")
+
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="orchestrator.completed",
+        source="orchestrator",
+        message="实时编排层已完成意图识别和主路由。",
+        payload=_build_orchestrator_debug_payload(result),
+    )
+    _complete_assistant_message(
+        db,
+        session=session,
+        assistant_message=assistant_message_row,
+        result=result,
+    )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="assistant.completed",
+        source="service",
+        message="实时助手消息已落库。",
+        payload={
+            "assistant_message_id": assistant_message_row.id,
+            "intent": result.intent.value,
+            "content_preview": result.text[:120],
+            "degraded": result.degraded,
+        },
+    )
+    session.current_request_id = None
+    session.last_event_seq = max(session.last_event_seq, last_event_seq)
+    session.updated_at = utc_now_iso()
+    db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.completed",
+        source="service",
+        message="本轮实时聊天主回复已完成。",
+        payload={"outcome": "completed", "chunk_count": chunk_count, "message": user_message},
+    )
+    return _to_session_detail_read(db, session)
+
+
 async def arun_conversation_realtime_turn(
     db: Session,
     *,
@@ -3093,11 +3592,28 @@ async def arun_conversation_realtime_turn(
     )
 
     session = _build_realtime_session_stub(turn_setup)
-    await _abroadcast_conversation_event(
-        session_factory=session_factory,
-        connection_manager=connection_manager,
-        household_id=turn_setup.household_id,
-        session_id=turn_setup.session_id,
+    last_event_seq = turn_setup.last_event_seq
+
+    async def _broadcast_turn_event(
+        *,
+        event_type: str,
+        payload: dict[str, object],
+        request_id: str | None = None,
+    ) -> None:
+        nonlocal last_event_seq
+        last_event_seq += 1
+        await _abroadcast_conversation_event(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+            household_id=turn_setup.household_id,
+            session_id=turn_setup.session_id,
+            event_type=event_type,
+            request_id=request_id,
+            payload=payload,
+            seq=last_event_seq,
+        )
+
+    await _broadcast_turn_event(
         event_type="user.message.accepted",
         request_id=request_id,
         payload={},
@@ -3121,11 +3637,7 @@ async def arun_conversation_realtime_turn(
         ):
             if event_type == "chunk":
                 emitted_chunks.append(str(event_payload))
-                await _abroadcast_conversation_event(
-                    session_factory=session_factory,
-                    connection_manager=connection_manager,
-                    household_id=turn_setup.household_id,
-                    session_id=turn_setup.session_id,
+                await _broadcast_turn_event(
                     event_type="agent.chunk",
                     request_id=request_id,
                     payload={"text": str(event_payload)},
@@ -3137,13 +3649,14 @@ async def arun_conversation_realtime_turn(
             raise RuntimeError("family_qa stream did not produce final result")
 
         snapshot = await run_blocking_db(
-            lambda thread_db: _finish_conversation_realtime_turn_sync(
+            lambda thread_db: _finalize_conversation_realtime_reply_sync_active(
                 thread_db,
                 turn_setup=turn_setup,
                 request_id=request_id,
                 result=result,
                 actor=actor,
                 chunk_count=len(emitted_chunks),
+                last_event_seq=last_event_seq + 2,
                 user_message=user_message.strip(),
             ),
             session_factory=session_factory,
@@ -3152,23 +3665,38 @@ async def arun_conversation_realtime_turn(
             logger=logger,
             context={"session_id": session_id, "request_id": request_id},
         )
-        await _abroadcast_conversation_event(
-            session_factory=session_factory,
-            connection_manager=connection_manager,
-            household_id=turn_setup.household_id,
-            session_id=turn_setup.session_id,
+        await _broadcast_turn_event(
             event_type="agent.done",
             request_id=request_id,
             payload={},
         )
-        await _abroadcast_conversation_event(
-            session_factory=session_factory,
-            connection_manager=connection_manager,
-            household_id=turn_setup.household_id,
-            session_id=turn_setup.session_id,
+        await _broadcast_turn_event(
             event_type="session.snapshot",
             payload={"snapshot": snapshot.model_dump(mode="json")},
         )
+        try:
+            postprocess_snapshot = await _apostprocess_conversation_realtime_proposals(
+                db,
+                session_factory=session_factory,
+                turn_setup=turn_setup,
+                request_id=request_id,
+                result=result,
+                actor=actor,
+                last_event_seq=last_event_seq + 1,
+                session_id=session_id,
+            )
+        except Exception:
+            logger.exception(
+                "实时提案后处理异常，但主回复已成功 session_id=%s request_id=%s",
+                turn_setup.session_id,
+                request_id,
+            )
+            postprocess_snapshot = None
+        if postprocess_snapshot is not None:
+            await _broadcast_turn_event(
+                event_type="session.snapshot",
+                payload={"snapshot": postprocess_snapshot.model_dump(mode="json")},
+            )
     except Exception as exc:
         logger.exception(
             "瀹炴椂浼氳瘽澶勭悊澶辫触 session_id=%s request_id=%s household_id=%s requester_member_id=%s error_code=%s partial_chunks=%s",
@@ -3189,6 +3717,7 @@ async def arun_conversation_realtime_turn(
                 partial_text=partial_text,
                 error_message=_render_turn_error(exc),
                 error_code=_resolve_turn_error_code(exc),
+                last_event_seq=last_event_seq + 2,
             ),
             session_factory=session_factory,
             policy=_build_conversation_realtime_policy(label="conversation.realtime.turn.fail"),
@@ -3196,11 +3725,7 @@ async def arun_conversation_realtime_turn(
             logger=logger,
             context={"session_id": session_id, "request_id": request_id},
         )
-        await _abroadcast_conversation_event(
-            session_factory=session_factory,
-            connection_manager=connection_manager,
-            household_id=turn_setup.household_id,
-            session_id=turn_setup.session_id,
+        await _broadcast_turn_event(
             event_type="agent.error",
             request_id=request_id,
             payload={
@@ -3208,11 +3733,7 @@ async def arun_conversation_realtime_turn(
                 "error_code": _resolve_turn_error_code(exc),
             },
         )
-        await _abroadcast_conversation_event(
-            session_factory=session_factory,
-            connection_manager=connection_manager,
-            household_id=turn_setup.household_id,
-            session_id=turn_setup.session_id,
+        await _broadcast_turn_event(
             event_type="session.snapshot",
             payload={"snapshot": snapshot.model_dump(mode="json")},
         )
