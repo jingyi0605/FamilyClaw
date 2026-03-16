@@ -277,6 +277,51 @@ class VoiceConversationBridgeTests(unittest.TestCase):
         self.assertTrue(result.degraded)
         self.assertFalse(result.streaming_playback)
 
+    def test_bridge_records_turn_source_when_realtime_turn_crashes_after_turn_created(self) -> None:
+        with patch(
+            "app.modules.voice.conversation_bridge.get_active_voice_terminal_conversation_binding",
+            return_value=None,
+        ), patch(
+            "app.modules.voice.conversation_bridge.bind_voice_terminal_conversation",
+            return_value=SimpleNamespace(id="binding-4"),
+        ), patch(
+            "app.modules.voice.conversation_bridge.create_conversation_session",
+            return_value=SimpleNamespace(id="conversation-4"),
+        ), patch(
+            "app.modules.voice.conversation_bridge.run_conversation_realtime_turn",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ), patch(
+            "app.modules.voice.conversation_bridge.conversation_turn_exists",
+            return_value=True,
+        ) as turn_exists_mock, patch(
+            "app.modules.voice.conversation_bridge.record_conversation_turn_source",
+            return_value=SimpleNamespace(id="source-4"),
+        ) as source_mock:
+            result = asyncio.run(
+                voice_conversation_bridge.bridge(
+                    _FakeDbSession(),
+                    session=VoiceSessionState(
+                        session_id="voice-session-4",
+                        terminal_id="terminal-4",
+                        household_id="household-1",
+                    ),
+                    terminal=VoiceTerminalState(
+                        terminal_id="terminal-4",
+                        household_id="household-1",
+                        terminal_code="kitchen-speaker",
+                        name="厨房音箱",
+                        status="online",
+                    ),
+                    transcript_text="说一下今天的安排",
+                    identity=None,
+                )
+            )
+
+        self.assertEqual("conversation_bridge_unavailable", result.error_code)
+        self.assertTrue(result.degraded)
+        turn_exists_mock.assert_called_once()
+        source_mock.assert_called_once()
+
     def test_bridge_reuses_persisted_binding_before_creating_new_session(self) -> None:
         session_detail = ConversationSessionDetailRead(
             id="conversation-bound",
@@ -356,6 +401,10 @@ class _FakeDbSession:
     def get(self, model, key):
         _ = model
         return SimpleNamespace(id=key, active_agent_id=None)
+
+    def scalar(self, stmt):
+        _ = stmt
+        return None
 
 
 if __name__ == "__main__":

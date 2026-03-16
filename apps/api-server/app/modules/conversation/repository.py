@@ -77,6 +77,18 @@ def list_messages(db: Session, *, session_id: str) -> Sequence[ConversationMessa
     return list(db.scalars(stmt).all())
 
 
+def has_message_for_request(db: Session, *, session_id: str, request_id: str) -> bool:
+    stmt = (
+        select(ConversationMessage.id)
+        .where(
+            ConversationMessage.session_id == session_id,
+            ConversationMessage.request_id == request_id,
+        )
+        .limit(1)
+    )
+    return db.scalar(stmt) is not None
+
+
 def get_next_message_seq(db: Session, *, session_id: str) -> int:
     current = db.scalar(
         select(func.max(ConversationMessage.seq)).where(ConversationMessage.session_id == session_id)

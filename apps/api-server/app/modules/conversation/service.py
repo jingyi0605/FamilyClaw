@@ -117,6 +117,19 @@ def record_conversation_turn_source(
     return row
 
 
+def conversation_turn_exists(
+    db: Session,
+    *,
+    conversation_session_id: str,
+    conversation_turn_id: str,
+) -> bool:
+    return repository.has_message_for_request(
+        db,
+        session_id=conversation_session_id,
+        request_id=conversation_turn_id,
+    )
+
+
 def create_conversation_session(
     db: Session,
     *,

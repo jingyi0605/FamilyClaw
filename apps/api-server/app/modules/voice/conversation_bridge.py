@@ -11,6 +11,7 @@ from app.modules.conversation.inbound_command_service import (
 )
 from app.modules.conversation.schemas import ConversationSessionCreate, ConversationMessageRead
 from app.modules.conversation.service import (
+    conversation_turn_exists,
     create_conversation_session,
     get_conversation_session_detail,
     record_conversation_turn_source,
@@ -140,6 +141,17 @@ class VoiceConversationBridge:
             terminal_id=session.terminal_id,
         )
         request_id = new_uuid()
+
+        def _record_voice_turn_source() -> None:
+            record_conversation_turn_source(
+                db,
+                conversation_session_id=conversation_session_id,
+                conversation_turn_id=request_id,
+                source_kind="voice_terminal",
+                platform_code=terminal.adapter_type or "voice_terminal",
+                voice_terminal_code=terminal_code,
+            )
+
         try:
             await run_conversation_realtime_turn(
                 db,
@@ -150,6 +162,12 @@ class VoiceConversationBridge:
                 connection_manager=streamer,
             )
         except Exception:
+            if conversation_turn_exists(
+                db,
+                conversation_session_id=conversation_session_id,
+                conversation_turn_id=request_id,
+            ):
+                _record_voice_turn_source()
             return VoiceConversationBridgeResult(
                 conversation_session_id=conversation_session_id,
                 response_text="我先收到你的问题了，但这次慢路径处理没跑通，请稍后再试。",
@@ -157,14 +175,7 @@ class VoiceConversationBridge:
                 error_code="conversation_bridge_unavailable",
                 streaming_playback=False,
             )
-        record_conversation_turn_source(
-            db,
-            conversation_session_id=conversation_session_id,
-            conversation_turn_id=request_id,
-            source_kind="voice_terminal",
-            platform_code=terminal.adapter_type or "voice_terminal",
-            voice_terminal_code=terminal_code,
-        )
+        _record_voice_turn_source()
 
         session_detail = get_conversation_session_detail(
             db,
