@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import create_engine
-from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.db.engine import build_database_engine
 from app.db.utils import utc_now_iso
 from app.modules.device_control.schemas import DeviceControlPluginPayload
 from app.modules.ha_integration.client import HomeAssistantClient
-from app.modules.ha_integration.models import HouseholdHaConfig
+from app.modules.ha_integration.service import get_home_assistant_runtime_config
 
 RESULT_SCHEMA_VERSION = "device-control-result.v1"
 
@@ -19,12 +18,7 @@ def parse_payload(raw_payload: dict[str, Any] | None) -> DeviceControlPluginPayl
 
 
 def build_session_factory(database_url: str) -> tuple[sessionmaker[Session], Any]:
-    url = make_url(database_url)
-    engine = create_engine(
-        database_url,
-        future=True,
-        connect_args={"check_same_thread": False} if url.get_backend_name() == "sqlite" else {},
-    )
+    engine = build_database_engine(database_url)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session), engine
 
 
@@ -48,12 +42,10 @@ def build_home_assistant_client(
     household_id: str,
     timeout_seconds: int,
 ) -> HomeAssistantClient:
-    config = db.get(HouseholdHaConfig, household_id)
-    base_url = _normalize_optional_text(config.base_url) if config else None
-    access_token = _normalize_optional_text(config.access_token) if config else None
+    config = get_home_assistant_runtime_config(db, household_id)
     return HomeAssistantClient(
-        base_url=base_url,
-        token=access_token,
+        base_url=(config.base_url if config else None),
+        token=(config.access_token if config else None),
         timeout_seconds=float(timeout_seconds),
     )
 
@@ -96,12 +88,3 @@ def append_last_action_at(patch: dict[str, Any] | None) -> dict[str, Any]:
     result = dict(patch or {})
     result["last_action_at"] = utc_now_iso()
     return result
-
-
-def _normalize_optional_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        value = str(value)
-    normalized = value.strip()
-    return normalized or None

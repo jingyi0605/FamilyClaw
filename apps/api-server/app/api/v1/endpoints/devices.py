@@ -468,6 +468,7 @@ def upsert_home_assistant_config_endpoint(
         access_token=payload.access_token,
         clear_access_token=payload.clear_access_token,
         sync_rooms_enabled=payload.sync_rooms_enabled,
+        updated_by=actor.actor_id,
     )
     write_audit_log(
         db,

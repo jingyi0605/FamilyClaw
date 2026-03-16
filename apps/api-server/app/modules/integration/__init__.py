@@ -1,5 +1,6 @@
 from .schemas import (
     IntegrationActionRead,
+    IntegrationActionResultRead,
     IntegrationActionType,
     IntegrationCatalogItemRead,
     IntegrationCatalogListRead,
@@ -26,6 +27,7 @@ from .schemas import (
 
 __all__ = [
     "IntegrationActionRead",
+    "IntegrationActionResultRead",
     "IntegrationActionType",
     "IntegrationCatalogItemRead",
     "IntegrationCatalogListRead",

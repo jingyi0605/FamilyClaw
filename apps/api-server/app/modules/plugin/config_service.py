@@ -101,6 +101,9 @@ def save_plugin_config_form(
         scope_key=scope_key,
     )
     stored_data, stored_secret_data, _ = _load_config_payloads(
+        db,
+        household_id=household_id,
+        plugin=plugin,
         config_spec=config_spec,
         instance=existing_instance,
         scope_context=scope_context,
@@ -183,6 +186,9 @@ def save_plugin_config_form(
         existing_instance.updated_at = now
 
     _sync_runtime_scope_config(
+        db,
+        household_id=household_id,
+        plugin=plugin,
         scope_context=scope_context,
         config_spec=config_spec,
         values=values,
@@ -281,6 +287,9 @@ def _build_plugin_config_form(
         scope_key=scope_key,
     )
     stored_data, stored_secret_data, has_persisted_record = _load_config_payloads(
+        db,
+        household_id=household_id,
+        plugin=plugin,
         config_spec=config_spec,
         instance=instance,
         scope_context=scope_context,
@@ -307,7 +316,10 @@ def _build_plugin_config_form(
 
 
 def _load_config_payloads(
+    db: Session,
     *,
+    household_id: str,
+    plugin: PluginRegistryItem,
     config_spec: PluginManifestConfigSpec,
     instance: PluginConfigInstance | None,
     scope_context: ChannelPluginAccount | None,
@@ -318,6 +330,10 @@ def _load_config_payloads(
         return data_payload, decrypt_plugin_config_secrets(instance.secret_data_encrypted), True
 
     if scope_context is None:
+        if plugin.id == "homeassistant" and config_spec.scope_type == "plugin":
+            from app.modules.ha_integration.service import load_homeassistant_plugin_fallback_payload
+
+            return load_homeassistant_plugin_fallback_payload(db, household_id=household_id)
         return {}, {}, False
 
     raw_payload = load_json(scope_context.config_json)
@@ -414,13 +430,27 @@ def _extract_persisted_secret_data(
 
 
 def _sync_runtime_scope_config(
+    db: Session,
     *,
+    household_id: str,
+    plugin: PluginRegistryItem,
     scope_context: ChannelPluginAccount | None,
     config_spec: PluginManifestConfigSpec,
     values: dict[str, Any],
     secret_fields: dict[str, Any],
     secret_data: dict[str, Any],
 ) -> None:
+    if plugin.id == "homeassistant" and config_spec.scope_type == "plugin":
+        from app.modules.ha_integration.service import sync_legacy_homeassistant_config_from_plugin_values
+
+        sync_legacy_homeassistant_config_from_plugin_values(
+            db,
+            household_id=household_id,
+            values=values,
+            secret_fields=secret_fields,
+            secret_data=secret_data,
+        )
+
     if scope_context is None or config_spec.scope_type != "channel_account":
         return
 

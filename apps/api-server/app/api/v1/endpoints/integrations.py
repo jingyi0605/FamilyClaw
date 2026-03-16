@@ -8,6 +8,7 @@ from app.api.dependencies import ActorContext, ensure_actor_can_access_household
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.integration import (
+    IntegrationActionResultRead,
     IntegrationCatalogListRead,
     IntegrationInstanceActionRequest,
     IntegrationInstanceCreateRequest,
@@ -19,6 +20,7 @@ from app.modules.integration import (
 from app.modules.integration.service import (
     build_integration_page_view,
     create_integration_instance,
+    execute_integration_instance_action,
     list_integration_catalog,
     list_integration_instances,
     list_integration_resources,
@@ -118,19 +120,25 @@ def create_integration_instance_endpoint(
         raise translate_integrity_error(exc) from exc
 
 
-@router.post("/instances/{instance_id}/actions", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-def execute_integration_instance_action_endpoint(
+@router.post("/instances/{instance_id}/actions", response_model=IntegrationActionResultRead)
+async def execute_integration_instance_action_endpoint(
     instance_id: str,
     payload: IntegrationInstanceActionRequest,
-    _db: Session = Depends(get_db),
-    _actor: ActorContext = Depends(require_admin_actor),
-) -> None:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "detail": "统一集成动作执行链还没接通，当前只完成了统一接口边界。",
-            "error_code": "integration_action_not_implemented",
-            "instance_id": instance_id,
-            "action": payload.action,
-        },
-    )
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> IntegrationActionResultRead:
+    try:
+        result = await execute_integration_instance_action(
+            db,
+            instance_id=instance_id,
+            payload=payload,
+            updated_by=actor.actor_id,
+        )
+        db.commit()
+        return result
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc

@@ -14,7 +14,7 @@ from app.modules.device_integration.schemas import (
     DeviceIntegrationPluginPayload,
     DeviceIntegrationPluginResult,
 )
-from app.modules.ha_integration.models import HouseholdHaConfig
+from app.modules.ha_integration.service import get_home_assistant_runtime_config, record_home_assistant_device_sync
 from app.modules.household.service import get_household_or_404
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import (
@@ -350,9 +350,9 @@ def _parse_plugin_result(output: Any) -> DeviceIntegrationPluginResult:
 
 def _apply_device_sync_result(db: Session, *, household_id: str, result: DeviceIntegrationPluginResult) -> SyncSummary:
     get_household_or_404(db, household_id)
-    config = db.get(HouseholdHaConfig, household_id)
+    runtime_config = get_home_assistant_runtime_config(db, household_id)
     room_cache = _load_room_cache(db, household_id)
-    sync_rooms_enabled = bool(config and config.sync_rooms_enabled)
+    sync_rooms_enabled = bool(runtime_config and runtime_config.sync_rooms_enabled)
 
     created_devices = 0
     updated_devices = 0
@@ -441,9 +441,8 @@ def _apply_device_sync_result(db: Session, *, household_id: str, result: DeviceI
     for failure in result.failures:
         failures.append(SyncFailure(entity_id=failure.external_ref, reason=failure.reason))
 
-    if config is not None:
-        config.last_device_sync_at = utc_now_iso()
-        db.add(config)
+    if runtime_config is not None:
+        record_home_assistant_device_sync(db, household_id=household_id)
 
     return SyncSummary(
         household_id=household_id,

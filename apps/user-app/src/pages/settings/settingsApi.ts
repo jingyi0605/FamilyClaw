@@ -17,11 +17,7 @@ import type {
   ChannelInboundEventRead,
   ContextOverviewRead,
   Device,
-  HomeAssistantConfig,
-  HomeAssistantDeviceCandidatesResponse,
-  HomeAssistantRoomCandidatesResponse,
-  HomeAssistantRoomSyncResponse,
-  HomeAssistantSyncResponse,
+  IntegrationActionResult,
   IntegrationCatalogListRead,
   IntegrationInstance,
   IntegrationInstanceActionRequest,
@@ -30,6 +26,7 @@ import type {
   IntegrationPageViewModel,
   IntegrationResourceListRead,
   HouseholdVoiceprintSummaryRead,
+  PluginConfigFormRead,
   MemberChannelBindingCreate,
   MemberChannelBindingRead,
   MemberChannelBindingUpdate,
@@ -255,8 +252,39 @@ export const settingsApi = {
       method: 'POST',
     });
   },
-  getHomeAssistantConfig(householdId: string) {
-    return request<HomeAssistantConfig>(`/devices/ha-config/${encodeURIComponent(householdId)}`);
+  getHouseholdPluginConfigForm(
+    householdId: string,
+    pluginId: string,
+    params: {
+      scope_type: 'plugin' | 'channel_account';
+      scope_key: string;
+    },
+  ) {
+    const query = new URLSearchParams({
+      scope_type: params.scope_type,
+      scope_key: params.scope_key,
+    });
+    return request<PluginConfigFormRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config?${query.toString()}`,
+    );
+  },
+  saveHouseholdPluginConfigForm(
+    householdId: string,
+    pluginId: string,
+    payload: {
+      scope_type: 'plugin' | 'channel_account';
+      scope_key: string;
+      values: Record<string, unknown>;
+      clear_secret_fields: string[];
+    },
+  ) {
+    return request<PluginConfigFormRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
   },
   listIntegrationCatalog(
     householdId: string,
@@ -301,41 +329,9 @@ export const settingsApi = {
     });
   },
   executeIntegrationInstanceAction(instanceId: string, payload: IntegrationInstanceActionRequest) {
-    return request<void>(`/integrations/instances/${encodeURIComponent(instanceId)}/actions`, {
+    return request<IntegrationActionResult>(`/integrations/instances/${encodeURIComponent(instanceId)}/actions`, {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
-  },
-  updateHomeAssistantConfig(
-    householdId: string,
-    payload: {
-      base_url: string | null;
-      access_token?: string | null;
-      clear_access_token?: boolean;
-      sync_rooms_enabled: boolean;
-    },
-  ) {
-    return request<HomeAssistantConfig>(`/devices/ha-config/${encodeURIComponent(householdId)}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
-  },
-  listHomeAssistantDeviceCandidates(householdId: string) {
-    return request<HomeAssistantDeviceCandidatesResponse>(`/devices/ha-candidates/${encodeURIComponent(householdId)}`);
-  },
-  syncSelectedHomeAssistantDevices(householdId: string, externalDeviceIds: string[]) {
-    return request<HomeAssistantSyncResponse>('/devices/sync/ha', {
-      method: 'POST',
-      body: JSON.stringify({ household_id: householdId, external_device_ids: externalDeviceIds }),
-    });
-  },
-  listHomeAssistantRoomCandidates(householdId: string) {
-    return request<HomeAssistantRoomCandidatesResponse>(`/devices/rooms/ha-candidates/${encodeURIComponent(householdId)}`);
-  },
-  syncSelectedHomeAssistantRooms(householdId: string, roomNames: string[]) {
-    return request<HomeAssistantRoomSyncResponse>('/devices/rooms/sync/ha', {
-      method: 'POST',
-      body: JSON.stringify({ household_id: householdId, room_names: roomNames }),
     });
   },
   getContextOverview(householdId: string) {

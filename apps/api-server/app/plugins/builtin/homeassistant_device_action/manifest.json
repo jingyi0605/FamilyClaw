@@ -15,5 +15,65 @@
     "action": "app.plugins.builtin.homeassistant_device_action.executor.run",
     "connector": "app.plugins.builtin.homeassistant_device_action.connector.sync",
     "memory_ingestor": "app.plugins.builtin.homeassistant_device_action.ingestor.transform"
-  }
+  },
+  "config_specs": [
+    {
+      "scope_type": "plugin",
+      "title": "Home Assistant 连接配置",
+      "description": "配置当前家庭使用的 Home Assistant 地址、访问令牌和同步策略。",
+      "schema_version": 1,
+      "config_schema": {
+        "fields": [
+          {
+            "key": "base_url",
+            "label": "Home Assistant 地址",
+            "type": "string",
+            "required": true,
+            "min_length": 1,
+            "max_length": 255
+          },
+          {
+            "key": "access_token",
+            "label": "访问令牌",
+            "type": "secret",
+            "required": true
+          },
+          {
+            "key": "sync_rooms_enabled",
+            "label": "同步时自动匹配房间",
+            "type": "boolean",
+            "required": false,
+            "default": false
+          }
+        ]
+      },
+      "ui_schema": {
+        "sections": [
+          {
+            "id": "connection",
+            "title": "连接参数",
+            "fields": ["base_url", "access_token", "sync_rooms_enabled"]
+          }
+        ],
+        "field_order": ["base_url", "access_token", "sync_rooms_enabled"],
+        "submit_text": "保存连接配置",
+        "widgets": {
+          "base_url": {
+            "widget": "input",
+            "placeholder": "http://homeassistant.local:8123",
+            "help_text": "填写当前家庭使用的 Home Assistant 地址。"
+          },
+          "access_token": {
+            "widget": "password",
+            "placeholder": "填写当前家庭的 Long-Lived Token",
+            "help_text": "系统会使用这个令牌访问 Home Assistant API。"
+          },
+          "sync_rooms_enabled": {
+            "widget": "switch",
+            "help_text": "导入设备时，同时尝试把 Home Assistant 区域映射到当前家庭房间。"
+          }
+        }
+      }
+    }
+  ]
 }

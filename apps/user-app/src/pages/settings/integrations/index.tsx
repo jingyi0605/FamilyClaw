@@ -17,15 +17,19 @@ import { settingsApi } from '../settingsApi';
 import type {
   ContextOverviewRead,
   Device,
-  HomeAssistantConfig,
   HomeAssistantDeviceCandidate,
   HomeAssistantRoomCandidate,
   HomeAssistantRoomSyncResponse,
   HomeAssistantSyncResponse,
   HouseholdVoiceprintSummaryRead,
+  IntegrationActionResult,
+  IntegrationInstance,
+  PluginConfigFormRead,
+  PluginManifestConfigField,
+  PluginManifestFieldUiSchema,
   Room,
-  VoiceprintEnrollmentRead,
   VoiceDiscoveryTerminal,
+  VoiceprintEnrollmentRead,
 } from '../settingsTypes';
 
 function resolveDateLocale(locale: string | undefined) {
@@ -36,6 +40,49 @@ function resolveDateLocale(locale: string | undefined) {
     return 'zh-TW';
   }
   return 'zh-CN';
+}
+
+type HaFormDraft = {
+  values: Record<string, unknown>;
+  secretValues: Record<string, string>;
+  clearSecretFields: string[];
+};
+
+function buildPluginFormDraft(form: PluginConfigFormRead | null): HaFormDraft {
+  return {
+    values: { ...(form?.view.values ?? {}) },
+    secretValues: {},
+    clearSecretFields: [],
+  };
+}
+
+function getStringFieldValue(values: Record<string, unknown>, key: string): string {
+  const value = values[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function getBooleanFieldValue(values: Record<string, unknown>, key: string): boolean {
+  return values[key] === true;
+}
+
+function getActionOutputItems<T>(result: IntegrationActionResult): T[] {
+  const items = result.output.items;
+  return Array.isArray(items) ? (items as T[]) : [];
+}
+
+function getActionOutputSummary<T>(result: IntegrationActionResult): T | null {
+  const summary = result.output.summary;
+  return summary && typeof summary === 'object' ? (summary as T) : null;
+}
+
+function normalizeFieldSubmitValue(field: PluginManifestConfigField, value: unknown): unknown {
+  if (field.type === 'boolean') {
+    return value === true;
+  }
+  if (field.type === 'string' || field.type === 'text' || field.type === 'secret') {
+    return typeof value === 'string' ? value.trim() : value;
+  }
+  return value;
 }
 
 function SettingsIntegrationsContent() {
@@ -49,8 +96,9 @@ function SettingsIntegrationsContent() {
   const listSeparator = locale.toLowerCase().startsWith('en') ? ', ' : '、';
   const errorJoiner = locale.toLowerCase().startsWith('en') ? '; ' : '；';
   const [overview, setOverview] = useState<ContextOverviewRead | null>(null);
-  const [haConfig, setHaConfig] = useState<HomeAssistantConfig | null>(null);
-  const [haForm, setHaForm] = useState({ base_url: '', access_token: '', sync_rooms_enabled: false, clear_access_token: false });
+  const [haInstance, setHaInstance] = useState<IntegrationInstance | null>(null);
+  const [haConfigForm, setHaConfigForm] = useState<PluginConfigFormRead | null>(null);
+  const [haFormDraft, setHaFormDraft] = useState<HaFormDraft>(() => buildPluginFormDraft(null));
   const [devices, setDevices] = useState<Device[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [deviceDrafts, setDeviceDrafts] = useState<Record<string, Pick<Device, 'name' | 'room_id' | 'status' | 'controllable'>>>({});
@@ -141,6 +189,45 @@ function SettingsIntegrationsContent() {
     finishHaConnectionFirst: page('settings.integrations.action.finishHaConnectionFirst'),
   };
 
+  async function loadHaIntegrationState(householdId: string) {
+    const [instancesResult, configFormResult] = await Promise.all([
+      settingsApi.listIntegrationInstances(householdId),
+      settingsApi.getHouseholdPluginConfigForm(householdId, 'homeassistant', {
+        scope_type: 'plugin',
+        scope_key: 'default',
+      }),
+    ]);
+    const instance = instancesResult.items.find((item) => item.plugin_id === 'homeassistant') ?? null;
+    return {
+      instance,
+      form: configFormResult,
+    };
+  }
+
+  function applyHaIntegrationState(nextState: { instance: IntegrationInstance | null; form: PluginConfigFormRead | null }) {
+    setHaInstance(nextState.instance);
+    setHaConfigForm(nextState.form);
+    setHaFormDraft(buildPluginFormDraft(nextState.form));
+  }
+
+  async function ensureHaInstance(householdId: string) {
+    if (haInstance) {
+      return haInstance;
+    }
+    if (haConfigForm?.view.state !== 'configured') {
+      return null;
+    }
+    await settingsApi.saveHouseholdPluginConfigForm(householdId, 'homeassistant', {
+      scope_type: 'plugin',
+      scope_key: 'default',
+      values: {},
+      clear_secret_fields: [],
+    });
+    const nextState = await loadHaIntegrationState(householdId);
+    applyHaIntegrationState(nextState);
+    return nextState.instance;
+  }
+
   const getDefaultVoiceDiscoveryDraft = () => ({ terminal_name: copy.defaultSpeakerName, room_id: rooms[0]?.id ?? '' });
   const mergeVoiceDiscoveryDrafts = (items: VoiceDiscoveryTerminal[], previous: Record<string, { terminal_name: string; room_id: string }>) => Object.fromEntries(items.map((item) => [item.fingerprint, { ...getDefaultVoiceDiscoveryDraft(), ...previous[item.fingerprint] }]));
   const normalizeVoiceDiscoveryErrorMessage = (message: string) => {
@@ -191,34 +278,35 @@ function SettingsIntegrationsContent() {
   useEffect(() => {
     if (!currentHouseholdId) {
       setOverview(null); setDevices([]); setRooms([]); setVoiceDiscoveries([]); setVoiceDiscoveryDrafts({}); setVoiceDiscoveryError('');
+      setHaInstance(null); setHaConfigForm(null); setHaFormDraft(buildPluginFormDraft(null));
       setVoiceprintSummary(null); setVoiceprintError(''); setVoiceprintWizard(null); setVoiceprintWizardEnrollment(null);
       return;
     }
     let cancelled = false;
     async function loadData() {
       setLoading(true); setError('');
-      const [configResult, devicesResult, roomsResult] = await Promise.allSettled([
-        settingsApi.getHomeAssistantConfig(currentHouseholdId),
+      const [haStateResult, devicesResult, roomsResult] = await Promise.allSettled([
+        loadHaIntegrationState(currentHouseholdId),
         settingsApi.listDevices(currentHouseholdId),
         settingsApi.listRooms(currentHouseholdId),
       ]);
       if (cancelled) return;
-      const nextConfig = configResult.status === 'fulfilled' ? configResult.value : null;
+      const nextHaState = haStateResult.status === 'fulfilled' ? haStateResult.value : null;
       const nextDevices = devicesResult.status === 'fulfilled' ? devicesResult.value.items : [];
       const nextRooms = roomsResult.status === 'fulfilled' ? roomsResult.value.items : [];
-      setDevices(nextDevices); setRooms(nextRooms); setHaConfig(nextConfig);
-      setHaForm({ base_url: nextConfig?.base_url ?? '', access_token: '', sync_rooms_enabled: nextConfig?.sync_rooms_enabled ?? false, clear_access_token: false });
+      setDevices(nextDevices); setRooms(nextRooms);
+      applyHaIntegrationState(nextHaState ?? { instance: null, form: null });
       setDeviceDrafts(Object.fromEntries(nextDevices.map((device) => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
       await loadVoiceDiscoveries(currentHouseholdId);
-      const hasHaConfig = Boolean(nextConfig?.base_url && nextConfig?.token_configured);
+      const hasHaConfig = nextHaState?.form?.view.state === 'configured';
       if (hasHaConfig) {
         const overviewResult = await settingsApi.getContextOverview(currentHouseholdId).then((value) => ({ status: 'fulfilled' as const, value }), (reason) => ({ status: 'rejected' as const, reason }));
         if (cancelled) return;
         setOverview(overviewResult.status === 'fulfilled' ? overviewResult.value : null);
-        setError([configResult, devicesResult, roomsResult, overviewResult].filter((result) => result.status === 'rejected').map((result) => result.reason instanceof Error ? result.reason.message : copy.loadIntegrationFailed).join(errorJoiner));
+        setError([haStateResult, devicesResult, roomsResult, overviewResult].filter((result) => result.status === 'rejected').map((result) => result.reason instanceof Error ? result.reason.message : copy.loadIntegrationFailed).join(errorJoiner));
       } else {
         setOverview(null);
-        setError([configResult, devicesResult, roomsResult].filter((result) => result.status === 'rejected').map((result) => result.reason instanceof Error ? result.reason.message : copy.loadIntegrationFailed).join(errorJoiner));
+        setError([haStateResult, devicesResult, roomsResult].filter((result) => result.status === 'rejected').map((result) => result.reason instanceof Error ? result.reason.message : copy.loadIntegrationFailed).join(errorJoiner));
       }
       setLoading(false);
     }
@@ -287,10 +375,9 @@ function SettingsIntegrationsContent() {
 
   async function reloadWorkspace() {
     if (!currentHouseholdId) return;
-    const [config, nextDevices, nextRooms] = await Promise.all([settingsApi.getHomeAssistantConfig(currentHouseholdId), settingsApi.listDevices(currentHouseholdId), settingsApi.listRooms(currentHouseholdId)]);
-    setHaConfig(config);
-    setHaForm({ base_url: config.base_url ?? '', access_token: '', sync_rooms_enabled: config.sync_rooms_enabled, clear_access_token: false });
-    setOverview(config.base_url && config.token_configured ? await settingsApi.getContextOverview(currentHouseholdId).catch(() => null) : null);
+    const [haState, nextDevices, nextRooms] = await Promise.all([loadHaIntegrationState(currentHouseholdId), settingsApi.listDevices(currentHouseholdId), settingsApi.listRooms(currentHouseholdId)]);
+    applyHaIntegrationState(haState);
+    setOverview(haState.form?.view.state === 'configured' ? await settingsApi.getContextOverview(currentHouseholdId).catch(() => null) : null);
     setDevices(nextDevices.items); setRooms(nextRooms.items);
     setDeviceDrafts(Object.fromEntries(nextDevices.items.map((device) => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
     await loadVoiceDiscoveries(currentHouseholdId, { silent: true });
@@ -303,11 +390,30 @@ function SettingsIntegrationsContent() {
 
   async function handleSaveHaConfig(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!currentHouseholdId) return;
+    if (!currentHouseholdId || !haConfigForm) return;
     await runAction(async () => {
-      const result = await settingsApi.updateHomeAssistantConfig(currentHouseholdId, { base_url: haForm.base_url.trim() || null, access_token: haForm.access_token.trim() || undefined, clear_access_token: haForm.clear_access_token, sync_rooms_enabled: haForm.sync_rooms_enabled });
-      setHaConfig(result);
-      setHaForm({ base_url: result.base_url ?? '', access_token: '', sync_rooms_enabled: result.sync_rooms_enabled, clear_access_token: false });
+      const fieldMap = new Map(haConfigForm.config_spec.config_schema.fields.map((field) => [field.key, field]));
+      const values = Object.fromEntries(Object.entries(haFormDraft.values).map(([key, value]) => {
+        const field = fieldMap.get(key);
+        return [key, field ? normalizeFieldSubmitValue(field, value) : value];
+      }));
+      for (const [key, value] of Object.entries(haFormDraft.secretValues)) {
+        if (!value.trim()) {
+          continue;
+        }
+        const field = fieldMap.get(key);
+        values[key] = field ? normalizeFieldSubmitValue(field, value) : value.trim();
+      }
+      const result = await settingsApi.saveHouseholdPluginConfigForm(currentHouseholdId, 'homeassistant', {
+        scope_type: haConfigForm.view.scope_type,
+        scope_key: haConfigForm.view.scope_key,
+        values,
+        clear_secret_fields: haFormDraft.clearSecretFields,
+      });
+      setHaConfigForm(result);
+      setHaFormDraft(buildPluginFormDraft(result));
+      const nextHaState = await loadHaIntegrationState(currentHouseholdId);
+      applyHaIntegrationState(nextHaState);
       setConfigModalOpen(false); setStatus(copy.saveHaSuccess);
     });
   }
@@ -316,8 +422,17 @@ function SettingsIntegrationsContent() {
     if (!currentHouseholdId) { setError(copy.selectHousehold); return; }
     setDeviceModalLoading(true); setError('');
     try {
-      const result = await settingsApi.listHomeAssistantDeviceCandidates(currentHouseholdId);
-      setDeviceCandidates(result.items); setSelectedExternalDeviceIds(result.items.map((item) => item.external_device_id)); setDeviceModalOpen(true);
+      const instance = await ensureHaInstance(currentHouseholdId);
+      if (!instance) {
+        throw new Error(copy.finishHaConnectionFirst);
+      }
+      const result = await settingsApi.executeIntegrationInstanceAction(instance.id, {
+        action: 'sync',
+        payload: { sync_scope: 'device_candidates' },
+      });
+      const items = getActionOutputItems<HomeAssistantDeviceCandidate>(result);
+      setHaInstance(result.instance ?? instance);
+      setDeviceCandidates(items); setSelectedExternalDeviceIds(items.map((item) => item.external_device_id)); setDeviceModalOpen(true);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : copy.loadHaDevicesFailed);
     } finally { setDeviceModalLoading(false); }
@@ -326,8 +441,25 @@ function SettingsIntegrationsContent() {
   async function handleConfirmDeviceSync() {
     if (!currentHouseholdId) return;
     await runAction(async () => {
-      const result = await settingsApi.syncSelectedHomeAssistantDevices(currentHouseholdId, selectedExternalDeviceIds);
-      setSyncSummary(result); setDeviceModalOpen(false); await reloadWorkspace(); setStatus(copy.importHaDevicesSuccess(result.created_devices + result.updated_devices));
+      const instance = await ensureHaInstance(currentHouseholdId);
+      if (!instance) {
+        throw new Error(copy.finishHaConnectionFirst);
+      }
+      const result = await settingsApi.executeIntegrationInstanceAction(instance.id, {
+        action: 'sync',
+        payload: {
+          sync_scope: 'device_sync',
+          selected_external_ids: selectedExternalDeviceIds,
+        },
+      });
+      const summary = getActionOutputSummary<HomeAssistantSyncResponse>(result);
+      if (summary) {
+        setSyncSummary(summary);
+        setStatus(copy.importHaDevicesSuccess(summary.created_devices + summary.updated_devices));
+      }
+      setHaInstance(result.instance ?? instance);
+      setDeviceModalOpen(false);
+      await reloadWorkspace();
     });
   }
 
@@ -335,8 +467,17 @@ function SettingsIntegrationsContent() {
     if (!currentHouseholdId) { setError(copy.selectHousehold); return; }
     setRoomModalLoading(true); setError('');
     try {
-      const result = await settingsApi.listHomeAssistantRoomCandidates(currentHouseholdId);
-      setRoomCandidates(result.items); setSelectedRoomNames(result.items.filter((item) => item.can_sync).map((item) => item.name)); setRoomModalOpen(true);
+      const instance = await ensureHaInstance(currentHouseholdId);
+      if (!instance) {
+        throw new Error(copy.finishHaConnectionFirst);
+      }
+      const result = await settingsApi.executeIntegrationInstanceAction(instance.id, {
+        action: 'sync',
+        payload: { sync_scope: 'room_candidates' },
+      });
+      const items = getActionOutputItems<HomeAssistantRoomCandidate>(result);
+      setHaInstance(result.instance ?? instance);
+      setRoomCandidates(items); setSelectedRoomNames(items.filter((item) => item.can_sync).map((item) => item.name)); setRoomModalOpen(true);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : copy.loadHaRoomsFailed);
     } finally { setRoomModalLoading(false); }
@@ -345,8 +486,25 @@ function SettingsIntegrationsContent() {
   async function handleConfirmRoomSync() {
     if (!currentHouseholdId) return;
     await runAction(async () => {
-      const result = await settingsApi.syncSelectedHomeAssistantRooms(currentHouseholdId, selectedRoomNames);
-      setRoomSyncSummary(result); setRoomModalOpen(false); await reloadWorkspace(); setStatus(copy.importHaRoomsSuccess(result.created_rooms));
+      const instance = await ensureHaInstance(currentHouseholdId);
+      if (!instance) {
+        throw new Error(copy.finishHaConnectionFirst);
+      }
+      const result = await settingsApi.executeIntegrationInstanceAction(instance.id, {
+        action: 'sync',
+        payload: {
+          sync_scope: 'room_sync',
+          selected_external_ids: selectedRoomNames,
+        },
+      });
+      const summary = getActionOutputSummary<HomeAssistantRoomSyncResponse>(result);
+      if (summary) {
+        setRoomSyncSummary(summary);
+        setStatus(copy.importHaRoomsSuccess(summary.created_rooms));
+      }
+      setHaInstance(result.instance ?? instance);
+      setRoomModalOpen(false);
+      await reloadWorkspace();
     });
   }
 
@@ -477,16 +635,41 @@ function SettingsIntegrationsContent() {
   const roomNameMap = useMemo(() => Object.fromEntries(rooms.map((room) => [room.id, room.name])), [rooms]);
   const roomOptions = useMemo(() => [{ id: '', name: copy.roomUnassigned }, ...rooms.map((room) => ({ id: room.id, name: room.name }))], [copy.roomUnassigned, rooms]);
   const deviceCandidateGroups = useMemo(() => Array.from(deviceCandidates.reduce((map, candidate) => map.set(candidate.room_name || copy.roomUnassigned, [...(map.get(candidate.room_name || copy.roomUnassigned) ?? []), candidate]), new Map<string, HomeAssistantDeviceCandidate[]>()).entries()).map(([roomName, items]) => ({ roomName, items })).sort((left, right) => left.roomName.localeCompare(right.roomName, resolveDateLocale(locale))), [copy.roomUnassigned, deviceCandidates, locale]);
+  const haFieldWidgets = useMemo(() => haConfigForm?.config_spec.ui_schema.widgets ?? {}, [haConfigForm]);
+  const haFieldsByKey = useMemo(() => new Map((haConfigForm?.config_spec.config_schema.fields ?? []).map((field) => [field.key, field])), [haConfigForm]);
+  const haConfigSections = useMemo(() => {
+    if (!haConfigForm) {
+      return [];
+    }
+    const sectionMap = new Map(haConfigForm.config_spec.ui_schema.sections.map((section) => [section.id, section]));
+    const orderedSectionIds = haConfigForm.config_spec.ui_schema.sections.map((section) => section.id);
+    const fallbackSectionId = '__default__';
+    const buckets = new Map<string, string[]>();
+    for (const fieldKey of haConfigForm.config_spec.ui_schema.field_order ?? haConfigForm.config_spec.config_schema.fields.map((field) => field.key)) {
+      const owner = haConfigForm.config_spec.ui_schema.sections.find((section) => section.fields.includes(fieldKey));
+      const sectionId = owner?.id ?? fallbackSectionId;
+      buckets.set(sectionId, [...(buckets.get(sectionId) ?? []), fieldKey]);
+    }
+    return [...orderedSectionIds, ...buckets.keys()].filter((sectionId, index, list) => list.indexOf(sectionId) === index).map((sectionId) => ({
+      id: sectionId,
+      title: sectionMap.get(sectionId)?.title ?? haConfigForm.config_spec.title,
+      description: sectionMap.get(sectionId)?.description ?? haConfigForm.config_spec.description,
+      fields: buckets.get(sectionId) ?? [],
+    })).filter((section) => section.fields.length > 0);
+  }, [haConfigForm]);
+  const haBaseUrl = getStringFieldValue(haConfigForm?.view.values ?? {}, 'base_url');
+  const haTokenConfigured = Boolean(haConfigForm?.view.secret_fields.access_token?.has_value);
+  const haConfigured = haConfigForm?.view.state === 'configured' && Boolean(haBaseUrl) && haTokenConfigured;
   const formatDeviceType = (type: Device['device_type']) => ({ light: copy.deviceTypeLight, ac: copy.deviceTypeAc, curtain: copy.deviceTypeCurtain, speaker: copy.deviceTypeSpeaker, camera: copy.deviceTypeCamera, sensor: copy.deviceTypeSensor, lock: copy.deviceTypeLock }[type] ?? type);
   const formatVoiceDiscoveryStatus = (value: VoiceDiscoveryTerminal['connection_status']) => value === 'online' ? copy.online : copy.recentlyOnline;
   const formatVoiceDiscoveryTime = (value: string) => Number.isNaN(new Date(value).getTime()) ? value : new Date(value).toLocaleString(resolveDateLocale(locale), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   const formatVoiceDiscoverySerial = (sn: string) => sn.trim().length <= 4 ? sn.trim() : sn.trim().slice(-4);
   const formatVoiceTakeoverPrefixes = (prefixes: string[]) => prefixes.join(listSeparator);
-  const formatHaStatus = (config: HomeAssistantConfig | null, statusValue: ContextOverviewRead['home_assistant_status'] | undefined) => !config?.base_url || !config?.token_configured ? { label: copy.haUnconfigured, tone: 'idle' as const } : statusValue === 'healthy' ? { label: copy.haHealthy, tone: 'online' as const } : statusValue === 'degraded' ? { label: copy.haDegraded, tone: 'warning' as const } : statusValue === 'offline' ? { label: copy.haOffline, tone: 'offline' as const } : { label: copy.haChecking, tone: 'warning' as const };
-  const haStatus = formatHaStatus(haConfig, overview?.home_assistant_status);
-  const lastSyncText = syncSummary ? copy.justNow : haConfig?.last_device_sync_at ?? (overview ? copy.currentStatusLoaded : copy.noRecord);
-  const haAddressText = haConfig?.base_url ?? copy.haUnconfigured;
-  const canOperateHa = Boolean(haConfig?.base_url && haConfig?.token_configured);
+  const formatHaStatus = (configured: boolean, statusValue: ContextOverviewRead['home_assistant_status'] | undefined, state: PluginConfigFormRead['view']['state'] | undefined) => !configured ? { label: copy.haUnconfigured, tone: 'idle' as const } : state === 'invalid' ? { label: copy.haDegraded, tone: 'warning' as const } : statusValue === 'healthy' ? { label: copy.haHealthy, tone: 'online' as const } : statusValue === 'degraded' ? { label: copy.haDegraded, tone: 'warning' as const } : statusValue === 'offline' ? { label: copy.haOffline, tone: 'offline' as const } : { label: copy.haChecking, tone: 'warning' as const };
+  const haStatus = formatHaStatus(haConfigured, overview?.home_assistant_status, haConfigForm?.view.state);
+  const lastSyncText = syncSummary ? copy.justNow : haInstance?.sync_state.last_synced_at ?? (overview ? copy.currentStatusLoaded : copy.noRecord);
+  const haAddressText = haBaseUrl || copy.haUnconfigured;
+  const canOperateHa = haConfigured;
   const syncButtonLabel = canOperateHa ? (loading ? copy.importing : copy.importDevices) : copy.connectHaFirst;
   const syncRoomsButtonLabel = canOperateHa ? copy.importRooms : copy.connectHaFirst;
   const disabledHaActionTooltip = canOperateHa ? undefined : copy.finishHaConnectionFirst;
@@ -495,6 +678,33 @@ function SettingsIntegrationsContent() {
     () => devices.find((device) => device.id === speakerDetailDeviceId) ?? null,
     [devices, speakerDetailDeviceId],
   );
+
+  function updateHaDraftValue(key: string, value: unknown) {
+    setHaFormDraft((current) => ({
+      ...current,
+      values: { ...current.values, [key]: value },
+    }));
+  }
+
+  function updateHaSecretValue(key: string, value: string) {
+    setHaFormDraft((current) => ({
+      ...current,
+      secretValues: { ...current.secretValues, [key]: value },
+      clearSecretFields: current.clearSecretFields.filter((item) => item !== key),
+    }));
+  }
+
+  function updateHaSecretHandling(key: string, mode: 'keep' | 'clear') {
+    setHaFormDraft((current) => ({
+      ...current,
+      secretValues: mode === 'clear'
+        ? { ...current.secretValues, [key]: '' }
+        : current.secretValues,
+      clearSecretFields: mode === 'clear'
+        ? Array.from(new Set([...current.clearSecretFields, key]))
+        : current.clearSecretFields.filter((item) => item !== key),
+    }));
+  }
 
   return (
     <SettingsPageShell activeKey="integrations">
@@ -670,10 +880,96 @@ function SettingsIntegrationsContent() {
             <div className="member-modal ha-config-modal" onClick={(event) => event.stopPropagation()}>
               <div className="member-modal__header"><div><h3>{page('settings.integrations.modal.config.title')}</h3><p>{page('settings.integrations.modal.config.desc')}</p></div></div>
               <form className="settings-form integration-config-form" onSubmit={handleSaveHaConfig}>
-                <div className="form-group"><label>{page('settings.integrations.modal.config.baseUrlLabel')}</label><input className="form-input" value={haForm.base_url} onChange={(event) => setHaForm((current) => ({ ...current, base_url: event.target.value }))} placeholder={page('settings.integrations.modal.config.baseUrlPlaceholder')} /><div className="form-help">{page('settings.integrations.modal.config.baseUrlHelp')}</div></div>
-                <div className="form-group"><label>{page('settings.integrations.modal.config.accessTokenLabel')}</label><input className="form-input" type="password" value={haForm.access_token} onChange={(event) => setHaForm((current) => ({ ...current, access_token: event.target.value, clear_access_token: false }))} placeholder={haConfig?.token_configured ? page('settings.integrations.modal.config.accessTokenPlaceholderConfigured') : page('settings.integrations.modal.config.accessTokenPlaceholderEmpty')} /><div className="form-help">{page('settings.integrations.modal.config.accessTokenHelp', { state: haConfig?.token_configured ? page('settings.integrations.modal.config.tokenStateSaved') : page('settings.integrations.modal.config.tokenStateEmpty') })}</div></div>
-                <div className="integration-config-grid"><div className="form-group"><label>{page('settings.integrations.modal.config.syncRoomsLabel')}</label><select className="form-select" value={haForm.sync_rooms_enabled ? 'true' : 'false'} onChange={(event) => setHaForm((current) => ({ ...current, sync_rooms_enabled: event.target.value === 'true' }))}><option value="false">{page('settings.integrations.modal.config.syncRoomsDevicesOnly')}</option><option value="true">{page('settings.integrations.modal.config.syncRoomsMatchExisting')}</option></select></div><div className="form-group"><label>{page('settings.integrations.modal.config.accessTokenHandlingLabel')}</label><select className="form-select" value={haForm.clear_access_token ? 'clear' : 'keep'} onChange={(event) => setHaForm((current) => ({ ...current, clear_access_token: event.target.value === 'clear', access_token: event.target.value === 'clear' ? '' : current.access_token }))}><option value="keep">{page('settings.integrations.modal.config.accessTokenKeep')}</option><option value="clear">{page('settings.integrations.modal.config.accessTokenClear')}</option></select></div></div>
-                <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setConfigModalOpen(false)} disabled={loading}>{page('settings.integrations.action.cancel')}</button><button className="btn btn--outline btn--sm" type="submit" disabled={loading}>{loading ? page('settings.integrations.action.saving') : page('settings.integrations.action.saveConnectionSettings')}</button></div>
+                {!haConfigForm ? (
+                  <div className="integration-status__detail">{copy.loadIntegrationFailed}</div>
+                ) : (
+                  <>
+                    {haConfigSections.map((section) => (
+                      <div key={section.id}>
+                        <div className="form-group">
+                          <label>{section.title}</label>
+                          {section.description ? <div className="form-help">{section.description}</div> : null}
+                        </div>
+                        {section.fields.map((fieldKey) => {
+                          const field = haFieldsByKey.get(fieldKey);
+                          if (!field) {
+                            return null;
+                          }
+                          const widget: PluginManifestFieldUiSchema | undefined = haFieldWidgets[field.key];
+                          const fieldError = haConfigForm.view.field_errors[field.key];
+                          if (field.type === 'secret') {
+                            const secretState = haConfigForm.view.secret_fields[field.key];
+                            const clearMode = haFormDraft.clearSecretFields.includes(field.key);
+                            const secretPlaceholder = secretState?.has_value
+                              ? page('settings.integrations.modal.config.accessTokenPlaceholderConfigured')
+                              : (widget?.placeholder ?? page('settings.integrations.modal.config.accessTokenPlaceholderEmpty'));
+                            const secretHelp = widget?.help_text
+                              ? `${widget.help_text} ${page('settings.integrations.modal.config.accessTokenHelp', { state: secretState?.has_value && !clearMode ? page('settings.integrations.modal.config.tokenStateSaved') : page('settings.integrations.modal.config.tokenStateEmpty') })}`
+                              : page('settings.integrations.modal.config.accessTokenHelp', { state: secretState?.has_value && !clearMode ? page('settings.integrations.modal.config.tokenStateSaved') : page('settings.integrations.modal.config.tokenStateEmpty') });
+                            return (
+                              <div key={field.key} className="integration-config-grid">
+                                <div className="form-group">
+                                  <label>{field.label}</label>
+                                  <input
+                                    className="form-input"
+                                    type="password"
+                                    value={haFormDraft.secretValues[field.key] ?? ''}
+                                    onChange={(event) => updateHaSecretValue(field.key, event.target.value)}
+                                    placeholder={secretPlaceholder}
+                                  />
+                                  <div className="form-help">{secretHelp}</div>
+                                  {fieldError ? <div className="form-help">{fieldError}</div> : null}
+                                </div>
+                                <div className="form-group">
+                                  <label>{page('settings.integrations.modal.config.accessTokenHandlingLabel')}</label>
+                                  <select
+                                    className="form-select"
+                                    value={clearMode ? 'clear' : 'keep'}
+                                    onChange={(event) => updateHaSecretHandling(field.key, event.target.value === 'clear' ? 'clear' : 'keep')}
+                                  >
+                                    <option value="keep">{page('settings.integrations.modal.config.accessTokenKeep')}</option>
+                                    <option value="clear">{page('settings.integrations.modal.config.accessTokenClear')}</option>
+                                  </select>
+                                </div>
+                              </div>
+                            );
+                          }
+                          if (field.type === 'boolean') {
+                            return (
+                              <div key={field.key} className="form-group">
+                                <label>{field.label}</label>
+                                <select
+                                  className="form-select"
+                                  value={getBooleanFieldValue(haFormDraft.values, field.key) ? 'true' : 'false'}
+                                  onChange={(event) => updateHaDraftValue(field.key, event.target.value === 'true')}
+                                >
+                                  <option value="false">{field.key === 'sync_rooms_enabled' ? page('settings.integrations.modal.config.syncRoomsDevicesOnly') : 'false'}</option>
+                                  <option value="true">{field.key === 'sync_rooms_enabled' ? page('settings.integrations.modal.config.syncRoomsMatchExisting') : 'true'}</option>
+                                </select>
+                                <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+                                {fieldError ? <div className="form-help">{fieldError}</div> : null}
+                              </div>
+                            );
+                          }
+                          return (
+                            <div key={field.key} className="form-group">
+                              <label>{field.label}</label>
+                              <input
+                                className="form-input"
+                                value={getStringFieldValue(haFormDraft.values, field.key)}
+                                onChange={(event) => updateHaDraftValue(field.key, event.target.value)}
+                                placeholder={widget?.placeholder ?? undefined}
+                              />
+                              <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+                              {fieldError ? <div className="form-help">{fieldError}</div> : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                    <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setConfigModalOpen(false)} disabled={loading}>{page('settings.integrations.action.cancel')}</button><button className="btn btn--outline btn--sm" type="submit" disabled={loading}>{loading ? page('settings.integrations.action.saving') : (haConfigForm.config_spec.ui_schema.submit_text ?? page('settings.integrations.action.saveConnectionSettings'))}</button></div>
+                  </>
+                )}
               </form>
             </div>
           </div>

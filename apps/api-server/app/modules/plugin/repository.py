@@ -182,6 +182,10 @@ def get_plugin_config_instance(
     return db.scalar(stmt)
 
 
+def get_plugin_config_instance_by_id(db: Session, instance_id: str) -> PluginConfigInstance | None:
+    return db.get(PluginConfigInstance, instance_id)
+
+
 def list_plugin_config_instances(
     db: Session,
     *,

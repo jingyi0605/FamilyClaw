@@ -71,7 +71,7 @@
   - 怎么验证：
     - 接口清单走查
     - 前后端字段映射检查
-  - 当前执行说明：已新增 `/integrations/catalog`、`/integrations/instances`、`/integrations/resources`、`/integrations/page-view` 和创建实例接口；统一动作接口已占位，后续在 task 2.2 接通真实执行链。
+  - 当前执行说明：已新增 `/integrations/catalog`、`/integrations/instances`、`/integrations/resources`、`/integrations/page-view` 和统一动作接口；设置页里的 Home Assistant 区块已切到插件配置表单 `/ai-config/{household_id}/plugins/{plugin_id}/config` 和 `/integrations/instances/{id}/actions`，前端不再调用旧 `ha-config`、`ha-candidates`、`sync/ha`。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 3、需求 5、需求 6
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L146)
 
@@ -100,7 +100,7 @@
 ## 阶段 2：后端主链彻底收口到统一插件体系
 
 - [ ] 2.1 给设备类插件接入统一插件配置，不再直读旧 HA 专表
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：让 `homeassistant` 插件改为读取统一插件配置实例，删除插件内部对 `HouseholdHaConfig` 和 `database_url` 偷读路径的依赖。
   - 做完你能看到什么：插件运行时终于像插件，而不是回库偷配置的特权模块。
   - 先依赖什么：1.3
@@ -119,11 +119,12 @@
   - 怎么验证：
     - 插件配置测试
     - grep 检查 `HouseholdHaConfig` 依赖面
+  - 当前执行说明：`homeassistant` 插件 manifest 已声明 `plugin` 级 `config_specs`；插件配置服务已支持用插件配置实例和旧 HA 表做双向桥接；插件适配器、HA runtime 配置和设备同步服务已经优先读取插件配置实例。
   - 对应需求：`requirements.md` 需求 5、需求 6、需求 7
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L59)
 
 - [ ] 2.2 建统一集成实例服务和资源查询服务
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：新增或重构后端服务，统一管理插件目录、集成实例、资源列表、资源详情。
   - 做完你能看到什么：页面可以只调用统一服务，不再分别找 HA、设备、音箱、上下文接口拼数据。
   - 先依赖什么：2.1
@@ -142,6 +143,7 @@
   - 怎么验证：
     - 后端集成测试
     - API 契约测试
+  - 当前执行说明：统一集成实例和资源查询接口已经落地；`/integrations/instances/{id}/actions` 已从占位切到真实执行，当前已接通 `homeassistant` 的 `configure`、`device_candidates`、`device_sync`、`room_candidates`、`room_sync`。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 3、需求 4、需求 5
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L48)
 
@@ -218,7 +220,7 @@
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L36)
 
 - [ ] 3.2 实现“选择品牌或集成”弹层和动态配置流程
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：做出统一插件目录搜索和选择弹层，用户通过插件配置表单添加集成实例。
   - 做完你能看到什么：用户添加 `homeassistant` 时，走的是标准插件流程，不再是写死的 HA 配置对话框。
   - 先依赖什么：3.1
@@ -237,11 +239,12 @@
   - 怎么验证：
     - 页面 E2E
     - 用户流程回放
+  - 当前执行说明：虽然还没重做“添加集成”总入口，但 Home Assistant 连接弹窗已经改成按插件 `config_spec` 渲染，配置保存也走插件配置接口，不再写死 HA 专用表单提交。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 5
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L146)
 
 - [ ] 3.3 用统一资源视图替换 HA 导入和音箱管理区块
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：把当前页面里的 HA 候选导入弹窗、HA 房间导入、音箱发现和音箱详情入口，全部改成统一资源和实例动作的子流程。
   - 做完你能看到什么：页面里没有“HA 导入设备”“HA 导入房间”“新音箱”这种硬编码区块。
   - 先依赖什么：3.2
@@ -259,6 +262,7 @@
   - 怎么验证：
     - 页面 grep 检查
     - 冒烟回归
+  - 当前执行说明：Home Assistant 的设备候选、房间候选和同步确认已经切到统一实例动作链路；音箱发现和音箱详情仍是旧页面区块，这一项还没做完，不能标 DONE。
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 6
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L69)
 
@@ -310,7 +314,7 @@
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L121)
 
 - [ ] 4.2 删除旧 HA 专用后端接口、schema、服务和前端类型
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：把旧 `ha-config`、`sync/ha`、`HomeAssistant*` 类型和页面调用全部删掉，不再保留兼容外壳。
   - 做完你能看到什么：代码仓库里不会再出现误导性的旧入口。
   - 先依赖什么：4.1
@@ -330,6 +334,7 @@
   - 怎么验证：
     - grep 检查关键字
     - 后端和前端回归测试
+  - 当前执行说明：前端 `HomeAssistantConfig` 类型和旧 HA API 调用已经从设置页删除；后端旧 `devices/ha-*` 兼容接口还保留着，等迁移和回归补齐后再删。
   - 对应需求：`requirements.md` 需求 6、需求 8
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L184)
 

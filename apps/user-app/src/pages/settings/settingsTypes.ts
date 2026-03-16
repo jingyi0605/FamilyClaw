@@ -246,15 +246,6 @@ export type HomeAssistantDeviceCandidatesResponse = {
   items: HomeAssistantDeviceCandidate[];
 };
 
-export type HomeAssistantConfig = {
-  household_id: string;
-  base_url: string | null;
-  token_configured: boolean;
-  sync_rooms_enabled: boolean;
-  last_device_sync_at: string | null;
-  updated_at: string | null;
-};
-
 export type HomeAssistantRoomSyncResponse = {
   household_id: string;
   created_rooms: number;
@@ -567,6 +558,27 @@ export type PluginManifestConfigSpec = {
 
 export type PluginConfigState = 'unconfigured' | 'configured' | 'invalid';
 
+export type PluginConfigSecretFieldRead = {
+  has_value: boolean;
+  masked: string | null;
+};
+
+export type PluginConfigView = {
+  scope_type: PluginConfigScopeType;
+  scope_key: string;
+  schema_version: number;
+  state: PluginConfigState;
+  values: Record<string, unknown>;
+  secret_fields: Record<string, PluginConfigSecretFieldRead>;
+  field_errors: Record<string, string>;
+};
+
+export type PluginConfigFormRead = {
+  plugin_id: string;
+  config_spec: PluginManifestConfigSpec;
+  view: PluginConfigView;
+};
+
 export type PluginRegistryItem = {
   id: string;
   name: string;
@@ -813,6 +825,16 @@ export type IntegrationInstanceCreateRequest = {
 export type IntegrationInstanceActionRequest = {
   action: IntegrationActionType;
   payload: Record<string, unknown>;
+};
+
+export type IntegrationActionResult = {
+  action: IntegrationActionType;
+  execution_mode: 'immediate' | 'queued';
+  message: string | null;
+  instance: IntegrationInstance | null;
+  config_form: PluginConfigFormRead | null;
+  job: PluginJobRead | null;
+  output: Record<string, unknown>;
 };
 
 export type PluginJobRead = {

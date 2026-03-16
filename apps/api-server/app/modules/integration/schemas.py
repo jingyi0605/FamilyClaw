@@ -4,7 +4,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.plugin.schemas import PluginConfigScopeType, PluginConfigState, PluginManifestConfigSpec, PluginSourceType, RiskLevel
+from app.modules.plugin.schemas import (
+    PluginConfigFormRead,
+    PluginConfigScopeType,
+    PluginConfigState,
+    PluginJobRead,
+    PluginManifestConfigSpec,
+    PluginSourceType,
+    RiskLevel,
+)
 
 IntegrationResourceType = Literal["device", "entity", "helper"]
 IntegrationInstanceStatus = Literal["draft", "active", "degraded", "disabled", "deleted"]
@@ -205,6 +213,18 @@ class IntegrationInstanceActionRequest(BaseModel):
 
     action: IntegrationActionType
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class IntegrationActionResultRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: IntegrationActionType
+    execution_mode: Literal["immediate", "queued"] = "immediate"
+    message: str | None = None
+    instance: IntegrationInstanceRead | None = None
+    config_form: PluginConfigFormRead | None = None
+    job: PluginJobRead | None = None
+    output: dict[str, Any] = Field(default_factory=dict)
 
 
 class IntegrationResourceListQuery(BaseModel):
