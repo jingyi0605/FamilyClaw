@@ -5,6 +5,8 @@
 
 .page--assistant {
   display: block;
+  width: auto;
+  max-width: none;
   margin: calc(-1 * var(--spacing-xl)) calc(-1 * var(--spacing-xxl));
   height: 100vh;
   min-height: 0;
