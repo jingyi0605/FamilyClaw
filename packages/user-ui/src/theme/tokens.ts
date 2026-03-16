@@ -1,10 +1,10 @@
 import { userAppThemeList } from './themes';
 
-const isH5 = typeof process !== 'undefined' && process.env.TARO_ENV === 'h5';
+const canUseCssVariables = typeof document !== 'undefined';
 const fallbackTheme = userAppThemeList[0];
 
 function themeVar(cssVarName: string, fallbackValue: string) {
-  return isH5 ? `var(${cssVarName})` : fallbackValue;
+  return canUseCssVariables ? `var(${cssVarName}, ${fallbackValue})` : fallbackValue;
 }
 
 export const userAppFoundationTokens = {
