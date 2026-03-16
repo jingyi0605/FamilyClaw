@@ -1,7 +1,7 @@
 import logging
 import unittest
 
-from app.core.logging import UvicornAccessNoiseFilter
+from app.core.logging import NOISY_THIRD_PARTY_LOGGER_LEVELS, UvicornAccessNoiseFilter, setup_logging
 
 
 class UvicornAccessNoiseFilterTests(unittest.TestCase):
@@ -64,6 +64,14 @@ class UvicornAccessNoiseFilterTests(unittest.TestCase):
             args=("127.0.0.1:12345", method, path, "1.1", status_code),
             exc_info=None,
         )
+
+
+class LoggingSetupTests(unittest.TestCase):
+    def test_setup_logging_lowers_http_client_noise(self) -> None:
+        setup_logging("INFO")
+
+        for logger_name, logger_level in NOISY_THIRD_PARTY_LOGGER_LEVELS.items():
+            self.assertEqual(logger_level, logging.getLogger(logger_name).level)
 
 
 if __name__ == "__main__":

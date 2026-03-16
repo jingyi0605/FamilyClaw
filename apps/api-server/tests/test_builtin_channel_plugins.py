@@ -9,6 +9,7 @@ from xml.etree import ElementTree
 from cryptography.hazmat.primitives import padding, serialization
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import httpx
 
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import execute_plugin, list_registered_plugins
@@ -40,7 +41,7 @@ class BuiltinChannelPluginTests(unittest.TestCase):
         self.assertIn("channel-wecom-app", plugin_ids)
         self.assertIn("channel-wecom-bot", plugin_ids)
 
-    def test_telegram_plugin_normalizes_webhook_and_sends_text(self) -> None:
+    def _legacy_test_telegram_plugin_normalizes_webhook_and_sends_text(self) -> None:
         webhook_result = execute_plugin(
             PluginExecutionRequest(
                 plugin_id="channel-telegram",
@@ -82,6 +83,10 @@ class BuiltinChannelPluginTests(unittest.TestCase):
         self.assertEqual("chat:3003", event["external_conversation_key"])
         self.assertEqual("direct", event["normalized_payload"]["chat_type"])
         self.assertEqual("9", event["normalized_payload"]["thread_key"])
+        self.assertEqual("alice", event["normalized_payload"]["sender_display_name"])
+        self.assertEqual("3003", event["normalized_payload"]["metadata"]["chat_id"])
+        self.assertEqual("2002", event["normalized_payload"]["metadata"]["message_id"])
+        self.assertEqual("alice", event["normalized_payload"]["metadata"]["username"])
 
         with patch("app.plugins.builtin.channel_telegram.channel.httpx.post") as http_post:
             http_post.return_value = _MockHttpResponse({"ok": True, "result": {"message_id": 5555}})
@@ -105,6 +110,182 @@ class BuiltinChannelPluginTests(unittest.TestCase):
         self.assertEqual("5555", send_result.output["provider_message_ref"])
         self.assertIn("/sendMessage", http_post.call_args.args[0])
         self.assertEqual(9, http_post.call_args.kwargs["json"]["message_thread_id"])
+
+    def _legacy_test_telegram_plugin_handles_missing_display_name_and_username(self) -> None:
+        webhook_result = execute_plugin(
+            PluginExecutionRequest(
+                plugin_id="channel-telegram",
+                plugin_type="channel",
+                payload={
+                    "action": "webhook",
+                    "account": {"config": json.dumps({"bot_token": "telegram-token"})},
+                    "request": {
+                        "body_text": json.dumps(
+                            {
+                                "update_id": 1002,
+                                "message": {
+                                    "message_id": 2003,
+                                    "text": "hello",
+                                    "chat": {"id": 3004, "type": "private"},
+                                    "from": {"id": 4005},
+                                },
+                            }
+                        )
+                    },
+                },
+            ),
+            root_dir=self.builtin_root,
+        )
+
+        self.assertTrue(webhook_result.success)
+        event = webhook_result.output["event"]
+        self.assertIsNone(event["normalized_payload"]["sender_display_name"])
+        self.assertIsNone(event["normalized_payload"]["metadata"]["username"])
+        self.assertEqual("3004", event["normalized_payload"]["metadata"]["chat_id"])
+
+    def test_telegram_plugin_normalizes_polling_updates_and_sends_text(self) -> None:
+        with patch("app.plugins.builtin.channel_telegram.channel.httpx.post") as http_post:
+            http_post.side_effect = [
+                _MockHttpResponse(
+                    {
+                        "ok": True,
+                        "result": [
+                            {
+                                "update_id": 1001,
+                                "message": {
+                                    "message_id": 2002,
+                                    "message_thread_id": 9,
+                                    "text": "你好，Telegram",
+                                    "chat": {"id": 3003, "type": "private"},
+                                    "from": {"id": 4004, "username": "alice"},
+                                },
+                            }
+                        ],
+                    }
+                ),
+                _MockHttpResponse({"ok": True, "result": {"message_id": 5555}}),
+            ]
+            poll_result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-telegram",
+                    plugin_type="channel",
+                    payload={
+                        "action": "poll",
+                        "account": {"config": json.dumps({"bot_token": "telegram-token"})},
+                        "poll_state": {"cursor": "1001"},
+                    },
+                ),
+                root_dir=self.builtin_root,
+            )
+            send_result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-telegram",
+                    plugin_type="channel",
+                    payload={
+                        "action": "send",
+                        "account": {"config": json.dumps({"bot_token": "telegram-token"})},
+                        "delivery": {
+                            "external_conversation_key": "chat:3003#thread:9",
+                            "text": "回复 Telegram",
+                        },
+                    },
+                ),
+                root_dir=self.builtin_root,
+            )
+
+        self.assertTrue(poll_result.success)
+        self.assertEqual("1002", poll_result.output["next_cursor"])
+        self.assertEqual(1, len(poll_result.output["events"]))
+        event = poll_result.output["events"][0]
+        self.assertEqual("1001", event["external_event_id"])
+        self.assertEqual("4004", event["external_user_id"])
+        self.assertEqual("chat:3003", event["external_conversation_key"])
+        self.assertEqual("direct", event["normalized_payload"]["chat_type"])
+        self.assertEqual("9", event["normalized_payload"]["thread_key"])
+        self.assertEqual("alice", event["normalized_payload"]["sender_display_name"])
+        self.assertEqual("3003", event["normalized_payload"]["metadata"]["chat_id"])
+        self.assertEqual("2002", event["normalized_payload"]["metadata"]["message_id"])
+        self.assertEqual("alice", event["normalized_payload"]["metadata"]["username"])
+
+        self.assertTrue(send_result.success)
+        self.assertEqual("5555", send_result.output["provider_message_ref"])
+        self.assertIn("/sendMessage", http_post.call_args.args[0])
+        self.assertEqual(9, http_post.call_args.kwargs["json"]["message_thread_id"])
+
+    def test_telegram_plugin_handles_missing_display_name_and_username(self) -> None:
+        with patch("app.plugins.builtin.channel_telegram.channel.httpx.post") as http_post:
+            http_post.return_value = _MockHttpResponse(
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 1002,
+                            "message": {
+                                "message_id": 2003,
+                                "text": "hello",
+                                "chat": {"id": 3004, "type": "private"},
+                                "from": {"id": 4005},
+                            },
+                        }
+                    ],
+                }
+            )
+            poll_result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-telegram",
+                    plugin_type="channel",
+                    payload={
+                        "action": "poll",
+                        "account": {"config": json.dumps({"bot_token": "telegram-token"})},
+                    },
+                ),
+                root_dir=self.builtin_root,
+            )
+
+        self.assertTrue(poll_result.success)
+        event = poll_result.output["events"][0]
+        self.assertIsNone(event["normalized_payload"]["sender_display_name"])
+        self.assertIsNone(event["normalized_payload"]["metadata"]["username"])
+        self.assertEqual("3004", event["normalized_payload"]["metadata"]["chat_id"])
+
+    def test_telegram_plugin_retries_polling_after_transport_error(self) -> None:
+        request = httpx.Request("POST", "https://api.telegram.org/bottelegram-token/getUpdates")
+        with patch("app.plugins.builtin.channel_telegram.channel.httpx.post") as http_post:
+            http_post.side_effect = [
+                httpx.ReadError("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol", request=request),
+                _MockHttpResponse(
+                    {
+                        "ok": True,
+                        "result": [
+                            {
+                                "update_id": 1005,
+                                "message": {
+                                    "message_id": 2005,
+                                    "text": "retry ok",
+                                    "chat": {"id": 3005, "type": "private"},
+                                    "from": {"id": 4005, "username": "retry_user"},
+                                },
+                            }
+                        ],
+                    }
+                ),
+            ]
+            poll_result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-telegram",
+                    plugin_type="channel",
+                    payload={
+                        "action": "poll",
+                        "account": {"config": json.dumps({"bot_token": "telegram-token"})},
+                    },
+                ),
+                root_dir=self.builtin_root,
+            )
+
+        self.assertTrue(poll_result.success)
+        self.assertEqual(2, http_post.call_count)
+        self.assertEqual("1006", poll_result.output["next_cursor"])
+        self.assertEqual("1005", poll_result.output["events"][0]["external_event_id"])
 
     def test_discord_plugin_handles_ping_and_command_delivery(self) -> None:
         private_key = Ed25519PrivateKey.generate()

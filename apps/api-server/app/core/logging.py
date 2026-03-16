@@ -16,6 +16,10 @@ VOICE_DISCOVERY_LIST_PATH = "/api/v1/devices/voice-terminals/discoveries"
 VOICE_DISCOVERY_REPORT_PATH = "/api/v1/devices/voice-terminals/discoveries/report"
 VOICE_DISCOVERY_BINDING_PATH_PREFIX = "/api/v1/devices/voice-terminals/discoveries/"
 VOICE_DISCOVERY_BINDING_PATH_SUFFIX = "/binding"
+NOISY_THIRD_PARTY_LOGGER_LEVELS = {
+    "httpx": logging.WARNING,
+    "httpcore": logging.WARNING,
+}
 
 
 class UvicornAccessNoiseFilter(logging.Filter):
@@ -64,6 +68,13 @@ def setup_logging(log_level: str, *, conversation_debug_enabled: bool = False) -
         logger.setLevel(level)
         if logger_name == "uvicorn.access":
             logger.addFilter(UvicornAccessNoiseFilter())
+
+    for logger_name, logger_level in NOISY_THIRD_PARTY_LOGGER_LEVELS.items():
+        logger = logging.getLogger(logger_name)
+        logger.handlers.clear()
+        logger.filters.clear()
+        logger.propagate = True
+        logger.setLevel(logger_level)
 
     _setup_conversation_debug_logger(enabled=conversation_debug_enabled)
 
