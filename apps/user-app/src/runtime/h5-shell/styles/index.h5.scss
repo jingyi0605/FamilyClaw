@@ -4676,6 +4676,135 @@ input, select, textarea {
   color: var(--text-secondary);
 }
 
+.device-card__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 集成设置页面样式 */
+.settings-page--integrations {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.settings-status {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: var(--color-success-light);
+  color: var(--color-success);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.settings-error {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.settings-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.settings-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xxl) var(--spacing-lg);
+  text-align: center;
+}
+
+.settings-empty-state h3 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.settings-empty-state p {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 400px;
+}
+
+.integration-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.integration-card--active {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 2px var(--brand-primary-light);
+}
+
+.integration-card--adder {
+  border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
+}
+
+.integration-card--adder:hover {
+  border-color: var(--brand-primary);
+  background: var(--brand-primary-light);
+}
+
+.integration-card__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: inherit;
+  color: inherit;
+}
+
+.integration-card__main:focus {
+  outline: none;
+}
+
+.integration-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
+.integration-card__header strong {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* 集成页面响应式样式 */
+@media (max-width: 768px) {
+  .settings-page--integrations .settings-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .integration-card__header {
+    flex-wrap: wrap;
+  }
+
+  .integration-card__header .device-card__actions {
+    width: 100%;
+    margin-top: var(--spacing-sm);
+    justify-content: flex-start;
+  }
+}
+
 .speaker-device-detail-dialog {
   width: min(760px, calc(100vw - 32px));
 }

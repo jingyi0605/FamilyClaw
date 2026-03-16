@@ -63,22 +63,22 @@ export function ShellNav(props: { collapsed: boolean; onToggleCollapse: () => vo
         <span className="shell-nav__logo">
           {/* FamilyClaw Logo: 爪印造型，象征家庭的守护与连接 */}
           <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-brand-primary">
-            {/* 主掌垫 - 心形基底 */}
+            {/* 心形掌垫 - 缩小但保持在底部 */}
             <path
-              d="M14 24c-1.5 0-3-1-4.5-2.5C7 19.5 4 16 4 12c0-3.5 2.5-6 5.5-6 1.8 0 3.2.8 4.5 2 1.3-1.2 2.7-2 4.5-2 3 0 5.5 2.5 5.5 6 0 4-3 7.5-5.5 9.5C17 23 15.5 24 14 24Z"
+              d="M14 25c-1.1 0-2.2-.7-3.3-1.8C8.6 20.5 7 18 7 15c0-2.8 2-5 4.5-5 1.2 0 2 .5 2.5 1.3.5-.8 1.3-1.3 2.5-1.3 2.5 0 4.5 2.2 4.5 5 0 3-1.6 5.5-3.7 8.2C16.2 24.3 15.1 25 14 25Z"
               fill="currentColor"
               opacity="0.9"
             />
             {/* 左上爪垫 */}
-            <ellipse cx="7.5" cy="6" rx="2.5" ry="3" fill="currentColor" />
+            <ellipse cx="7.5" cy="8" rx="2.5" ry="3" fill="currentColor" />
             {/* 中上爪垫 */}
-            <ellipse cx="14" cy="4" rx="2.5" ry="3" fill="currentColor" />
+            <ellipse cx="14" cy="6" rx="2.5" ry="3" fill="currentColor" />
             {/* 右上爪垫 */}
-            <ellipse cx="20.5" cy="6" rx="2.5" ry="3" fill="currentColor" />
+            <ellipse cx="20.5" cy="8" rx="2.5" ry="3" fill="currentColor" />
             {/* 左侧小爪垫 */}
-            <ellipse cx="4.5" cy="10.5" rx="2" ry="2.5" fill="currentColor" opacity="0.8" />
+            <ellipse cx="4.5" cy="12.5" rx="2" ry="2.5" fill="currentColor" opacity="0.8" />
             {/* 右侧小爪垫 */}
-            <ellipse cx="23.5" cy="10.5" rx="2" ry="2.5" fill="currentColor" opacity="0.8" />
+            <ellipse cx="23.5" cy="12.5" rx="2" ry="2.5" fill="currentColor" opacity="0.8" />
           </svg>
         </span>
         {!props.collapsed ? <span className="shell-nav__name">FamilyClaw</span> : null}
