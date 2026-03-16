@@ -110,7 +110,7 @@ export function ScheduledTaskForm({ mode, task, isOpen, onClose, onSuccess }: Sc
       });
     } else if (task) {
       setFormData({
-        name: mode === 'copy' ? `${task.name} (副本)` : task.name,
+        name: mode === 'copy' ? `${task.name}${t('scheduledTasks.form.copySuffix')}` : task.name,
         description: task.description ?? '',
         owner_scope: task.owner_scope,
         owner_member_id: task.owner_member_id,
@@ -130,13 +130,13 @@ export function ScheduledTaskForm({ mode, task, isOpen, onClose, onSuccess }: Sc
   }, [actor?.member_id, isOpen, mode, task]);
 
   const timezones = useMemo(() => [
-    { value: 'Asia/Shanghai', label: '北京时间 (UTC+8)' },
-    { value: 'Asia/Tokyo', label: '东京时间 (UTC+9)' },
-    { value: 'America/New_York', label: '纽约时间 (UTC-5)' },
-    { value: 'America/Los_Angeles', label: '洛杉矶时间 (UTC-8)' },
-    { value: 'Europe/London', label: '伦敦时间 (UTC+0)' },
-    { value: 'UTC', label: '协调世界时 (UTC)' },
-  ], []);
+    { value: 'Asia/Shanghai', label: t('scheduledTasks.timezone.beijing') },
+    { value: 'Asia/Tokyo', label: t('scheduledTasks.timezone.tokyo') },
+    { value: 'America/New_York', label: t('scheduledTasks.timezone.newYork') },
+    { value: 'America/Los_Angeles', label: t('scheduledTasks.timezone.losAngeles') },
+    { value: 'Europe/London', label: t('scheduledTasks.timezone.london') },
+    { value: 'UTC', label: t('scheduledTasks.timezone.utc') },
+  ], [t]);
 
   const updateField = <K extends keyof TaskFormData>(key: K, value: TaskFormData[K]) => {
     setFormData(current => ({ ...current, [key]: value }));

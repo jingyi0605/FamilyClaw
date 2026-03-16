@@ -37,12 +37,12 @@ const STEP_ORDER: HouseholdSetupStepCode[] = [
   'first_butler_agent',
 ];
 
-const STEP_LABELS: Record<HouseholdSetupStepCode, string> = {
-  family_profile: '创建家庭',
-  first_member: '首位成员',
-  provider_setup: '配置 AI',
-  first_butler_agent: '管家档案',
-  finish: '完成',
+const STEP_LABEL_KEYS: Record<HouseholdSetupStepCode, string> = {
+  family_profile: 'setup.step.familyProfile',
+  first_member: 'setup.step.firstMember',
+  provider_setup: 'setup.step.providerSetup',
+  first_butler_agent: 'setup.step.firstButler',
+  finish: 'setup.step.finish',
 };
 
 function getDefaultTimezone() {
@@ -91,7 +91,10 @@ async function enterApp() {
   }
 }
 
-function calculatePasswordStrength(password: string): {
+function calculatePasswordStrength(
+  password: string,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): {
   score: number;
   label: string;
   classSuffix: string;
@@ -109,15 +112,15 @@ function calculatePasswordStrength(password: string): {
   if (/[^A-Za-z0-9]/.test(password)) score += 1;
 
   if (score < 2) {
-    return { score, label: '弱', classSuffix: 'weak' };
+    return { score, label: t('setup.password.weak'), classSuffix: 'weak' };
   }
   if (score < 4) {
-    return { score, label: '中等', classSuffix: 'fair' };
+    return { score, label: t('setup.password.fair'), classSuffix: 'fair' };
   }
   if (score < 5) {
-    return { score, label: '良好', classSuffix: 'good' };
+    return { score, label: t('setup.password.good'), classSuffix: 'good' };
   }
-  return { score, label: '强', classSuffix: 'strong' };
+  return { score, label: t('setup.password.strong'), classSuffix: 'strong' };
 }
 
 export default function SetupPageH5() {
@@ -128,11 +131,15 @@ export default function SetupPageH5() {
     refreshCurrentHousehold,
     refreshHouseholds,
   } = useHouseholdContext();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const { setupStatus, setupStatusLoading, refreshSetupStatus } = useSetupContext();
   const { themeId, themeList, setTheme } = useTheme();
 
   const defaultLocale = useMemo(() => getDefaultLocale(locale), [locale]);
+
+  useEffect(() => {
+    void Taro.setNavigationBarTitle({ title: t('setup.page.title') }).catch(() => undefined);
+  }, [t, locale]);
 
   const [familyForm, setFamilyForm] = useState({
     name: '',
@@ -313,7 +320,7 @@ export default function SetupPageH5() {
     try {
       if (!currentHouseholdId) {
         if (!canCreateFirstHousehold) {
-          throw new Error('当前账号没有创建家庭的权限');
+          throw new Error(t('setup.page.emptyDesc'));
         }
 
         const created = await setupApi.createHousehold({
@@ -346,7 +353,7 @@ export default function SetupPageH5() {
       await refreshShellState(currentHouseholdId);
       advanceToNextStep();
     } catch (error) {
-      setFamilyError(error instanceof Error ? error.message : '保存家庭资料失败');
+      setFamilyError(error instanceof Error ? error.message : t('settings.error.saveFailed'));
     } finally {
       setFamilySubmitting(false);
     }
@@ -371,10 +378,10 @@ export default function SetupPageH5() {
         });
       } else {
         if (!memberForm.password.trim()) {
-          throw new Error('请先设置正式密码');
+          throw new Error(t('setup.member.passwordLabel'));
         }
         if (memberForm.password !== memberForm.confirmPassword) {
-          throw new Error('两次输入的密码不一致');
+          throw new Error(t('setup.member.confirmPasswordLabel'));
         }
 
         const member = await setupApi.createMember({
@@ -407,7 +414,7 @@ export default function SetupPageH5() {
       }));
       advanceToNextStep();
     } catch (error) {
-      setMemberError(error instanceof Error ? error.message : '创建首位成员失败');
+      setMemberError(error instanceof Error ? error.message : t('setup.step.firstMember'));
     } finally {
       setMemberSubmitting(false);
     }
@@ -443,7 +450,7 @@ export default function SetupPageH5() {
               <div className="setup-step__indicator">
                 {index < backendIndex && index !== renderIndex ? '✓' : index + 1}
               </div>
-              <div className="setup-step__label">{STEP_LABELS[step]}</div>
+                <div className="setup-step__label">{t(STEP_LABEL_KEYS[step])}</div>
             </button>
           );
         })}
@@ -496,16 +503,16 @@ export default function SetupPageH5() {
       return (
         <Card className="setup-wizard-card">
           <div className="setup-wizard-header">
-            <h2>欢迎！先给你的家庭起个名字吧。</h2>
-            <p>这个名字将用来标识你的家庭专属空间。</p>
+            <h2>{t('setup.family.title')}</h2>
+            <p>{t('setup.family.desc')}</p>
           </div>
           <form className="settings-form" onSubmit={handleFamilySubmit}>
             <div className="form-group">
-              <label htmlFor="setup-family-name">主家庭名称</label>
+              <label htmlFor="setup-family-name">{t('setup.family.nameLabel')}</label>
               <input
                 id="setup-family-name"
                 className="form-input"
-                placeholder="例如：观澜园 / 张家大院"
+                placeholder={t('setup.family.namePlaceholder')}
                 value={familyForm.name}
                 onChange={event => setFamilyForm(current => ({
                   ...current,
@@ -522,7 +529,7 @@ export default function SetupPageH5() {
             />
             {currentHousehold?.region?.status === 'unconfigured' && currentHousehold?.city ? (
               <div className="form-hint">
-                当前家庭之前保存的是“{currentHousehold.city}”，请重新选择完整地区信息。
+                {t('setup.family.legacyRegionHint', { city: currentHousehold.city })}
               </div>
             ) : null}
             {familyError ? <div className="form-error">{familyError}</div> : null}
@@ -540,10 +547,10 @@ export default function SetupPageH5() {
                 }
               >
                 {familySubmitting
-                  ? '保存中...'
+                  ? t('setup.family.saving')
                   : backendIndex > 0
-                    ? '保存修改并下一步'
-                    : '下一步'}
+                    ? t('setup.family.saveAndNext')
+                    : t('setup.family.next')}
               </button>
             </div>
           </form>
@@ -552,7 +559,7 @@ export default function SetupPageH5() {
     }
 
     if (STEP_ORDER[renderIndex] === 'first_member') {
-      const passwordStrength = calculatePasswordStrength(memberForm.password);
+      const passwordStrength = calculatePasswordStrength(memberForm.password, t);
       const hasExistingMember = Boolean(existingMemberId);
       const canSubmitMember = hasExistingMember
         ? Boolean(memberForm.name.trim() && memberForm.username.trim())
@@ -567,13 +574,13 @@ export default function SetupPageH5() {
       return (
         <Card className="setup-wizard-card">
           <div className="setup-wizard-header">
-            <h2>完善您的个人资料</h2>
-            <p>作为引导者，您将是首位加入的家庭成员，并享有管理权限。</p>
+            <h2>{t('setup.member.title')}</h2>
+            <p>{t('setup.member.desc')}</p>
           </div>
           <form className="settings-form" onSubmit={handleMemberSubmit}>
             <div className="setup-form-grid">
               <div className="form-group">
-                <label htmlFor="setup-member-name">真实姓名</label>
+                <label htmlFor="setup-member-name">{t('setup.member.nameLabel')}</label>
                 <input
                   id="setup-member-name"
                   className="form-input"
@@ -583,7 +590,7 @@ export default function SetupPageH5() {
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="setup-member-birthday">生日</label>
+                <label htmlFor="setup-member-birthday">{t('setup.member.birthdayLabel')}</label>
                 <input
                   id="setup-member-birthday"
                   type="date"
@@ -600,7 +607,7 @@ export default function SetupPageH5() {
 
             <div className="setup-form-grid" style={{ marginTop: '0.5rem' }}>
               <div className="form-group">
-                <label htmlFor="setup-member-nickname">日常称呼 / 昵称</label>
+                <label htmlFor="setup-member-nickname">{t('setup.member.nicknameLabel')}</label>
                 <input
                   id="setup-member-nickname"
                   className="form-input"
@@ -613,7 +620,7 @@ export default function SetupPageH5() {
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="setup-member-gender">性别</label>
+                <label htmlFor="setup-member-gender">{t('setup.member.genderLabel')}</label>
                 <select
                   id="setup-member-gender"
                   className="form-select"
@@ -624,9 +631,9 @@ export default function SetupPageH5() {
                   }))}
                   required
                 >
-                  <option value="">请选择</option>
-                  <option value="male">男</option>
-                  <option value="female">女</option>
+                  <option value="">{t('setup.member.genderPlaceholder')}</option>
+                  <option value="male">{t('setup.member.genderMale')}</option>
+                  <option value="female">{t('setup.member.genderFemale')}</option>
                 </select>
               </div>
             </div>
@@ -644,14 +651,14 @@ export default function SetupPageH5() {
                 className="setup-wizard-header"
                 style={{ marginBottom: '1.5rem', textAlign: 'left' }}
               >
-                <h3 style={{ fontSize: 'var(--font-size-md)' }}>设置您的专属登录账号</h3>
+                <h3 style={{ fontSize: 'var(--font-size-md)' }}>{t('setup.member.accountTitle')}</h3>
                 <p style={{ fontSize: 'var(--font-size-sm)' }}>
-                  这个账号会顶替掉你当前登录所用的临时凭证，请牢记。
+                  {t('setup.member.accountDesc')}
                 </p>
               </div>
 
               <div className="form-group">
-                <label htmlFor="setup-member-username">登录账号</label>
+                <label htmlFor="setup-member-username">{t('setup.member.usernameLabel')}</label>
                 <input
                   id="setup-member-username"
                   className="form-input"
@@ -661,14 +668,14 @@ export default function SetupPageH5() {
                   disabled={hasExistingMember}
                 />
                 {hasExistingMember ? (
-                  <div className="form-help">正式账号已创建，这里只回显当前登录账号。</div>
+                  <div className="form-help">{t('setup.member.usernameReadonlyHelp')}</div>
                 ) : null}
               </div>
 
               {!hasExistingMember ? (
                 <div className="setup-form-grid">
                   <div className="form-group">
-                    <label htmlFor="setup-member-password">访问密码</label>
+                    <label htmlFor="setup-member-password">{t('setup.member.passwordLabel')}</label>
                     <input
                       id="setup-member-password"
                       type="password"
@@ -708,13 +715,13 @@ export default function SetupPageH5() {
                             })`,
                           }}
                         >
-                          密码强度: {passwordStrength.label}
+                          {t('setup.member.passwordStrength', { label: passwordStrength.label })}
                         </div>
                       </div>
                     ) : null}
                   </div>
                   <div className="form-group">
-                    <label htmlFor="setup-member-password-confirm">确认密码</label>
+                    <label htmlFor="setup-member-password-confirm">{t('setup.member.confirmPasswordLabel')}</label>
                     <input
                       id="setup-member-password-confirm"
                       type="password"
@@ -742,7 +749,7 @@ export default function SetupPageH5() {
                 className="btn btn--outline btn--large"
                 onClick={handleBack}
               >
-                返回上一步
+                {t('setup.member.back')}
               </button>
               <button
                 type="submit"
@@ -750,12 +757,12 @@ export default function SetupPageH5() {
                 disabled={memberSubmitting || !canSubmitMember}
               >
                 {memberSubmitting
-                  ? '验证中...'
+                  ? t('setup.member.verifying')
                   : hasExistingMember
-                    ? '保存资料并下一步'
+                    ? t('setup.member.saveProfileAndNext')
                     : backendIndex > 1
-                      ? '保存修改并下一步'
-                      : '创建账号并下一步'}
+                      ? t('setup.member.saveChangesAndNext')
+                      : t('setup.member.createAccountAndNext')}
               </button>
             </div>
           </form>
@@ -767,8 +774,8 @@ export default function SetupPageH5() {
       return (
         <div className="setup-wizard-card--transparent">
           <div className="setup-wizard-header">
-            <h2>为家庭接入 AI 大脑</h2>
-            <p>选择一个您信赖的 AI 供应商。配置完毕后，它将驱动整个家庭的对话交互和智能分析。</p>
+            <h2>{t('setup.provider.title')}</h2>
+            <p>{t('setup.provider.desc')}</p>
           </div>
           <SimpleAiProviderSetup
             householdId={currentHouseholdId}
@@ -782,7 +789,7 @@ export default function SetupPageH5() {
               className="btn btn--outline btn--large"
               onClick={handleBack}
             >
-              返回上一步
+              {t('setup.provider.back')}
             </button>
             {backendIndex > 2 ? (
               <button
@@ -791,7 +798,7 @@ export default function SetupPageH5() {
                 style={{ marginLeft: '1rem' }}
                 onClick={() => advanceToNextStep()}
               >
-                跳过（已配置）
+                {t('setup.provider.skipConfigured')}
               </button>
             ) : null}
           </div>
@@ -803,8 +810,8 @@ export default function SetupPageH5() {
       return (
         <div className="setup-wizard-card--transparent">
           <div className="setup-wizard-header">
-            <h2>定制您的专属 AI 管家</h2>
-            <p>和你的管家认识一下吧！讲讲你心目中管家的形象、性格以及服务偏好，系统将自动生成他的设定档案。</p>
+            <h2>{t('setup.butler.title')}</h2>
+            <p>{t('setup.butler.desc')}</p>
           </div>
           <ButlerBootstrapConversation
             householdId={currentHouseholdId}
@@ -817,7 +824,7 @@ export default function SetupPageH5() {
               className="btn btn--outline btn--large"
               onClick={handleBack}
             >
-              返回上一步
+              {t('setup.butler.back')}
             </button>
           </div>
         </div>
@@ -827,8 +834,8 @@ export default function SetupPageH5() {
     return (
       <Card className="setup-wizard-card">
         <div className="setup-wizard-header">
-          <h2>全搞定了！</h2>
-          <p>家庭数据、账号和 AI 管家均已就绪。这就起航吧。</p>
+          <h2>{t('setup.finish.title')}</h2>
+          <p>{t('setup.finish.desc')}</p>
         </div>
         <div
           className="setup-form-actions"
@@ -839,7 +846,7 @@ export default function SetupPageH5() {
             className="btn btn--outline btn--large"
             onClick={handleBack}
           >
-            返回上一步
+            {t('setup.finish.back')}
           </button>
           <button
             type="button"
@@ -848,7 +855,7 @@ export default function SetupPageH5() {
               void enterApp();
             }}
           >
-            进入主页
+            {t('setup.finish.enterApp')}
           </button>
         </div>
       </Card>
@@ -858,17 +865,17 @@ export default function SetupPageH5() {
   const guardedContent = !currentHouseholdId && !canCreateFirstHousehold && !setupStatusLoading
     ? (
       <div className="setup-page">
-        <PageHeader title="家庭向导" />
+        <PageHeader title={t('setup.page.title')} />
         <EmptyState
-          title="未找到家庭关联"
-          description="当前账号没有关联任何家庭上下文。"
+          title={t('setup.page.emptyTitle')}
+          description={t('setup.page.emptyDesc')}
         />
       </div>
     )
     : setupStatusLoading
       ? (
         <div className="setup-page setup-page--centered">
-          <p>正在读取初始化状态...</p>
+          <p>{t('setup.page.loading')}</p>
         </div>
       )
       : !hasSeenWelcome && !currentHouseholdId && backendIndex === 0
