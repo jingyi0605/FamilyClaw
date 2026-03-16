@@ -97,6 +97,36 @@ class PluginStateOverride(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
 
 
+class PluginConfigInstance(Base):
+    __tablename__ = "plugin_config_instances"
+    __table_args__ = (
+        UniqueConstraint(
+            "household_id",
+            "plugin_id",
+            "scope_type",
+            "scope_key",
+            name="uq_plugin_config_instances_household_plugin_scope",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    household_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    plugin_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    scope_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    schema_version: Mapped[int] = mapped_column(nullable=False)
+    data_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    secret_data_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
+
+
 class PluginJob(Base):
     __tablename__ = "plugin_jobs"
     __table_args__ = (

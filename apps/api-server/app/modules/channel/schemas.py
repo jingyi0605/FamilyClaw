@@ -16,7 +16,7 @@ ChannelBridgeDisposition = Literal["dispatched", "ignored"]
 
 class ChannelAccountCreate(BaseModel):
     plugin_id: str = Field(min_length=1, max_length=64)
-    account_code: str = Field(min_length=1, max_length=64)
+    account_code: str | None = Field(default=None, min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=100)
     connection_mode: ChannelConnectionMode
     config: dict[str, Any] = Field(default_factory=dict)
@@ -82,6 +82,19 @@ class MemberChannelBindingRead(BaseModel):
     binding_status: ChannelBindingStatus
     created_at: str
     updated_at: str
+
+
+class ChannelBindingCandidateRead(BaseModel):
+    external_user_id: str
+    external_chat_id: str | None = None
+    sender_display_name: str | None = None
+    username: str | None = None
+    chat_type: ChannelInboundChatType
+    last_message_text: str | None = None
+    last_seen_at: str
+    inbound_event_id: str
+    platform_code: str
+    channel_account_id: str
 
 
 class ChannelInboundEventCreate(BaseModel):
@@ -198,6 +211,23 @@ class ChannelGatewayHttpResponse(BaseModel):
 class ChannelGatewayHandleResult(BaseModel):
     ack: ChannelGatewayWebhookAck
     http_response: ChannelGatewayHttpResponse | None = None
+
+
+class ChannelPollingExecutionRead(BaseModel):
+    events: list[ChannelGatewayInboundEvent] = Field(default_factory=list)
+    next_cursor: str | None = Field(default=None, max_length=255)
+    message: str | None = None
+
+
+class ChannelPollingBatchRead(BaseModel):
+    account_id: str
+    plugin_id: str
+    fetched_event_count: int = Field(default=0, ge=0)
+    recorded_event_count: int = Field(default=0, ge=0)
+    duplicate_event_count: int = Field(default=0, ge=0)
+    processed_event_count: int = Field(default=0, ge=0)
+    next_cursor: str | None = None
+    message: str | None = None
 
 
 class ChannelInboundMessage(BaseModel):

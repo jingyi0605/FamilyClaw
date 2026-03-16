@@ -4,6 +4,7 @@ from sqlalchemy import Select, select, update
 from sqlalchemy.orm import Session
 
 from app.modules.plugin.models import (
+    PluginConfigInstance,
     PluginJob,
     PluginJobAttempt,
     PluginJobNotification,
@@ -71,6 +72,28 @@ def list_plugin_raw_records(
 def add_plugin_mount(db: Session, row: PluginMount) -> PluginMount:
     db.add(row)
     return row
+
+
+def add_plugin_config_instance(db: Session, row: PluginConfigInstance) -> PluginConfigInstance:
+    db.add(row)
+    return row
+
+
+def get_plugin_config_instance(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    scope_type: str,
+    scope_key: str,
+) -> PluginConfigInstance | None:
+    stmt: Select[tuple[PluginConfigInstance]] = select(PluginConfigInstance).where(
+        PluginConfigInstance.household_id == household_id,
+        PluginConfigInstance.plugin_id == plugin_id,
+        PluginConfigInstance.scope_type == scope_type,
+        PluginConfigInstance.scope_key == scope_key,
+    )
+    return db.scalar(stmt)
 
 
 def add_plugin_state_override(db: Session, row: PluginStateOverride) -> PluginStateOverride:

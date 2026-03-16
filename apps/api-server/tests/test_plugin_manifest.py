@@ -161,14 +161,52 @@ class PluginManifestTests(unittest.TestCase):
                         "risk_level": "low",
                         "triggers": ["manual"],
                         "entrypoints": {"channel": "plugin.channel.handle"},
+                        "config_specs": [
+                            {
+                                "scope_type": "channel_account",
+                                "title": "Telegram 配置",
+                                "schema_version": 1,
+                                "config_schema": {
+                                    "fields": [
+                                        {
+                                            "key": "bot_token",
+                                            "label": "Bot Token",
+                                            "type": "secret",
+                                            "required": True,
+                                        }
+                                    ]
+                                },
+                                "ui_schema": {
+                                    "sections": [
+                                        {
+                                            "id": "basic",
+                                            "title": "连接参数",
+                                            "fields": ["bot_token"],
+                                        }
+                                    ],
+                                    "widgets": {
+                                        "bot_token": {
+                                            "widget": "password",
+                                            "placeholder": "123456:ABC",
+                                            "help_text": "机器人令牌",
+                                        }
+                                    },
+                                },
+                            }
+                        ],
                         "capabilities": {
                             "channel": {
                                 "platform_code": "telegram",
-                                "inbound_modes": ["webhook"],
+                                "inbound_modes": ["polling"],
                                 "delivery_modes": ["reply", "push"],
                                 "supports_member_binding": True,
                                 "supports_group_chat": True,
                                 "supports_threading": True,
+                                "ui": {
+                                    "binding": {
+                                        "identity_label": "TG-ID",
+                                    },
+                                },
                                 "reserved": False,
                             }
                         },
@@ -184,8 +222,122 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual("plugin.channel.handle", manifest.entrypoints.channel)
         assert manifest.capabilities.channel is not None
         self.assertEqual("telegram", manifest.capabilities.channel.platform_code)
-        self.assertEqual(["webhook"], manifest.capabilities.channel.inbound_modes)
+        self.assertEqual(["polling"], manifest.capabilities.channel.inbound_modes)
         self.assertEqual(["reply", "push"], manifest.capabilities.channel.delivery_modes)
+        self.assertEqual("channel_account", manifest.config_specs[0].scope_type)
+        self.assertEqual("bot_token", manifest.config_specs[0].config_schema.fields[0].key)
+        self.assertEqual("password", manifest.config_specs[0].ui_schema.widgets["bot_token"].widget)
+        self.assertEqual("TG-ID", manifest.capabilities.channel.ui.binding.identity_label)
+
+    def test_manifest_rejects_invalid_config_widget_for_secret_field(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-config-widget-plugin",
+                        "name": "坏配置插件",
+                        "version": "0.1.0",
+                        "types": ["connector"],
+                        "permissions": ["device.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "config_specs": [
+                            {
+                                "scope_type": "plugin",
+                                "title": "插件配置",
+                                "schema_version": 1,
+                                "config_schema": {
+                                    "fields": [
+                                        {
+                                            "key": "api_key",
+                                            "label": "API Key",
+                                            "type": "secret",
+                                            "required": True,
+                                        }
+                                    ]
+                                },
+                                "ui_schema": {
+                                    "sections": [
+                                        {
+                                            "id": "basic",
+                                            "title": "连接参数",
+                                            "fields": ["api_key"],
+                                        }
+                                    ],
+                                    "widgets": {
+                                        "api_key": {
+                                            "widget": "input",
+                                        }
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("widget", str(context.exception))
+        self.assertIn("api_key", str(context.exception))
+
+    def test_manifest_rejects_duplicate_config_scope_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-config-scope-plugin",
+                        "name": "坏作用域插件",
+                        "version": "0.1.0",
+                        "types": ["connector"],
+                        "permissions": ["device.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "config_specs": [
+                            {
+                                "scope_type": "plugin",
+                                "title": "配置一",
+                                "schema_version": 1,
+                                "config_schema": {
+                                    "fields": [
+                                        {"key": "name", "label": "Name", "type": "string", "required": True}
+                                    ]
+                                },
+                                "ui_schema": {
+                                    "sections": [{"id": "basic", "title": "基础", "fields": ["name"]}]
+                                },
+                            },
+                            {
+                                "scope_type": "plugin",
+                                "title": "配置二",
+                                "schema_version": 1,
+                                "config_schema": {
+                                    "fields": [
+                                        {"key": "other", "label": "Other", "type": "string", "required": True}
+                                    ]
+                                },
+                                "ui_schema": {
+                                    "sections": [{"id": "basic", "title": "基础", "fields": ["other"]}]
+                                },
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("scope_type", str(context.exception))
 
     def test_reject_channel_plugin_missing_channel_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

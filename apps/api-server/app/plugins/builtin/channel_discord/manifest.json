@@ -12,6 +12,53 @@
   "entrypoints": {
     "channel": "app.plugins.builtin.channel_discord.channel.handle"
   },
+  "config_specs": [
+    {
+      "scope_type": "channel_account",
+      "title": "Discord 账号配置",
+      "description": "给当前 Discord 账号填 webhook 校验和发信参数。",
+      "schema_version": 1,
+      "config_schema": {
+        "fields": [
+          {
+            "key": "application_public_key",
+            "label": "Application Public Key",
+            "type": "string",
+            "required": true
+          },
+          {
+            "key": "bot_token",
+            "label": "Bot Token",
+            "type": "secret",
+            "required": false
+          }
+        ]
+      },
+      "ui_schema": {
+        "sections": [
+          {
+            "id": "basic",
+            "title": "连接参数",
+            "fields": ["application_public_key", "bot_token"]
+          }
+        ],
+        "field_order": ["application_public_key", "bot_token"],
+        "submit_text": "保存配置",
+        "widgets": {
+          "application_public_key": {
+            "widget": "input",
+            "placeholder": "abc123def456...",
+            "help_text": "从 Discord Developer Portal 获取的公钥。"
+          },
+          "bot_token": {
+            "widget": "password",
+            "placeholder": "可选，用于主动发消息",
+            "help_text": "如果需要主动回发消息，请填写 Bot Token。"
+          }
+        }
+      }
+    }
+  ],
   "capabilities": {
     "channel": {
       "platform_code": "discord",
@@ -20,6 +67,18 @@
       "supports_member_binding": true,
       "supports_group_chat": true,
       "supports_threading": true,
+      "ui": {
+        "binding": {
+          "identity_label": "Discord User ID",
+          "identity_placeholder": "例如：123456789012345678",
+          "identity_help_text": "Discord 用户的唯一 ID。",
+          "chat_label": "Channel ID",
+          "chat_placeholder": "例如：987654321098765432",
+          "chat_help_text": "Discord 频道或私聊会话 ID。",
+          "candidate_title": "待绑定 Discord 用户",
+          "candidate_help_text": "这里只展示最近给当前账号发过消息、但还没有在当前账号下绑定的用户。"
+        }
+      },
       "reserved": false
     }
   }

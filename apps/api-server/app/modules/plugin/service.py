@@ -5,7 +5,7 @@ import asyncio
 import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from typing import cast
+from typing import Any, cast
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -81,22 +81,26 @@ class PluginServiceError(ValueError):
         *,
         error_code: str,
         field: str | None = None,
+        field_errors: dict[str, str] | None = None,
         status_code: int = 400,
     ) -> None:
         super().__init__(detail)
         self.detail = detail
         self.error_code = error_code
         self.field = field
+        self.field_errors = field_errors or {}
         self.status_code = status_code
 
-    def to_detail(self) -> dict[str, str]:
-        payload = {
+    def to_detail(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "detail": self.detail,
             "error_code": self.error_code,
             "timestamp": utc_now_iso(),
         }
         if self.field is not None:
             payload["field"] = self.field
+        if self.field_errors:
+            payload["field_errors"] = self.field_errors
         return payload
 
 
@@ -166,6 +170,7 @@ def list_registered_plugins(
                 manifest_path=str(manifest_path),
                 entrypoints=manifest.entrypoints,
                 capabilities=manifest.capabilities,
+                config_specs=manifest.config_specs,
                 locales=manifest.locales,
                 schedule_templates=manifest.schedule_templates,
             )
@@ -202,6 +207,7 @@ def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest
             "manifest_path": mount.manifest_path,
             "entrypoints": manifest.entrypoints.model_dump(mode="json"),
             "capabilities": manifest.capabilities.model_dump(mode="json"),
+            "config_specs": [item.model_dump(mode="json") for item in manifest.config_specs],
             "locales": [item.model_dump(mode="json") for item in manifest.locales],
             "schedule_templates": [item.model_dump(mode="json") for item in manifest.schedule_templates],
             "source_type": mount.source_type,
@@ -281,6 +287,7 @@ def _to_plugin_mount_read(row: PluginMount, *, manifest: PluginManifest | None =
             "triggers": current_manifest.triggers,
             "entrypoints": current_manifest.entrypoints.model_dump(mode="json"),
             "capabilities": current_manifest.capabilities.model_dump(mode="json"),
+            "config_specs": [item.model_dump(mode="json") for item in current_manifest.config_specs],
             "locales": [item.model_dump(mode="json") for item in current_manifest.locales],
             "schedule_templates": [item.model_dump(mode="json") for item in current_manifest.schedule_templates],
             "source_type": row.source_type,

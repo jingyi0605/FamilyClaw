@@ -12,6 +12,53 @@
   "entrypoints": {
     "channel": "app.plugins.builtin.channel_dingtalk.channel.handle"
   },
+  "config_specs": [
+    {
+      "scope_type": "channel_account",
+      "title": "钉钉账号配置",
+      "description": "给当前钉钉应用填基础连接参数。",
+      "schema_version": 1,
+      "config_schema": {
+        "fields": [
+          {
+            "key": "app_key",
+            "label": "App Key",
+            "type": "string",
+            "required": true
+          },
+          {
+            "key": "app_secret",
+            "label": "App Secret",
+            "type": "secret",
+            "required": false
+          }
+        ]
+      },
+      "ui_schema": {
+        "sections": [
+          {
+            "id": "basic",
+            "title": "连接参数",
+            "fields": ["app_key", "app_secret"]
+          }
+        ],
+        "field_order": ["app_key", "app_secret"],
+        "submit_text": "保存配置",
+        "widgets": {
+          "app_key": {
+            "widget": "input",
+            "placeholder": "dingxxx",
+            "help_text": "钉钉开放平台应用 App Key。"
+          },
+          "app_secret": {
+            "widget": "password",
+            "placeholder": "可选，用于获取 Access Token",
+            "help_text": "如果需要调用开放平台接口，请填写应用密钥。"
+          }
+        }
+      }
+    }
+  ],
   "capabilities": {
     "channel": {
       "platform_code": "dingtalk",
@@ -20,6 +67,18 @@
       "supports_member_binding": true,
       "supports_group_chat": true,
       "supports_threading": false,
+      "ui": {
+        "binding": {
+          "identity_label": "用户 ID",
+          "identity_placeholder": "例如：staff-001",
+          "identity_help_text": "钉钉用户在当前通道里使用的唯一标识。",
+          "chat_label": "会话 ID",
+          "chat_placeholder": "例如：cid-001",
+          "chat_help_text": "钉钉会话 conversationId。",
+          "candidate_title": "待绑定钉钉用户",
+          "candidate_help_text": "这里只展示最近给当前账号发过消息、但还没有在当前账号下绑定的用户。"
+        }
+      },
       "reserved": false
     }
   }

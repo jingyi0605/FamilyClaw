@@ -92,7 +92,6 @@ class ChannelServiceTests(unittest.TestCase):
                 household_id=household.id,
                 payload=ChannelAccountCreate(
                     plugin_id="telegram-channel-plugin",
-                    account_code="telegram-main",
                     display_name="Telegram 主账号",
                     connection_mode="webhook",
                     config={"token": "test-token"},
@@ -102,6 +101,7 @@ class ChannelServiceTests(unittest.TestCase):
             self.assertEqual("telegram", created.platform_code)
             self.assertEqual("telegram-channel-plugin", created.plugin_id)
             self.assertEqual({"token": "test-token"}, created.config)
+            self.assertTrue(created.account_code.startswith("telegram-account-"))
 
             updated = update_channel_account(
                 self.db,
@@ -120,6 +120,7 @@ class ChannelServiceTests(unittest.TestCase):
             accounts = list_channel_accounts(self.db, household_id=household.id)
             self.assertEqual(1, len(accounts))
             self.assertEqual(created.id, accounts[0].id)
+            self.assertEqual(created.account_code, accounts[0].account_code)
 
             with self.assertRaises(ChannelAccountServiceError):
                 create_channel_account(
@@ -182,6 +183,7 @@ class ChannelServiceTests(unittest.TestCase):
                 member_id=member.id,
                 payload=MemberChannelBindingCreate(
                     channel_account_id=account.id,
+                    member_id=member.id,
                     external_user_id="tg-user-001",
                     external_chat_id="chat-001",
                     display_hint="爸爸的 Telegram",
@@ -272,6 +274,7 @@ class ChannelServiceTests(unittest.TestCase):
                     member_id=member.id,
                     payload=MemberChannelBindingCreate(
                         channel_account_id=account.id,
+                        member_id=member.id,
                         external_user_id="tg-user-001",
                     ),
                 )

@@ -63,11 +63,15 @@ class ChannelRepositoryTests(unittest.TestCase):
     def test_channel_account_and_member_binding_constraints(self) -> None:
         household, member = self._create_household_and_member()
         account = self._create_channel_account(household_id=household.id)
+        sibling_account = self._create_channel_account(
+            household_id=household.id,
+            account_code="telegram-secondary",
+            display_name="Telegram 次账号",
+        )
         self.db.flush()
 
         accounts = list_channel_plugin_accounts(self.db, household_id=household.id)
-        self.assertEqual(1, len(accounts))
-        self.assertEqual(account.id, accounts[0].id)
+        self.assertEqual(2, len(accounts))
 
         binding = MemberChannelBinding(
             id=new_uuid(),
@@ -87,15 +91,32 @@ class ChannelRepositoryTests(unittest.TestCase):
 
         bindings = list_member_channel_bindings(self.db, member_id=member.id)
         self.assertEqual(1, len(bindings))
+
         matched = get_member_channel_binding_by_external_user(
             self.db,
             household_id=household.id,
-            platform_code="telegram",
+            channel_account_id=account.id,
             external_user_id="tg-user-001",
         )
         self.assertIsNotNone(matched)
         assert matched is not None
         self.assertEqual(member.id, matched.member_id)
+
+        sibling_binding = MemberChannelBinding(
+            id=new_uuid(),
+            household_id=household.id,
+            member_id=member.id,
+            channel_account_id=sibling_account.id,
+            platform_code="telegram",
+            external_user_id="tg-user-001",
+            external_chat_id="tg-chat-002",
+            display_hint="同 household 不同 bot",
+            binding_status="active",
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        add_member_channel_binding(self.db, sibling_binding)
+        self.db.flush()
         self.db.commit()
 
         duplicate_account = ChannelPluginAccount(
@@ -124,8 +145,8 @@ class ChannelRepositoryTests(unittest.TestCase):
             channel_account_id=account.id,
             platform_code="telegram",
             external_user_id="tg-user-001",
-            external_chat_id="tg-chat-002",
-            display_hint="重复绑定",
+            external_chat_id="tg-chat-003",
+            display_hint="当前 bot 下重复绑定",
             binding_status="active",
             created_at=utc_now_iso(),
             updated_at=utc_now_iso(),
@@ -247,14 +268,20 @@ class ChannelRepositoryTests(unittest.TestCase):
         self.db.flush()
         return household, member
 
-    def _create_channel_account(self, *, household_id: str) -> ChannelPluginAccount:
+    def _create_channel_account(
+        self,
+        *,
+        household_id: str,
+        account_code: str = "telegram-main",
+        display_name: str = "Telegram 主账号",
+    ) -> ChannelPluginAccount:
         account = ChannelPluginAccount(
             id=new_uuid(),
             household_id=household_id,
             plugin_id="channel-telegram",
             platform_code="telegram",
-            account_code="telegram-main",
-            display_name="Telegram 主账号",
+            account_code=account_code,
+            display_name=display_name,
             connection_mode="webhook",
             config_json="{}",
             status="draft",

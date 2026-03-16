@@ -20,6 +20,7 @@ import type {
   ChannelAccountCreate,
   ChannelAccountUpdate,
   ChannelAccountStatusRead,
+  ChannelBindingCandidateRead,
   MemberChannelBindingRead,
   MemberChannelBindingCreate,
   MemberChannelBindingUpdate,
@@ -65,6 +66,9 @@ import type {
   ScheduledTaskRun,
   PluginRegistrySnapshot,
   PluginRegistryItem,
+  PluginConfigForm,
+  PluginConfigScopeList,
+  PluginConfigUpdatePayload,
   PluginStateUpdateRequest,
   PluginMountRead,
   PluginMountCreate,
@@ -745,6 +749,12 @@ export const api = {
     );
   },
 
+  listChannelAccountBindingCandidates(householdId: string, accountId: string) {
+    return request<ChannelBindingCandidateRead[]>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/binding-candidates`,
+    );
+  },
+
   createChannelAccountBinding(householdId: string, accountId: string, payload: MemberChannelBindingCreate) {
     return request<MemberChannelBindingRead>(
       `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/bindings`,
@@ -775,6 +785,32 @@ export const api = {
   // 获取所有已注册插件（包括内置、官方、第三方）
   listRegisteredPlugins(householdId: string) {
     return request<PluginRegistrySnapshot>(`/ai-config/${encodeURIComponent(householdId)}/plugins`);
+  },
+
+  listPluginConfigScopes(householdId: string, pluginId: string) {
+    return request<PluginConfigScopeList>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config-scopes`,
+    );
+  },
+
+  getPluginConfigForm(householdId: string, pluginId: string, params: { scope_type: string; scope_key: string }) {
+    const query = new URLSearchParams({
+      scope_type: params.scope_type,
+      scope_key: params.scope_key,
+    });
+    return request<PluginConfigForm>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config?${query.toString()}`,
+    );
+  },
+
+  savePluginConfigForm(householdId: string, pluginId: string, payload: PluginConfigUpdatePayload) {
+    return request<PluginConfigForm>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
   },
 
   updatePluginState(householdId: string, pluginId: string, payload: PluginStateUpdateRequest) {

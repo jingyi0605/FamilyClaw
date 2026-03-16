@@ -143,6 +143,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
             member_id=self.member.id,
             payload=MemberChannelBindingCreate(
                 channel_account_id=self.account.id,
+                member_id=self.member.id,
                 external_user_id="tg-user-001",
                 external_chat_id="chat:bound",
             ),

@@ -42,9 +42,9 @@ class MemberChannelBinding(Base):
     __table_args__ = (
         UniqueConstraint(
             "household_id",
-            "platform_code",
+            "channel_account_id",
             "external_user_id",
-            name="uq_member_channel_bindings_household_platform_external_user",
+            name="uq_member_channel_bindings_household_account_external_user",
         ),
         Index("idx_member_channel_bindings_household_id", "household_id"),
         Index("idx_member_channel_bindings_member_id", "member_id"),
@@ -143,6 +143,13 @@ class ChannelInboundEvent(Base):
         Index("idx_channel_inbound_events_platform_code", "platform_code"),
         Index("idx_channel_inbound_events_event_type", "event_type"),
         Index("idx_channel_inbound_events_status", "status"),
+        Index(
+            "idx_channel_inbound_events_account_status_error_received",
+            "channel_account_id",
+            "status",
+            "error_code",
+            "received_at",
+        ),
         Index("idx_channel_inbound_events_conversation_session_id", "conversation_session_id"),
     )
 

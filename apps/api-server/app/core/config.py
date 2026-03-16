@@ -61,10 +61,14 @@ class Settings(BaseSettings):
     plugin_job_default_retry_delay_seconds: int = 5
     plugin_job_default_timeout_seconds: int = 60
     plugin_job_running_stale_after_seconds: int = 120
+    plugin_config_secret_seed: str = "familyclaw-dev-plugin-config-seed"
     scheduler_worker_enabled: bool = True
     scheduler_worker_poll_interval_seconds: float = 1.0
     scheduler_worker_batch_size: int = 100
     scheduler_definition_failure_threshold: int = 3
+    channel_polling_worker_enabled: bool = True
+    channel_polling_worker_poll_interval_seconds: float = 3.0
+    channel_polling_worker_batch_size: int = 20
     voice_gateway_token: str = "dev-voice-gateway-token"
     voice_runtime_enabled: bool = False
     voice_runtime_base_url: str | None = None

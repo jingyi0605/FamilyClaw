@@ -159,6 +159,7 @@ class ChannelGatewayApiTests(unittest.TestCase):
                 member_id=member.id,
                 payload=MemberChannelBindingCreate(
                     channel_account_id=account.id,
+                    member_id=member.id,
                     external_user_id="tg-user-001",
                     external_chat_id="chat:12345",
                 ),

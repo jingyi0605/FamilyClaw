@@ -40,12 +40,18 @@ def create_channel_account(
         raise ChannelAccountServiceError("channel connection_mode is not supported by plugin manifest")
 
     now = utc_now_iso()
+    account_code = _resolve_account_code(
+        db,
+        household_id=household_id,
+        platform_code=spec.platform_code,
+        requested_account_code=payload.account_code,
+    )
     row = ChannelPluginAccount(
         id=new_uuid(),
         household_id=household_id,
         plugin_id=plugin.id,
         platform_code=spec.platform_code,
-        account_code=payload.account_code.strip(),
+        account_code=account_code,
         display_name=payload.display_name.strip(),
         connection_mode=payload.connection_mode,
         config_json=dump_json(payload.config) or "{}",
@@ -108,6 +114,30 @@ def _resolve_channel_plugin(db: Session, *, household_id: str, plugin_id: str):
     if spec is None or spec.reserved or spec.platform_code is None:
         raise ChannelAccountServiceError("channel plugin manifest is incomplete")
     return plugin
+
+
+def _resolve_account_code(
+    db: Session,
+    *,
+    household_id: str,
+    platform_code: str,
+    requested_account_code: str | None,
+) -> str:
+    normalized = (requested_account_code or "").strip()
+    if normalized:
+        return normalized
+
+    base_code = f"{platform_code}-account"
+    for _ in range(10):
+        candidate = f"{base_code}-{new_uuid().replace('-', '')[:8]}"
+        exists = repository.get_channel_plugin_account_by_account_code(
+            db,
+            household_id=household_id,
+            account_code=candidate,
+        )
+        if exists is None:
+            return candidate
+    raise ChannelAccountServiceError("failed to generate unique channel account code")
 
 
 def _to_channel_account_read(row: ChannelPluginAccount) -> ChannelAccountRead:

@@ -13,6 +13,7 @@ from app.modules.channel.schemas import (
     ChannelAccountCreate,
     ChannelAccountRead,
     ChannelAccountStatusRead,
+    ChannelBindingCandidateRead,
     ChannelAccountUpdate,
     ChannelDeliveryRead,
     ChannelInboundEventRead,
@@ -23,6 +24,8 @@ from app.modules.channel.schemas import (
 from app.modules.channel.binding_service import (
     MemberChannelBindingServiceError,
     create_channel_account_binding,
+    delete_channel_account_binding,
+    list_channel_account_binding_candidates,
     list_channel_account_bindings,
     update_channel_account_binding,
 )
@@ -215,6 +218,23 @@ def list_channel_account_bindings_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@router.get(
+    "/{household_id}/channel-accounts/{account_id}/binding-candidates",
+    response_model=list[ChannelBindingCandidateRead],
+)
+def list_channel_account_binding_candidates_endpoint(
+    household_id: str,
+    account_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> list[ChannelBindingCandidateRead]:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        return list_channel_account_binding_candidates(db, household_id=household_id, account_id=account_id)
+    except ChannelAccountServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.post(
     "/{household_id}/channel-accounts/{account_id}/bindings",
     response_model=MemberChannelBindingRead,
@@ -297,3 +317,39 @@ def update_channel_account_binding_endpoint(
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
+
+
+@router.delete(
+    "/{household_id}/channel-accounts/{account_id}/bindings/{binding_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_channel_account_binding_endpoint(
+    household_id: str,
+    account_id: str,
+    binding_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> None:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        delete_channel_account_binding(
+            db,
+            household_id=household_id,
+            account_id=account_id,
+            binding_id=binding_id,
+        )
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="channel_account_binding.delete",
+            target_type="member_channel_binding",
+            target_id=binding_id,
+            result="success",
+            details={"channel_account_id": account_id},
+        )
+        db.commit()
+        return None
+    except (ChannelAccountServiceError, MemberChannelBindingServiceError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

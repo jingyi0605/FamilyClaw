@@ -19,11 +19,37 @@ def get_channel_plugin_account(db: Session, account_id: str) -> ChannelPluginAcc
     return db.get(ChannelPluginAccount, account_id)
 
 
+def get_channel_plugin_account_by_account_code(
+    db: Session,
+    *,
+    household_id: str,
+    account_code: str,
+) -> ChannelPluginAccount | None:
+    stmt: Select[tuple[ChannelPluginAccount]] = select(ChannelPluginAccount).where(
+        ChannelPluginAccount.household_id == household_id,
+        ChannelPluginAccount.account_code == account_code,
+    )
+    return db.scalar(stmt)
+
+
 def list_channel_plugin_accounts(db: Session, *, household_id: str) -> list[ChannelPluginAccount]:
     stmt: Select[tuple[ChannelPluginAccount]] = (
         select(ChannelPluginAccount)
         .where(ChannelPluginAccount.household_id == household_id)
         .order_by(ChannelPluginAccount.created_at.desc(), ChannelPluginAccount.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def list_polling_channel_plugin_accounts(db: Session, *, limit: int) -> list[ChannelPluginAccount]:
+    stmt: Select[tuple[ChannelPluginAccount]] = (
+        select(ChannelPluginAccount)
+        .where(
+            ChannelPluginAccount.connection_mode == "polling",
+            ChannelPluginAccount.status != "disabled",
+        )
+        .order_by(ChannelPluginAccount.updated_at.asc(), ChannelPluginAccount.id.asc())
+        .limit(limit)
     )
     return list(db.scalars(stmt).all())
 
@@ -35,6 +61,10 @@ def get_member_channel_binding(db: Session, binding_id: str) -> MemberChannelBin
 def add_member_channel_binding(db: Session, row: MemberChannelBinding) -> MemberChannelBinding:
     db.add(row)
     return row
+
+
+def delete_member_channel_binding(db: Session, row: MemberChannelBinding) -> None:
+    db.delete(row)
 
 
 def list_member_channel_bindings(db: Session, *, member_id: str) -> list[MemberChannelBinding]:
@@ -60,12 +90,12 @@ def get_member_channel_binding_by_external_user(
     db: Session,
     *,
     household_id: str,
-    platform_code: str,
+    channel_account_id: str,
     external_user_id: str,
 ) -> MemberChannelBinding | None:
     stmt: Select[tuple[MemberChannelBinding]] = select(MemberChannelBinding).where(
         MemberChannelBinding.household_id == household_id,
-        MemberChannelBinding.platform_code == platform_code,
+        MemberChannelBinding.channel_account_id == channel_account_id,
         MemberChannelBinding.external_user_id == external_user_id,
     )
     return db.scalar(stmt)
@@ -127,6 +157,42 @@ def list_channel_inbound_events(
         select(ChannelInboundEvent)
         .where(ChannelInboundEvent.household_id == household_id)
         .order_by(ChannelInboundEvent.received_at.desc(), ChannelInboundEvent.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def get_latest_channel_inbound_event_by_account(
+    db: Session,
+    *,
+    channel_account_id: str,
+) -> ChannelInboundEvent | None:
+    stmt: Select[tuple[ChannelInboundEvent]] = (
+        select(ChannelInboundEvent)
+        .where(ChannelInboundEvent.channel_account_id == channel_account_id)
+        .order_by(ChannelInboundEvent.received_at.desc(), ChannelInboundEvent.id.desc())
+        .limit(1)
+    )
+    return db.scalar(stmt)
+
+
+def list_channel_account_unbound_inbound_events(
+    db: Session,
+    *,
+    channel_account_id: str,
+    status: str,
+    error_code: str,
+    limit: int,
+) -> list[ChannelInboundEvent]:
+    stmt: Select[tuple[ChannelInboundEvent]] = (
+        select(ChannelInboundEvent)
+        .where(
+            ChannelInboundEvent.channel_account_id == channel_account_id,
+            ChannelInboundEvent.status == status,
+            ChannelInboundEvent.error_code == error_code,
+            ChannelInboundEvent.external_user_id.is_not(None),
+        )
+        .order_by(ChannelInboundEvent.received_at.desc(), ChannelInboundEvent.id.desc())
+        .limit(limit)
     )
     return list(db.scalars(stmt).all())
 

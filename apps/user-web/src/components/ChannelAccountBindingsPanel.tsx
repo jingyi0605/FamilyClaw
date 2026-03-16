@@ -1,32 +1,78 @@
 /* ============================================================
  * 平台账号成员绑定面板
  * ============================================================ */
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import type {
-  MemberChannelBindingRead,
-  MemberChannelBindingCreate,
-  MemberChannelBindingUpdate,
+  ChannelBindingCandidateRead,
   Member,
+  MemberChannelBindingCreate,
+  MemberChannelBindingRead,
+  MemberChannelBindingUpdate,
+  PluginRegistryItem,
 } from '../lib/types';
 
 type ChannelAccountBindingsPanelProps = {
   householdId: string;
   accountId: string;
   members: Member[];
+  plugin: PluginRegistryItem | null;
+  supportsMemberBinding: boolean;
 };
+
+type BindingLabels = {
+  identityLabel: string;
+  identityPlaceholder: string;
+  identityHelpText: string;
+  chatLabel: string;
+  chatPlaceholder: string;
+  chatHelpText: string;
+  candidateTitle: string;
+  candidateHelpText: string;
+};
+
+function formatTimestamp(ts: string): string {
+  try {
+    return new Date(ts).toLocaleString('zh-CN');
+  } catch {
+    return ts;
+  }
+}
+
+function buildDisplayHint(candidate: ChannelBindingCandidateRead): string {
+  const parts = [candidate.sender_display_name, candidate.username ? `@${candidate.username}` : null]
+    .filter((item): item is string => !!item && item.trim().length > 0);
+  return parts.join(' ');
+}
+
+function resolveBindingLabels(plugin: PluginRegistryItem | null): BindingLabels {
+  const bindingUi = plugin?.capabilities.channel?.ui?.binding;
+  return {
+    identityLabel: bindingUi?.identity_label ?? '外部用户 ID',
+    identityPlaceholder: bindingUi?.identity_placeholder ?? '请输入外部平台用户 ID',
+    identityHelpText: bindingUi?.identity_help_text ?? '平台上的唯一用户标识。',
+    chatLabel: bindingUi?.chat_label ?? '外部会话 ID',
+    chatPlaceholder: bindingUi?.chat_placeholder ?? '可选，用于排查会话映射',
+    chatHelpText: bindingUi?.chat_help_text ?? '可选，群聊或需要排查时再填写。',
+    candidateTitle: bindingUi?.candidate_title ?? '待绑定候选',
+    candidateHelpText: bindingUi?.candidate_help_text ?? '这里只显示最近发过消息、但还没有绑定的用户。',
+  };
+}
 
 export function ChannelAccountBindingsPanel({
   householdId,
   accountId,
   members,
+  plugin,
+  supportsMemberBinding,
 }: ChannelAccountBindingsPanelProps) {
   const [bindings, setBindings] = useState<MemberChannelBindingRead[]>([]);
+  const [candidates, setCandidates] = useState<ChannelBindingCandidateRead[]>([]);
   const [loading, setLoading] = useState(false);
+  const [candidateLoading, setCandidateLoading] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
 
-  // 弹窗状态
   const [modalOpen, setModalOpen] = useState(false);
   const [editingBinding, setEditingBinding] = useState<MemberChannelBindingRead | null>(null);
   const [form, setForm] = useState<{
@@ -45,62 +91,51 @@ export function ChannelAccountBindingsPanel({
   const [modalLoading, setModalLoading] = useState(false);
   const [formError, setFormError] = useState('');
 
-  // 成员映射
-  const memberMap = useMemo(
-    () => new Map(members.map(m => [m.id, m])),
-    [members],
-  );
+  const labels = useMemo(() => resolveBindingLabels(plugin), [plugin]);
+  const memberMap = useMemo(() => new Map(members.map(member => [member.id, member])), [members]);
 
-  // 加载绑定列表
-  useEffect(() => {
-    if (!householdId || !accountId) {
+  async function reloadData() {
+    if (!householdId || !accountId || !supportsMemberBinding) {
       setBindings([]);
+      setCandidates([]);
       return;
     }
 
-    let cancelled = false;
+    setLoading(true);
+    setCandidateLoading(true);
+    setError('');
+    try {
+      const [bindingResult, candidateResult] = await Promise.all([
+        api.listChannelAccountBindings(householdId, accountId),
+        api.listChannelAccountBindingCandidates(householdId, accountId),
+      ]);
+      setBindings(bindingResult);
+      setCandidates(candidateResult);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '加载绑定数据失败');
+    } finally {
+      setLoading(false);
+      setCandidateLoading(false);
+    }
+  }
 
-    const loadBindings = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        const result = await api.listChannelAccountBindings(householdId, accountId);
-        if (!cancelled) {
-          setBindings(result);
-        }
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : '加载绑定失败');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
+  useEffect(() => {
+    void reloadData();
+  }, [accountId, householdId, supportsMemberBinding]);
 
-    void loadBindings();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [householdId, accountId]);
-
-  // 打开新增弹窗
-  function openCreateModal() {
+  function openCreateModal(candidate?: ChannelBindingCandidateRead) {
     setEditingBinding(null);
     setForm({
       member_id: '',
-      external_user_id: '',
-      external_chat_id: '',
-      display_hint: '',
+      external_user_id: candidate?.external_user_id ?? '',
+      external_chat_id: candidate?.external_chat_id ?? '',
+      display_hint: candidate ? buildDisplayHint(candidate) : '',
       binding_status: 'active',
     });
     setFormError('');
     setModalOpen(true);
   }
 
-  // 打开编辑弹窗
   function openEditModal(binding: MemberChannelBindingRead) {
     setEditingBinding(binding);
     setForm({
@@ -114,38 +149,34 @@ export function ChannelAccountBindingsPanel({
     setModalOpen(true);
   }
 
-  // 保存绑定
   async function handleSaveBinding(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!householdId || !accountId) return;
+    if (!householdId || !accountId) {
+      return;
+    }
+    if (!form.member_id && !editingBinding) {
+      setFormError('请选择要绑定的家庭成员。');
+      return;
+    }
+    if (!form.external_user_id.trim()) {
+      setFormError(`请填写${labels.identityLabel}。`);
+      return;
+    }
 
     setModalLoading(true);
     setFormError('');
 
     try {
       if (editingBinding) {
-        // 编辑模式
         const payload: MemberChannelBindingUpdate = {
-          external_user_id: form.external_user_id.trim() || undefined,
+          external_user_id: form.external_user_id.trim(),
           external_chat_id: form.external_chat_id.trim() || null,
           display_hint: form.display_hint.trim() || null,
           binding_status: form.binding_status,
         };
-        const result = await api.updateChannelAccountBinding(householdId, accountId, editingBinding.id, payload);
-        setBindings(current => current.map(b => (b.id === result.id ? result : b)));
+        await api.updateChannelAccountBinding(householdId, accountId, editingBinding.id, payload);
         setStatus('绑定已更新。');
       } else {
-        // 新增模式
-        if (!form.member_id) {
-          setFormError('请选择要绑定的家庭成员。');
-          setModalLoading(false);
-          return;
-        }
-        if (!form.external_user_id.trim()) {
-          setFormError('请填写外部用户 ID。');
-          setModalLoading(false);
-          return;
-        }
         const payload: MemberChannelBindingCreate = {
           channel_account_id: accountId,
           member_id: form.member_id,
@@ -154,11 +185,11 @@ export function ChannelAccountBindingsPanel({
           display_hint: form.display_hint.trim() || null,
           binding_status: form.binding_status,
         };
-        const result = await api.createChannelAccountBinding(householdId, accountId, payload);
-        setBindings(current => [result, ...current]);
+        await api.createChannelAccountBinding(householdId, accountId, payload);
         setStatus('绑定已创建。');
       }
       setModalOpen(false);
+      await reloadData();
     } catch (saveError) {
       const errorMessage =
         saveError instanceof ApiError
@@ -172,19 +203,20 @@ export function ChannelAccountBindingsPanel({
     }
   }
 
-  // 停用/恢复绑定
   async function handleToggleBinding(binding: MemberChannelBindingRead) {
-    if (!householdId || !accountId) return;
+    if (!householdId || !accountId) {
+      return;
+    }
 
     setLoading(true);
     setError('');
-    const newStatus = binding.binding_status === 'disabled' ? 'active' : 'disabled';
+    const nextStatus = binding.binding_status === 'disabled' ? 'active' : 'disabled';
     try {
-      const result = await api.updateChannelAccountBinding(householdId, accountId, binding.id, {
-        binding_status: newStatus,
+      await api.updateChannelAccountBinding(householdId, accountId, binding.id, {
+        binding_status: nextStatus,
       });
-      setBindings(current => current.map(b => (b.id === result.id ? result : b)));
-      setStatus(newStatus === 'active' ? '绑定已恢复。' : '绑定已停用。');
+      setStatus(nextStatus === 'active' ? '绑定已恢复。' : '绑定已停用。');
+      await reloadData();
     } catch (toggleError) {
       setError(toggleError instanceof Error ? toggleError.message : '操作失败');
     } finally {
@@ -192,27 +224,76 @@ export function ChannelAccountBindingsPanel({
     }
   }
 
-  function formatTimestamp(ts: string): string {
-    try {
-      return new Date(ts).toLocaleString('zh-CN');
-    } catch {
-      return ts;
-    }
+  if (!supportsMemberBinding) {
+    return (
+      <div className="channel-bindings-panel">
+        <div className="form-help">当前通道只支持出站推送，不支持成员绑定。</div>
+      </div>
+    );
   }
 
   return (
     <div className="channel-bindings-panel">
-      {/* 状态提示 */}
       {error && <div className="settings-note"><span>⚠️</span> {error}</div>}
       {status && <div className="settings-note"><span>✅</span> {status}</div>}
 
-      {/* 绑定列表 */}
+      <div className="channel-detail-section">
+        <h5>{labels.candidateTitle}</h5>
+        <div className="form-help">{labels.candidateHelpText}</div>
+        {candidateLoading ? (
+          <div className="text-text-secondary">加载候选中...</div>
+        ) : candidates.length === 0 ? (
+          <div className="form-help">当前没有待绑定候选。</div>
+        ) : (
+          <div className="channel-bindings-list">
+            {candidates.map(candidate => (
+              <div key={candidate.inbound_event_id} className="channel-binding-item">
+                <div className="channel-binding-item__info">
+                  <span className="channel-binding-item__member">
+                    {labels.identityLabel}：{candidate.external_user_id}
+                  </span>
+                  {candidate.username && (
+                    <span className="channel-binding-item__hint">@{candidate.username}</span>
+                  )}
+                  {candidate.sender_display_name && (
+                    <span className="channel-binding-item__hint">{candidate.sender_display_name}</span>
+                  )}
+                  {candidate.external_chat_id && (
+                    <span className="channel-binding-item__external">
+                      {labels.chatLabel}：{candidate.external_chat_id}
+                    </span>
+                  )}
+                  {candidate.last_message_text && (
+                    <span className="channel-binding-item__external">
+                      最近消息：{candidate.last_message_text}
+                    </span>
+                  )}
+                </div>
+                <div className="channel-binding-item__meta">
+                  <span className="badge badge--warning">{candidate.chat_type === 'group' ? '群聊' : '私聊'}</span>
+                  <span className="channel-binding-item__time">{formatTimestamp(candidate.last_seen_at)}</span>
+                </div>
+                <div className="channel-binding-item__actions">
+                  <button
+                    className="btn btn--primary btn--sm"
+                    onClick={() => openCreateModal(candidate)}
+                    disabled={loading || modalLoading}
+                  >
+                    一键绑定
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {loading && bindings.length === 0 ? (
         <div className="text-text-secondary">加载绑定中...</div>
       ) : bindings.length === 0 ? (
         <div className="channel-bindings-empty">
-          <p>还没有绑定成员。</p>
-          <button className="btn btn--primary btn--sm" onClick={openCreateModal}>
+          <p>还没有成员绑定。</p>
+          <button className="btn btn--primary btn--sm" onClick={() => openCreateModal()}>
             新增绑定
           </button>
         </div>
@@ -220,7 +301,7 @@ export function ChannelAccountBindingsPanel({
         <>
           <div className="channel-bindings-header">
             <span>已绑定 {bindings.length} 个成员</span>
-            <button className="btn btn--primary btn--sm" onClick={openCreateModal}>
+            <button className="btn btn--primary btn--sm" onClick={() => openCreateModal()}>
               新增绑定
             </button>
           </div>
@@ -231,14 +312,15 @@ export function ChannelAccountBindingsPanel({
               const isActive = binding.binding_status === 'active';
 
               return (
-                <div key={binding.id} className={`channel-binding-item ${!isActive ? 'channel-binding-item--disabled' : ''}`}>
+                <div
+                  key={binding.id}
+                  className={`channel-binding-item ${!isActive ? 'channel-binding-item--disabled' : ''}`}
+                >
                   <div className="channel-binding-item__info">
-                    <span className="channel-binding-item__member">
-                      {member?.name ?? '未知成员'}
-                    </span>
+                    <span className="channel-binding-item__member">{member?.name ?? '未知成员'}</span>
                     <span className="channel-binding-item__external">
-                      外部 ID：{binding.external_user_id}
-                      {binding.external_chat_id && ` · 会话：${binding.external_chat_id}`}
+                      {labels.identityLabel}：{binding.external_user_id}
+                      {binding.external_chat_id ? ` / ${labels.chatLabel}：${binding.external_chat_id}` : ''}
                     </span>
                     {binding.display_hint && (
                       <span className="channel-binding-item__hint">{binding.display_hint}</span>
@@ -248,9 +330,7 @@ export function ChannelAccountBindingsPanel({
                     <span className={`badge badge--${isActive ? 'success' : 'secondary'}`}>
                       {isActive ? '生效中' : '已停用'}
                     </span>
-                    <span className="channel-binding-item__time">
-                      {formatTimestamp(binding.updated_at)}
-                    </span>
+                    <span className="channel-binding-item__time">{formatTimestamp(binding.updated_at)}</span>
                   </div>
                   <div className="channel-binding-item__actions">
                     <button
@@ -275,13 +355,12 @@ export function ChannelAccountBindingsPanel({
         </>
       )}
 
-      {/* 新增/编辑绑定弹窗 */}
       {modalOpen && (
         <div className="member-modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="member-modal" onClick={e => e.stopPropagation()}>
+          <div className="member-modal" onClick={event => event.stopPropagation()}>
             <div className="member-modal__header">
               <h3>{editingBinding ? '编辑成员绑定' : '新增成员绑定'}</h3>
-              <p>将平台用户 ID 绑定到家庭成员，让系统识别消息来源。</p>
+              <p>绑定文案和候选展示都来自对应插件声明，宿主这里只负责渲染通用 UI。</p>
             </div>
             <form className="settings-form" onSubmit={handleSaveBinding}>
               <div className="form-group">
@@ -289,58 +368,62 @@ export function ChannelAccountBindingsPanel({
                 <select
                   className="form-select"
                   value={form.member_id}
-                  onChange={e => setForm(f => ({ ...f, member_id: e.target.value }))}
+                  onChange={event => setForm(current => ({ ...current, member_id: event.target.value }))}
                   disabled={!!editingBinding}
                   required
                 >
                   <option value="">请选择成员</option>
-                  {members.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.role})
+                  {members.map(member => (
+                    <option key={member.id} value={member.id}>
+                      {member.name} ({member.role})
                     </option>
                   ))}
                 </select>
-                {!editingBinding && (
-                  <div className="form-help">选择后，该成员在此平台发送的消息会被识别。</div>
-                )}
               </div>
+
               <div className="form-group">
-                <label>外部用户 ID</label>
+                <label>{labels.identityLabel}</label>
                 <input
                   className="form-input"
                   value={form.external_user_id}
-                  onChange={e => setForm(f => ({ ...f, external_user_id: e.target.value }))}
-                  placeholder="例如：telegram:123456789"
+                  onChange={event => setForm(current => ({ ...current, external_user_id: event.target.value }))}
+                  placeholder={labels.identityPlaceholder}
                   required
                 />
-                <div className="form-help">平台上的用户唯一标识，如 Telegram 的 user_id。</div>
+                <div className="form-help">{labels.identityHelpText}</div>
               </div>
+
               <div className="form-group">
-                <label>外部会话 ID（可选）</label>
+                <label>{labels.chatLabel}</label>
                 <input
                   className="form-input"
                   value={form.external_chat_id}
-                  onChange={e => setForm(f => ({ ...f, external_chat_id: e.target.value }))}
-                  placeholder="例如：-1001234567890"
+                  onChange={event => setForm(current => ({ ...current, external_chat_id: event.target.value }))}
+                  placeholder={labels.chatPlaceholder}
                 />
-                <div className="form-help">群聊时使用，用于区分不同会话。</div>
+                <div className="form-help">{labels.chatHelpText}</div>
               </div>
+
               <div className="form-group">
-                <label>备注（可选）</label>
+                <label>备注</label>
                 <input
                   className="form-input"
                   value={form.display_hint}
-                  onChange={e => setForm(f => ({ ...f, display_hint: e.target.value }))}
-                  placeholder="例如：妈妈私人号"
+                  onChange={event => setForm(current => ({ ...current, display_hint: event.target.value }))}
+                  placeholder="例如：妈妈的私聊账号"
                 />
-                <div className="form-help">帮助管理员识别这个绑定的用途。</div>
+                <div className="form-help">帮助管理员快速识别这个绑定的用途。</div>
               </div>
+
               <div className="form-group">
                 <label>状态</label>
                 <select
                   className="form-select"
                   value={form.binding_status}
-                  onChange={e => setForm(f => ({ ...f, binding_status: e.target.value as 'active' | 'disabled' }))}
+                  onChange={event => setForm(current => ({
+                    ...current,
+                    binding_status: event.target.value as 'active' | 'disabled',
+                  }))}
                 >
                   <option value="active">生效</option>
                   <option value="disabled">停用</option>
@@ -350,7 +433,12 @@ export function ChannelAccountBindingsPanel({
               {formError && <div className="settings-note"><span>⚠️</span> {formError}</div>}
 
               <div className="member-modal__actions">
-                <button className="btn btn--outline btn--sm" type="button" onClick={() => setModalOpen(false)} disabled={modalLoading}>
+                <button
+                  className="btn btn--outline btn--sm"
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  disabled={modalLoading}
+                >
                   取消
                 </button>
                 <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading}>

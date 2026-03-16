@@ -72,6 +72,9 @@ from app.modules.plugin import (
     ainvoke_agent_plugin,
     AgentActionPluginInvokeRequest,
     AgentActionPluginInvokeResult,
+    PluginConfigFormRead,
+    PluginConfigScopeListRead,
+    PluginConfigUpdateRequest,
     PluginLocaleListRead,
     PluginMountCreate,
     PluginMountRead,
@@ -84,10 +87,13 @@ from app.modules.plugin import (
     invoke_agent_action_plugin,
     list_registered_plugin_locales_for_household,
     list_plugin_mounts,
+    list_plugin_config_scopes,
     list_registered_plugins_for_household,
     register_plugin_mount,
+    save_plugin_config_form,
     set_household_plugin_enabled,
     PluginServiceError,
+    get_plugin_config_form,
     update_plugin_mount,
 )
 
@@ -530,6 +536,79 @@ def list_household_plugins_endpoint(
 ) -> PluginRegistrySnapshot:
     ensure_actor_can_access_household(actor, household_id)
     return list_registered_plugins_for_household(db, household_id=household_id)
+
+
+@router.get("/{household_id}/plugins/{plugin_id}/config-scopes", response_model=PluginConfigScopeListRead)
+def list_household_plugin_config_scopes_endpoint(
+    household_id: str,
+    plugin_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> PluginConfigScopeListRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        return list_plugin_config_scopes(db, household_id=household_id, plugin_id=plugin_id)
+    except PluginServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+
+@router.get("/{household_id}/plugins/{plugin_id}/config", response_model=PluginConfigFormRead)
+def get_household_plugin_config_form_endpoint(
+    household_id: str,
+    plugin_id: str,
+    scope_type: str = Query(...),
+    scope_key: str = Query(...),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> PluginConfigFormRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        return get_plugin_config_form(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            scope_type=scope_type,
+            scope_key=scope_key,
+        )
+    except PluginServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+
+@router.put("/{household_id}/plugins/{plugin_id}/config", response_model=PluginConfigFormRead)
+def save_household_plugin_config_form_endpoint(
+    household_id: str,
+    plugin_id: str,
+    payload: PluginConfigUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> PluginConfigFormRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = save_plugin_config_form(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            payload=payload,
+            updated_by=actor.actor_id,
+        )
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="plugin.config.save",
+            target_type="plugin_config_instance",
+            target_id=f"{plugin_id}:{payload.scope_type}:{payload.scope_key}",
+            result="success",
+            details=payload.model_dump(mode="json"),
+        )
+        db.commit()
+        return result
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
 
 
 @router.put("/{household_id}/plugins/{plugin_id}/state", response_model=PluginRegistryItem)

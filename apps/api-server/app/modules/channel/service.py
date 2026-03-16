@@ -14,6 +14,7 @@ from .account_service import (
 from .binding_service import (
     MemberChannelBindingServiceError,
     create_member_binding,
+    delete_channel_account_binding,
     list_member_bindings,
     update_member_binding,
 )
@@ -195,6 +196,7 @@ __all__ = [
     "create_channel_account",
     "create_channel_delivery",
     "create_member_binding",
+    "delete_channel_account_binding",
     "get_channel_account_or_404",
     "list_channel_accounts",
     "list_channel_delivery_records",

@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
 import { api, ApiError } from '../lib/api';
 import type {
+  PluginConfigForm,
   PluginRegistryItem,
   PluginJobListRead,
   PluginJobListItemRead,
@@ -13,6 +14,7 @@ import type {
   PluginRiskLevel,
   PluginManifestType,
 } from '../lib/types';
+import { DynamicPluginConfigForm } from './plugin-config/DynamicPluginConfigForm';
 
 type PluginDetailDrawerProps = {
   plugin: PluginRegistryItem | null;
@@ -106,6 +108,11 @@ export function PluginDetailDrawer({
   const [jobs, setJobs] = useState<PluginJobListItemRead[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState('');
+  const [configForm, setConfigForm] = useState<PluginConfigForm | null>(null);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configError, setConfigError] = useState('');
+  const [configStatus, setConfigStatus] = useState('');
 
   // 加载最近任务
   useEffect(() => {
@@ -145,6 +152,79 @@ export function PluginDetailDrawer({
       cancelled = true;
     };
   }, [householdId, plugin, isOpen]);
+
+  useEffect(() => {
+    if (!householdId || !plugin || !isOpen) {
+      setConfigForm(null);
+      setConfigError('');
+      setConfigStatus('');
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadConfig = async () => {
+      setConfigLoading(true);
+      setConfigError('');
+      try {
+        const scopes = await api.listPluginConfigScopes(householdId, plugin.id);
+        const pluginScope = scopes.items.find(item => item.scope_type === 'plugin');
+        const scopeInstance = pluginScope?.instances.find(item => item.scope_key === 'default') ?? pluginScope?.instances[0];
+        if (!scopeInstance) {
+          if (!cancelled) {
+            setConfigForm(null);
+          }
+          return;
+        }
+        const form = await api.getPluginConfigForm(householdId, plugin.id, {
+          scope_type: 'plugin',
+          scope_key: scopeInstance.scope_key,
+        });
+        if (!cancelled) {
+          setConfigForm(form);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setConfigError(err instanceof ApiError ? err.message : '加载插件配置失败');
+          setConfigForm(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setConfigLoading(false);
+        }
+      }
+    };
+
+    void loadConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [householdId, isOpen, plugin]);
+
+  async function handleSavePluginConfig(payload: {
+    scope_type: 'plugin' | 'channel_account';
+    scope_key: string;
+    values: Record<string, unknown>;
+    clear_secret_fields?: string[];
+  }) {
+    if (!householdId || !plugin) {
+      return;
+    }
+
+    setConfigSaving(true);
+    setConfigError('');
+    setConfigStatus('');
+    try {
+      const result = await api.savePluginConfigForm(householdId, plugin.id, payload);
+      setConfigForm(result);
+      setConfigStatus('插件配置已保存。');
+    } catch (err) {
+      setConfigError(err instanceof ApiError ? err.message : '保存插件配置失败');
+    } finally {
+      setConfigSaving(false);
+    }
+  }
 
   if (!isOpen || !plugin) return null;
 
@@ -327,6 +407,30 @@ export function PluginDetailDrawer({
               </div>
             </div>
           )}
+
+          <div className="plugin-detail-section">
+            <h3>插件配置</h3>
+            {configLoading ? (
+              <div className="plugin-detail-loading">正在加载配置...</div>
+            ) : configForm ? (
+              <>
+                <DynamicPluginConfigForm
+                  configSpec={configForm.config_spec}
+                  view={configForm.view}
+                  onSubmit={handleSavePluginConfig}
+                  saving={configSaving}
+                  formError={configError}
+                />
+                {configStatus && <div className="plugin-config-inline-status">{configStatus}</div>}
+              </>
+            ) : (
+              <p className="plugin-detail-empty">
+                {plugin.config_specs.some(item => item.scope_type === 'channel_account')
+                  ? '这个插件只有账号级配置，请去通道接入页设置。'
+                  : '这个插件没有插件级配置。'}
+              </p>
+            )}
+          </div>
 
           {/* 最近任务 */}
           <div className="plugin-detail-section">

@@ -12,6 +12,86 @@
   "entrypoints": {
     "channel": "app.plugins.builtin.channel_feishu.channel.handle"
   },
+  "config_specs": [
+    {
+      "scope_type": "channel_account",
+      "title": "飞书账号配置",
+      "description": "给当前飞书应用填 webhook 和 API 访问参数。",
+      "schema_version": 1,
+      "config_schema": {
+        "fields": [
+          {
+            "key": "app_id",
+            "label": "App ID",
+            "type": "string",
+            "required": true
+          },
+          {
+            "key": "app_secret",
+            "label": "App Secret",
+            "type": "secret",
+            "required": true
+          },
+          {
+            "key": "verification_token",
+            "label": "Verification Token",
+            "type": "secret",
+            "required": false
+          },
+          {
+            "key": "encrypt_key",
+            "label": "Encrypt Key",
+            "type": "secret",
+            "required": false
+          },
+          {
+            "key": "base_url",
+            "label": "Base URL",
+            "type": "string",
+            "required": false
+          }
+        ]
+      },
+      "ui_schema": {
+        "sections": [
+          {
+            "id": "basic",
+            "title": "连接参数",
+            "fields": ["app_id", "app_secret", "verification_token", "encrypt_key", "base_url"]
+          }
+        ],
+        "field_order": ["app_id", "app_secret", "verification_token", "encrypt_key", "base_url"],
+        "submit_text": "保存配置",
+        "widgets": {
+          "app_id": {
+            "widget": "input",
+            "placeholder": "cli_xxx",
+            "help_text": "飞书开放平台应用 ID。"
+          },
+          "app_secret": {
+            "widget": "password",
+            "placeholder": "应用密钥",
+            "help_text": "飞书开放平台应用密钥。"
+          },
+          "verification_token": {
+            "widget": "password",
+            "placeholder": "可选的校验 Token",
+            "help_text": "如果开启事件校验，可以填写回调 Token。"
+          },
+          "encrypt_key": {
+            "widget": "password",
+            "placeholder": "可选的消息加密密钥",
+            "help_text": "如果飞书开启加密消息，这里填写 Encrypt Key。"
+          },
+          "base_url": {
+            "widget": "input",
+            "placeholder": "https://open.feishu.cn",
+            "help_text": "私有部署时可改成自定义地址。"
+          }
+        }
+      }
+    }
+  ],
   "capabilities": {
     "channel": {
       "platform_code": "feishu",
@@ -20,6 +100,18 @@
       "supports_member_binding": true,
       "supports_group_chat": true,
       "supports_threading": true,
+      "ui": {
+        "binding": {
+          "identity_label": "Open ID",
+          "identity_placeholder": "例如：ou_xxx",
+          "identity_help_text": "飞书用户的 open_id。",
+          "chat_label": "Chat ID",
+          "chat_placeholder": "例如：oc_xxx",
+          "chat_help_text": "飞书会话 chat_id。",
+          "candidate_title": "待绑定飞书用户",
+          "candidate_help_text": "这里只展示最近给当前账号发过消息、但还没有在当前账号下绑定的用户。"
+        }
+      },
       "reserved": false
     }
   }

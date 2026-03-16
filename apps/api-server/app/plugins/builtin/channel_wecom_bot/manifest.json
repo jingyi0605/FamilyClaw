@@ -11,6 +11,53 @@
   "entrypoints": {
     "channel": "app.plugins.builtin.channel_wecom_bot.channel.handle"
   },
+  "config_specs": [
+    {
+      "scope_type": "channel_account",
+      "title": "企业微信群机器人配置",
+      "description": "给当前群机器人填出站推送参数。",
+      "schema_version": 1,
+      "config_schema": {
+        "fields": [
+          {
+            "key": "webhook_url",
+            "label": "Webhook URL",
+            "type": "string",
+            "required": false
+          },
+          {
+            "key": "key",
+            "label": "Key",
+            "type": "secret",
+            "required": false
+          }
+        ]
+      },
+      "ui_schema": {
+        "sections": [
+          {
+            "id": "basic",
+            "title": "连接参数",
+            "fields": ["webhook_url", "key"]
+          }
+        ],
+        "field_order": ["webhook_url", "key"],
+        "submit_text": "保存配置",
+        "widgets": {
+          "webhook_url": {
+            "widget": "input",
+            "placeholder": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx",
+            "help_text": "企业微信机器人完整 Webhook URL，与 Key 二选一。"
+          },
+          "key": {
+            "widget": "password",
+            "placeholder": "机器人 Key",
+            "help_text": "企业微信机器人 Key，与 Webhook URL 二选一。"
+          }
+        }
+      }
+    }
+  ],
   "capabilities": {
     "channel": {
       "platform_code": "wecom-bot",
@@ -19,6 +66,16 @@
       "supports_member_binding": false,
       "supports_group_chat": true,
       "supports_threading": false,
+      "ui": {
+        "binding": {
+          "identity_label": "外部用户 ID",
+          "identity_placeholder": "当前模式不支持成员绑定",
+          "identity_help_text": "企业微信机器人目前只支持出站推送，不支持成员绑定。",
+          "chat_label": "会话 ID",
+          "chat_placeholder": "当前模式不支持成员绑定",
+          "chat_help_text": "企业微信机器人目前只支持出站推送，不支持成员绑定。"
+        }
+      },
       "reserved": false
     }
   }
