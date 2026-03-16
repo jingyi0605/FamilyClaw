@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import Taro from '@tarojs/taro';
-import { EmptyStateCard, UiCard } from '@familyclaw/user-ui';
+import { EmptyStateCard, PageHeader, UiCard } from '@familyclaw/user-ui';
 import {
   Activity,
   AlertTriangle,
@@ -833,21 +833,48 @@ export default function HomePage() {
     await persistLayout(nextItems);
   };
 
+  const [activeTab, setActiveTab] = useState('home');
+
+  const tabs = [{ id: 'home', label: t('dashboard.tab.home') }];
+
   return (
     <div className="page page--home">
-      <div className="welcome-banner">
-        <div className="welcome-banner__text">
-          <h1 className="welcome-banner__title animate-slide-in flex items-center gap-3">
-            {t('home.welcome')}，{familyName} <Home size={32} className="text-brand-primary" />
-          </h1>
-          <p className="welcome-banner__sub">{t('home.greeting')}</p>
-          {dashboard?.warnings.length ? <p className="text-text-secondary">{t('home.partialDegraded')}</p> : null}
-          {error ? <p className="text-text-secondary">{error}</p> : null}
+      <PageHeader title={t('dashboard.title')} />
+
+      <div className="memory-main-tabs">
+        {tabs.map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`memory-main-tab ${activeTab === tab.id ? 'memory-main-tab--active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+        {editMode && (
+          <button
+            type="button"
+            className="memory-main-tab memory-main-tab--add"
+            title={t('dashboard.tab.add')}
+          >
+            <Plus size={16} />
+          </button>
+        )}
+      </div>
+
+      <div className="dashboard-header-bar">
+        <div className="dashboard-header-bar__left">
+          <span className="dashboard-header-bar__greeting">
+            {t('home.welcome')}，{familyName}
+          </span>
+          {dashboard?.warnings.length ? <span className="text-text-secondary">{t('home.partialDegraded')}</span> : null}
+          {error ? <span className="text-text-secondary">{error}</span> : null}
         </div>
-        <div className="welcome-banner__right">
-          <div className="welcome-banner__time">
+        <div className="dashboard-header-bar__right">
+          <span className="dashboard-header-bar__time">
             {new Date().toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' })}
-          </div>
+          </span>
           <button
             className={`edit-dashboard-btn ${editMode ? 'edit-dashboard-btn--active' : ''}`}
             type="button"

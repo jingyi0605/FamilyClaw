@@ -6,7 +6,7 @@
   /* ===== 页面级尺寸变量（缩小并统一） ===== */
 
   /* 页面布局 */
-  --page-content-max-width: 1280px;
+  --page-content-max-width: 1440px;
 
   /* 卡片尺寸 - 统一缩小 */
   --card-min-height-compact: 160px;
@@ -127,17 +127,51 @@
   overflow: hidden;
 }
 
-.welcome-banner::before {
-  content: '';
-  position: absolute;
-  top: -48%;
-  right: -12%;
-  width: 200px;
-  height: 200px;
-  border-radius: 50%;
-  background: var(--glow-color);
-  filter: blur(60px);
-  opacity: 0.88;
+// 移除渐变蒙版，简化设计
+// .welcome-banner::before {
+//   content: '';
+//   position: absolute;
+//   top: -48%;
+//   right: -12%;
+//   width: 200px;
+//   height: 200px;
+//   border-radius: 50%;
+//   background: var(--glow-color);
+//   filter: blur(60px);
+//   opacity: 0.88;
+// }
+
+.dashboard-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--card-gap);
+  padding: var(--spacing-sm) 0;
+  margin-bottom: var(--card-gap);
+}
+
+.dashboard-header-bar__left {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.dashboard-header-bar__greeting {
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.dashboard-header-bar__right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.dashboard-header-bar__time {
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  white-space: nowrap;
 }
 
 .welcome-banner__text,

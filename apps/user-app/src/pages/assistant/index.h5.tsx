@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Taro from '@tarojs/taro';
 import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealtimeEvent } from '@familyclaw/user-platform/web';
-import { EmptyStateCard, userAppFoundationTokens } from '@familyclaw/user-ui';
-import { Bot, History, Info, Menu, MessageSquarePlus } from 'lucide-react';
+import { EmptyStateCard, PageHeader, userAppFoundationTokens } from '@familyclaw/user-ui';
+import { Bot, Construction, History, Info, Menu, MessageSquarePlus } from 'lucide-react';
 import { assistantApi } from './assistant.api';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel, isConversationAgent, pickDefaultConversationAgent } from './assistant.agents';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
@@ -267,6 +267,7 @@ function AssistantPageContent() {
   const [status, setStatus] = useState('');
   const [actionBusyId, setActionBusyId] = useState('');
   const [expandedAutoMessageId, setExpandedAutoMessageId] = useState('');
+  const [activeChatTab, setActiveChatTab] = useState<'personal' | 'public' | 'moments'>('personal');
   const realtimeClientRef = useRef<ConversationRealtimeClient | null>(null);
   const pendingSyncTimerRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
@@ -967,8 +968,43 @@ function AssistantPageContent() {
     );
   }
 
+  const chatTabs = [
+    { key: 'personal' as const, labelKey: 'assistant.tab.personal', available: true },
+    { key: 'public' as const, labelKey: 'assistant.tab.public', available: false },
+    { key: 'moments' as const, labelKey: 'assistant.tab.moments', available: false },
+  ];
+
+  function renderComingSoonTab() {
+    return (
+      <div className="assistant-coming-soon">
+        <EmptyStateCard
+          icon={<Construction size={48} className="text-text-tertiary" />}
+          title={t('assistant.tab.comingSoonTitle')}
+          description={t('assistant.tab.comingSoonDesc')}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="page page--assistant">
+      <PageHeader title={t('nav.assistant')} />
+
+      <div className="memory-main-tabs">
+        {chatTabs.map(tab => (
+          <button
+            key={tab.key}
+            type="button"
+            className={`memory-main-tab ${activeChatTab === tab.key ? 'memory-main-tab--active' : ''}`}
+            onClick={() => setActiveChatTab(tab.key)}
+          >
+            {t(tab.labelKey)}
+          </button>
+        ))}
+      </div>
+
+      {activeChatTab !== 'personal' ? renderComingSoonTab() : (
+        <>
       {contextPanelOpen ? <div className="assistant-panel-overlay" onClick={() => setContextPanelOpen(false)} /> : null}
       <div className={`assistant-panel assistant-panel--right ${contextPanelOpen ? 'is-open' : ''}`.trim()}>
         <div className="assistant-panel__header">
@@ -1246,6 +1282,8 @@ function AssistantPageContent() {
           />
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

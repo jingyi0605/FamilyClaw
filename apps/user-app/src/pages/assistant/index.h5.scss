@@ -4,18 +4,71 @@
 }
 
 .page--assistant {
-  display: block;
-  width: auto;
-  max-width: none;
-  margin: calc(-1 * var(--spacing-xl)) calc(-1 * var(--spacing-xxl));
-  height: 100vh;
-  min-height: 0;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-width: var(--page-content-max-width);
+  margin: 0 auto;
+  min-height: 100%;
   background: var(--bg-app);
   color: var(--text-primary);
   font-family: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: 15px;
+  font-size: var(--font-size-md);
   line-height: 1.6;
+
+  /* 页面布局 */
+  --page-content-max-width: 1440px;
+
+  /* 标签页支持滚动 */
+  .memory-main-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    &::-webkit-scrollbar { display: none; }
+  }
+
+  .memory-main-tab {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* 卡片尺寸 */
+  --card-min-height-compact: 160px;
+  --card-min-height-regular: 200px;
+  --card-min-height-tall: 280px;
+  --card-padding: var(--spacing-md);
+  --card-gap: var(--spacing-md);
+  --card-radius: var(--radius-lg);
+
+  /* 图标尺寸层级 */
+  --icon-size-xs: 16px;
+  --icon-size-sm: 18px;
+  --icon-size-md: 20px;
+  --icon-size-lg: 32px;
+  --icon-size-xl: 40px;
+
+  /* 图标容器尺寸 */
+  --icon-box-sm: 28px;
+  --icon-box-md: 32px;
+  --icon-box-lg: 36px;
+  --icon-box-xl: 40px;
+
+  /* 文字尺寸层级 */
+  --card-title-size: var(--font-size-md);
+  --card-subtitle-size: var(--font-size-sm);
+  --card-body-size: var(--font-size-sm);
+  --card-meta-size: var(--font-size-xs);
+
+  /* 列表/项目间距 */
+  --list-gap: var(--spacing-sm);
+  --list-item-padding: var(--spacing-xs) 0;
+
+  /* 按钮尺寸 */
+  --btn-gap: var(--spacing-sm);
+  --btn-padding: var(--spacing-sm) var(--spacing-lg);
+  --btn-icon-size: var(--icon-box-md);
+
+  /* 标签/徽章 */
+  --badge-padding: 2px 8px;
+  --badge-radius: var(--radius-sm);
 }
 
 .page--assistant button,
@@ -26,174 +79,175 @@
 }
 
 /* Taro H5 的 rem 根字号会放大旧页这批尺寸，这里把旧页按 16px 根字号计算后的值钉死。 */
+
 .conversation-agent-banner__avatar {
-  width: 48px;
-  height: 48px;
-  font-size: 24px;
+  width: var(--icon-box-xl);
+  height: var(--icon-box-xl);
+  font-size: var(--icon-size-lg);
 }
 
 .conversation-agent-banner__text {
-  gap: 6px;
+  gap: var(--spacing-xs);
 }
 
 .conversation-agent-banner__title-row {
-  gap: 8px;
+  gap: var(--spacing-xs);
 }
 
 .ai-pill {
-  padding: 3px 10px;
+  padding: var(--badge-padding);
 }
 
 .assistant-main__messages {
-  gap: 20px;
+  gap: var(--spacing-md);
 }
 
 .message {
-  gap: 14px;
+  gap: var(--spacing-sm);
 }
 
 .message__avatar {
-  width: 40px;
-  height: 40px;
-  font-size: 20px;
+  width: var(--icon-box-xl);
+  height: var(--icon-box-xl);
+  font-size: var(--icon-size-md);
 }
 
 .message__content-wrapper {
-  gap: 8px;
+  gap: var(--spacing-xs);
 }
 
 .message__bubble {
-  padding: 16px 18px;
-  border-radius: 20px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-lg);
 }
 
 .message--user .message__bubble {
-  border-bottom-right-radius: 6px;
+  border-bottom-right-radius: var(--radius-sm);
 }
 
 .message--assistant .message__bubble {
-  border-bottom-left-radius: 6px;
+  border-bottom-left-radius: var(--radius-sm);
 }
 
 .message__memory-tag {
-  gap: 4px;
-  margin-top: 8px;
-  padding: 4px 10px;
-  border-radius: 16px;
-  font-size: 12px;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+  padding: var(--badge-padding);
+  border-radius: var(--radius-md);
+  font-size: var(--card-meta-size);
 }
 
 .message__actions {
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
 }
 
 .message__action-cards {
-  gap: 10px;
+  gap: var(--spacing-sm);
 }
 
 .message__action-card {
-  padding: 14px 16px;
-  border-radius: 16px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
 }
 
 .message__action-header {
-  gap: 8px;
+  gap: var(--spacing-xs);
 }
 
 .message__action-icon {
-  font-size: 16px;
+  font-size: var(--icon-size-xs);
 }
 
 .message__action-text {
-  margin: 8px 0 0;
+  margin: var(--spacing-xs) 0 0;
 }
 
 .message__action-meta {
-  gap: 4px;
-  margin-top: 8px;
-  font-size: 12px;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+  font-size: var(--card-meta-size);
 }
 
 .message__proposal-body {
-  gap: 9px;
-  margin-top: 11px;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
 }
 
 .message__proposal-summary {
-  font-size: 15px;
+  font-size: var(--card-body-size);
 }
 
 .message__proposal-chips {
-  gap: 7px;
+  gap: var(--spacing-xs);
 }
 
 .message__proposal-chip {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: var(--badge-padding);
+  font-size: var(--card-meta-size);
 }
 
 .message__proposal-warning {
-  padding: 9px 11px;
-  border-radius: 13px;
-  font-size: 13px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-md);
+  font-size: var(--card-body-size);
 }
 
 .message__proposal-hint {
-  font-size: 12px;
+  font-size: var(--card-meta-size);
   line-height: 1.5;
 }
 
 .message__action-icons {
-  gap: 8px;
+  gap: var(--spacing-xs);
 }
 
 .message__action-icon-btn {
-  width: 32px;
-  height: 32px;
+  width: var(--icon-box-md);
+  height: var(--icon-box-md);
 }
 
 .message__action-details {
-  margin-top: 12px;
-  gap: 10px;
+  margin-top: var(--spacing-sm);
+  gap: var(--spacing-sm);
 }
 
 .message__action-detail-row {
-  padding-top: 10px;
+  padding-top: var(--spacing-sm);
 }
 
 .msg-action-btn {
-  padding: 6px 12px;
-  border-radius: 16px;
-  font-size: 12px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-md);
+  font-size: var(--card-meta-size);
 }
 
 .assistant-main__input {
-  padding: 14px 20px;
+  padding: var(--spacing-sm) var(--spacing-md);
 }
 
 .chat-composer {
-  gap: 10px;
-  padding: 14px 16px;
-  border-radius: 20px;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-lg);
 }
 
 .chat-composer__input.form-input {
-  min-height: 44px;
-  max-height: 112px;
-  font-size: 15px;
+  min-height: var(--icon-box-xl);
+  max-height: 6rem;
+  font-size: var(--card-body-size);
 }
 
 .chat-composer__footer {
-  gap: 12px;
+  gap: var(--spacing-sm);
 }
 
 .chat-composer__hint {
-  font-size: 12px;
+  font-size: var(--card-meta-size);
 }
 
 .context-memory-item__sub {
-  font-size: 14px;
+  font-size: var(--card-body-size);
   line-height: 1.5;
 }
 
@@ -205,11 +259,22 @@
   color: var(--text-secondary);
 }
 
+.text-text-tertiary {
+  color: var(--text-tertiary);
+}
+
+.assistant-coming-soon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: var(--spacing-xxl);
+}
+
 @media (max-width: 900px) {
   .page--assistant {
-    margin: calc(-1 * var(--spacing-md));
-    height: calc(100vh - 60px);
-    position: relative;
-    overflow: hidden;
+    max-width: none;
+    margin: 0;
+    min-height: calc(100vh - 60px);
   }
 }

@@ -20,6 +20,8 @@ apps/api-server/scripts/20260314-语义路由评估.py
 .lsp.json
 .codex-tmp/*
 apps/user-app/.tmp/*
+test*.py
+apps\api-server\tests\*
 
 # TypeScript compiled JS files (keep source ts/tsx)
 apps/user-app/**/*.js

@@ -114,6 +114,16 @@ const SHELL_MESSAGES = {
     'settings.nav.channelAccess.desc': '接入 Telegram、Discord 等外部平台',
     'settings.nav.plugins.label': '插件管理',
     'settings.nav.plugins.desc': '查看和管理已安装插件',
+    // 仪表盘/首页标签页
+    'dashboard.title': '仪表盘',
+    'dashboard.tab.home': '主页',
+    'dashboard.tab.add': '添加标签页',
+    // 聊天页面标签页
+    'assistant.tab.personal': '个人聊天',
+    'assistant.tab.public': '公共聊天',
+    'assistant.tab.moments': '家人圈',
+    'assistant.tab.comingSoonTitle': '功能开发中',
+    'assistant.tab.comingSoonDesc': '该功能正在紧张开发中，敬请期待！',
     'settings.appearance.title': '主题模式',
     'settings.language.title': '语言与地区',
     'settings.language.interface': '界面语言',
@@ -245,6 +255,16 @@ const SHELL_MESSAGES = {
     'settings.nav.channelAccess.desc': 'Connect Telegram, Discord, and other external platforms',
     'settings.nav.plugins.label': 'Plugins',
     'settings.nav.plugins.desc': 'Review and manage installed plugins',
+    // Dashboard/Home tabs
+    'dashboard.title': 'Dashboard',
+    'dashboard.tab.home': 'Home',
+    'dashboard.tab.add': 'Add Tab',
+    // Assistant tabs
+    'assistant.tab.personal': 'Personal Chat',
+    'assistant.tab.public': 'Public Chat',
+    'assistant.tab.moments': 'Moments',
+    'assistant.tab.comingSoonTitle': 'Coming Soon',
+    'assistant.tab.comingSoonDesc': 'This feature is under development. Stay tuned!',
     'settings.appearance.title': 'Theme Mode',
     'settings.language.title': 'Language & Region',
     'settings.language.interface': 'Interface Language',

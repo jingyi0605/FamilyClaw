@@ -12,10 +12,8 @@ export function SettingsPageShell(props: {
   return (
     <div className="page page--settings">
       <PageHeader title={t('settings.title')} />
-      <div className="settings-layout">
-        <SettingsNav activeKey={props.activeKey} />
-        <div className="settings-content">{props.children}</div>
-      </div>
+      <SettingsNav activeKey={props.activeKey} />
+      <div className="settings-content">{props.children}</div>
     </div>
   );
 }

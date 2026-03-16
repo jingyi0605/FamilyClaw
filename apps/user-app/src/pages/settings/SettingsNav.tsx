@@ -111,26 +111,23 @@ export function SettingsNav(props: { activeKey: SettingsNavKey }) {
   const { t } = useI18n();
 
   return (
-    <nav className="settings-nav">
-      {settingsItems.map((item) => {
-        const isActive = props.activeKey === item.key;
-
-        return (
-          <button
-            key={item.key}
-            type="button"
-            className={`settings-nav__item ${isActive ? 'settings-nav__item--active' : ''}`}
-            aria-current={isActive ? 'page' : undefined}
-            onClick={() => void openPage(item.url)}
-          >
-            <span className="settings-nav__icon">{item.icon}</span>
-            <div className="settings-nav__text">
-              <span className="settings-nav__label">{t(item.labelKey)}</span>
-              <span className="settings-nav__desc">{t(item.descKey)}</span>
-            </div>
-          </button>
-        );
-      })}
+    <nav className="settings-tabs" role="tablist">
+      <div className="settings-tabs__scroll">
+        {settingsItems.map((item) => {
+          const isActive = props.activeKey === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              className={`settings-tab ${isActive ? 'settings-tab--active' : ''}`}
+              onClick={() => void openPage(item.url)}
+            >
+              <span className="settings-tab__icon">{item.icon}</span>
+              <span className="settings-tab__label">{t(item.labelKey)}</span>
+            </button>
+          );
+        })}
+      </div>
     </nav>
   );
 }
