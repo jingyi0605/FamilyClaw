@@ -7,6 +7,18 @@ import type {
   AiProviderProfileUpdatePayload,
 } from './setupTypes';
 
+export const AI_CAPABILITY_OPTIONS = [
+  { value: 'qa_generation', label: '家庭问答生成' },
+  { value: 'qa_structured_answer', label: '结构化问答' },
+  { value: 'reminder_copywriting', label: '提醒文案' },
+  { value: 'scene_explanation', label: '场景解释' },
+  { value: 'embedding', label: '向量检索' },
+  { value: 'rerank', label: '结果重排' },
+  { value: 'stt', label: '语音转文字' },
+  { value: 'tts', label: '文字转语音' },
+  { value: 'vision', label: '视觉理解' },
+] as const;
+
 export const SETUP_ROUTE_CAPABILITIES = ['qa_generation', 'qa_structured_answer'];
 
 const CORE_PROVIDER_FIELD_KEYS = new Set([
@@ -18,6 +30,10 @@ const CORE_PROVIDER_FIELD_KEYS = new Set([
   'privacy_level',
   'latency_budget_ms',
 ]);
+
+export function getCapabilityLabel(capability: string) {
+  return AI_CAPABILITY_OPTIONS.find(item => item.value === capability)?.label ?? capability;
+}
 
 export function parseTags(raw: string) {
   return Array.from(new Set(raw.split(/[,，、\n]/).map(item => item.trim()).filter(Boolean)));

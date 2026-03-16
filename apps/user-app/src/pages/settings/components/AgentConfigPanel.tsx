@@ -17,25 +17,16 @@ type CreateFormState = {
   serviceFocus: string;
 };
 
-function pickLocaleText(
-  locale: string | undefined,
-  values: { zhCN: string; zhTW: string; enUS: string },
-) {
-  if (locale?.toLowerCase().startsWith('en')) return values.enUS;
-  if (locale?.toLowerCase().startsWith('zh-tw')) return values.zhTW;
-  return values.zhCN;
-}
-
-function buildCreateForm(locale: string | undefined): CreateFormState {
+function buildCreateForm(t: (key: string, params?: Record<string, string | number>) => string): CreateFormState {
   return {
-    displayName: pickLocaleText(locale, { zhCN: '家庭管家', zhTW: '家庭管家', enUS: 'Household Butler' }),
+    displayName: t('settings.ai.agent.defaultName'),
     agentType: 'butler',
     selfIdentity: '',
-    roleSummary: pickLocaleText(locale, { zhCN: '负责家庭问答、提醒和日常陪伴。', zhTW: '負責家庭問答、提醒和日常陪伴。', enUS: 'Responsible for household Q&A, reminders, and everyday companionship.' }),
-    introMessage: pickLocaleText(locale, { zhCN: '你好，我是你的家庭管家。', zhTW: '你好，我是你的家庭管家。', enUS: 'Hello, I am your household butler.' }),
-    speakingStyle: pickLocaleText(locale, { zhCN: '温和、清晰、让人安心', zhTW: '溫和、清晰、讓人安心', enUS: 'Gentle, clear, and reassuring' }),
-    personalityTraits: pickLocaleText(locale, { zhCN: '细心, 稳定, 可靠', zhTW: '細心, 穩定, 可靠', enUS: 'Thoughtful, steady, reliable' }),
-    serviceFocus: pickLocaleText(locale, { zhCN: '家庭问答, 日常提醒, 成员关怀', zhTW: '家庭問答, 日常提醒, 成員關懷', enUS: 'Household Q&A, daily reminders, member care' }),
+    roleSummary: t('settings.ai.agent.defaultRoleSummary'),
+    introMessage: t('settings.ai.agent.defaultIntro'),
+    speakingStyle: t('settings.ai.agent.defaultSpeakingStyle'),
+    personalityTraits: t('settings.ai.agent.defaultTraits'),
+    serviceFocus: t('settings.ai.agent.defaultFocus'),
   };
 }
 
@@ -45,7 +36,7 @@ export function AgentConfigPanel(props: {
   onlyButler?: boolean;
   onChanged?: () => Promise<void> | void;
 }) {
-  const { locale } = useI18n();
+  const { t } = useI18n();
   const { householdId, compact = false, onlyButler = false, onChanged } = props;
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -56,7 +47,7 @@ export function AgentConfigPanel(props: {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
-  const [createForm, setCreateForm] = useState<CreateFormState>(buildCreateForm(locale));
+  const [createForm, setCreateForm] = useState<CreateFormState>(buildCreateForm(t));
   const [baseForm, setBaseForm] = useState({ displayName: '', status: 'active', sortOrder: '100' });
   const [soulForm, setSoulForm] = useState({
     selfIdentity: '',
@@ -88,10 +79,10 @@ export function AgentConfigPanel(props: {
   );
 
   const createActionLabel = compact
-    ? pickLocaleText(locale, { zhCN: '创建第一个 AI 管家', zhTW: '建立第一個 AI 管家', enUS: 'Create the first AI butler' })
+    ? t('settings.ai.agent.createFirst')
     : (onlyButler
-      ? pickLocaleText(locale, { zhCN: '添加 AI 管家', zhTW: '新增 AI 管家', enUS: 'Add AI butler' })
-      : pickLocaleText(locale, { zhCN: '添加 AI 助手', zhTW: '新增 AI 助手', enUS: 'Add AI agent' }));
+      ? t('settings.ai.agent.addButler')
+      : t('settings.ai.agent.addAgent'));
   const createDisabled = (
     saving
     || !createForm.displayName.trim()
@@ -102,77 +93,69 @@ export function AgentConfigPanel(props: {
   );
 
   const actionOptions = [
-    { value: 'ask', label: pickLocaleText(locale, { zhCN: '先询问我', zhTW: '先詢問我', enUS: 'Ask me first' }) },
-    { value: 'notify', label: pickLocaleText(locale, { zhCN: '先处理再告诉我', zhTW: '先處理再告訴我', enUS: 'Handle first, then tell me' }) },
-    { value: 'auto', label: pickLocaleText(locale, { zhCN: '自动处理', zhTW: '自動處理', enUS: 'Handle automatically' }) },
+    { value: 'ask', label: t('settings.ai.agent.action.ask') },
+    { value: 'notify', label: t('settings.ai.agent.action.notify') },
+    { value: 'auto', label: t('settings.ai.agent.action.auto') },
   ] as const;
   const copy = {
-    loadFailed: pickLocaleText(locale, { zhCN: '加载 AI 助手失败', zhTW: '載入 AI 助手失敗', enUS: 'Failed to load AI agents' }),
-    loadDetailFailed: pickLocaleText(locale, { zhCN: '加载助手详情失败', zhTW: '載入助手詳情失敗', enUS: 'Failed to load the agent details' }),
-    createdStatus: (name: string) => pickLocaleText(locale, { zhCN: `已添加 AI 助手：${name}`, zhTW: `已新增 AI 助手：${name}`, enUS: `AI agent added: ${name}` }),
-    createFailed: pickLocaleText(locale, { zhCN: '添加 AI 助手失败', zhTW: '新增 AI 助手失敗', enUS: 'Failed to add the AI agent' }),
-    saveBaseSuccess: pickLocaleText(locale, { zhCN: '基本信息已保存', zhTW: '基本資訊已儲存', enUS: 'Basic information saved' }),
-    saveBaseFailed: pickLocaleText(locale, { zhCN: '保存基本信息失败', zhTW: '儲存基本資訊失敗', enUS: 'Failed to save the basic information' }),
-    saveSoulSuccess: pickLocaleText(locale, { zhCN: '角色设定已保存', zhTW: '角色設定已儲存', enUS: 'Role settings saved' }),
-    saveSoulFailed: pickLocaleText(locale, { zhCN: '保存角色设定失败', zhTW: '儲存角色設定失敗', enUS: 'Failed to save the role settings' }),
-    saveRuntimeSuccess: pickLocaleText(locale, { zhCN: '使用方式已保存', zhTW: '使用方式已儲存', enUS: 'Usage settings saved' }),
-    saveRuntimeFailed: pickLocaleText(locale, { zhCN: '保存使用方式失败', zhTW: '儲存使用方式失敗', enUS: 'Failed to save usage settings' }),
-    saveCognitionSuccess: pickLocaleText(locale, { zhCN: '与家人的互动方式已保存', zhTW: '與家人的互動方式已儲存', enUS: 'Household interaction settings saved' }),
-    saveCognitionFailed: pickLocaleText(locale, { zhCN: '保存互动方式失败', zhTW: '儲存互動方式失敗', enUS: 'Failed to save the interaction settings' }),
-    panelTitleCompact: pickLocaleText(locale, { zhCN: '创建第一个 AI 管家', zhTW: '建立第一個 AI 管家', enUS: 'Create the first AI butler' }),
-    panelTitleButler: pickLocaleText(locale, { zhCN: 'AI 管家', zhTW: 'AI 管家', enUS: 'AI butler' }),
-    panelTitleAgent: pickLocaleText(locale, { zhCN: 'AI 助手', zhTW: 'AI 助手', enUS: 'AI agents' }),
-    panelDescriptionCompact: pickLocaleText(locale, {
-      zhCN: '先创建一个 AI 管家，之后还可以继续完善名字、语气和服务内容。',
-      zhTW: '先建立一個 AI 管家，之後還可以繼續完善名稱、語氣和服務內容。',
-      enUS: 'Create an AI butler first. You can refine the name, tone, and service scope afterward.',
-    }),
-    panelDescriptionDefault: pickLocaleText(locale, {
-      zhCN: '你可以在这里添加不同的 AI 助手，比如家庭管家、营养师或学习教练。',
-      zhTW: '您可以在這裡新增不同的 AI 助手，例如家庭管家、營養師或學習教練。',
-      enUS: 'Add different AI agents here, such as a household butler, nutritionist, or study coach.',
-    }),
-    loading: pickLocaleText(locale, { zhCN: '正在读取 AI 助手信息...', zhTW: '正在讀取 AI 助手資訊...', enUS: 'Loading AI agents...' }),
-    conversationEnabled: pickLocaleText(locale, { zhCN: '可对话', zhTW: '可對話', enUS: 'Available for chat' }),
-    conversationPaused: pickLocaleText(locale, { zhCN: '已暂停对话', zhTW: '已暫停對話', enUS: 'Conversation paused' }),
-    summaryEmpty: pickLocaleText(locale, { zhCN: '还没有填写角色简介。', zhTW: '還沒有填寫角色簡介。', enUS: 'No role summary yet.' }),
-    baseTitle: pickLocaleText(locale, { zhCN: '基本信息', zhTW: '基本資訊', enUS: 'Basic information' }),
-    displayNameLabel: pickLocaleText(locale, { zhCN: '显示名称', zhTW: '顯示名稱', enUS: 'Display name' }),
-    statusLabel: pickLocaleText(locale, { zhCN: '当前状态', zhTW: '目前狀態', enUS: 'Current status' }),
-    sortOrderLabel: pickLocaleText(locale, { zhCN: '显示顺序', zhTW: '顯示順序', enUS: 'Display order' }),
-    saveBaseButton: pickLocaleText(locale, { zhCN: '保存基本信息', zhTW: '儲存基本資訊', enUS: 'Save basic information' }),
-    soulTitle: pickLocaleText(locale, { zhCN: '角色设定', zhTW: '角色設定', enUS: 'Role settings' }),
-    selfIdentityLabel: pickLocaleText(locale, { zhCN: 'Ta 是谁', zhTW: 'Ta 是誰', enUS: 'Who is this agent?' }),
-    roleSummaryLabel: pickLocaleText(locale, { zhCN: '角色简介', zhTW: '角色簡介', enUS: 'Role summary' }),
-    introMessageLabel: pickLocaleText(locale, { zhCN: '开场问候', zhTW: '開場問候', enUS: 'Opening greeting' }),
-    speakingStyleLabel: pickLocaleText(locale, { zhCN: '说话风格', zhTW: '說話風格', enUS: 'Speaking style' }),
-    personalityTraitsLabel: pickLocaleText(locale, { zhCN: '性格特点', zhTW: '性格特點', enUS: 'Personality traits' }),
-    serviceFocusLabel: pickLocaleText(locale, { zhCN: '擅长内容', zhTW: '擅長內容', enUS: 'Service focus' }),
-    saveSoulButton: pickLocaleText(locale, { zhCN: '保存角色设定', zhTW: '儲存角色設定', enUS: 'Save role settings' }),
-    runtimeTitle: pickLocaleText(locale, { zhCN: '使用方式', zhTW: '使用方式', enUS: 'Usage settings' }),
-    conversationOption: pickLocaleText(locale, { zhCN: '允许和家人对话', zhTW: '允許和家人對話', enUS: 'Allow conversations with household members' }),
-    defaultEntryOption: pickLocaleText(locale, { zhCN: '设为默认助手', zhTW: '設為預設助手', enUS: 'Set as the default agent' }),
-    routingTagsLabel: pickLocaleText(locale, { zhCN: '适用标签', zhTW: '適用標籤', enUS: 'Routing tags' }),
-    memoryActionLabel: pickLocaleText(locale, { zhCN: '涉及记忆内容时', zhTW: '涉及記憶內容時', enUS: 'When memory content is involved' }),
-    configActionLabel: pickLocaleText(locale, { zhCN: '涉及设置调整时', zhTW: '涉及設定調整時', enUS: 'When settings changes are involved' }),
-    operationActionLabel: pickLocaleText(locale, { zhCN: '涉及后续操作时', zhTW: '涉及後續操作時', enUS: 'When follow-up actions are involved' }),
-    saveRuntimeButton: pickLocaleText(locale, { zhCN: '保存使用方式', zhTW: '儲存使用方式', enUS: 'Save usage settings' }),
-    cognitionTitle: pickLocaleText(locale, { zhCN: '与家人的互动方式', zhTW: '與家人的互動方式', enUS: 'Household interaction settings' }),
-    displayAddressLabel: pickLocaleText(locale, { zhCN: '怎么称呼 Ta', zhTW: '怎麼稱呼 Ta', enUS: 'How to address them' }),
-    closenessLevelLabel: pickLocaleText(locale, { zhCN: '熟悉程度', zhTW: '熟悉程度', enUS: 'Closeness level' }),
-    servicePriorityLabel: pickLocaleText(locale, { zhCN: '关注优先级', zhTW: '關注優先級', enUS: 'Service priority' }),
-    communicationStyleLabel: pickLocaleText(locale, { zhCN: '沟通方式', zhTW: '溝通方式', enUS: 'Communication style' }),
-    promptNotesLabel: pickLocaleText(locale, { zhCN: '补充备注', zhTW: '補充備註', enUS: 'Additional notes' }),
-    saveCognitionButton: pickLocaleText(locale, { zhCN: '保存互动方式', zhTW: '儲存互動方式', enUS: 'Save interaction settings' }),
-    emptyButlerTitle: pickLocaleText(locale, { zhCN: '还没有 AI 管家', zhTW: '還沒有 AI 管家', enUS: 'No AI butler yet' }),
-    emptyAgentTitle: pickLocaleText(locale, { zhCN: '还没有 AI 助手', zhTW: '還沒有 AI 助手', enUS: 'No AI agents yet' }),
-    emptyDescription: pickLocaleText(locale, { zhCN: '先添加一个 AI 助手，再继续完善它的资料。', zhTW: '先新增一個 AI 助手，再繼續完善它的資料。', enUS: 'Add an AI agent first, then continue refining its profile.' }),
-    createModalDescription: pickLocaleText(locale, { zhCN: '先填写基础信息，创建后还可以继续完善。', zhTW: '先填寫基礎資訊，建立後還可以繼續完善。', enUS: 'Fill in the basics first. You can refine the details after creation.' }),
-    agentTypeLabel: pickLocaleText(locale, { zhCN: '助手类型', zhTW: '助手類型', enUS: 'Agent type' }),
-    personalityTraitsHint: pickLocaleText(locale, { zhCN: '多个特点请用逗号分隔。', zhTW: '多個特點請用逗號分隔。', enUS: 'Separate multiple traits with commas.' }),
-    serviceFocusHint: pickLocaleText(locale, { zhCN: '多个内容请用逗号分隔。', zhTW: '多個內容請用逗號分隔。', enUS: 'Separate multiple items with commas.' }),
-    cancel: pickLocaleText(locale, { zhCN: '取消', zhTW: '取消', enUS: 'Cancel' }),
-    creating: pickLocaleText(locale, { zhCN: '添加中...', zhTW: '新增中...', enUS: 'Adding...' }),
+    loadFailed: t('settings.ai.agent.loadFailed'),
+    loadDetailFailed: t('settings.ai.agent.loadDetailFailed'),
+    createdStatus: (name: string) => t('settings.ai.agent.createdStatus', { name }),
+    createFailed: t('settings.ai.agent.createFailed'),
+    saveBaseSuccess: t('settings.ai.agent.saveBaseSuccess'),
+    saveBaseFailed: t('settings.ai.agent.saveBaseFailed'),
+    saveSoulSuccess: t('settings.ai.agent.saveSoulSuccess'),
+    saveSoulFailed: t('settings.ai.agent.saveSoulFailed'),
+    saveRuntimeSuccess: t('settings.ai.agent.saveRuntimeSuccess'),
+    saveRuntimeFailed: t('settings.ai.agent.saveRuntimeFailed'),
+    saveCognitionSuccess: t('settings.ai.agent.saveCognitionSuccess'),
+    saveCognitionFailed: t('settings.ai.agent.saveCognitionFailed'),
+    panelTitleCompact: t('settings.ai.agent.createFirst'),
+    panelTitleButler: t('settings.ai.agent.panelTitleButler'),
+    panelTitleAgent: t('settings.ai.agent.panelTitleAgent'),
+    panelDescriptionCompact: t('settings.ai.agent.panelDescCompact'),
+    panelDescriptionDefault: t('settings.ai.agent.panelDescDefault'),
+    loading: t('settings.ai.agent.loading'),
+    conversationEnabled: t('settings.ai.agent.conversationEnabled'),
+    conversationPaused: t('settings.ai.agent.conversationPaused'),
+    summaryEmpty: t('settings.ai.agent.summaryEmpty'),
+    baseTitle: t('settings.ai.agent.baseTitle'),
+    displayNameLabel: t('settings.ai.agent.displayName'),
+    statusLabel: t('settings.ai.agent.status'),
+    sortOrderLabel: t('settings.ai.agent.sortOrder'),
+    saveBaseButton: t('settings.ai.agent.saveBase'),
+    soulTitle: t('settings.ai.agent.soulTitle'),
+    selfIdentityLabel: t('settings.ai.agent.selfIdentity'),
+    roleSummaryLabel: t('settings.ai.agent.roleSummary'),
+    introMessageLabel: t('settings.ai.agent.introMessage'),
+    speakingStyleLabel: t('settings.ai.agent.speakingStyle'),
+    personalityTraitsLabel: t('settings.ai.agent.personalityTraits'),
+    serviceFocusLabel: t('settings.ai.agent.serviceFocus'),
+    saveSoulButton: t('settings.ai.agent.saveSoul'),
+    runtimeTitle: t('settings.ai.agent.runtimeTitle'),
+    conversationOption: t('settings.ai.agent.conversationOption'),
+    defaultEntryOption: t('settings.ai.agent.defaultEntry'),
+    routingTagsLabel: t('settings.ai.agent.routingTags'),
+    memoryActionLabel: t('settings.ai.agent.memoryAction'),
+    configActionLabel: t('settings.ai.agent.configAction'),
+    operationActionLabel: t('settings.ai.agent.operationAction'),
+    saveRuntimeButton: t('settings.ai.agent.saveRuntime'),
+    cognitionTitle: t('settings.ai.agent.cognitionTitle'),
+    displayAddressLabel: t('settings.ai.agent.displayAddress'),
+    closenessLevelLabel: t('settings.ai.agent.closenessLevel'),
+    servicePriorityLabel: t('settings.ai.agent.servicePriority'),
+    communicationStyleLabel: t('settings.ai.agent.communicationStyle'),
+    promptNotesLabel: t('settings.ai.agent.promptNotes'),
+    saveCognitionButton: t('settings.ai.agent.saveCognition'),
+    emptyButlerTitle: t('settings.ai.agent.emptyButler'),
+    emptyAgentTitle: t('settings.ai.agent.emptyAgent'),
+    emptyDescription: t('settings.ai.agent.emptyHint'),
+    createModalDescription: t('settings.ai.agent.createModalHint'),
+    agentTypeLabel: t('settings.ai.agent.agentType'),
+    personalityTraitsHint: t('settings.ai.agent.traitsHint'),
+    serviceFocusHint: t('settings.ai.agent.focusHint'),
+    cancel: t('common.cancel'),
+    creating: t('settings.ai.agent.addAgent'),
   };
   const agentTypeOptions: Array<CreateFormState['agentType']> = ['butler', 'nutritionist', 'fitness_coach', 'study_coach', 'custom'];
   const statusOptions: Array<AgentDetail['status']> = ['active', 'inactive', 'draft'];
@@ -213,7 +196,7 @@ export function AgentConfigPanel(props: {
   }
 
   function resetCreateForm() {
-    setCreateForm(buildCreateForm(locale));
+    setCreateForm(buildCreateForm(t));
   }
 
   function openCreateModal() {
@@ -486,7 +469,7 @@ export function AgentConfigPanel(props: {
                           {agent.conversation_enabled ? copy.conversationEnabled : copy.conversationPaused}
                         </span>
                       </div>
-                      <p className="ai-config-card__meta">{getAgentTypeLabel(agent.agent_type, locale)} · {getAgentStatusLabel(agent.status, locale)}</p>
+                      <p className="ai-config-card__meta">{getAgentTypeLabel(agent.agent_type, t)} · {getAgentStatusLabel(agent.status, t)}</p>
                       <p className="ai-config-card__summary">{agent.summary ?? copy.summaryEmpty}</p>
                     </div>
                   </div>
@@ -500,7 +483,7 @@ export function AgentConfigPanel(props: {
                   <h4>{copy.baseTitle}</h4>
                   <div className="setup-form-grid">
                     <div className="form-group"><label>{copy.displayNameLabel}</label><input className="form-input" value={baseForm.displayName} onChange={(event) => setBaseForm(current => ({ ...current, displayName: event.target.value }))} /></div>
-                    <div className="form-group"><label>{copy.statusLabel}</label><select className="form-select" value={baseForm.status} onChange={(event) => setBaseForm(current => ({ ...current, status: event.target.value }))}>{statusOptions.map(option => <option key={option} value={option}>{getAgentStatusLabel(option, locale)}</option>)}</select></div>
+                    <div className="form-group"><label>{copy.statusLabel}</label><select className="form-select" value={baseForm.status} onChange={(event) => setBaseForm(current => ({ ...current, status: event.target.value }))}>{statusOptions.map(option => <option key={option} value={option}>{getAgentStatusLabel(option, t)}</option>)}</select></div>
                     <div className="form-group"><label>{copy.sortOrderLabel}</label><input className="form-input" type="number" value={baseForm.sortOrder} onChange={(event) => setBaseForm(current => ({ ...current, sortOrder: event.target.value }))} /></div>
                   </div>
                   <div className="setup-form-actions"><button type="button" className="btn btn--primary" onClick={() => void handleSaveBase()} disabled={saving}>{copy.saveBaseButton}</button></div>
@@ -581,7 +564,7 @@ export function AgentConfigPanel(props: {
                   <div className="form-group">
                     <label htmlFor={`agent-type-${householdId}`}>{copy.agentTypeLabel}</label>
                     <select id={`agent-type-${householdId}`} className="form-select" value={createForm.agentType} onChange={(event) => setCreateForm(current => ({ ...current, agentType: event.target.value as CreateFormState['agentType'] }))}>
-                      {agentTypeOptions.map(option => <option key={option} value={option}>{getAgentTypeLabel(option, locale)}</option>)}
+                      {agentTypeOptions.map(option => <option key={option} value={option}>{getAgentTypeLabel(option, t)}</option>)}
                     </select>
                   </div>
                 ) : null}
@@ -595,7 +578,7 @@ export function AgentConfigPanel(props: {
               </div>
               <div className="member-modal__actions">
                 <button className="btn btn--outline btn--sm" type="button" onClick={closeCreateModal} disabled={saving}>{copy.cancel}</button>
-                <button className="btn btn--primary btn--sm" type="submit" disabled={createDisabled}>{saving ? copy.creating : createActionLabel}</button>
+                <button className="btn btn--primary btn--sm" type="submit" disabled={createDisabled}>{saving ? t('common.saving') : createActionLabel}</button>
               </div>
             </form>
           </div>

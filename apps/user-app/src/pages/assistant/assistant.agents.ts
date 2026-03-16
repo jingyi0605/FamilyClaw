@@ -1,5 +1,7 @@
 import type { AgentStatus, AgentSummary, AgentType } from './assistant.types';
 
+type TranslateFn = (key: string, params?: Record<string, string | number>) => string;
+
 function pickLocaleText(locale: string | undefined, values: {
   zhCN: string;
   zhTW: string;
@@ -14,18 +16,36 @@ function pickLocaleText(locale: string | undefined, values: {
   return values.zhCN;
 }
 
-export function getAgentTypeLabel(agentType: AgentType, locale?: string): string {
+export function getAgentTypeLabel(agentType: AgentType, locale?: string | TranslateFn): string {
+  const translate = typeof locale === 'function' ? locale as TranslateFn : null;
+  const localeId = typeof locale === 'string' ? locale : undefined;
+  if (translate) {
+    switch (agentType) {
+      case 'butler':
+        return translate('assistant.agentType.butler');
+      case 'nutritionist':
+        return translate('assistant.agentType.nutritionist');
+      case 'fitness_coach':
+        return translate('assistant.agentType.fitnessCoach');
+      case 'study_coach':
+        return translate('assistant.agentType.studyCoach');
+      case 'custom':
+        return translate('assistant.agentType.custom');
+      default:
+        return translate('assistant.agentType.default');
+    }
+  }
   switch (agentType) {
     case 'butler':
-      return pickLocaleText(locale, { zhCN: '家庭管家', zhTW: '家庭管家', enUS: 'Butler' });
+      return pickLocaleText(localeId, { zhCN: '家庭管家', zhTW: '家庭管家', enUS: 'Butler' });
     case 'nutritionist':
-      return pickLocaleText(locale, { zhCN: '营养师', zhTW: '營養師', enUS: 'Nutritionist' });
+      return pickLocaleText(localeId, { zhCN: '营养师', zhTW: '營養師', enUS: 'Nutritionist' });
     case 'fitness_coach':
-      return pickLocaleText(locale, { zhCN: '健身教练', zhTW: '健身教練', enUS: 'Fitness Coach' });
+      return pickLocaleText(localeId, { zhCN: '健身教练', zhTW: '健身教練', enUS: 'Fitness Coach' });
     case 'study_coach':
-      return pickLocaleText(locale, { zhCN: '学习教练', zhTW: '學習教練', enUS: 'Study Coach' });
+      return pickLocaleText(localeId, { zhCN: '学习教练', zhTW: '學習教練', enUS: 'Study Coach' });
     case 'custom':
-      return pickLocaleText(locale, { zhCN: '自定义角色', zhTW: '自訂角色', enUS: 'Custom Role' });
+      return pickLocaleText(localeId, { zhCN: '自定义角色', zhTW: '自訂角色', enUS: 'Custom Role' });
     default:
       return 'Agent';
   }
@@ -48,16 +68,30 @@ export function getAgentTypeEmoji(agentType: AgentType): string {
   }
 }
 
-export function getAgentStatusLabel(status: AgentStatus, locale?: string): string {
+export function getAgentStatusLabel(status: AgentStatus, locale?: string | TranslateFn): string {
+  const translate = typeof locale === 'function' ? locale as TranslateFn : null;
+  const localeId = typeof locale === 'string' ? locale : undefined;
+  if (translate) {
+    switch (status) {
+      case 'active':
+        return translate('assistant.agentStatus.active');
+      case 'inactive':
+        return translate('assistant.agentStatus.inactive');
+      case 'draft':
+        return translate('assistant.agentStatus.draft');
+      default:
+        return translate('assistant.agentStatus.unknown');
+    }
+  }
   switch (status) {
     case 'active':
-      return pickLocaleText(locale, { zhCN: '已启用', zhTW: '已啟用', enUS: 'Active' });
+      return pickLocaleText(localeId, { zhCN: '已启用', zhTW: '已啟用', enUS: 'Active' });
     case 'inactive':
-      return pickLocaleText(locale, { zhCN: '已停用', zhTW: '已停用', enUS: 'Disabled' });
+      return pickLocaleText(localeId, { zhCN: '已停用', zhTW: '已停用', enUS: 'Disabled' });
     case 'draft':
-      return pickLocaleText(locale, { zhCN: '草稿', zhTW: '草稿', enUS: 'Draft' });
+      return pickLocaleText(localeId, { zhCN: '草稿', zhTW: '草稿', enUS: 'Draft' });
     default:
-      return pickLocaleText(locale, { zhCN: '未知', zhTW: '未知', enUS: 'Unknown' });
+      return pickLocaleText(localeId, { zhCN: '未知', zhTW: '未知', enUS: 'Unknown' });
   }
 }
 

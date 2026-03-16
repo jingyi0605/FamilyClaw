@@ -1,11 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useHouseholdContext } from '../../household';
+import { useI18n } from '../i18n/I18nProvider';
 import { ShellNav } from './ShellNav';
 
 const NAV_COLLAPSE_BREAKPOINT = 1200;
 
 export function AppLayoutShell(props: { children: ReactNode }) {
   const { currentHousehold, households, setCurrentHouseholdId } = useHouseholdContext();
+  const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === 'undefined') {
       return false;
@@ -30,7 +32,7 @@ export function AppLayoutShell(props: { children: ReactNode }) {
       <main className="app-layout__main">
         <div className="mobile-household-bar">
           <label className="mobile-household-bar__label" htmlFor="mobile-household-select">
-            当前家庭
+            {t('common.currentHousehold')}
           </label>
           <select
             id="mobile-household-select"

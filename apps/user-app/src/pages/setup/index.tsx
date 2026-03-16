@@ -1,12 +1,15 @@
 import { Text } from '@tarojs/components';
 import { AppShellPage } from '../../components/AppShellPage';
+import { GuardedPage } from '../../runtime';
 
 export default function SetupPage() {
   return (
-    <AppShellPage>
-      <Text style={{ display: 'block', fontSize: '24px', lineHeight: '1.8', color: '#5c6b80' }}>
-        初始化向导的旧页正式迁移先落在 H5，RN 这里先保留安全占位，避免多端构建被网页表单和浏览器实时连接卡死。
-      </Text>
-    </AppShellPage>
+    <GuardedPage mode="setup" path="/pages/setup/index">
+      <AppShellPage>
+        <Text style={{ display: 'block', fontSize: '24px', lineHeight: '1.8', color: '#5c6b80' }}>
+          H5 已按 user-web 正式迁移到统一壳；当前文件只保留给 RN 安全构建使用，不承接网页 DOM 和旧样式。
+        </Text>
+      </AppShellPage>
+    </GuardedPage>
   );
 }

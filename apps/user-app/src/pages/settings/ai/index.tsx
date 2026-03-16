@@ -6,21 +6,11 @@ import { AgentConfigPanel } from '../components/AgentConfigPanel';
 import { AiProviderConfigPanel } from '../components/AiProviderConfigPanel';
 
 type AiSettingsTab = 'agent' | 'provider';
-
-function pickLocaleText(
-  locale: string | undefined,
-  values: { zhCN: string; zhTW: string; enUS: string },
-) {
-  if (locale?.toLowerCase().startsWith('en')) return values.enUS;
-  if (locale?.toLowerCase().startsWith('zh-tw')) return values.zhTW;
-  return values.zhCN;
-}
-
-function mapSetupHint(step: string, locale: string | undefined) {
-  if (step === 'family_profile') return pickLocaleText(locale, { zhCN: '家庭资料', zhTW: '家庭資料', enUS: 'Household profile' });
-  if (step === 'first_member') return pickLocaleText(locale, { zhCN: '家庭成员', zhTW: '家庭成員', enUS: 'Household members' });
-  if (step === 'provider_setup') return pickLocaleText(locale, { zhCN: '模型服务', zhTW: '模型服務', enUS: 'Model providers' });
-  if (step === 'first_butler_agent') return pickLocaleText(locale, { zhCN: 'AI 管家', zhTW: 'AI 管家', enUS: 'AI Butler' });
+function mapSetupHint(step: string, t: (key: string) => string) {
+  if (step === 'family_profile') return t('settings.ai.hint.familyProfile');
+  if (step === 'first_member') return t('settings.ai.hint.firstMember');
+  if (step === 'provider_setup') return t('settings.ai.hint.providerSetup');
+  if (step === 'first_butler_agent') return t('settings.ai.hint.firstButler');
   return step;
 }
 
@@ -32,7 +22,7 @@ function pickInitialTab(missingRequirements: string[]): AiSettingsTab {
 }
 
 function SettingsAiContent() {
-  const { locale } = useI18n();
+  const { t } = useI18n();
   const { currentHouseholdId } = useHouseholdContext();
   const { setupStatus, refreshSetupStatus } = useSetupContext();
   const missingRequirements = setupStatus?.missing_requirements ?? [];
@@ -53,11 +43,11 @@ function SettingsAiContent() {
     return (
       <SettingsPageShell activeKey="ai">
         <div className="settings-page">
-          <Section title={pickLocaleText(locale, { zhCN: 'AI 设置', zhTW: 'AI 設定', enUS: 'AI settings' })}>
+          <Section title={t('settings.ai.title')}>
             <EmptyState
               icon="AI"
-              title={pickLocaleText(locale, { zhCN: '还没有选中家庭', zhTW: '還沒有選取家庭', enUS: 'No household selected' })}
-              description={pickLocaleText(locale, { zhCN: '先选择一个家庭，再来设置 AI。', zhTW: '先選擇一個家庭，再來設定 AI。', enUS: 'Select a household first before configuring AI.' })}
+              title={t('settings.ai.emptyHousehold')}
+              description={t('settings.ai.emptyHouseholdHint')}
             />
           </Section>
         </div>
@@ -65,7 +55,7 @@ function SettingsAiContent() {
     );
   }
 
-  const setupHints = missingRequirements.map(item => mapSetupHint(item, locale));
+  const setupHints = missingRequirements.map(item => mapSetupHint(item, t));
 
   async function refreshSetup() {
     await refreshSetupStatus(currentHouseholdId);
@@ -79,16 +69,16 @@ function SettingsAiContent() {
   return (
     <SettingsPageShell activeKey="ai">
       <div className="settings-page">
-        <Section title={pickLocaleText(locale, { zhCN: 'AI 设置', zhTW: 'AI 設定', enUS: 'AI settings' })}>
+        <Section title={t('settings.ai.title')}>
           {setupHints.length > 0 ? (
             <div className="card setup-resume-card">
               <div className="setup-resume-card__header">
                 <div>
-                  <h3>{pickLocaleText(locale, { zhCN: '还有几项内容没有设置好', zhTW: '還有幾項內容尚未設定好', enUS: 'A few items still need to be set up' })}</h3>
-                  <p>{pickLocaleText(locale, { zhCN: '完成这些内容后，AI 才能更好地为你的家庭提供帮助。', zhTW: '完成這些內容後，AI 才能更好地為您的家庭提供協助。', enUS: 'Once these items are completed, AI can help your household much more effectively.' })}</p>
+                  <h3>{t('settings.ai.setupResume.title')}</h3>
+                  <p>{t('settings.ai.setupResume.desc')}</p>
                 </div>
                 <button className="btn btn--outline" type="button" onClick={() => void refreshSetup()}>
-                  {pickLocaleText(locale, { zhCN: '重新检查', zhTW: '重新檢查', enUS: 'Recheck' })}
+                  {t('settings.ai.setupResume.recheck')}
                 </button>
               </div>
               <div className="setup-resume-card__chips">
@@ -97,7 +87,7 @@ function SettingsAiContent() {
             </div>
           ) : null}
 
-          <div className="memory-main-tabs settings-ai-tabs" role="tablist" aria-label={pickLocaleText(locale, { zhCN: 'AI 设置标签', zhTW: 'AI 設定標籤', enUS: 'AI settings tabs' })}>
+          <div className="memory-main-tabs settings-ai-tabs" role="tablist" aria-label={t('settings.ai.tabs')}>
             <button
               className={`memory-main-tab ${activeTab === 'agent' ? 'memory-main-tab--active' : ''}`}
               type="button"
@@ -105,7 +95,7 @@ function SettingsAiContent() {
               aria-selected={activeTab === 'agent'}
               onClick={() => handleTabChange('agent')}
             >
-              {pickLocaleText(locale, { zhCN: 'AI 助手', zhTW: 'AI 助手', enUS: 'AI agents' })}
+              {t('settings.ai.tab.agent')}
             </button>
             <button
               className={`memory-main-tab ${activeTab === 'provider' ? 'memory-main-tab--active' : ''}`}
@@ -114,7 +104,7 @@ function SettingsAiContent() {
               aria-selected={activeTab === 'provider'}
               onClick={() => handleTabChange('provider')}
             >
-              {pickLocaleText(locale, { zhCN: '模型服务', zhTW: '模型服務', enUS: 'Model providers' })}
+              {t('settings.ai.tab.provider')}
             </button>
           </div>
 

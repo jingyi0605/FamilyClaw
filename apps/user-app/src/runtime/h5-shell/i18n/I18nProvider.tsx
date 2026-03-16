@@ -16,6 +16,7 @@ import {
   type LocaleDefinition,
   type PluginLocale,
 } from '@familyclaw/user-core';
+import { PAGE_MESSAGES } from './pageMessages';
 
 const SHELL_MESSAGES = {
   'zh-CN': {
@@ -282,13 +283,25 @@ const SHELL_MESSAGES = {
   },
 } as const;
 
+const BUILTIN_MESSAGES = {
+  'zh-CN': {
+    ...SHELL_MESSAGES['zh-CN'],
+    ...PAGE_MESSAGES['zh-CN'],
+  },
+  'en-US': {
+    ...SHELL_MESSAGES['en-US'],
+    ...PAGE_MESSAGES['en-US'],
+  },
+} as const;
+
 export type ShellMessageKey = string;
+type ShellMessageParams = Record<string, string | number>;
 
 type I18nContextValue = {
   locale: string;
   locales: LocaleDefinition[];
   setLocale: (id: string) => void;
-  t: (key: ShellMessageKey) => string;
+  t: (key: ShellMessageKey, params?: ShellMessageParams) => string;
   replacePluginLocales: (items: PluginLocale[]) => void;
   formatLocaleLabel: (definition: Pick<LocaleDefinition, 'id' | 'nativeLabel'>) => string;
 };
@@ -309,6 +322,17 @@ function getStoredLocale(localeDefinitions: LocaleDefinition[]) {
   } catch {
     return DEFAULT_LOCALE_ID;
   }
+}
+
+function formatMessage(template: string, params?: ShellMessageParams) {
+  if (!params) {
+    return template;
+  }
+
+  return template.replace(/\{(\w+)\}/g, (full, key: string) => {
+    const value = params[key];
+    return value === undefined ? full : String(value);
+  });
 }
 
 export function I18nProvider(props: { children: ReactNode }) {
@@ -345,17 +369,20 @@ export function I18nProvider(props: { children: ReactNode }) {
     setPluginLocales(items);
   }, []);
 
-  const t = useCallback((key: ShellMessageKey) => {
+  const t = useCallback((key: ShellMessageKey, params?: ShellMessageParams) => {
     const localeDefinition = locales.find(item => item.id === locale);
     const pluginMessage = localeDefinition?.messages?.[key];
     if (typeof pluginMessage === 'string' && pluginMessage.trim()) {
-      return pluginMessage;
+      return formatMessage(pluginMessage, params);
     }
 
-    const builtinLocale = locale.toLowerCase().startsWith('en') ? 'en-US' : 'zh-CN';
-    const builtinMessages = SHELL_MESSAGES[builtinLocale] as Record<string, string>;
-    const fallbackMessages = SHELL_MESSAGES['zh-CN'] as Record<string, string>;
-    return builtinMessages[key] ?? fallbackMessages[key] ?? key;
+    const builtinLocale = locale.toLowerCase().startsWith('en')
+      ? 'en-US'
+      : locale.toLowerCase().startsWith('zh-tw')
+        ? 'en-US'
+        : 'zh-CN';
+    const builtinMessages = BUILTIN_MESSAGES[builtinLocale] as Record<string, string>;
+    return formatMessage(builtinMessages[key] ?? key, params);
   }, [locale, locales]);
 
   const value = useMemo<I18nContextValue>(
