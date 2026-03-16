@@ -1,7 +1,7 @@
 import { PropsWithChildren, useEffect } from 'react';
-import { Button, ScrollView, Text, View } from '@tarojs/components';
+import { ScrollView, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import { PageSection, StatusCard, userAppTokens } from '@familyclaw/user-ui';
+import { PageSection, StatusCard, UiButton, UiCard, UiText } from '@familyclaw/user-ui';
 import {
   APP_ROUTES,
   useAppRuntime,
@@ -9,6 +9,7 @@ import {
   MAIN_NAV_ITEMS,
   MainNavKey,
   needsBlockingSetup,
+  useI18n,
 } from '../runtime';
 import { AppShellPage } from './AppShellPage';
 
@@ -20,6 +21,7 @@ type MainShellPageProps = PropsWithChildren<{
 
 export function MainShellPage({ currentNav, title, description, children }: MainShellPageProps) {
   const { bootstrap, error, loading, refreshing, refresh, logout, switchHousehold } = useAppRuntime();
+  const { t } = useI18n();
 
   useEffect(() => {
     if (loading) {
@@ -44,23 +46,13 @@ export function MainShellPage({ currentNav, title, description, children }: Main
     return (
       <AppShellPage>
         <PageSection title="正在进入主导航壳" description="先校验账号态和 setup 状态，再渲染受保护页面。">
-          <Text style={{ color: error && !bootstrap ? userAppTokens.colorWarning : userAppTokens.colorMuted, fontSize: '24px' }}>
+          <UiText variant="body" tone={error && !bootstrap ? 'warning' : 'secondary'} style={{ fontSize: '24px' }}>
             {error && !bootstrap ? error : '正在检查访问条件...'}
-          </Text>
+          </UiText>
           {error && !bootstrap ? (
-            <Button
-              size="mini"
-              onClick={() => void refresh()}
-              style={{
-                background: userAppTokens.colorSurface,
-                border: `1px solid ${userAppTokens.colorBorder}`,
-                borderRadius: userAppTokens.radiusMd,
-                color: userAppTokens.colorText,
-                marginTop: '12px',
-              }}
-            >
+            <UiButton size="sm" variant="secondary" onClick={() => void refresh()} style={{ marginTop: '12px' }}>
               重新读取启动摘要
-            </Button>
+            </UiButton>
           ) : null}
         </PageSection>
       </AppShellPage>
@@ -86,33 +78,19 @@ export function MainShellPage({ currentNav, title, description, children }: Main
           value={bootstrap ? `${bootstrap.platformTarget.supports_share ? '支持' : '不支持'} 分享 / ${bootstrap.platformTarget.supports_deeplink ? '支持' : '不支持'} 深链` : '加载中'}
           tone="info"
         />
-        {error ? <Text style={{ color: userAppTokens.colorWarning, fontSize: '24px' }}>{error}</Text> : null}
-        {refreshing ? <Text style={{ color: userAppTokens.colorMuted, fontSize: '24px' }}>正在刷新数据...</Text> : null}
+        {error ? <UiText variant="body" tone="warning" style={{ fontSize: '24px' }}>{error}</UiText> : null}
+        {refreshing ? <UiText variant="body" tone="secondary" style={{ fontSize: '24px' }}>正在刷新数据...</UiText> : null}
         <View style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
-          <Button
-            size="mini"
-            onClick={() => void refresh()}
-            style={{
-              background: userAppTokens.colorSurface,
-              border: `1px solid ${userAppTokens.colorBorder}`,
-              borderRadius: userAppTokens.radiusMd,
-              color: userAppTokens.colorText,
-            }}
-          >
+          <UiButton size="sm" variant="secondary" onClick={() => void refresh()}>
             刷新启动摘要
-          </Button>
-          <Button
-            size="mini"
+          </UiButton>
+          <UiButton
+            size="sm"
+            variant="warning"
             onClick={() => void logout().then(() => Taro.reLaunch({ url: '/pages/login/index' }))}
-            style={{
-              background: '#fff5f2',
-              border: `1px solid ${userAppTokens.colorWarning}`,
-              borderRadius: userAppTokens.radiusMd,
-              color: userAppTokens.colorWarning,
-            }}
           >
             退出登录
-          </Button>
+          </UiButton>
         </View>
       </PageSection>
 
@@ -123,20 +101,15 @@ export function MainShellPage({ currentNav, title, description, children }: Main
               {bootstrap.households.map(household => {
                 const active = household.id === bootstrap.currentHousehold?.id;
                 return (
-                  <Button
+                  <UiButton
                     key={household.id}
-                    size="mini"
+                    size="sm"
+                    variant={active ? 'primary' : 'secondary'}
                     onClick={() => void switchHousehold(household.id)}
-                    style={{
-                      background: active ? userAppTokens.colorPrimary : userAppTokens.colorSurface,
-                      border: `1px solid ${active ? userAppTokens.colorPrimary : userAppTokens.colorBorder}`,
-                      borderRadius: userAppTokens.radiusMd,
-                      color: active ? '#ffffff' : userAppTokens.colorText,
-                      minWidth: '140px',
-                    }}
+                    style={{ minWidth: '140px' }}
                   >
                     {household.name}
-                  </Button>
+                  </UiButton>
                 );
               })}
             </View>
@@ -150,20 +123,15 @@ export function MainShellPage({ currentNav, title, description, children }: Main
             {MAIN_NAV_ITEMS.map(item => {
               const active = item.key === currentNav;
               return (
-                <Button
+                <UiButton
                   key={item.key}
-                  size="mini"
+                  size="sm"
+                  variant={active ? 'primary' : 'secondary'}
                   onClick={() => void handleNavigate(item.url)}
-                  style={{
-                    background: active ? userAppTokens.colorPrimary : '#f9fbff',
-                    border: `1px solid ${active ? userAppTokens.colorPrimary : userAppTokens.colorBorder}`,
-                    borderRadius: userAppTokens.radiusMd,
-                    color: active ? '#ffffff' : userAppTokens.colorText,
-                    minWidth: '120px',
-                  }}
+                  style={{ minWidth: '120px' }}
                 >
                   {item.label}
-                </Button>
+                </UiButton>
               );
             })}
           </View>
@@ -171,21 +139,14 @@ export function MainShellPage({ currentNav, title, description, children }: Main
       </PageSection>
 
       {hasDeferredSetupWork(bootstrap?.setupStatus ?? null) ? (
-        <View
-          style={{
-            background: '#fff8ec',
-            border: `1px solid ${userAppTokens.colorWarning}`,
-            borderRadius: userAppTokens.radiusLg,
-            padding: userAppTokens.spacingMd,
-          }}
-        >
-          <Text style={{ color: userAppTokens.colorWarning, display: 'block', fontSize: '28px', fontWeight: '600' }}>
+        <UiCard variant="warning">
+          <UiText variant="label" tone="warning" style={{ fontSize: '28px' }}>
             初始化还有后续步骤
-          </Text>
-          <Text style={{ color: userAppTokens.colorText, display: 'block', fontSize: '24px', lineHeight: '1.6', marginTop: '8px' }}>
+          </UiText>
+          <UiText variant="body" style={{ fontSize: '24px', marginTop: '8px' }}>
             当前高频页面已经允许进入，但 AI 配置和首位管家创建还没迁到共享主线。这个不再阻塞 3.2，高频链路先走通。
-          </Text>
-        </View>
+          </UiText>
+        </UiCard>
       ) : null}
 
       {children}

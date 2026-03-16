@@ -1,4 +1,13 @@
+import path from 'node:path';
+
 const apiProxyTarget = process.env.USER_APP_API_PROXY_TARGET ?? 'http://127.0.0.1:8000';
+
+const workspacePackageSrcRoots = [
+  'user-platform',
+  'user-core',
+  'user-ui',
+  'user-testing',
+].map(packageName => path.resolve(process.cwd(), `../../packages/${packageName}/src`));
 
 const h5Config = {
   router: {
@@ -14,6 +23,9 @@ const h5Config = {
       '/pages/settings/index': '/settings',
       '/pages/plugins/index': '/plugins',
     },
+  },
+  compile: {
+    include: workspacePackageSrcRoots,
   },
   h5: {
     output: {

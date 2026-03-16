@@ -1,6 +1,8 @@
 import { PropsWithChildren } from 'react';
-import { Text, View } from '@tarojs/components';
+import { View } from '@tarojs/components';
 import { userAppComponentTokens } from '../theme/tokens';
+import { UiCard } from './UiCard';
+import { UiText } from './UiText';
 
 type PageSectionProps = PropsWithChildren<{
   title: string;
@@ -11,24 +13,23 @@ export function PageSection({ title, description, children }: PageSectionProps) 
   const tokens = userAppComponentTokens.pageSection;
 
   return (
-    <View
+    <UiCard
       style={{
-        background: tokens.background,
-        border: `1px solid ${tokens.borderColor}`,
-        borderRadius: tokens.radius,
         marginBottom: tokens.marginBottom,
-        padding: tokens.padding,
       }}
     >
-      <Text style={{ color: tokens.titleColor, display: 'block', fontSize: tokens.titleFontSize, fontWeight: '600' }}>
+      <UiText
+        variant="sectionTitle"
+        style={{ color: tokens.titleColor, fontSize: tokens.titleFontSize, fontWeight: tokens.titleFontWeight }}
+      >
         {title}
-      </Text>
+      </UiText>
       {description ? (
-        <Text style={{ color: tokens.descriptionColor, display: 'block', fontSize: tokens.descriptionFontSize, marginTop: tokens.descriptionMarginTop }}>
+        <UiText variant="body" style={{ color: tokens.descriptionColor, fontSize: tokens.descriptionFontSize, marginTop: tokens.descriptionMarginTop }}>
           {description}
-        </Text>
+        </UiText>
       ) : null}
       <View style={{ marginTop: tokens.contentMarginTop }}>{children}</View>
-    </View>
+    </UiCard>
   );
 }

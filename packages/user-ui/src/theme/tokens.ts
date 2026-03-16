@@ -98,6 +98,142 @@ export const userAppSemanticTokens = {
 } as const;
 
 export const userAppComponentTokens = {
+  text: {
+    body: {
+      color: userAppSemanticTokens.text.primary,
+      fontSize: userAppFoundationTokens.fontSize.md,
+      fontWeight: '400',
+      lineHeight: '1.6',
+    },
+    caption: {
+      color: userAppSemanticTokens.text.secondary,
+      fontSize: userAppFoundationTokens.fontSize.sm,
+      fontWeight: '400',
+      lineHeight: '1.5',
+    },
+    label: {
+      color: userAppSemanticTokens.text.primary,
+      fontSize: userAppFoundationTokens.fontSize.md,
+      fontWeight: '600',
+      lineHeight: '1.5',
+    },
+    title: {
+      color: userAppSemanticTokens.text.primary,
+      fontSize: userAppFoundationTokens.fontSize.xl,
+      fontWeight: '600',
+      lineHeight: '1.4',
+    },
+    sectionTitle: {
+      color: userAppSemanticTokens.text.primary,
+      fontSize: userAppFoundationTokens.fontSize.xl,
+      fontWeight: '600',
+      lineHeight: '1.4',
+    },
+  },
+  card: {
+    default: {
+      background: userAppSemanticTokens.surface.card,
+      borderColor: userAppSemanticTokens.border.subtle,
+      radius: userAppFoundationTokens.radius.lg,
+      padding: userAppFoundationTokens.spacing.md,
+    },
+    muted: {
+      background: userAppSemanticTokens.surface.muted,
+      borderColor: userAppSemanticTokens.border.subtle,
+      radius: userAppFoundationTokens.radius.md,
+      padding: userAppFoundationTokens.spacing.sm,
+    },
+    warning: {
+      background: userAppSemanticTokens.state.warningLight,
+      borderColor: userAppSemanticTokens.state.warning,
+      radius: userAppFoundationTokens.radius.lg,
+      padding: userAppFoundationTokens.spacing.md,
+    },
+  },
+  button: {
+    size: {
+      sm: {
+        fontSize: userAppFoundationTokens.fontSize.sm,
+        minHeight: '36px',
+        paddingInline: '12px',
+        radius: userAppFoundationTokens.radius.md,
+      },
+      md: {
+        fontSize: userAppFoundationTokens.fontSize.md,
+        minHeight: '44px',
+        paddingInline: '16px',
+        radius: userAppFoundationTokens.radius.md,
+      },
+    },
+    variant: {
+      primary: {
+        background: userAppSemanticTokens.action.primary,
+        borderColor: userAppSemanticTokens.action.primary,
+        textColor: userAppSemanticTokens.text.inverse,
+      },
+      secondary: {
+        background: userAppSemanticTokens.surface.card,
+        borderColor: userAppSemanticTokens.border.default,
+        textColor: userAppSemanticTokens.text.primary,
+      },
+      warning: {
+        background: userAppSemanticTokens.state.warningLight,
+        borderColor: userAppSemanticTokens.state.warning,
+        textColor: userAppSemanticTokens.state.warning,
+      },
+    },
+  },
+  input: {
+    background: userAppSemanticTokens.surface.card,
+    borderColor: userAppSemanticTokens.border.default,
+    radius: userAppFoundationTokens.radius.md,
+    textColor: userAppSemanticTokens.text.primary,
+    fontSize: userAppFoundationTokens.fontSize.md,
+    minHeight: '44px',
+    paddingBlock: '10px',
+    paddingInline: '14px',
+  },
+  tag: {
+    radius: userAppFoundationTokens.radius.md,
+    fontSize: userAppFoundationTokens.fontSize.sm,
+    paddingBlock: '2px',
+    paddingInline: '10px',
+    variant: {
+      neutral: {
+        background: userAppSemanticTokens.surface.muted,
+        borderColor: userAppSemanticTokens.border.default,
+        textColor: userAppSemanticTokens.text.secondary,
+      },
+      info: {
+        background: userAppSemanticTokens.action.primaryLight,
+        borderColor: userAppSemanticTokens.action.primary,
+        textColor: userAppSemanticTokens.action.primary,
+      },
+      success: {
+        background: userAppSemanticTokens.state.successLight,
+        borderColor: userAppSemanticTokens.state.success,
+        textColor: userAppSemanticTokens.state.success,
+      },
+      warning: {
+        background: userAppSemanticTokens.state.warningLight,
+        borderColor: userAppSemanticTokens.state.warning,
+        textColor: userAppSemanticTokens.state.warning,
+      },
+    },
+  },
+  field: {
+    gap: '10px',
+    hintMarginTop: userAppFoundationTokens.spacing.xs,
+  },
+  emptyState: {
+    background: userAppSemanticTokens.action.primaryLight,
+    borderColor: userAppSemanticTokens.border.default,
+    radius: userAppFoundationTokens.radius.lg,
+    gap: userAppFoundationTokens.spacing.sm,
+    padding: userAppFoundationTokens.spacing.md,
+    titleFontSize: userAppFoundationTokens.fontSize.xxl,
+    actionMarginTop: userAppFoundationTokens.spacing.xs,
+  },
   pageSection: {
     background: userAppSemanticTokens.surface.card,
     borderColor: userAppSemanticTokens.border.subtle,
@@ -106,7 +242,8 @@ export const userAppComponentTokens = {
     padding: userAppFoundationTokens.spacing.md,
     titleColor: userAppSemanticTokens.text.primary,
     titleFontSize: userAppFoundationTokens.fontSize.xl,
-    descriptionColor: userAppSemanticTokens.text.secondary,
+    titleFontWeight: '600',
+    descriptionColor: userAppSemanticTokens.text.primary,
     descriptionFontSize: userAppFoundationTokens.fontSize.md,
     descriptionMarginTop: userAppFoundationTokens.spacing.xs,
     contentMarginTop: userAppFoundationTokens.spacing.sm,

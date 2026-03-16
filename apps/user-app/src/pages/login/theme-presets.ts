@@ -1,15 +1,16 @@
 import {
-  getThemeCssVariables,
   userAppThemeList,
-  type ThemeId,
+  userAppThemes,
 } from '@familyclaw/user-ui';
+import { applyThemeDocument } from '../../runtime/h5-shell/theme/applyThemeDocument';
+
+type ThemeId = keyof typeof userAppThemes;
 
 type LoginThemePreset = {
   id: ThemeId;
   label: string;
   description: string;
   emoji: string;
-  vars: Record<string, string>;
 };
 
 export const loginThemeList: LoginThemePreset[] = userAppThemeList.map(theme => ({
@@ -17,7 +18,6 @@ export const loginThemeList: LoginThemePreset[] = userAppThemeList.map(theme => 
   label: theme.label,
   description: theme.description,
   emoji: theme.emoji,
-  vars: { ...getThemeCssVariables(theme) },
 }));
 
 export function getLoginThemePreset(themeId: ThemeId) {
@@ -25,14 +25,6 @@ export function getLoginThemePreset(themeId: ThemeId) {
 }
 
 export function applyLoginThemeCssVariables(themeId: ThemeId) {
-  if (typeof document === 'undefined') {
-    return;
-  }
-
-  const theme = getLoginThemePreset(themeId);
-  const root = document.documentElement;
-
-  for (const [key, value] of Object.entries(theme.vars)) {
-    root.style.setProperty(key, value);
-  }
+  const theme = userAppThemes[themeId] ?? userAppThemeList[0];
+  applyThemeDocument(theme);
 }

@@ -66,6 +66,13 @@
 
 结论很简单：**标准源要搬到 `packages/user-ui`，H5 运行时只负责把它注入成 CSS 变量，不再自己偷偷维护一套。**
 
+补充边界直接写死：
+
+1. `packages/user-ui/src/theme/themes.ts` 负责完整主题值、主题列表和 CSS 变量名映射，仍然是唯一上游标准源
+2. `apps/user-app/src/runtime/h5-shell/theme/ThemeProvider.tsx` 只负责主题选择状态和持久化，不再自己展开变量表
+3. `apps/user-app/src/runtime/h5-shell/theme/applyThemeDocument.ts` 是 H5 把共享主题写进 DOM 的唯一入口，避免登录页和壳层各写一套 `documentElement.style`
+4. `apps/user-app/src/pages/login/theme-presets.ts` 只允许保留登录页需要的主题元数据投影，不再维护 preset 值，也不再单独承担 CSS 变量注入职责
+
 ### 2.3 不破坏现有页面的兼容策略
 
 第一轮不能指望所有页面立刻全迁完，所以需要兼容层。
@@ -206,9 +213,10 @@ H5 运行时仍然需要 CSS 变量，因为现有页面和 SCSS 已经在大量
 这里不推倒重来，而是做映射：
 
 1. 共享 token 生成语义对象
-2. `ThemeProvider` 读取语义对象
-3. `ThemeProvider` 继续写入现有 CSS 变量名
-4. 新增缺失的变量名时，先在共享层定义，再由 `ThemeProvider` 注入
+2. H5 运行时通过单一注入入口把共享主题写进 `document.documentElement`
+3. `ThemeProvider` 继续复用现有 CSS 变量名，但不再自己维护另一份变量展开逻辑
+4. 登录页或其他 H5 页面如果要切换主题，也只能复用这条注入链路
+5. 新增缺失的变量名时，先在共享层定义，再由 H5 注入层映射
 
 这保证 H5 页面继续能跑，也让共享层真正成为上游。
 
@@ -298,14 +306,14 @@ JSX/TS 行内样式不能再直接写 `'24px'` 这种值，因为它不会自动
 
 第一批建议直接收口这些：
 
-1. `Text`
-2. `Button`
-3. `Input`
-4. `Card`
-5. `Section`
-6. `Tag`
-7. `Field`
-8. `EmptyState`
+1. `UiText`
+2. `UiButton`
+3. `UiInput`
+4. `UiCard`
+5. `PageSection`
+6. `UiTag`
+7. `FormField`
+8. `EmptyStateCard`
 
 它们能覆盖现在 `AppUi.tsx`、`MainShellPage.tsx`、壳层和设置页里最大的一批重复样式。
 

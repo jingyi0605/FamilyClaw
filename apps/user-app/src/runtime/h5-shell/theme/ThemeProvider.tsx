@@ -13,13 +13,13 @@ import {
   type ThemeId as SharedThemeId,
 } from '@familyclaw/user-core';
 import {
-  getThemeCssVariables,
   userAppThemeList,
   userAppThemes,
-  type UserAppTheme,
 } from '@familyclaw/user-ui';
+import { applyThemeDocument } from './applyThemeDocument';
 
 type ThemeId = SharedThemeId;
+type UserAppTheme = (typeof userAppThemeList)[number];
 
 type ThemeContextValue = {
   theme: UserAppTheme;
@@ -42,26 +42,12 @@ function getStoredThemeId(): ThemeId {
   }
 }
 
-function applyCssVariables(theme: UserAppTheme) {
-  if (typeof document === 'undefined') {
-    return;
-  }
-
-  const root = document.documentElement;
-  const variables = getThemeCssVariables(theme);
-
-  Object.entries(variables).forEach(([key, value]) => {
-    root.style.setProperty(key, value);
-  });
-  root.setAttribute('data-theme', theme.id);
-}
-
 export function ThemeProvider(props: { children: ReactNode }) {
   const [themeId, setThemeId] = useState<ThemeId>(getStoredThemeId);
   const theme = userAppThemes[themeId] ?? userAppThemes[DEFAULT_THEME_ID];
 
   useEffect(() => {
-    applyCssVariables(theme);
+    applyThemeDocument(theme);
     if (typeof window === 'undefined') {
       return;
     }

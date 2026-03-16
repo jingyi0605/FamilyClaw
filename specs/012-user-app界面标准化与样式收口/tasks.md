@@ -99,12 +99,12 @@
     6. `packages/user-ui/src/components/PageSection.tsx` 与 `packages/user-ui/src/components/StatusCard.tsx` 已改为消费 component token，开始建立共享组件变体链路。
   - 本轮验证补充：
     - 已对本轮改动文件执行定向 TypeScript 编译，改动链路本身通过。
-    - 全量 `npm.cmd --prefix apps/user-app run typecheck` 仍被仓库已有的 `apps/user-app/src/pages/family/LegacyFamilyPage.tsx` 语法错误阻断，这不是本轮引入的问题。
+    - 1.2 落地当时，全量 `npm.cmd --prefix apps/user-app run typecheck` 曾被仓库已有的 `apps/user-app/src/pages/family/LegacyFamilyPage.tsx` 语法错误阻断；当前最新全量验证结果以任务 2.2 的验证补充为准。
   - 对应需求：`requirements.md` 需求 1、需求 5、需求 6
   - 对应设计：`design.md` 2.3、2.4、3.1、3.4、3.5、7
 
-- [ ] 1.3 阶段检查：确认样式标准已经收口到共享层
-  - 状态：TODO
+- [x] 1.3 阶段检查：确认样式标准已经收口到共享层
+  - 状态：DONE
   - 这一 step 到底做什么：只检查底座，不急着扩范围。
   - 做完你能看到什么：后面开始改组件时，不会发现底层变量还在打架。
   - 先依赖什么：1.1、1.2
@@ -120,6 +120,17 @@
     3. `designWidth` 和单位使用规则不再处于口口相传状态
   - 怎么验证：
     - 人工走查
+  - 本轮结果（2026-03-16）：
+    1. 已把 H5 主题变量写入动作收口到 `apps/user-app/src/runtime/h5-shell/theme/applyThemeDocument.ts`，`ThemeProvider.tsx` 与登录页不再各自展开 `document.documentElement.style`。
+    2. 已确认 `packages/user-ui/src/theme/themes.ts` 继续持有完整主题值、主题列表和 CSS 变量映射；`apps/user-app/src/runtime/h5-shell/theme/tokens.ts` 只剩兼容导出职责，没有再回流成标准源。
+    3. 已把 `apps/user-app/src/pages/login/theme-presets.ts` 降成登录页主题元数据投影，不再缓存一份 preset 变量表，也不再单独承担 DOM 注入职责。
+    4. 已在 `design.md` 补清边界：共享层负责 canonical theme，H5 运行时只保留主题状态与 DOM 映射入口，页面层不能再复制 preset 或变量注入逻辑。
+    5. 已修正 `packages/user-ui/package.json` 的运行时入口，改为直接指向 `src/index.ts`；避免 H5 运行时继续吃陈旧 `dist/index.js`，导致 `userAppThemes` 在前端变成 `undefined`。
+    6. 已把 `packages/user-ui/src/index.ts` 中 H5 构建链路不兼容的 `export { ..., type X } from ...` 改成独立 `export type`，避免 webpack 在源码入口上直接报语法错误。
+    7. 进一步移除了 `packages/user-ui/src/index.ts` 的根入口类型导出，把 `ThemeProvider`、`theme-presets.ts`、H5 `tokens.ts` 改成从共享值推导类型，规避当前 H5 webpack 链路对根入口 `export type` 的解析缺陷。
+    8. 已确认真正缺口在 `apps/user-app` 的 H5 webpack 转译规则：工作区包源码没有通过 `compile.include` 进入 Babel/TS 链路。现已改为把 `packages/user-core`、`packages/user-platform`、`packages/user-testing`、`packages/user-ui` 统一纳入 `compile.include`，并把 H5 别名明确指向源码入口，不再依赖 `dist/*.js`。
+    9. 已补齐 `@familyclaw/user-platform/web` 的源码别名，避免 H5 页面在切到工作区源码入口后找不到 web 子路径。
+    10. 已清理 `apps/user-app/config/index.ts` 里的残留合并冲突标记，并显式增加 `workspaceScript` Babel 规则，让工作区包源码即使不依赖 `dist/*.js` 也能稳定走 TS/Babel 转译。
   - 对应需求：`requirements.md` 需求 1、需求 5、需求 6、需求 7
   - 对应设计：`design.md` 2.2、2.3、2.4、3.4、3.5
 
@@ -127,8 +138,8 @@
 
 ## 阶段 2：把高频基础组件和公共组合件收口
 
-- [ ] 2.1 在 `packages/user-ui` 里补齐高频基础组件和变体
-  - 状态：TODO
+- [x] 2.1 在 `packages/user-ui` 里补齐高频基础组件和变体
+  - 状态：DONE
   - 这一 step 到底做什么：把按钮、卡片、输入框、文本、标签、字段这些高频基础件补齐，别再让页面自己拼。
   - 做完你能看到什么：新页面实现常见 UI 时，有正式的共享组件可用。
   - 先依赖什么：1.3
@@ -148,11 +159,15 @@
   - 怎么验证：
     - 组件渲染测试
     - 类型检查
+  - 本轮结果（2026-03-16）：
+    1. 已在 `packages/user-ui/src/components/` 新增 `UiText`、`UiButton`、`UiInput`、`UiCard`、`UiTag`、`FormField`、`EmptyStateCard`，并通过 `packages/user-ui/src/index.ts` 给出稳定导出入口。
+    2. 已把 `packages/user-ui/src/theme/tokens.ts` 补齐文本、按钮、输入框、卡片、标签、字段、空态的 component token 变体，页面不必再手写同一套字号、圆角和边框。
+    3. 已让 `PageSection`、`StatusCard` 改为消费新的共享基础件，而不是继续各自拼一套卡片和文本样式。
   - 对应需求：`requirements.md` 需求 2、需求 4
   - 对应设计：`design.md` 4.1、4.2、4.3
 
-- [ ] 2.2 把 `AppUi.tsx` 的通用能力归并进共享层
-  - 状态：TODO
+- [x] 2.2 把 `AppUi.tsx` 的通用能力归并进共享层
+  - 状态：DONE
   - 这一 step 到底做什么：把现在散在 `AppUi.tsx` 里的通用组件收口成正式共享件，避免同仓库两套基础组件并行生长。
   - 做完你能看到什么：`AppUi.tsx` 变成薄兼容层或直接被替换，团队知道以后该从哪里拿基础件。
   - 先依赖什么：2.1
@@ -171,6 +186,12 @@
   - 怎么验证：
     - 人工走查导入路径
     - 类型检查
+  - 本轮结果（2026-03-16）：
+    1. `apps/user-app/src/components/AppUi.tsx` 已降成兼容层，`SectionNote`、`FormField`、`TextInput`、`PrimaryButton`、`SecondaryButton`、`EmptyStateCard` 优先包装共享基础件，不再自己维护完整视觉实现。
+    2. `AuthShellPage.tsx`、`MainShellPage.tsx` 已开始直接消费 `UiButton`、`UiCard`、`UiText`，壳层里的固定字号和按钮样式不再各写一套。
+    3. 这一步只收公共件和壳层，不碰 `home`、`setup`、`assistant` 等重页面，保持兼容迁移顺序不失控。
+  - 本轮验证补充：
+    - 已重新执行 `npm.cmd --prefix apps/user-app run typecheck`，当前全量通过。
   - 对应需求：`requirements.md` 需求 2、需求 7
   - 对应设计：`design.md` 4.1、4.4
 

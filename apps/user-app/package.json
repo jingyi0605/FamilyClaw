@@ -6,12 +6,18 @@
     "stylelint": "16.10.0"
   },
   "scripts": {
+    "clean:generated-js": "node ./scripts/clean-generated-js.mjs",
+    "predev:h5": "npm run clean:generated-js",
     "dev:h5": "taro build --type h5 --watch",
+    "prebuild:h5": "npm run clean:generated-js",
     "build:h5": "taro build --type h5",
+    "prebuild:rn": "npm run clean:generated-js",
     "build:rn": "taro build --type rn",
     "build:ios": "npm run build:rn",
     "build:android": "npm run build:rn",
+    "prebuild:harmony": "npm run clean:generated-js",
     "build:harmony": "taro build --type harmony_cpp",
+    "pretypecheck": "npm run clean:generated-js",
     "typecheck": "tsc --noEmit",
     "test:voiceprint": "powershell -NoProfile -Command \"Remove-Item -Recurse -Force '.tmp/voiceprint-tests' -ErrorAction SilentlyContinue; & '.\\node_modules\\.bin\\tsc.cmd' -p tsconfig.voiceprint-tests.json; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node --test '.tmp/voiceprint-tests/settings/components/__tests__/speakerVoiceprintHelpers.test.js' '.tmp/voiceprint-tests/settings/components/__tests__/speakerVoiceprintComponents.test.js'\""
   },

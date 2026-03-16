@@ -32,6 +32,17 @@ export default defineConfig(async merge => {
     'user-testing',
   ].map(packageName => path.resolve(process.cwd(), `../../packages/${packageName}/src`));
 
+  const workspacePackageEntries = {
+    '@familyclaw/user-core': path.resolve(process.cwd(), '../../packages/user-core/src/index.ts'),
+    '@familyclaw/user-testing': path.resolve(process.cwd(), '../../packages/user-testing/src/index.ts'),
+    '@familyclaw/user-ui': path.resolve(process.cwd(), '../../packages/user-ui/src/index.ts'),
+    '@familyclaw/user-platform/web': path.resolve(process.cwd(), '../../packages/user-platform/src/index.web.ts'),
+    '@familyclaw/user-platform': path.resolve(
+      process.cwd(),
+      taroEnv === 'h5' ? '../../packages/user-platform/src/index.web.ts' : '../../packages/user-platform/src/index.ts',
+    ),
+  } as const;
+
   const baseConfig = {
     projectName: 'familyclaw-user-app',
     date: '2026-03-15',
@@ -54,6 +65,7 @@ export default defineConfig(async merge => {
     plugins: taroEnv === 'harmony_cpp' ? ['@tarojs/plugin-platform-harmony-cpp'] : [],
     alias: {
       '@': path.resolve(process.cwd(), 'src'),
+      ...workspacePackageEntries,
     },
     appPath: 'src/app.ts',
     modifyWebpackChain(chain: any) {
@@ -61,7 +73,16 @@ export default defineConfig(async merge => {
         return;
       }
 
-      // H5 需要编译工作区包源码，否则 file: 依赖会绕过 Babel 的 TS 处理。
+      chain.resolve.symlinks(false);
+      chain.resolve.extensions.clear();
+      ['.h5.tsx', '.h5.ts', '.h5.jsx', '.h5.js', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.vue'].forEach((extension: string) => {
+        chain.resolve.extensions.add(extension);
+      });
+
+      Object.entries(workspacePackageEntries).forEach(([packageName, packageEntry]) => {
+        chain.resolve.alias.set(`${packageName}$`, packageEntry);
+      });
+
       const scriptRule = chain.module.rule('script');
       workspacePackageSrcRoots.forEach(packageSrcRoot => {
         scriptRule.include.add(packageSrcRoot);

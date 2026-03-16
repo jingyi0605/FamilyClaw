@@ -1,6 +1,12 @@
-import { Button, Input, Text, View } from '@tarojs/components';
-import { CSSProperties, PropsWithChildren } from 'react';
-import { userAppTokens } from '@familyclaw/user-ui';
+import { View } from '@tarojs/components';
+import { type CSSProperties, type PropsWithChildren } from 'react';
+import {
+  EmptyStateCard as SharedEmptyStateCard,
+  FormField as SharedFormField,
+  UiButton,
+  UiInput,
+  UiText,
+} from '@familyclaw/user-ui';
 
 type OptionPillsProps<T extends string> = {
   value: T;
@@ -23,23 +29,16 @@ export function SectionNote({
   children,
   tone = 'muted',
 }: PropsWithChildren<{ tone?: 'muted' | 'warning' | 'success' }>) {
-  const colorMap: Record<'muted' | 'warning' | 'success', string> = {
-    muted: userAppTokens.colorMuted,
-    warning: userAppTokens.colorWarning,
-    success: userAppTokens.colorSuccess,
+  const toneMap: Record<'muted' | 'warning' | 'success', 'secondary' | 'warning' | 'success'> = {
+    muted: 'secondary',
+    warning: 'warning',
+    success: 'success',
   };
 
   return (
-    <Text
-      style={{
-        color: colorMap[tone],
-        display: 'block',
-        fontSize: '24px',
-        lineHeight: '1.6',
-      }}
-    >
+    <UiText variant="body" tone={toneMap[tone]} style={{ fontSize: '24px' }}>
       {children}
-    </Text>
+    </UiText>
   );
 }
 
@@ -49,13 +48,9 @@ export function FormField({
   children,
 }: PropsWithChildren<{ label: string; hint?: string }>) {
   return (
-    <View style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      <Text style={{ color: userAppTokens.colorText, fontSize: '24px', fontWeight: '600' }}>
-        {label}
-      </Text>
+    <SharedFormField label={label} hint={hint}>
       {children}
-      {hint ? <SectionNote>{hint}</SectionNote> : null}
-    </View>
+    </SharedFormField>
   );
 }
 
@@ -68,17 +63,13 @@ export function TextInput(props: {
   style?: CSSProperties;
 }) {
   return (
-    <Input
+    <UiInput
       value={props.value}
+      placeholder={props.placeholder}
       password={props.password}
       disabled={props.disabled}
-      placeholder={props.placeholder}
-      onInput={event => props.onInput(event.detail.value)}
+      onInput={props.onInput}
       style={{
-        background: userAppTokens.colorSurface,
-        border: `1px solid ${userAppTokens.colorBorder}`,
-        borderRadius: userAppTokens.radiusMd,
-        color: userAppTokens.colorText,
         fontSize: '26px',
         minHeight: '44px',
         padding: '10px 14px',
@@ -94,22 +85,19 @@ export function OptionPills<T extends string>({ value, options, disabled, onChan
       {options.map(option => {
         const active = option.value === value;
         return (
-          <Button
+          <UiButton
             key={option.value}
             disabled={disabled}
             onClick={() => onChange(option.value)}
-            size="mini"
+            size="sm"
+            variant={active ? 'primary' : 'secondary'}
             style={{
-              background: active ? userAppTokens.colorPrimary : userAppTokens.colorSurface,
-              border: `1px solid ${active ? userAppTokens.colorPrimary : userAppTokens.colorBorder}`,
-              borderRadius: userAppTokens.radiusMd,
-              color: active ? '#ffffff' : userAppTokens.colorText,
               fontSize: '22px',
               padding: '0 10px',
             }}
           >
             {option.label}
-          </Button>
+          </UiButton>
         );
       })}
     </View>
@@ -130,18 +118,9 @@ export function PrimaryButton({
   onClick,
 }: PropsWithChildren<{ disabled?: boolean; onClick?: () => void }>) {
   return (
-    <Button
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        background: userAppTokens.colorPrimary,
-        borderRadius: userAppTokens.radiusMd,
-        color: '#ffffff',
-        fontSize: '24px',
-      }}
-    >
+    <UiButton disabled={disabled} onClick={onClick} style={{ fontSize: '24px' }}>
       {children}
-    </Button>
+    </UiButton>
   );
 }
 
@@ -151,46 +130,12 @@ export function SecondaryButton({
   onClick,
 }: PropsWithChildren<{ disabled?: boolean; onClick?: () => void }>) {
   return (
-    <Button
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        background: userAppTokens.colorSurface,
-        border: `1px solid ${userAppTokens.colorBorder}`,
-        borderRadius: userAppTokens.radiusMd,
-        color: userAppTokens.colorText,
-        fontSize: '24px',
-      }}
-    >
+    <UiButton variant="secondary" disabled={disabled} onClick={onClick} style={{ fontSize: '24px' }}>
       {children}
-    </Button>
+    </UiButton>
   );
 }
 
 export function EmptyStateCard(props: EmptyStateCardProps) {
-  return (
-    <View
-      style={{
-        background: '#f9fbff',
-        border: `1px dashed ${userAppTokens.colorBorder}`,
-        borderRadius: userAppTokens.radiusLg,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '12px',
-        padding: userAppTokens.spacingMd,
-      }}
-    >
-      <Text style={{ color: userAppTokens.colorText, fontSize: '30px', fontWeight: '600' }}>
-        {props.title}
-      </Text>
-      <SectionNote>{props.description}</SectionNote>
-      {props.actionLabel && props.onAction ? (
-        <View style={{ marginTop: '4px' }}>
-          <SecondaryButton onClick={props.onAction}>
-            {props.actionLabel}
-          </SecondaryButton>
-        </View>
-      ) : null}
-    </View>
-  );
+  return <SharedEmptyStateCard {...props} />;
 }
