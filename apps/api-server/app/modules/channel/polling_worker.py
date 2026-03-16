@@ -4,12 +4,19 @@ import logging
 import threading
 
 import app.db.session as db_session_module
-from app.core.blocking import BlockingCallKind, BlockingCallPolicy, run_blocking_db
+from app.core.blocking import BlockingCallKind, BlockingCallPolicy, run_blocking, run_blocking_db
 from app.core.config import settings
 from app.core.worker_runtime import WorkerRuntime, WorkerRuntimeConfig
 from app.modules.channel import repository
+from app.modules.channel.polling_service import (
+    ChannelPollingServiceError,
+    PreparedChannelPollExecution,
+    apply_channel_poll_execution,
+    mark_channel_account_poll_failed,
+    prepare_channel_account_poll_execution,
+)
 from app.modules.channel.schemas import ChannelPollingBatchRead
-from app.modules.channel.polling_service import mark_channel_account_poll_failed, poll_channel_account
+from app.modules.plugin.service import PluginExecutionError, execute_prepared_household_plugin
 
 logger = logging.getLogger(__name__)
 
@@ -54,16 +61,48 @@ async def run_channel_polling_worker_cycle() -> bool:
     processed = False
     for household_id, account_id in account_refs:
         try:
-            result = await run_blocking_db(
-                lambda db: _poll_channel_account_sync(
+            prepared = await run_blocking_db(
+                lambda db: _prepare_poll_channel_account_sync(
                     db,
                     household_id=household_id,
                     account_id=account_id,
                 ),
                 session_factory=db_session_module.SessionLocal,
                 policy=_build_polling_policy(
-                    label=f"channel.polling.poll_account.{account_id}",
+                    label=f"channel.polling.prepare_account.{account_id}",
+                    kind="sync_db",
+                ),
+                logger=logger,
+                context={
+                    "household_id": household_id,
+                    "account_id": account_id,
+                    "thread_id": threading.get_ident(),
+                },
+            )
+            result = await run_blocking(
+                lambda: _execute_poll_channel_account_sync(prepared),
+                policy=_build_polling_policy(
+                    label=f"channel.polling.execute_account.{account_id}",
                     kind="plugin_code",
+                ),
+                logger=logger,
+                context={
+                    "household_id": household_id,
+                    "account_id": account_id,
+                    "thread_id": threading.get_ident(),
+                },
+            )
+            result = await run_blocking_db(
+                lambda db: _apply_poll_channel_account_sync(
+                    db,
+                    household_id=household_id,
+                    account_id=account_id,
+                    execution=result,
+                ),
+                session_factory=db_session_module.SessionLocal,
+                policy=_build_polling_policy(
+                    label=f"channel.polling.persist_account.{account_id}",
+                    kind="sync_db",
                 ),
                 commit=True,
                 logger=logger,
@@ -75,6 +114,44 @@ async def run_channel_polling_worker_cycle() -> bool:
             )
             if result.recorded_event_count > 0 or result.duplicate_event_count > 0:
                 processed = True
+        except PluginExecutionError as exc:
+            logger.info(
+                "通道轮询插件返回失败 household_id=%s account_id=%s error=%s",
+                household_id,
+                account_id,
+                exc,
+            )
+        except ChannelPollingServiceError as exc:
+            logger.warning(
+                "通道轮询业务失败 household_id=%s account_id=%s error=%s",
+                household_id,
+                account_id,
+                exc,
+            )
+            if getattr(exc, "already_recorded", False):
+                continue
+            try:
+                await run_blocking_db(
+                    lambda db: _persist_poll_failure_sync(
+                        db,
+                        household_id=household_id,
+                        account_id=account_id,
+                        error_message=str(exc) or "channel polling failed",
+                    ),
+                    session_factory=db_session_module.SessionLocal,
+                    policy=_build_polling_policy(
+                        label=f"channel.polling.persist_failure.{account_id}",
+                        kind="sync_db",
+                    ),
+                    commit=True,
+                    logger=logger,
+                    context={
+                        "household_id": household_id,
+                        "account_id": account_id,
+                    },
+                )
+            except Exception:
+                logger.exception("通道轮询失败状态写回失败 household_id=%s account_id=%s", household_id, account_id)
         except Exception as exc:
             logger.exception("通道轮询失败 household_id=%s account_id=%s", household_id, account_id)
             try:
@@ -110,16 +187,35 @@ def _load_polling_accounts_sync(db) -> list[tuple[str, str]]:
     return [(item.household_id, item.id) for item in accounts]
 
 
-def _poll_channel_account_sync(
+def _prepare_poll_channel_account_sync(
     db,
     *,
     household_id: str,
     account_id: str,
-) -> ChannelPollingBatchRead:
-    return poll_channel_account(
+) -> PreparedChannelPollExecution:
+    return prepare_channel_account_poll_execution(
         db,
         household_id=household_id,
         account_id=account_id,
+    )
+
+
+def _execute_poll_channel_account_sync(prepared: PreparedChannelPollExecution):
+    return execute_prepared_household_plugin(prepared.plugin_execution)
+
+
+def _apply_poll_channel_account_sync(
+    db,
+    *,
+    household_id: str,
+    account_id: str,
+    execution,
+) -> ChannelPollingBatchRead:
+    return apply_channel_poll_execution(
+        db,
+        household_id=household_id,
+        account_id=account_id,
+        execution=execution,
     )
 
 

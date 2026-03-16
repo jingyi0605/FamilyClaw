@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -16,11 +17,25 @@ from app.modules.channel.schemas import (
 )
 from app.modules.channel.service import record_channel_inbound_event
 from app.modules.plugin.schemas import PluginExecutionRequest
-from app.modules.plugin.service import PluginExecutionError, execute_household_plugin
+from app.modules.plugin.service import (
+    PluginExecutionError,
+    PreparedHouseholdPluginExecution,
+    execute_prepared_household_plugin,
+    prepare_household_plugin_execution,
+)
 
 
 class ChannelPollingServiceError(ValueError):
-    pass
+    def __init__(self, detail: str, *, already_recorded: bool = False):
+        super().__init__(detail)
+        self.already_recorded = already_recorded
+
+
+@dataclass(slots=True)
+class PreparedChannelPollExecution:
+    household_id: str
+    account_id: str
+    plugin_execution: PreparedHouseholdPluginExecution
 
 
 def mark_channel_account_poll_failed(
@@ -45,6 +60,26 @@ def poll_channel_account(
     household_id: str,
     account_id: str,
 ) -> ChannelPollingBatchRead:
+    prepared = prepare_channel_account_poll_execution(
+        db,
+        household_id=household_id,
+        account_id=account_id,
+    )
+    execution = execute_prepared_household_plugin(prepared.plugin_execution)
+    return apply_channel_poll_execution(
+        db,
+        household_id=household_id,
+        account_id=account_id,
+        execution=execution,
+    )
+
+
+def prepare_channel_account_poll_execution(
+    db: Session,
+    *,
+    household_id: str,
+    account_id: str,
+) -> PreparedChannelPollExecution:
     account = get_channel_account_or_404(db, household_id=household_id, account_id=account_id)
     if account.status == "disabled":
         raise ChannelPollingServiceError("channel account is disabled")
@@ -52,28 +87,47 @@ def poll_channel_account(
         raise ChannelPollingServiceError("channel account connection_mode is not polling")
 
     poll_state = _build_poll_state(db, channel_account_id=account.id)
-    execution = execute_household_plugin(
-        db,
+    return PreparedChannelPollExecution(
         household_id=household_id,
-        request=PluginExecutionRequest(
-            plugin_id=account.plugin_id,
-            plugin_type="channel",
-            payload={
-                "action": "poll",
-                "account": {
-                    "id": account.id,
-                    "household_id": account.household_id,
-                    "plugin_id": account.plugin_id,
-                    "platform_code": account.platform_code,
-                    "account_code": account.account_code,
-                    "connection_mode": account.connection_mode,
-                    "config": account.config_json,
+        account_id=account_id,
+        plugin_execution=prepare_household_plugin_execution(
+            db,
+            household_id=household_id,
+            request=PluginExecutionRequest(
+                plugin_id=account.plugin_id,
+                plugin_type="channel",
+                payload={
+                    "action": "poll",
+                    "account": {
+                        "id": account.id,
+                        "household_id": account.household_id,
+                        "plugin_id": account.plugin_id,
+                        "platform_code": account.platform_code,
+                        "account_code": account.account_code,
+                        "connection_mode": account.connection_mode,
+                        "config": account.config_json,
+                    },
+                    "poll_state": poll_state,
                 },
-                "poll_state": poll_state,
-            },
-            trigger="channel-poll",
+                trigger="channel-poll",
+            ),
         ),
     )
+
+
+def apply_channel_poll_execution(
+    db: Session,
+    *,
+    household_id: str,
+    account_id: str,
+    execution,
+) -> ChannelPollingBatchRead:
+    account = get_channel_account_or_404(db, household_id=household_id, account_id=account_id)
+    if account.status == "disabled":
+        raise ChannelPollingServiceError("channel account is disabled")
+    if account.connection_mode != "polling":
+        raise ChannelPollingServiceError("channel account connection_mode is not polling")
+
     if not execution.success:
         _mark_poll_failed(
             account=account,
@@ -88,7 +142,10 @@ def poll_channel_account(
             error_code="channel_poll_invalid_output",
             error_message="channel plugin poll output must be a JSON object",
         )
-        raise ChannelPollingServiceError("channel plugin poll output must be a JSON object")
+        raise ChannelPollingServiceError(
+            "channel plugin poll output must be a JSON object",
+            already_recorded=True,
+        )
 
     batch = ChannelPollingExecutionRead.model_validate(execution.output)
     recorded_event_count = 0
@@ -137,6 +194,7 @@ def poll_channel_account(
         next_cursor=batch.next_cursor,
         message=batch.message,
     )
+
 
 
 def _build_poll_state(db: Session, *, channel_account_id: str) -> dict[str, Any]:

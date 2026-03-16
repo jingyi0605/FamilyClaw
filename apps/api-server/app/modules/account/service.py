@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import logging
 import secrets
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -19,6 +21,7 @@ from app.modules.member.models import Member
 
 _PASSWORD_ITERATIONS = 120_000
 _PASSWORD_SCHEME = "pbkdf2_sha256"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,8 +64,45 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _parse_utc_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _utc_datetime_to_iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _hash_session_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _should_refresh_session_last_seen(session: AccountSession, now: datetime) -> bool:
+    last_seen_at = _parse_utc_datetime(session.last_seen_at)
+    if last_seen_at is None:
+        return True
+    refresh_interval_seconds = max(settings.auth_session_touch_interval_seconds, 0)
+    if refresh_interval_seconds == 0:
+        return True
+    return now - last_seen_at >= timedelta(seconds=refresh_interval_seconds)
+
+
+def _commit_session_state_change(db: Session, session: AccountSession, *, reason: str) -> None:
+    try:
+        db.add(session)
+        db.commit()
+    except OperationalError as exc:
+        db.rollback()
+        logger.warning(
+            "account session state write skipped due to database error reason=%s session_id=%s error=%s",
+            reason,
+            session.id,
+            exc,
+        )
 
 
 def hash_password(password: str) -> str:
@@ -179,26 +219,27 @@ def resolve_authenticated_actor_by_session_token(db: Session, token: str | None)
     if session is None or session.status != "active":
         return None
 
-    try:
-        expires_at = datetime.fromisoformat(session.expires_at.replace("Z", "+00:00"))
-    except ValueError:
+    expires_at = _parse_utc_datetime(session.expires_at)
+    if expires_at is None:
         return None
 
-    if expires_at <= _utc_now():
+    now = _utc_now()
+    if expires_at <= now:
         session.status = "expired"
-        db.add(session)
-        db.commit()
+        _commit_session_state_change(db, session, reason="expire_session")
         return None
 
     account = db.get(Account, session.account_id)
     if account is None or account.status != "active":
         return None
 
-    session.last_seen_at = utc_now_iso()
-    db.add(session)
-    db.commit()
-    db.refresh(session)
-    return build_authenticated_actor(db, account)
+    actor = build_authenticated_actor(db, account)
+
+    if _should_refresh_session_last_seen(session, now):
+        session.last_seen_at = _utc_datetime_to_iso(now)
+        _commit_session_state_change(db, session, reason="refresh_last_seen")
+
+    return actor
 
 
 def revoke_session_by_token(db: Session, token: str | None) -> bool:

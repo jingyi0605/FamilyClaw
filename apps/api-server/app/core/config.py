@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     context_cache_enabled: bool = True
     auth_session_cookie_name: str = "familyclaw_session"
     auth_session_ttl_hours: int = 24 * 7
+    auth_session_touch_interval_seconds: int = 60
     auth_legacy_header_enabled: bool = True
     conversation_debug_log_enabled: bool = False
     conversation_lane_shadow_enabled: bool = False
