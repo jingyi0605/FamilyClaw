@@ -1,6 +1,6 @@
 # Spec 001.4 - 第三方插件仪表盘卡片开放
 
-状态：Draft
+状态：IN_REVIEW
 
 ## 这份 Spec 解决什么问题
 
@@ -27,6 +27,16 @@
 - 不顺手重做整个首页视觉和所有内置卡片
 - 不在第一版支持所有页面位置，只先支持 `user-app` 首页
 - 不把插件市场、插件配置、插件详情抽屉的全部历史问题一次性打包解决
+
+## 阶段 1 已经定死的边界
+
+- manifest 里的首页卡片正式入口叫 `dashboard_cards`，不是首页代码里的手写注册表
+- 第一版卡片位置只允许 `home`
+- 第一版模板只允许 `metric`、`status_list`、`timeline`、`insight`、`action_group`
+- 第一版动作白名单只允许 `navigate`、`open_plugin_detail`、`trigger_plugin_action`
+- `max_items` 只允许列表类卡片声明
+- `dashboard_cards` 里的未知字段一律拒绝，不接受“先吞掉以后再补”
+- 第三方插件依然不允许注入 React 组件、HTML、CSS、JavaScript
 
 ## 为什么现在做
 

@@ -1,6 +1,6 @@
 # 设计文档 - 第三方插件仪表盘卡片开放
 
-状态：Draft
+状态：IN_REVIEW
 
 ## 1. 概述
 
@@ -121,13 +121,15 @@
 | `empty_state_key` | string | 否 | 空态文案 key | 可为空 |
 | `refresh_strategy` | string | 是 | 刷新策略 | 仅支持 `manual` / `scheduled` / `event_driven` |
 | `max_items` | integer | 否 | 列表型卡片最大项数 | 1 到 20 |
-| `allowed_actions` | array | 否 | 允许动作类型 | 仅支持白名单动作 |
+| `allowed_actions` | array | 否 | 允许动作类型 | 仅支持 `navigate` / `open_plugin_detail` / `trigger_plugin_action` |
 
 规则：
 
 - 不允许声明自定义前端资源路径
 - 不允许声明任意脚本表达式
+- `max_items` 只允许出现在 `status_list` / `timeline` / `action_group`
 - 只允许声明系统支持的模板和动作
+- `dashboard_cards` 里的未知字段一律拒绝，不做“先吞掉以后再说”
 
 #### 3.2.2 `plugin_dashboard_card_snapshots`
 
@@ -212,6 +214,12 @@
 | `subtitle` | string | 否 | 已翻译副标题 |
 | `payload` | object | 是 | 模板数据 |
 | `actions` | array | 否 | 受控动作列表 |
+
+`actions[]` 第一版动作白名单：
+
+- `navigate`：跳转站内受控路由
+- `open_plugin_detail`：打开插件详情或配置入口
+- `trigger_plugin_action`：触发受控插件 action，不允许携带任意脚本
 
 ### 3.3 接口契约
 
