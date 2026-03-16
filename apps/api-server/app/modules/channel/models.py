@@ -85,7 +85,7 @@ class ChannelConversationBinding(Base):
             "household_id",
             "channel_account_id",
             "external_conversation_key",
-            name="uq_channel_conversation_bindings_household_account_external_conversation",
+            name="uq_channel_conv_bindings_household_account_external_conv",
         ),
         Index("idx_channel_conversation_bindings_household_id", "household_id"),
         Index("idx_channel_conversation_bindings_channel_account_id", "channel_account_id"),

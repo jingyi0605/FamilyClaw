@@ -12,7 +12,7 @@ from app.modules.agent import repository as agent_repository
 from app.modules.conversation import repository
 from app.modules.conversation.models import ConversationMessage, ConversationProposalBatch, ConversationProposalItem, ConversationSession
 from app.modules.conversation.proposal_analyzers import ProposalAnalyzerFailure, ProposalAnalyzerRegistry, ProposalDraft
-from app.modules.llm_task import invoke_llm
+from app.modules.llm_task import ainvoke_llm, invoke_llm
 from app.modules.llm_task.output_models import ProposalBatchExtractionOutput
 from app.modules.memory import repository as memory_repository
 
@@ -138,6 +138,25 @@ class ProposalPipeline:
         persist: bool,
     ) -> ProposalPipelineResult:
         extraction_output = self.extractor(db, turn_context, session.household_id)
+        return self.run_with_extraction(
+            db,
+            session=session,
+            request_id=request_id,
+            turn_context=turn_context,
+            extraction_output=extraction_output,
+            persist=persist,
+        )
+
+    def run_with_extraction(
+        self,
+        db: Session,
+        *,
+        session: ConversationSession,
+        request_id: str,
+        turn_context: TurnProposalContext,
+        extraction_output: ProposalBatchExtractionOutput,
+        persist: bool,
+    ) -> ProposalPipelineResult:
         turn_context.persist_enabled = persist
         drafts, failures = self.registry.run(turn_context, extraction_output)
         drafts = _filter_noop_config_drafts(db, session=session, drafts=drafts)
@@ -214,6 +233,33 @@ def extract_proposal_batch(
     household_id: str,
 ) -> ProposalBatchExtractionOutput:
     result = invoke_llm(
+        db,
+        task_type="proposal_batch_extraction",
+        variables={
+            "turn_messages": _render_turn_messages(turn_context.turn_messages),
+            "trusted_events": dump_json(turn_context.trusted_events) or "[]",
+            "main_reply_summary": _render_assistant_context_summary(turn_context.main_reply_summary),
+        },
+        household_id=household_id,
+        conversation_history=turn_context.conversation_history_excerpt,
+        request_context={
+            "request_id": turn_context.request_id,
+            "trace_id": turn_context.request_id,
+            "session_id": turn_context.session_id,
+            "channel": "conversation_proposal_pipeline",
+        },
+    )
+    if not isinstance(result.data, ProposalBatchExtractionOutput):
+        return ProposalBatchExtractionOutput()
+    return result.data
+
+
+async def aextract_proposal_batch(
+    db: Session,
+    turn_context: TurnProposalContext,
+    household_id: str,
+) -> ProposalBatchExtractionOutput:
+    result = await ainvoke_llm(
         db,
         task_type="proposal_batch_extraction",
         variables={

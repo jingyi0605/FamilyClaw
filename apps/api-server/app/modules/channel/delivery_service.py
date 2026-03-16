@@ -17,7 +17,8 @@ from app.modules.channel.schemas import (
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import (
     PluginExecutionError,
-    execute_household_plugin,
+    execute_prepared_household_plugin,
+    prepare_household_plugin_execution,
 )
 
 
@@ -64,8 +65,6 @@ def send_reply(
         created_at=now,
         updated_at=now,
     )
-    repository.add_channel_delivery(db, delivery)
-    db.flush()
     return _dispatch_delivery(db, delivery=delivery, text=text)
 
 
@@ -99,13 +98,14 @@ def _dispatch_delivery(
     metadata: dict[str, Any] | None = None,
 ) -> ChannelDeliveryDispatchRead:
     account = get_channel_account_or_404(db, household_id=delivery.household_id, account_id=delivery.channel_account_id)
-    delivery.attempt_count += 1
-    delivery.updated_at = utc_now_iso()
-
     if account.status == "disabled":
+        if delivery not in db:
+            repository.add_channel_delivery(db, delivery)
         delivery.status = "skipped"
         delivery.last_error_code = "channel_account_disabled"
         delivery.last_error_message = "channel account is disabled"
+        delivery.attempt_count += 1
+        delivery.updated_at = utc_now_iso()
         db.flush()
         return ChannelDeliveryDispatchRead(
             delivery=_to_channel_delivery_read(delivery),
@@ -113,36 +113,42 @@ def _dispatch_delivery(
             provider_message_ref=None,
         )
 
-    execution = execute_household_plugin(
-        db,
-        household_id=account.household_id,
-        request=PluginExecutionRequest(
-            plugin_id=account.plugin_id,
-            plugin_type="channel",
-            payload={
-                "action": "send",
-                "account": {
-                    "id": account.id,
-                    "household_id": account.household_id,
-                    "plugin_id": account.plugin_id,
-                    "platform_code": account.platform_code,
-                    "account_code": account.account_code,
-                    "connection_mode": account.connection_mode,
-                    "config": account.config_json,
+    execution = execute_prepared_household_plugin(
+        prepare_household_plugin_execution(
+            db,
+            household_id=account.household_id,
+            request=PluginExecutionRequest(
+                plugin_id=account.plugin_id,
+                plugin_type="channel",
+                payload={
+                    "action": "send",
+                    "account": {
+                        "id": account.id,
+                        "household_id": account.household_id,
+                        "plugin_id": account.plugin_id,
+                        "platform_code": account.platform_code,
+                        "account_code": account.account_code,
+                        "connection_mode": account.connection_mode,
+                        "config": account.config_json,
+                    },
+                    "delivery": {
+                        "delivery_id": delivery.id,
+                        "delivery_type": delivery.delivery_type,
+                        "external_conversation_key": delivery.external_conversation_key,
+                        "conversation_session_id": delivery.conversation_session_id,
+                        "assistant_message_id": delivery.assistant_message_id,
+                        "text": text,
+                        "metadata": metadata if isinstance(metadata, dict) else {},
+                    },
                 },
-                "delivery": {
-                    "delivery_id": delivery.id,
-                    "delivery_type": delivery.delivery_type,
-                    "external_conversation_key": delivery.external_conversation_key,
-                    "conversation_session_id": delivery.conversation_session_id,
-                    "assistant_message_id": delivery.assistant_message_id,
-                    "text": text,
-                    "metadata": metadata if isinstance(metadata, dict) else {},
-                },
-            },
-            trigger="channel-delivery",
-        ),
+                trigger="channel-delivery",
+            ),
+        )
     )
+    if delivery not in db:
+        repository.add_channel_delivery(db, delivery)
+    delivery.attempt_count += 1
+    delivery.updated_at = utc_now_iso()
 
     if not execution.success:
         delivery.status = "failed"
