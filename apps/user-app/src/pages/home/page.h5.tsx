@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import Taro from '@tarojs/taro';
 import { EmptyStateCard, UiCard } from '@familyclaw/user-ui';
 import {
@@ -45,21 +45,44 @@ import {
 
 type DashboardPayloadItem = Record<string, unknown>;
 type MemberBadgeTone = 'home' | 'away' | 'resting';
-type DashboardLayoutOption<T extends string> = {
-  value: T;
-  labelKey: ShellMessageKey;
+type ResizeAxis = 'width' | 'height';
+type ResizeSession = {
+  cardRef: string;
+  axis: ResizeAxis;
+  startX: number;
+  startY: number;
+  startSize: MemberDashboardLayoutItem['size'];
+  startHeight: MemberDashboardLayoutItem['height'];
+  nextSize: MemberDashboardLayoutItem['size'];
+  nextHeight: MemberDashboardLayoutItem['height'];
 };
 
-const DASHBOARD_WIDTH_OPTIONS: Array<DashboardLayoutOption<MemberDashboardLayoutItem['size']>> = [
-  { value: 'half', labelKey: 'home.cardWidth.half' },
-  { value: 'full', labelKey: 'home.cardWidth.full' },
-];
+const HEIGHT_ORDER: MemberDashboardLayoutItem['height'][] = ['compact', 'regular', 'tall'];
+const WIDTH_RESIZE_STEP = 72;
+const HEIGHT_RESIZE_STEP = 64;
 
-const DASHBOARD_HEIGHT_OPTIONS: Array<DashboardLayoutOption<MemberDashboardLayoutItem['height']>> = [
-  { value: 'compact', labelKey: 'home.cardHeight.compact' },
-  { value: 'regular', labelKey: 'home.cardHeight.regular' },
-  { value: 'tall', labelKey: 'home.cardHeight.tall' },
-];
+function clampIndex(value: number, max: number) {
+  return Math.min(Math.max(value, 0), max);
+}
+
+function resolveWidthByDelta(
+  startSize: MemberDashboardLayoutItem['size'],
+  deltaX: number,
+): MemberDashboardLayoutItem['size'] {
+  if (Math.abs(deltaX) < WIDTH_RESIZE_STEP / 2) {
+    return startSize;
+  }
+  return deltaX > 0 ? 'full' : 'half';
+}
+
+function resolveHeightByDelta(
+  startHeight: MemberDashboardLayoutItem['height'],
+  deltaY: number,
+): MemberDashboardLayoutItem['height'] {
+  const startIndex = HEIGHT_ORDER.indexOf(startHeight);
+  const deltaStep = Math.round(deltaY / HEIGHT_RESIZE_STEP);
+  return HEIGHT_ORDER[clampIndex(startIndex + deltaStep, HEIGHT_ORDER.length - 1)];
+}
 
 function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <UiCard className={`card ${className}`.trim()}>{children}</UiCard>;
@@ -609,60 +632,50 @@ function DashboardCardPanel({ card, t }: { card: HomeDashboardCardRead; t: (key:
 }
 
 function DashboardItemControls({
-  item,
   t,
   onHide,
-  onResize,
+  onDragStart,
+  onDragEnd,
+  onStartResize,
+  resizingAxis,
 }: {
-  item: MemberDashboardLayoutItem;
   t: (key: ShellMessageKey) => string;
   onHide: () => void;
-  onResize: (patch: Partial<Pick<MemberDashboardLayoutItem, 'size' | 'height'>>) => void;
+  onDragStart: (event: DragEvent<HTMLSpanElement>) => void;
+  onDragEnd: () => void;
+  onStartResize: (event: ReactMouseEvent<HTMLButtonElement>, axis: ResizeAxis) => void;
+  resizingAxis: ResizeAxis | null;
 }) {
   return (
     <div className="dashboard-item-controls">
-      <div className="dashboard-item-controls__top">
-        <span className="drag-handle">
+      <span
+        className="drag-handle"
+        draggable
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        title={t('home.dragCard')}
+      >
           <GripVertical size={18} />
-          <span>{t('home.dragCard')}</span>
-        </span>
-        <button className="remove-card-btn" type="button" onClick={onHide}>
-          <X size={14} />
-          <span>{t('home.hideCard')}</span>
-        </button>
-      </div>
-      <div className="dashboard-layout-editor">
-        <div className="dashboard-layout-editor__group">
-          <span className="dashboard-layout-editor__label">{t('home.cardWidth')}</span>
-          <div className="dashboard-segmented-control">
-            {DASHBOARD_WIDTH_OPTIONS.map(option => (
-              <button
-                key={`${item.card_ref}-width-${option.value}`}
-                className={`dashboard-segmented-control__item ${item.size === option.value ? 'is-active' : ''}`}
-                type="button"
-                onClick={() => onResize({ size: option.value })}
-              >
-                {t(option.labelKey)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="dashboard-layout-editor__group">
-          <span className="dashboard-layout-editor__label">{t('home.cardHeight')}</span>
-          <div className="dashboard-segmented-control">
-            {DASHBOARD_HEIGHT_OPTIONS.map(option => (
-              <button
-                key={`${item.card_ref}-height-${option.value}`}
-                className={`dashboard-segmented-control__item ${item.height === option.value ? 'is-active' : ''}`}
-                type="button"
-                onClick={() => onResize({ height: option.value })}
-              >
-                {t(option.labelKey)}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+      </span>
+      <button className="remove-card-btn" type="button" onClick={onHide} title={t('home.hideCard')}>
+        <X size={14} />
+      </button>
+      <button
+        className={`dashboard-resize-handle dashboard-resize-handle--width ${resizingAxis === 'width' ? 'is-active' : ''}`}
+        type="button"
+        title={t('home.resizeWidth')}
+        onMouseDown={event => onStartResize(event, 'width')}
+      >
+        <span className="dashboard-resize-handle__line" />
+      </button>
+      <button
+        className={`dashboard-resize-handle dashboard-resize-handle--height ${resizingAxis === 'height' ? 'is-active' : ''}`}
+        type="button"
+        title={t('home.resizeHeight')}
+        onMouseDown={event => onStartResize(event, 'height')}
+      >
+        <span className="dashboard-resize-handle__line" />
+      </button>
     </div>
   );
 }
@@ -673,10 +686,77 @@ export default function HomePage() {
   const [editMode, setEditMode] = useState(false);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [resizeSession, setResizeSession] = useState<ResizeSession | null>(null);
+  const isResizing = resizeSession !== null;
   const dragRef = useRef<number | null>(null);
+  const resizeSessionRef = useRef<ResizeSession | null>(null);
+  const previewLayoutItems = resizeSession
+    ? layoutItems.map(item => (
+      item.card_ref === resizeSession.cardRef
+        ? { ...item, size: resizeSession.nextSize, height: resizeSession.nextHeight }
+        : item
+    ))
+    : layoutItems;
   const cardMap = buildCardMap(dashboard?.cards ?? []);
-  const visibleItems = buildVisibleLayoutItems(layoutItems, cardMap);
+  const visibleItems = buildVisibleLayoutItems(previewLayoutItems, cardMap);
   const hiddenItems = layoutItems.filter(item => !item.visible);
+
+  useEffect(() => {
+    resizeSessionRef.current = resizeSession;
+  }, [resizeSession]);
+
+  useEffect(() => {
+    if (!resizeSessionRef.current) {
+      return undefined;
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const session = resizeSessionRef.current;
+      if (!session) {
+        return;
+      }
+      const deltaX = event.clientX - session.startX;
+      const deltaY = event.clientY - session.startY;
+      const nextSize = session.axis === 'width' ? resolveWidthByDelta(session.startSize, deltaX) : session.startSize;
+      const nextHeight = session.axis === 'height' ? resolveHeightByDelta(session.startHeight, deltaY) : session.startHeight;
+      const nextSession = {
+        ...session,
+        nextSize,
+        nextHeight,
+      };
+      resizeSessionRef.current = nextSession;
+      setResizeSession(nextSession);
+    };
+
+    const handleMouseUp = () => {
+      const session = resizeSessionRef.current;
+      resizeSessionRef.current = null;
+      setResizeSession(null);
+      if (!session) {
+        return;
+      }
+      const changed = session.nextSize !== session.startSize || session.nextHeight !== session.startHeight;
+      if (!changed) {
+        return;
+      }
+      const nextItems = layoutItems.map(item => (
+        item.card_ref === session.cardRef
+          ? { ...item, size: session.nextSize, height: session.nextHeight }
+          : item
+      ));
+      void persistLayout(nextItems);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    document.body.classList.add('dashboard-resizing');
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.classList.remove('dashboard-resizing');
+    };
+  }, [isResizing, layoutItems]);
 
   const persistLayout = async (nextItems: MemberDashboardLayoutItem[]) => {
     const success = await saveLayout(nextItems);
@@ -685,7 +765,7 @@ export default function HomePage() {
     }
   };
 
-  const handleDragStart = (idx: number) => (event: DragEvent<HTMLDivElement>) => {
+  const handleDragStart = (idx: number) => (event: DragEvent<HTMLSpanElement>) => {
     dragRef.current = idx;
     setDragIdx(idx);
     event.dataTransfer.effectAllowed = 'move';
@@ -719,6 +799,27 @@ export default function HomePage() {
     setDragOverIdx(null);
   };
 
+  const handleResizeStart = (
+    item: MemberDashboardLayoutItem,
+    event: ReactMouseEvent<HTMLButtonElement>,
+    axis: ResizeAxis,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const session: ResizeSession = {
+      cardRef: item.card_ref,
+      axis,
+      startX: event.clientX,
+      startY: event.clientY,
+      startSize: item.size,
+      startHeight: item.height,
+      nextSize: item.size,
+      nextHeight: item.height,
+    };
+    resizeSessionRef.current = session;
+    setResizeSession(session);
+  };
+
   const hideCard = async (cardRef: string) => {
     const nextItems = layoutItems.map(item => item.card_ref === cardRef ? { ...item, visible: false } : item);
     await persistLayout(nextItems);
@@ -729,14 +830,6 @@ export default function HomePage() {
     const nextItems = layoutItems.map(item => (
       item.card_ref === cardRef ? { ...item, visible: true, order: nextOrder } : item
     ));
-    await persistLayout(nextItems);
-  };
-
-  const resizeCard = async (
-    cardRef: string,
-    patch: Partial<Pick<MemberDashboardLayoutItem, 'size' | 'height'>>,
-  ) => {
-    const nextItems = layoutItems.map(item => item.card_ref === cardRef ? { ...item, ...patch } : item);
     await persistLayout(nextItems);
   };
 
@@ -789,19 +882,18 @@ export default function HomePage() {
           return (
             <div
               key={item.card_ref}
-              className={`dashboard-grid__item dashboard-grid__item--${item.size} dashboard-grid__item--${item.height} ${editMode ? 'dashboard-grid__item--editing' : ''} ${dragIdx === idx ? 'dashboard-grid__item--dragging' : ''} ${dragOverIdx === idx ? 'dashboard-grid__item--drag-over' : ''}`}
-              draggable={editMode}
-              onDragStart={editMode ? handleDragStart(idx) : undefined}
+              className={`dashboard-grid__item dashboard-grid__item--${item.size} dashboard-grid__item--${item.height} ${editMode ? 'dashboard-grid__item--editing' : ''} ${dragIdx === idx ? 'dashboard-grid__item--dragging' : ''} ${dragOverIdx === idx ? 'dashboard-grid__item--drag-over' : ''} ${resizeSession?.cardRef === item.card_ref ? 'dashboard-grid__item--resizing' : ''}`}
               onDragOver={editMode ? handleDragOver(idx) : undefined}
               onDrop={editMode ? handleDrop(idx) : undefined}
-              onDragEnd={editMode ? handleDragEnd : undefined}
             >
               {editMode ? (
                 <DashboardItemControls
-                  item={item}
                   t={t}
                   onHide={() => void hideCard(item.card_ref)}
-                  onResize={patch => void resizeCard(item.card_ref, patch)}
+                  onDragStart={handleDragStart(idx)}
+                  onDragEnd={handleDragEnd}
+                  onStartResize={(event, axis) => handleResizeStart(item, event, axis)}
+                  resizingAxis={resizeSession?.cardRef === item.card_ref ? resizeSession.axis : null}
                 />
               ) : null}
               <DashboardCardPanel card={card} t={t} />

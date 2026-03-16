@@ -112,6 +112,7 @@ function buildDefaultLayoutFromDashboard(dashboard: HomeDashboardRead): MemberDa
     visible: true,
     order: (index + 1) * 10,
     size: card.size,
+    height: 'regular',
   }));
 }
 

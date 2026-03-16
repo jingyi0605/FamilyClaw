@@ -171,6 +171,57 @@ export type PluginStateUpdateRequest = {
   enabled: boolean;
 };
 
+export type HomeDashboardCardTemplateType = 'metric' | 'status_list' | 'timeline' | 'insight' | 'action_group';
+export type HomeDashboardCardSize = 'half' | 'full';
+export type HomeDashboardCardHeight = 'compact' | 'regular' | 'tall';
+export type HomeDashboardCardState = 'ready' | 'empty' | 'stale' | 'error';
+export type HomeDashboardCardActionType = 'navigate' | 'open_plugin_detail' | 'trigger_plugin_action';
+
+export type HomeDashboardCardActionRead = {
+  action_key?: string | null;
+  action_type: HomeDashboardCardActionType;
+  label: string;
+  target?: string | null;
+  payload?: Record<string, unknown> | null;
+};
+
+export type HomeDashboardCardRead = {
+  card_ref: string;
+  source_type: 'builtin' | 'plugin';
+  template_type: HomeDashboardCardTemplateType;
+  size: HomeDashboardCardSize;
+  state: HomeDashboardCardState;
+  title: string;
+  subtitle?: string | null;
+  payload: Record<string, unknown>;
+  actions: HomeDashboardCardActionRead[];
+};
+
+export type HomeDashboardRead = {
+  household_id: string;
+  member_id: string;
+  layout_version: number;
+  cards: HomeDashboardCardRead[];
+  warnings: string[];
+};
+
+export type MemberDashboardLayoutItem = {
+  card_ref: string;
+  visible: boolean;
+  order: number;
+  size: HomeDashboardCardSize;
+  height: HomeDashboardCardHeight;
+};
+
+export type MemberDashboardLayoutRead = {
+  member_id: string;
+  placement: 'home';
+  layout_version: number;
+  items: MemberDashboardLayoutItem[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type PluginMountRead = {
   id: string;
   household_id: string;

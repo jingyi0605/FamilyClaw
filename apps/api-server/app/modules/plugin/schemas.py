@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PluginType = Literal["connector", "memory-ingestor", "action", "agent-skill", "channel", "region-provider"]
 PluginManifestType = Literal[
@@ -38,6 +38,19 @@ PluginConfigScopeType = Literal["plugin", "channel_account"]
 PluginConfigFieldType = Literal["string", "text", "integer", "number", "boolean", "enum", "multi_enum", "secret", "json"]
 PluginConfigWidgetType = Literal["input", "password", "textarea", "switch", "select", "multi_select", "json_editor"]
 PluginConfigVisibilityOperator = Literal["equals", "not_equals", "in", "truthy"]
+PluginDashboardCardPlacement = Literal["home"]
+PluginDashboardCardTemplateType = Literal["metric", "status_list", "timeline", "insight", "action_group"]
+PluginDashboardCardSize = Literal["half", "full"]
+PluginDashboardCardHeight = Literal["compact", "regular", "tall"]
+PluginDashboardCardRefreshStrategy = Literal["manual", "scheduled", "event_driven"]
+PluginDashboardCardActionType = Literal["navigate", "open_plugin_detail", "trigger_plugin_action"]
+PluginDashboardCardSnapshotState = Literal["ready", "stale", "invalid", "error"]
+HomeDashboardCardState = Literal["ready", "empty", "stale", "error"]
+HomeDashboardCardTone = Literal["neutral", "info", "success", "warning", "danger"]
+HomeDashboardCardTrendDirection = Literal["up", "down", "flat"]
+
+DASHBOARD_CARD_LIST_TEMPLATE_TYPES = {"status_list", "timeline", "action_group"}
+DASHBOARD_CARD_KEY_ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789-_")
 
 ENTRYPOINT_KEY_BY_TYPE: dict[PluginType, str] = {
     "connector": "connector",
@@ -212,6 +225,53 @@ class PluginManifestCapabilities(BaseModel):
     context_reads: PluginManifestContextReads = Field(default_factory=PluginManifestContextReads)
     channel: PluginManifestChannelSpec | None = None
     region_provider: PluginManifestRegionProviderSpec | None = None
+
+
+class PluginManifestDashboardCardSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    card_key: str = Field(min_length=1, max_length=64)
+    placement: PluginDashboardCardPlacement
+    template_type: PluginDashboardCardTemplateType
+    size: PluginDashboardCardSize
+    title_key: str = Field(min_length=1, max_length=255)
+    subtitle_key: str | None = Field(default=None, max_length=255)
+    empty_state_key: str | None = Field(default=None, max_length=255)
+    refresh_strategy: PluginDashboardCardRefreshStrategy
+    max_items: int | None = Field(default=None, ge=1, le=20)
+    allowed_actions: list[PluginDashboardCardActionType] = Field(default_factory=list)
+
+    @field_validator("card_key")
+    @classmethod
+    def validate_card_key(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("card_key 不能为空")
+        if any(char not in DASHBOARD_CARD_KEY_ALLOWED_CHARS for char in normalized):
+            raise ValueError("card_key 只能包含小写字母、数字、连字符和下划线")
+        return normalized
+
+    @field_validator("title_key", "subtitle_key", "empty_state_key")
+    @classmethod
+    def validate_i18n_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("i18n key 不能为空")
+        return normalized
+
+    @field_validator("allowed_actions")
+    @classmethod
+    def validate_allowed_actions(cls, value: list[PluginDashboardCardActionType]) -> list[PluginDashboardCardActionType]:
+        normalized = _normalize_text_list(value, field_name="allowed_actions")
+        return [cast(PluginDashboardCardActionType, item) for item in normalized]
+
+    @model_validator(mode="after")
+    def validate_template_constraints(self) -> "PluginManifestDashboardCardSpec":
+        if self.max_items is not None and self.template_type not in DASHBOARD_CARD_LIST_TEMPLATE_TYPES:
+            raise ValueError("只有列表类卡片才能声明 max_items")
+        return self
 
 
 class PluginManifestConfigFieldOption(BaseModel):
@@ -617,6 +677,7 @@ class PluginManifest(BaseModel):
     triggers: list[str] = Field(default_factory=list)
     entrypoints: PluginManifestEntrypoints = Field(default_factory=PluginManifestEntrypoints)
     capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
+    dashboard_cards: list[PluginManifestDashboardCardSpec] = Field(default_factory=list)
     config_specs: list[PluginManifestConfigSpec] = Field(default_factory=list)
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
     schedule_templates: list[PluginManifestScheduleTemplate] = Field(default_factory=list)
@@ -679,6 +740,16 @@ class PluginManifest(BaseModel):
             if item.scope_type in seen:
                 raise ValueError(f"config_specs 里不能有重复 scope_type: {item.scope_type}")
             seen.add(item.scope_type)
+        return value
+
+    @field_validator("dashboard_cards")
+    @classmethod
+    def validate_dashboard_cards(cls, value: list[PluginManifestDashboardCardSpec]) -> list[PluginManifestDashboardCardSpec]:
+        seen: set[str] = set()
+        for item in value:
+            if item.card_key in seen:
+                raise ValueError(f"dashboard_cards 里不能有重复 card_key: {item.card_key}")
+            seen.add(item.card_key)
         return value
 
     @model_validator(mode="before")
@@ -886,6 +957,7 @@ class PluginRegistryItem(BaseModel):
     manifest_path: str
     entrypoints: PluginManifestEntrypoints
     capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
+    dashboard_cards: list[PluginManifestDashboardCardSpec] = Field(default_factory=list)
     config_specs: list[PluginManifestConfigSpec] = Field(default_factory=list)
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
     schedule_templates: list[PluginManifestScheduleTemplate] = Field(default_factory=list)
@@ -912,6 +984,158 @@ class PluginLocaleRead(BaseModel):
 class PluginLocaleListRead(BaseModel):
     household_id: str
     items: list[PluginLocaleRead] = Field(default_factory=list)
+
+
+class HomeDashboardCardActionRead(BaseModel):
+    action_key: str | None = Field(default=None, min_length=1, max_length=64)
+    action_type: PluginDashboardCardActionType
+    label: str = Field(min_length=1, max_length=80)
+    target: str | None = Field(default=None, max_length=255)
+    payload: dict[str, Any] | None = None
+
+    @field_validator("action_key", "label", "target")
+    @classmethod
+    def validate_optional_action_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("动作字段不能为空")
+        return normalized
+
+
+class PluginDashboardCardSnapshotEnvelope(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+    actions: list[HomeDashboardCardActionRead] = Field(default_factory=list)
+
+    @field_validator("actions")
+    @classmethod
+    def validate_actions(cls, value: list[HomeDashboardCardActionRead]) -> list[HomeDashboardCardActionRead]:
+        seen_action_keys: set[str] = set()
+        for item in value:
+            if item.action_key is None:
+                continue
+            if item.action_key in seen_action_keys:
+                raise ValueError(f"actions 里不能有重复 action_key: {item.action_key}")
+            seen_action_keys.add(item.action_key)
+        return value
+
+
+class PluginDashboardCardSnapshotUpsert(BaseModel):
+    card_key: str = Field(min_length=1, max_length=64)
+    placement: PluginDashboardCardPlacement = "home"
+    payload: dict[str, Any] = Field(default_factory=dict)
+    actions: list[HomeDashboardCardActionRead] = Field(default_factory=list)
+    generated_at: str | None = None
+    expires_at: str | None = None
+
+    @field_validator("card_key")
+    @classmethod
+    def validate_snapshot_card_key(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("card_key 不能为空")
+        return normalized
+
+
+class PluginDashboardCardSnapshotErrorUpsert(BaseModel):
+    card_key: str = Field(min_length=1, max_length=64)
+    placement: PluginDashboardCardPlacement = "home"
+    error_code: str = Field(min_length=1, max_length=100)
+    error_message: str | None = Field(default=None, max_length=500)
+    generated_at: str | None = None
+    expires_at: str | None = None
+
+    @field_validator("card_key", "error_code", "error_message")
+    @classmethod
+    def validate_snapshot_error_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("错误字段不能为空")
+        return normalized
+
+
+class PluginDashboardCardSnapshotRead(BaseModel):
+    id: str
+    household_id: str
+    plugin_id: str
+    card_key: str
+    placement: PluginDashboardCardPlacement
+    state: PluginDashboardCardSnapshotState
+    payload: dict[str, Any] = Field(default_factory=dict)
+    actions: list[HomeDashboardCardActionRead] = Field(default_factory=list)
+    error_code: str | None = None
+    error_message: str | None = None
+    generated_at: str | None = None
+    expires_at: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class MemberDashboardLayoutItem(BaseModel):
+    card_ref: str = Field(min_length=1, max_length=255)
+    visible: bool = True
+    order: int = Field(default=0, ge=0, le=100000)
+    size: PluginDashboardCardSize
+    height: PluginDashboardCardHeight = "regular"
+
+    @field_validator("card_ref")
+    @classmethod
+    def validate_card_ref(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("card_ref 不能为空")
+        return normalized
+
+
+class MemberDashboardLayoutPayload(BaseModel):
+    version: int = Field(default=0, ge=0)
+    items: list[MemberDashboardLayoutItem] = Field(default_factory=list)
+
+    @field_validator("items")
+    @classmethod
+    def validate_layout_items(cls, value: list[MemberDashboardLayoutItem]) -> list[MemberDashboardLayoutItem]:
+        seen_card_refs: set[str] = set()
+        for item in value:
+            if item.card_ref in seen_card_refs:
+                raise ValueError(f"layout.items 里不能有重复 card_ref: {item.card_ref}")
+            seen_card_refs.add(item.card_ref)
+        return value
+
+
+class MemberDashboardLayoutUpdateRequest(BaseModel):
+    items: list[MemberDashboardLayoutItem] = Field(default_factory=list)
+
+
+class MemberDashboardLayoutRead(BaseModel):
+    member_id: str
+    placement: PluginDashboardCardPlacement
+    layout_version: int = Field(default=0, ge=0)
+    items: list[MemberDashboardLayoutItem] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class HomeDashboardCardRead(BaseModel):
+    card_ref: str
+    source_type: Literal["builtin", "plugin"]
+    template_type: PluginDashboardCardTemplateType
+    size: PluginDashboardCardSize
+    state: HomeDashboardCardState
+    title: str
+    subtitle: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    actions: list[HomeDashboardCardActionRead] = Field(default_factory=list)
+
+
+class HomeDashboardRead(BaseModel):
+    household_id: str
+    member_id: str
+    layout_version: int = Field(default=0, ge=0)
+    cards: list[HomeDashboardCardRead] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class PluginMountBase(BaseModel):
@@ -953,6 +1177,7 @@ class PluginMountRead(BaseModel):
     triggers: list[str]
     entrypoints: PluginManifestEntrypoints
     capabilities: PluginManifestCapabilities = Field(default_factory=PluginManifestCapabilities)
+    dashboard_cards: list[PluginManifestDashboardCardSpec] = Field(default_factory=list)
     config_specs: list[PluginManifestConfigSpec] = Field(default_factory=list)
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
     source_type: Literal["official", "third_party"]
