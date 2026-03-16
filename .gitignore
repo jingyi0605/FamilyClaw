@@ -24,3 +24,4 @@ apps/user-app/.tmp/*
 # TypeScript compiled JS files (keep source ts/tsx)
 apps/user-app/**/*.js
 apps/user-app/config/**/*.js
+.claude/settings.json
