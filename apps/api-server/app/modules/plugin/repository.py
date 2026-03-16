@@ -96,6 +96,31 @@ def get_plugin_config_instance(
     return db.scalar(stmt)
 
 
+def list_plugin_config_instances(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str | None = None,
+    scope_type: str | None = None,
+) -> list[PluginConfigInstance]:
+    filters = [PluginConfigInstance.household_id == household_id]
+    if plugin_id is not None:
+        filters.append(PluginConfigInstance.plugin_id == plugin_id)
+    if scope_type is not None:
+        filters.append(PluginConfigInstance.scope_type == scope_type)
+
+    stmt: Select[tuple[PluginConfigInstance]] = (
+        select(PluginConfigInstance)
+        .where(*filters)
+        .order_by(PluginConfigInstance.updated_at.desc(), PluginConfigInstance.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def delete_plugin_config_instance(db: Session, row: PluginConfigInstance) -> None:
+    db.delete(row)
+
+
 def add_plugin_state_override(db: Session, row: PluginStateOverride) -> PluginStateOverride:
     db.add(row)
     return row

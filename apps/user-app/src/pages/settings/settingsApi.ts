@@ -22,6 +22,13 @@ import type {
   HomeAssistantRoomCandidatesResponse,
   HomeAssistantRoomSyncResponse,
   HomeAssistantSyncResponse,
+  IntegrationCatalogListRead,
+  IntegrationInstance,
+  IntegrationInstanceActionRequest,
+  IntegrationInstanceCreateRequest,
+  IntegrationInstanceListRead,
+  IntegrationPageViewModel,
+  IntegrationResourceListRead,
   HouseholdVoiceprintSummaryRead,
   MemberChannelBindingCreate,
   MemberChannelBindingRead,
@@ -250,6 +257,54 @@ export const settingsApi = {
   },
   getHomeAssistantConfig(householdId: string) {
     return request<HomeAssistantConfig>(`/devices/ha-config/${encodeURIComponent(householdId)}`);
+  },
+  listIntegrationCatalog(
+    householdId: string,
+    params?: {
+      q?: string;
+      resource_type?: 'device' | 'entity' | 'helper';
+    },
+  ) {
+    const query = new URLSearchParams({ household_id: householdId });
+    if (params?.q) query.set('q', params.q);
+    if (params?.resource_type) query.set('resource_type', params.resource_type);
+    return request<IntegrationCatalogListRead>(`/integrations/catalog?${query.toString()}`);
+  },
+  listIntegrationInstances(householdId: string) {
+    return request<IntegrationInstanceListRead>(`/integrations/instances?household_id=${encodeURIComponent(householdId)}`);
+  },
+  listIntegrationResources(
+    householdId: string,
+    params: {
+      resource_type: 'device' | 'entity' | 'helper';
+      integration_instance_id?: string;
+      room_id?: string;
+      status?: string;
+    },
+  ) {
+    const query = new URLSearchParams({
+      household_id: householdId,
+      resource_type: params.resource_type,
+    });
+    if (params.integration_instance_id) query.set('integration_instance_id', params.integration_instance_id);
+    if (params.room_id) query.set('room_id', params.room_id);
+    if (params.status) query.set('status', params.status);
+    return request<IntegrationResourceListRead>(`/integrations/resources?${query.toString()}`);
+  },
+  getIntegrationPageView(householdId: string) {
+    return request<IntegrationPageViewModel>(`/integrations/page-view?household_id=${encodeURIComponent(householdId)}`);
+  },
+  createIntegrationInstance(payload: IntegrationInstanceCreateRequest) {
+    return request<IntegrationInstance>('/integrations/instances', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  executeIntegrationInstanceAction(instanceId: string, payload: IntegrationInstanceActionRequest) {
+    return request<void>(`/integrations/instances/${encodeURIComponent(instanceId)}/actions`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   },
   updateHomeAssistantConfig(
     householdId: string,

@@ -559,6 +559,8 @@ export type PluginManifestConfigSpec = {
   };
 };
 
+export type PluginConfigState = 'unconfigured' | 'configured' | 'invalid';
+
 export type PluginRegistryItem = {
   id: string;
   name: string;
@@ -641,6 +643,170 @@ export type PluginRegistrySnapshot = {
 
 export type PluginStateUpdateRequest = {
   enabled: boolean;
+};
+
+export type IntegrationResourceType = 'device' | 'entity' | 'helper';
+export type IntegrationInstanceStatus = 'draft' | 'active' | 'degraded' | 'disabled' | 'deleted';
+export type IntegrationResourceStatus = 'active' | 'offline' | 'inactive' | 'degraded' | 'disabled' | 'deleted' | 'pending';
+export type IntegrationActionType = 'configure' | 'sync' | 'repair' | 'enable' | 'disable' | 'delete' | 'claim';
+export type IntegrationDiscoveryStatus = 'pending' | 'claimed' | 'dismissed';
+
+export type IntegrationResourceSupport = {
+  device: boolean;
+  entity: boolean;
+  helper: boolean;
+};
+
+export type IntegrationSyncState = {
+  last_synced_at: string | null;
+  last_job_id: string | null;
+  last_job_status: string | null;
+  pending_job_id: string | null;
+};
+
+export type IntegrationErrorSummary = {
+  code: string;
+  message: string;
+  detail?: string | null;
+  occurred_at?: string | null;
+};
+
+export type IntegrationActionRead = {
+  action: IntegrationActionType;
+  label: string;
+  destructive: boolean;
+  disabled: boolean;
+  disabled_reason?: string | null;
+};
+
+export type IntegrationResourceCounts = {
+  device: number;
+  entity: number;
+  helper: number;
+};
+
+export type IntegrationConfigBindingRead = {
+  scope_type: PluginConfigScopeType;
+  scope_key: string;
+  state: PluginConfigState;
+  form_available: boolean;
+  config_spec?: PluginManifestConfigSpec | null;
+};
+
+export type IntegrationCatalogItem = {
+  plugin_id: string;
+  name: string;
+  description?: string | null;
+  icon_url?: string | null;
+  source_type: PluginSourceType;
+  risk_level: PluginRiskLevel;
+  resource_support: IntegrationResourceSupport;
+  config_schema_available: boolean;
+  already_added: boolean;
+  supported_actions: IntegrationActionType[];
+  tags: string[];
+};
+
+export type IntegrationInstance = {
+  id: string;
+  household_id: string;
+  plugin_id: string;
+  display_name: string;
+  description?: string | null;
+  icon_url?: string | null;
+  source_type: PluginSourceType;
+  status: IntegrationInstanceStatus;
+  config_state: PluginConfigState;
+  resource_support: IntegrationResourceSupport;
+  resource_counts: IntegrationResourceCounts;
+  sync_state: IntegrationSyncState;
+  config_bindings: IntegrationConfigBindingRead[];
+  allowed_actions: IntegrationActionRead[];
+  last_error?: IntegrationErrorSummary | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type IntegrationResource = {
+  id: string;
+  household_id: string;
+  integration_instance_id: string;
+  plugin_id: string;
+  resource_type: IntegrationResourceType;
+  resource_key: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  status: IntegrationResourceStatus;
+  room_id?: string | null;
+  room_name?: string | null;
+  device_id?: string | null;
+  parent_resource_id?: string | null;
+  capabilities: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  last_error?: IntegrationErrorSummary | null;
+  updated_at: string;
+};
+
+export type IntegrationDiscoveryItem = {
+  id: string;
+  household_id: string;
+  plugin_id: string;
+  integration_instance_id?: string | null;
+  discovery_type: string;
+  status: IntegrationDiscoveryStatus;
+  title: string;
+  subtitle?: string | null;
+  resource_type: IntegrationResourceType;
+  suggested_room_id?: string | null;
+  capability_tags: string[];
+  metadata: Record<string, unknown>;
+  discovered_at: string;
+  updated_at: string;
+};
+
+export type IntegrationCatalogListRead = {
+  household_id: string;
+  items: IntegrationCatalogItem[];
+};
+
+export type IntegrationInstanceListRead = {
+  household_id: string;
+  items: IntegrationInstance[];
+};
+
+export type IntegrationResourceListRead = {
+  household_id: string;
+  resource_type: IntegrationResourceType;
+  items: IntegrationResource[];
+};
+
+export type IntegrationDiscoveryListRead = {
+  household_id: string;
+  items: IntegrationDiscoveryItem[];
+};
+
+export type IntegrationPageViewModel = {
+  household_id: string;
+  catalog: IntegrationCatalogItem[];
+  instances: IntegrationInstance[];
+  discoveries: IntegrationDiscoveryItem[];
+  resources: Record<IntegrationResourceType, IntegrationResource[]>;
+};
+
+export type IntegrationInstanceCreateRequest = {
+  household_id: string;
+  plugin_id: string;
+  display_name?: string | null;
+  scope_type: PluginConfigScopeType;
+  scope_key: string;
+  config: Record<string, unknown>;
+  clear_secret_fields: string[];
+};
+
+export type IntegrationInstanceActionRequest = {
+  action: IntegrationActionType;
+  payload: Record<string, unknown>;
 };
 
 export type PluginJobRead = {
