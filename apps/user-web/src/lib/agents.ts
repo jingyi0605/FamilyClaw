@@ -1,13 +1,9 @@
 import type { AgentStatus, AgentSummary, AgentType } from './types';
 
-/* ============================================================
- * Agent 展示与选择辅助函数
- * ============================================================ */
-
 export function getAgentTypeLabel(agentType: AgentType): string {
   switch (agentType) {
     case 'butler':
-      return '主管家';
+      return '家庭管家';
     case 'nutritionist':
       return '营养师';
     case 'fitness_coach':
@@ -24,24 +20,24 @@ export function getAgentTypeLabel(agentType: AgentType): string {
 export function getAgentTypeEmoji(agentType: AgentType): string {
   switch (agentType) {
     case 'butler':
-      return '🧭';
+      return '管';
     case 'nutritionist':
-      return '🥗';
+      return '营';
     case 'fitness_coach':
-      return '🏃';
+      return '健';
     case 'study_coach':
-      return '📚';
+      return '学';
     case 'custom':
-      return '✨';
+      return '定';
     default:
-      return '🤖';
+      return 'AI';
   }
 }
 
 export function getAgentStatusLabel(status: AgentStatus): string {
   switch (status) {
     case 'active':
-      return '启用中';
+      return '已启用';
     case 'inactive':
       return '已停用';
     case 'draft':

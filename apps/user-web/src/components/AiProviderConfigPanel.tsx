@@ -62,9 +62,7 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
           api.listHouseholdAiProviders(householdId),
           api.listHouseholdAiRoutes(householdId),
         ]);
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
         setAdapters(adapterRows);
         setProviders(providerRows);
         setRoutes(routeRows);
@@ -74,7 +72,7 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : '加载供应商配置失败');
+          setError(loadError instanceof Error ? loadError.message : '加载模型服务失败');
         }
       } finally {
         if (!cancelled) {
@@ -118,7 +116,7 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentAdapter) {
-      setError('请先选择供应商类型');
+      setError('请先选择服务类型');
       return;
     }
     setSaving(true);
@@ -127,25 +125,23 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
     try {
       if (editingProviderId) {
         await api.updateHouseholdAiProvider(householdId, editingProviderId, buildUpdateProviderPayload(form, currentAdapter));
-        setStatus('供应商配置已更新。');
+        setStatus('模型服务已更新');
       } else {
         const created = await api.createHouseholdAiProvider(householdId, buildCreateProviderPayload(form, currentAdapter));
         setEditingProviderId(created.id);
         setSelectedProviderId(created.id);
-        setStatus('供应商配置已创建。');
+        setStatus('模型服务已添加');
       }
       await reload();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : '保存供应商配置失败');
+      setError(saveError instanceof Error ? saveError.message : '保存模型服务失败');
     } finally {
       setSaving(false);
     }
   }
 
   async function handleDelete() {
-    if (!selectedProvider) {
-      return;
-    }
+    if (!selectedProvider) return;
     setSaving(true);
     setError('');
     setStatus('');
@@ -154,10 +150,10 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
       setEditingProviderId(null);
       setSelectedProviderId('');
       setForm(buildProviderFormState(adapters[0] ?? null));
-      setStatus('供应商配置已删除。');
+      setStatus('模型服务已删除');
       await reload();
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : '删除供应商配置失败');
+      setError(deleteError instanceof Error ? deleteError.message : '删除模型服务失败');
     } finally {
       setSaving(false);
     }
@@ -174,35 +170,38 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
         capability,
         buildRoutePayload(householdId, capability, currentRoute, providerId || null, enabled),
       );
-      setStatus(`${getCapabilityLabel(capability)} 路由已更新。`);
+      setStatus(`${getCapabilityLabel(capability)} 已更新`);
       await reload();
     } catch (routeError) {
-      setError(routeError instanceof Error ? routeError.message : '更新能力路由失败');
+      setError(routeError instanceof Error ? routeError.message : '更新能力分配失败');
     } finally {
       setSaving(false);
     }
   }
 
-  const providerCards = providers.filter(item => !compact || visibleCapabilities.some(capability => item.supported_capabilities.includes(capability)));
+  const providerCards = providers.filter(
+    item => !compact || visibleCapabilities.some(capability => item.supported_capabilities.includes(capability)),
+  );
 
   return (
     <div className="ai-provider-center">
       <div className="ai-provider-center__toolbar">
-        <button className="btn btn--primary" type="button" onClick={startCreate}>新增供应商</button>
-        {selectedProvider && <button className="btn btn--outline" type="button" onClick={() => startEdit(selectedProvider)}>编辑当前供应商</button>}
-        {selectedProvider && !compact && <button className="btn btn--outline" type="button" onClick={() => void handleDelete()} disabled={saving}>删除当前供应商</button>}
+        <button className="btn btn--primary" type="button" onClick={startCreate}>添加模型服务</button>
+        {selectedProvider ? <button className="btn btn--outline" type="button" onClick={() => startEdit(selectedProvider)}>编辑当前服务</button> : null}
+        {selectedProvider && !compact ? <button className="btn btn--outline" type="button" onClick={() => void handleDelete()} disabled={saving}>删除当前服务</button> : null}
       </div>
-      {loading && <Card><p>正在读取供应商配置…</p></Card>}
-      {error && <Card><p className="form-error">{error}</p></Card>}
-      {!loading && (
+
+      {loading ? <div className="settings-loading-copy">正在读取模型服务信息...</div> : null}
+      {error ? <Card><p className="form-error">{error}</p></Card> : null}
+
+      {!loading ? (
         <>
           <div className="ai-config-list">
-            {providerCards.length === 0 && (
+            {providerCards.length === 0 ? (
               <Card className="ai-config-card">
-                <p className="ai-config-muted">当前家庭还没有可用供应商。先建一个，再谈什么正式入口。</p>
+                <p className="ai-config-muted">还没有可用的模型服务，先添加一个吧。</p>
               </Card>
-            )}
-            {providerCards.map(provider => (
+            ) : providerCards.map(provider => (
               <button
                 key={provider.id}
                 type="button"
@@ -213,14 +212,18 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
                   <div className="ai-config-card__text">
                     <div className="ai-config-card__title-row">
                       <h3>{provider.display_name}</h3>
-                      <span className={`ai-pill ${provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>{provider.enabled ? '已启用' : '已停用'}</span>
+                      <span className={`ai-pill ${provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>
+                        {provider.enabled ? '已启用' : '已停用'}
+                      </span>
                     </div>
                     <p className="ai-config-card__meta">{provider.provider_code}</p>
-                    <p className="ai-config-card__summary">{getProviderModelName(provider) ?? '未填写模型名'}</p>
+                    <p className="ai-config-card__summary">{getProviderModelName(provider) ?? '还没有填写模型名称'}</p>
                   </div>
                 </div>
                 <div className="ai-config-chip-list">
-                  {provider.supported_capabilities.map(capability => <span key={capability} className="ai-pill">{getCapabilityLabel(capability)}</span>)}
+                  {provider.supported_capabilities.map(capability => (
+                    <span key={capability} className="ai-pill">{getCapabilityLabel(capability)}</span>
+                  ))}
                 </div>
               </button>
             ))}
@@ -229,13 +232,13 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
           <Card className="ai-config-detail-card">
             <div className="setup-step-panel__header">
               <div>
-                <h3>{editingProviderId ? '编辑供应商配置' : '新增供应商配置'}</h3>
-                <p>页面按适配器定义渲染，不继续把每家供应商的差异散落在向导里。</p>
+                <h3>{editingProviderId ? '编辑模型服务' : '添加模型服务'}</h3>
+                <p>在这里填写服务地址、密钥和模型信息，保存后就可以分配给不同能力使用。</p>
               </div>
             </div>
             <form onSubmit={handleSubmit}>
               <div className="form-group">
-                <label htmlFor={`provider-adapter-${householdId}`}>供应商类型</label>
+                <label htmlFor={`provider-adapter-${householdId}`}>服务类型</label>
                 <select
                   id={`provider-adapter-${householdId}`}
                   className="form-select"
@@ -247,7 +250,7 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
                   {adapters.map(adapter => <option key={adapter.adapter_code} value={adapter.adapter_code}>{adapter.display_name}</option>)}
                 </select>
               </div>
-              {currentAdapter && (
+              {currentAdapter ? (
                 <>
                   <p className="ai-config-muted">{currentAdapter.description}</p>
                   <div className="setup-form-grid">
@@ -275,11 +278,11 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
                             disabled={Boolean(editingProviderId && field.key === 'provider_code')}
                           />
                         )}
-                        {field.help_text && <p className="ai-config-muted">{field.help_text}</p>}
+                        {field.help_text ? <p className="ai-config-muted">{field.help_text}</p> : null}
                       </div>
                     ))}
                     <div className="form-group">
-                      <label>支持能力</label>
+                      <label>可用于哪些能力</label>
                       <div className="setup-choice-group">
                         {AI_CAPABILITY_OPTIONS.map(item => (
                           <label key={item.value} className="setup-choice">
@@ -302,25 +305,21 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
                     </div>
                     <div className="form-group">
                       <label className="setup-choice">
-                        <input
-                          type="checkbox"
-                          checked={form.enabled}
-                          onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))}
-                        />
+                        <input type="checkbox" checked={form.enabled} onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))} />
                         <span>保存后立即启用</span>
                       </label>
                     </div>
                   </div>
                 </>
-              )}
-              {status && <div className="setup-form-status">{status}</div>}
+              ) : null}
+              {status ? <div className="setup-form-status">{status}</div> : null}
               <div className="setup-form-actions">
                 <button
                   className="btn btn--primary"
                   type="submit"
                   disabled={saving || !currentAdapter || !form.displayName.trim() || !form.providerCode.trim() || !form.modelName.trim() || form.supportedCapabilities.length === 0}
                 >
-                  {saving ? '保存中…' : editingProviderId ? '保存供应商' : '创建供应商'}
+                  {saving ? '保存中...' : editingProviderId ? '保存服务' : '添加服务'}
                 </button>
               </div>
             </form>
@@ -329,8 +328,8 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
           <Card className="ai-config-detail-card">
             <div className="setup-step-panel__header">
               <div>
-                <h3>{compact ? '向导所需能力路由' : '能力路由绑定'}</h3>
-                <p>{compact ? '这里只绑定向导真正会用到的能力。' : '真正影响对话主链路的是这里，不是上面那张好看的卡片。'}</p>
+                <h3>{compact ? '当前需要的能力' : '能力分配'}</h3>
+                <p>{compact ? '这里只显示当前流程需要用到的能力。' : '为不同能力选择默认使用的模型服务，AI 会按这里的设置来工作。'}</p>
               </div>
             </div>
             <div className="ai-route-grid">
@@ -344,14 +343,14 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
                       <span className={`ai-pill ${route?.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>{route?.enabled ? '已启用' : '未启用'}</span>
                     </div>
                     <div className="form-group">
-                      <label htmlFor={`${householdId}-route-${capability}`}>主供应商</label>
+                      <label htmlFor={`${householdId}-route-${capability}`}>默认使用的服务</label>
                       <select
                         id={`${householdId}-route-${capability}`}
                         className="form-select"
                         value={route?.primary_provider_profile_id ?? ''}
                         onChange={event => void bindProviderToCapability(capability, event.target.value, Boolean(event.target.value))}
                       >
-                        <option value="">未绑定</option>
+                        <option value="">暂不选择</option>
                         {candidates.map(provider => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
                       </select>
                     </div>
@@ -361,7 +360,7 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
                       onClick={() => void bindProviderToCapability(capability, route?.primary_provider_profile_id ?? '', !route?.enabled)}
                       disabled={!route?.primary_provider_profile_id}
                     >
-                      {route?.enabled ? '停用路由' : '启用路由'}
+                      {route?.enabled ? '暂停使用' : '开始使用'}
                     </button>
                   </div>
                 );
@@ -369,7 +368,7 @@ export function AiProviderConfigPanel({ householdId, compact = false, capability
             </div>
           </Card>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

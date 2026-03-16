@@ -1,17 +1,31 @@
 import type { AgentStatus, AgentSummary, AgentType } from './assistant.types';
 
-export function getAgentTypeLabel(agentType: AgentType): string {
+function pickLocaleText(locale: string | undefined, values: {
+  zhCN: string;
+  zhTW: string;
+  enUS: string;
+}) {
+  if (locale?.toLowerCase().startsWith('en')) {
+    return values.enUS;
+  }
+  if (locale?.toLowerCase().startsWith('zh-tw')) {
+    return values.zhTW;
+  }
+  return values.zhCN;
+}
+
+export function getAgentTypeLabel(agentType: AgentType, locale?: string): string {
   switch (agentType) {
     case 'butler':
-      return '主管家';
+      return pickLocaleText(locale, { zhCN: '家庭管家', zhTW: '家庭管家', enUS: 'Butler' });
     case 'nutritionist':
-      return '营养师';
+      return pickLocaleText(locale, { zhCN: '营养师', zhTW: '營養師', enUS: 'Nutritionist' });
     case 'fitness_coach':
-      return '健身教练';
+      return pickLocaleText(locale, { zhCN: '健身教练', zhTW: '健身教練', enUS: 'Fitness Coach' });
     case 'study_coach':
-      return '学习教练';
+      return pickLocaleText(locale, { zhCN: '学习教练', zhTW: '學習教練', enUS: 'Study Coach' });
     case 'custom':
-      return '自定义角色';
+      return pickLocaleText(locale, { zhCN: '自定义角色', zhTW: '自訂角色', enUS: 'Custom Role' });
     default:
       return 'Agent';
   }
@@ -20,30 +34,30 @@ export function getAgentTypeLabel(agentType: AgentType): string {
 export function getAgentTypeEmoji(agentType: AgentType): string {
   switch (agentType) {
     case 'butler':
-      return '🧑';
+      return '管';
     case 'nutritionist':
-      return '🥗';
+      return '营';
     case 'fitness_coach':
-      return '🏋️';
+      return '健';
     case 'study_coach':
-      return '📚';
+      return '学';
     case 'custom':
-      return '✨';
+      return '定';
     default:
-      return '🤖';
+      return 'AI';
   }
 }
 
-export function getAgentStatusLabel(status: AgentStatus): string {
+export function getAgentStatusLabel(status: AgentStatus, locale?: string): string {
   switch (status) {
     case 'active':
-      return '启用中';
+      return pickLocaleText(locale, { zhCN: '已启用', zhTW: '已啟用', enUS: 'Active' });
     case 'inactive':
-      return '已停用';
+      return pickLocaleText(locale, { zhCN: '已停用', zhTW: '已停用', enUS: 'Disabled' });
     case 'draft':
-      return '草稿';
+      return pickLocaleText(locale, { zhCN: '草稿', zhTW: '草稿', enUS: 'Draft' });
     default:
-      return '未知';
+      return pickLocaleText(locale, { zhCN: '未知', zhTW: '未知', enUS: 'Unknown' });
   }
 }
 

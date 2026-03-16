@@ -2814,11 +2814,16 @@ input, select, textarea {
 }
 
 .memory-main-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
   padding: var(--spacing-sm) var(--spacing-lg);
   font-size: var(--font-size-md);
   font-weight: 500;
+  line-height: 1.4;
   color: var(--text-secondary);
   border-bottom: 2px solid transparent;
+  cursor: pointer;
   transition: all var(--transition);
 }
 
@@ -4883,6 +4888,44 @@ body::before {
   margin-bottom: var(--spacing-md);
 }
 
+.agent-config-center {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.agent-config-center__toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.agent-config-center__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  max-width: 42rem;
+}
+
+.agent-config-center__intro h3,
+.agent-config-empty h4 {
+  margin: 0;
+}
+
+.agent-config-empty {
+  text-align: center;
+}
+
+.agent-create-modal {
+  width: min(760px, 100%);
+}
+
+.agent-create-form {
+  gap: var(--spacing-md);
+}
+
 .ai-route-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -5096,6 +5139,16 @@ body::before {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.settings-ai-tabs {
+  margin-bottom: var(--spacing-md);
+}
+
+.settings-ai-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
 }
 
 .butler-bootstrap {
@@ -5440,6 +5493,10 @@ body::before {
   .ai-config-list,
   .ai-config-detail__grid {
     grid-template-columns: 1fr;
+  }
+
+  .agent-config-center__toolbar {
+    align-items: stretch;
   }
 
   .relationship-graph__svg {
@@ -6975,6 +7032,12 @@ body::before {
   flex-shrink: 0;
 }
 
+.plugin-card__icon svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.2;
+}
+
 .plugin-card__icon--builtin {
   background: var(--brand-primary-light);
   color: var(--brand-primary);
@@ -6988,12 +7051,6 @@ body::before {
 .plugin-card__icon--third_party {
   background: var(--color-warning-light);
   color: var(--color-warning);
-}
-
-.plugin-card__icon svg {
-  width: 20px;
-  height: 20px;
-  stroke-width: 2.2;
 }
 
 /* 插件信息区 */
@@ -7716,6 +7773,103 @@ body::before {
   display: flex;
   gap: var(--spacing-sm);
   margin-top: var(--spacing-sm);
+}
+
+.plugin-config-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.plugin-config-section {
+  padding: var(--spacing-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+}
+
+.plugin-config-section__header {
+  margin-bottom: var(--spacing-md);
+}
+
+.plugin-config-section__header h4 {
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-md);
+  color: var(--text-primary);
+}
+
+.plugin-config-section__header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-config-section__fields {
+  display: grid;
+  gap: var(--spacing-md);
+}
+
+.plugin-config-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.plugin-config-field--switch {
+  padding: var(--spacing-sm) 0;
+}
+
+.plugin-config-field__label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plugin-config-json-editor {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  min-height: 10rem;
+}
+
+.plugin-config-secret-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-config-secret-status {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-config-multi-select {
+  display: grid;
+  gap: var(--spacing-xs);
+}
+
+.plugin-config-multi-select__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.plugin-config-form__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.plugin-config-inline-status {
+  margin-top: var(--spacing-sm);
+  color: var(--color-success);
+  font-size: var(--font-size-sm);
 }
 
 @media (max-width: 640px) {
