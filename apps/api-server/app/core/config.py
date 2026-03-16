@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_DB_PATH = BASE_DIR / "data" / "familyclaw.db"
+DEFAULT_DATABASE_URL = "postgresql+psycopg://familyclaw:change-me@127.0.0.1:5432/familyclaw"
 
 
 class AiProviderRuntimeConfig(BaseModel):
@@ -40,9 +40,11 @@ class Settings(BaseSettings):
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
-    database_url: str = Field(
-        default=f"sqlite:///{DEFAULT_DB_PATH.as_posix()}",
-    )
+    database_url: str = Field(default=DEFAULT_DATABASE_URL)
+    db_pool_size: int = Field(default=10, ge=1, le=100)
+    db_max_overflow: int = Field(default=20, ge=0, le=200)
+    db_pool_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    db_pool_recycle_seconds: int = Field(default=1800, ge=30, le=86400)
     home_assistant_base_url: str | None = None
     home_assistant_token: str | None = None
     home_assistant_timeout_seconds: float = 10.0

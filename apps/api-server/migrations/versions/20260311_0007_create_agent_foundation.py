@@ -48,7 +48,7 @@ def upgrade() -> None:
         "family_agents",
         ["household_id"],
         unique=True,
-        sqlite_where=sa.text("is_primary = 1"),
+        postgresql_where=sa.text("is_primary = true"),
     )
 
     op.create_table(
@@ -86,7 +86,7 @@ def upgrade() -> None:
         "family_agent_soul_profiles",
         ["agent_id"],
         unique=True,
-        sqlite_where=sa.text("is_active = 1"),
+        postgresql_where=sa.text("is_active = true"),
     )
 
     op.create_table(

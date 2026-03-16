@@ -18,13 +18,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("scheduled_task_definitions", recreate="always") as batch_op:
-        batch_op.create_check_constraint(
-            "ck_scheduled_task_definitions_schedule_type",
-            "schedule_type IS NULL OR schedule_type IN ('daily', 'interval', 'cron', 'once')",
-        )
+    op.create_check_constraint(
+        "ck_scheduled_task_definitions_schedule_type",
+        "scheduled_task_definitions",
+        "schedule_type IS NULL OR schedule_type IN ('daily', 'interval', 'cron', 'once')",
+    )
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("scheduled_task_definitions", recreate="always") as batch_op:
-        batch_op.drop_constraint("ck_scheduled_task_definitions_schedule_type", type_="check")
+    op.drop_constraint("ck_scheduled_task_definitions_schedule_type", "scheduled_task_definitions", type_="check")

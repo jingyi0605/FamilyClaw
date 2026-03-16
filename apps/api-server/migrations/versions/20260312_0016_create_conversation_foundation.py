@@ -70,7 +70,7 @@ def upgrade() -> None:
         sa.Column("effective_agent_id", sa.Text(), nullable=True),
         sa.Column("ai_provider_code", sa.String(length=100), nullable=True),
         sa.Column("ai_trace_id", sa.String(length=100), nullable=True),
-        sa.Column("degraded", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("degraded", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("error_code", sa.String(length=100), nullable=True),
         sa.Column("facts_json", sa.Text(), nullable=True),
         sa.Column("suggestions_json", sa.Text(), nullable=True),

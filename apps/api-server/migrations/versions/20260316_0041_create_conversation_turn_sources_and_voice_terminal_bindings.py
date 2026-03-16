@@ -103,7 +103,7 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
-        "idx_voice_terminal_conversation_bindings_conversation_session_id",
+        "idx_voice_terminal_conv_bindings_session_id",
         "voice_terminal_conversation_bindings",
         ["conversation_session_id"],
         unique=False,
@@ -121,10 +121,7 @@ def downgrade() -> None:
         "idx_voice_terminal_conversation_bindings_binding_status",
         table_name="voice_terminal_conversation_bindings",
     )
-    op.drop_index(
-        "idx_voice_terminal_conversation_bindings_conversation_session_id",
-        table_name="voice_terminal_conversation_bindings",
-    )
+    op.drop_index("idx_voice_terminal_conv_bindings_session_id", table_name="voice_terminal_conversation_bindings")
     op.drop_index(
         "idx_voice_terminal_conversation_bindings_terminal_type",
         table_name="voice_terminal_conversation_bindings",

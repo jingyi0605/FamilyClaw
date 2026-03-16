@@ -16,7 +16,7 @@ class FamilyAgent(Base):
             "uq_family_agents_household_primary",
             "household_id",
             unique=True,
-            sqlite_where=text("is_primary = 1"),
+            postgresql_where=text("is_primary = true"),
         ),
     )
 
@@ -46,7 +46,7 @@ class FamilyAgentSoulProfile(Base):
             "uq_family_agent_soul_profiles_agent_active",
             "agent_id",
             unique=True,
-            sqlite_where=text("is_active = 1"),
+            postgresql_where=text("is_active = true"),
         ),
     )
 

@@ -42,7 +42,7 @@ def upgrade() -> None:
             "household_id",
             "channel_account_id",
             "external_conversation_key",
-            name="uq_channel_conversation_bindings_household_account_external_conversation",
+            name="uq_channel_conv_bindings_household_account_external_conv",
         ),
     )
     op.create_index(

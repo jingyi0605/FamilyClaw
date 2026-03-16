@@ -87,14 +87,14 @@ def upgrade() -> None:
         "ai_capability_routes",
         ["capability"],
         unique=True,
-        sqlite_where=sa.text("household_id IS NULL"),
+        postgresql_where=sa.text("household_id IS NULL"),
     )
     op.create_index(
         "uq_ai_capability_routes_household_capability",
         "ai_capability_routes",
         ["household_id", "capability"],
         unique=True,
-        sqlite_where=sa.text("household_id IS NOT NULL"),
+        postgresql_where=sa.text("household_id IS NOT NULL"),
     )
 
     op.create_table(

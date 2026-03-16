@@ -92,59 +92,27 @@ install_dependencies() {
   printf '%s' "${current_hash}" > "${DEPS_HASH_FILE}"
 }
 
-database_file_path() {
+current_revision() {
   python - <<'PY'
 import os
-from pathlib import Path
-from sqlalchemy.engine import make_url
+from sqlalchemy import create_engine, inspect, text
 
 database_url = os.getenv("FAMILYCLAW_DATABASE_URL")
 if not database_url:
     from app.core.config import settings
     database_url = settings.database_url
 
-url = make_url(database_url)
-if url.get_backend_name() == "sqlite" and url.database:
-    print(Path(url.database).resolve())
-PY
-}
-
-database_status() {
-  python - <<'PY'
-import os
-import sqlite3
-from pathlib import Path
-from sqlalchemy.engine import make_url
-
-database_url = os.getenv("FAMILYCLAW_DATABASE_URL")
-if not database_url:
-    from app.core.config import settings
-    database_url = settings.database_url
-
-url = make_url(database_url)
-if url.get_backend_name() != "sqlite" or not url.database:
-    print("non-sqlite")
-    raise SystemExit(0)
-
-db_path = Path(url.database)
-if not db_path.exists():
-    print("missing")
-    raise SystemExit(0)
-
-conn = sqlite3.connect(db_path)
+engine = create_engine(database_url, future=True)
 try:
-    tables = {
-        row[0]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
-    if "alembic_version" not in tables:
-        print("unversioned")
-        raise SystemExit(0)
-
-    version = conn.execute("SELECT version_num FROM alembic_version LIMIT 1").fetchone()
-    print(version[0] if version else "empty")
+    with engine.connect() as conn:
+        inspector = inspect(conn)
+        if "alembic_version" not in inspector.get_table_names():
+            print("unversioned")
+        else:
+            version = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
+            print(version or "empty")
 finally:
-    conn.close()
+    engine.dispose()
 PY
 }
 
@@ -160,37 +128,27 @@ PY
 }
 
 ensure_database() {
-  local db_status
   local db_file
+  local current_rev
   local head_rev
 
   head_rev="$(head_revision)"
-  db_status="$(database_status)"
-  db_file="$(database_file_path || true)"
+  current_rev="$(current_revision)"
+  db_file="${FAMILYCLAW_DATABASE_URL:-postgresql-configured}"
 
-  if [[ -n "${db_file}" ]]; then
-    log "SQLite 数据库: ${db_file}"
-  else
-    log "数据库类型不是 SQLite，按 Alembic 状态检查"
-  fi
+  log "数据库连接: ${db_file}"
 
-  if [[ "${db_status}" == "${head_rev}" ]]; then
+  if [[ "${current_rev}" == "${head_rev}" ]]; then
     log "数据库已是最新迁移版本 ${head_rev}"
     return
   fi
 
-  case "${db_status}" in
-    missing)
-      log "数据库文件不存在，执行初始化迁移"
-      ;;
+  case "${current_rev}" in
     unversioned|empty)
       log "数据库未初始化迁移版本，执行迁移"
       ;;
-    non-sqlite)
-      log "检测 Alembic 头版本 ${head_rev}，执行迁移校准"
-      ;;
     *)
-      log "数据库当前版本 ${db_status}，目标版本 ${head_rev}，执行迁移"
+      log "数据库当前版本 ${current_rev}，目标版本 ${head_rev}，执行迁移"
       ;;
   esac
 

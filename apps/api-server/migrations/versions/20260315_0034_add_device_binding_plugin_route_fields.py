@@ -20,7 +20,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
     op.add_column("device_bindings", sa.Column("plugin_id", sa.String(length=64), nullable=True))
     op.add_column(
         "device_bindings",
@@ -42,11 +41,7 @@ def upgrade() -> None:
             """
         )
     )
-    if bind.dialect.name == "sqlite":
-        with op.batch_alter_table("device_bindings") as batch_op:
-            batch_op.alter_column("binding_version", server_default=None)
-    else:
-        op.alter_column("device_bindings", "binding_version", server_default=None)
+    op.alter_column("device_bindings", "binding_version", server_default=None)
 
 
 def downgrade() -> None:

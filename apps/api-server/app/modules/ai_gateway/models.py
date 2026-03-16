@@ -38,14 +38,14 @@ class AiCapabilityRoute(Base):
             "uq_ai_capability_routes_global_capability",
             "capability",
             unique=True,
-            sqlite_where=text("household_id IS NULL"),
+            postgresql_where=text("household_id IS NULL"),
         ),
         Index(
             "uq_ai_capability_routes_household_capability",
             "household_id",
             "capability",
             unique=True,
-            sqlite_where=text("household_id IS NOT NULL"),
+            postgresql_where=text("household_id IS NOT NULL"),
         ),
     )
 

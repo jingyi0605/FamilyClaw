@@ -20,7 +20,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
     op.add_column(
         "devices",
         sa.Column("voiceprint_identity_enabled", sa.Integer(), nullable=False, server_default="0"),
@@ -34,11 +33,7 @@ def upgrade() -> None:
         )
     )
 
-    if bind.dialect.name == "sqlite":
-        with op.batch_alter_table("devices") as batch_op:
-            batch_op.alter_column("voiceprint_identity_enabled", server_default=None)
-    else:
-        op.alter_column("devices", "voiceprint_identity_enabled", server_default=None)
+    op.alter_column("devices", "voiceprint_identity_enabled", server_default=None)
 
 
 def downgrade() -> None:
