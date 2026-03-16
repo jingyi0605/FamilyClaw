@@ -50,6 +50,8 @@ from app.modules.llm_task.parser import parse_to_model
 from app.modules.ai_gateway.provider_runtime import build_template_fallback_output
 from app.modules.agent.service import build_agent_runtime_context
 from app.modules.family_qa.fact_view_service import build_qa_fact_view
+from app.modules.memory.context_engine import build_memory_context_bundle
+from app.modules.memory.models import MemoryCard
 from app.modules.memory import repository as memory_repository
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.preferences_schemas import MemberPreferenceUpsert
@@ -118,6 +120,53 @@ class ConversationFoundationTests(unittest.TestCase):
             member_role="admin",
             is_authenticated=True,
         )
+
+    def _build_channel_system_actor(self, *, member_id: str) -> ActorContext:
+        return ActorContext(
+            role="system",
+            actor_type="system",
+            actor_id="channel-conversation-bridge",
+            account_id="system",
+            account_type="system",
+            account_status="active",
+            username="system",
+            household_id=self.household.id,
+            member_id=member_id,
+            member_role=None,
+            is_authenticated=True,
+        )
+
+    def _create_memory_card_for_member(
+        self,
+        *,
+        member_id: str,
+        title: str,
+        summary: str,
+        normalized_text: str,
+        visibility: str = "family",
+        memory_type: str = "fact",
+    ) -> MemoryCard:
+        card = MemoryCard(
+            id=new_uuid(),
+            household_id=self.household.id,
+            memory_type=memory_type,
+            title=title,
+            summary=summary,
+            normalized_text=normalized_text,
+            content_json=dump_json({"source": "test"}) or "{}",
+            status="active",
+            visibility=visibility,
+            importance=4,
+            confidence=0.95,
+            subject_member_id=member_id,
+            dedupe_key=f"test-memory:{member_id}:{title}",
+            created_by="test",
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        memory_repository.add_memory_card(self.db, card)
+        self.db.flush()
+        return card
 
     def tearDown(self) -> None:
         self.db.close()
@@ -321,6 +370,60 @@ class ConversationFoundationTests(unittest.TestCase):
         assert fact_view.active_member is not None
         self.assertEqual("宝宝", fact_view.active_member.name)
         self.assertIn("宝宝", [item.name for item in fact_view.member_states])
+
+    def test_build_memory_context_bundle_uses_bound_member_for_channel_system_actor(self) -> None:
+        target_member = create_member(
+            self.db,
+            MemberCreate(household_id=self.household.id, name="Jack", role="adult"),
+        )
+        self._create_memory_card_for_member(
+            member_id=target_member.id,
+            title="爱好是唱歌",
+            summary="Jack 的爱好是唱歌。",
+            normalized_text="爱好 喜欢唱歌 唱歌",
+            memory_type="preference",
+        )
+        self.db.commit()
+
+        bundle = build_memory_context_bundle(
+            self.db,
+            household_id=self.household.id,
+            actor=self._build_channel_system_actor(member_id=target_member.id),
+            requester_member_id=target_member.id,
+            question="你知道我的爱好吗",
+            capability="conversation_free_chat",
+        )
+
+        self.assertEqual(1, bundle.hot_summary.total_visible_cards)
+        self.assertEqual(1, bundle.query_result.total)
+        self.assertEqual("爱好是唱歌", bundle.query_result.items[0].card.title)
+
+    def test_build_qa_fact_view_reads_memory_for_channel_system_actor(self) -> None:
+        target_member = create_member(
+            self.db,
+            MemberCreate(household_id=self.household.id, name="Jack", role="adult"),
+        )
+        self._create_memory_card_for_member(
+            member_id=target_member.id,
+            title="爱好是唱歌",
+            summary="Jack 的爱好是唱歌。",
+            normalized_text="爱好 喜欢唱歌 唱歌",
+            memory_type="preference",
+        )
+        self.db.commit()
+
+        fact_view = build_qa_fact_view(
+            self.db,
+            household_id=self.household.id,
+            requester_member_id=target_member.id,
+            agent_id=self.agent.id,
+            actor=self._build_channel_system_actor(member_id=target_member.id),
+            question="你知道我的爱好吗",
+        )
+
+        self.assertEqual("available", fact_view.memory_summary.status)
+        self.assertEqual(1, len(fact_view.memory_summary.items))
+        self.assertEqual("爱好是唱歌", fact_view.memory_summary.items[0].label)
 
     def test_list_conversation_debug_logs_reflects_env_switch(self) -> None:
         session = create_conversation_session(

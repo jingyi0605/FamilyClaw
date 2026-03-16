@@ -40,11 +40,19 @@ def _summary_cache_key(household_id: str, actor: ActorContext, requester_member_
 def _resolve_requester_member_id(actor: ActorContext, requested_member_id: str | None) -> str | None:
     if actor.role == "admin":
         return requested_member_id
-    if actor.actor_id is None:
+    if actor.account_type == "system":
+        return requested_member_id or actor.member_id
+
+    effective_member_id = actor.member_id
+    if effective_member_id is None and actor.actor_type == "member":
+        effective_member_id = actor.actor_id
+
+    if effective_member_id is None:
         return None
-    if requested_member_id is not None and requested_member_id != actor.actor_id:
-        return actor.actor_id
-    return actor.actor_id
+
+    if requested_member_id is not None and requested_member_id != effective_member_id:
+        return effective_member_id
+    return effective_member_id
 
 
 def resolve_requester_member_id(actor: ActorContext, requested_member_id: str | None) -> str | None:
