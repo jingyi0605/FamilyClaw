@@ -1,4 +1,4 @@
-import inspect
+﻿import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,12 +44,12 @@ class DeviceControlPhase2Tests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-        command.upgrade(_build_alembic_config(settings.database_url), "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         with self.SessionLocal() as db:
             household = create_household(
@@ -69,7 +69,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
 
             self.light_device_id = self._add_device_with_binding(
                 db,
-                name="客厅灯",
+                name="瀹㈠巺鐏?,
                 device_type="light",
                 plugin_id="homeassistant",
                 external_entity_id="light.living_room_main",
@@ -77,7 +77,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             )
             self.lock_device_id = self._add_device_with_binding(
                 db,
-                name="入户门锁",
+                name="鍏ユ埛闂ㄩ攣",
                 device_type="lock",
                 plugin_id="homeassistant",
                 external_entity_id="lock.front_door",
@@ -114,8 +114,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_homeassistant_action_plugin_maps_light_brightness_to_real_service_call(self) -> None:
@@ -307,3 +306,4 @@ class DeviceControlPhase2Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

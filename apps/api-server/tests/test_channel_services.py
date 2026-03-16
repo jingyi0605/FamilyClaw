@@ -1,4 +1,4 @@
-import json
+﻿import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,21 +48,17 @@ class ChannelServiceTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_create_and_update_channel_account_uses_channel_plugin_manifest(self) -> None:
@@ -92,7 +88,7 @@ class ChannelServiceTests(unittest.TestCase):
                 household_id=household.id,
                 payload=ChannelAccountCreate(
                     plugin_id="telegram-channel-plugin",
-                    display_name="Telegram 主账号",
+                    display_name="Telegram 涓昏处鍙?,
                     connection_mode="webhook",
                     config={"token": "test-token"},
                     status="draft",
@@ -129,7 +125,7 @@ class ChannelServiceTests(unittest.TestCase):
                     payload=ChannelAccountCreate(
                         plugin_id="telegram-channel-plugin",
                         account_code="telegram-invalid",
-                        display_name="非法模式账号",
+                        display_name="闈炴硶妯″紡璐﹀彿",
                         connection_mode="websocket",
                         config={},
                     ),
@@ -145,7 +141,7 @@ class ChannelServiceTests(unittest.TestCase):
             self.db,
             MemberCreate(
                 household_id=household.id,
-                name="爸爸",
+                name="鐖哥埜",
                 role="adult",
             ),
         )
@@ -172,7 +168,7 @@ class ChannelServiceTests(unittest.TestCase):
                 payload=ChannelAccountCreate(
                     plugin_id="telegram-channel-plugin",
                     account_code="telegram-main",
-                    display_name="Telegram 主账号",
+                    display_name="Telegram 涓昏处鍙?,
                     connection_mode="webhook",
                     config={"token": "token"},
                 ),
@@ -186,7 +182,7 @@ class ChannelServiceTests(unittest.TestCase):
                     member_id=member.id,
                     external_user_id="tg-user-001",
                     external_chat_id="chat-001",
-                    display_hint="爸爸的 Telegram",
+                    display_hint="鐖哥埜鐨?Telegram",
                 ),
             )
             self.assertEqual("telegram", binding.platform_code)
@@ -196,11 +192,11 @@ class ChannelServiceTests(unittest.TestCase):
                 member_id=member.id,
                 binding_id=binding.id,
                 payload=MemberChannelBindingUpdate(
-                    display_hint="新的备注",
+                    display_hint="鏂扮殑澶囨敞",
                     binding_status="disabled",
                 ),
             )
-            self.assertEqual("新的备注", updated_binding.display_hint)
+            self.assertEqual("鏂扮殑澶囨敞", updated_binding.display_hint)
             self.assertEqual("disabled", updated_binding.binding_status)
 
             bindings = list_member_bindings(self.db, member_id=member.id)
@@ -221,7 +217,7 @@ class ChannelServiceTests(unittest.TestCase):
                     event_type="message",
                     external_user_id="tg-user-001",
                     external_conversation_key="chat:12345",
-                    normalized_payload={"text": "你好"},
+                    normalized_payload={"text": "浣犲ソ"},
                     status="received",
                     conversation_session_id=session.id,
                 ),
@@ -237,7 +233,7 @@ class ChannelServiceTests(unittest.TestCase):
                     event_type="message",
                     external_user_id="tg-user-001",
                     external_conversation_key="chat:12345",
-                    normalized_payload={"text": "重复"},
+                    normalized_payload={"text": "閲嶅"},
                     status="matched",
                     conversation_session_id=session.id,
                 ),
@@ -257,7 +253,7 @@ class ChannelServiceTests(unittest.TestCase):
                     assistant_message_id=assistant_message.id,
                     external_conversation_key="chat:12345",
                     delivery_type="reply",
-                    request_payload={"text": "收到"},
+                    request_payload={"text": "鏀跺埌"},
                     status="sent",
                     attempt_count=1,
                 ),
@@ -300,7 +296,7 @@ class ChannelServiceTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "Telegram 通道插件",
+                    "name": "Telegram 閫氶亾鎻掍欢",
                     "version": "0.1.0",
                     "types": ["channel"],
                     "permissions": ["channel.receive", "channel.send"],
@@ -335,7 +331,7 @@ class ChannelServiceTests(unittest.TestCase):
             active_agent_id=None,
             current_request_id=None,
             last_event_seq=0,
-            title="渠道会话",
+            title="娓犻亾浼氳瘽",
             status="active",
             last_message_at=now,
             created_at=now,
@@ -349,7 +345,7 @@ class ChannelServiceTests(unittest.TestCase):
             seq=1,
             role="assistant",
             message_type="text",
-            content="收到",
+            content="鏀跺埌",
             status="completed",
             effective_agent_id=None,
             ai_provider_code=None,
@@ -367,3 +363,4 @@ class ChannelServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

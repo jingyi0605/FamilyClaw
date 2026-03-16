@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -79,13 +79,13 @@ class _ReminderLikeAnalyzer:
             ProposalDraft(
                 proposal_kind="reminder_create",
                 policy_category="ask",
-                title="提醒草稿",
-                summary="测试提醒",
+                title="鎻愰啋鑽夌",
+                summary="娴嬭瘯鎻愰啋",
                 evidence_message_ids=[turn_context.turn_messages[0].message_id],
                 evidence_roles=["user"],
                 dedupe_key="reminder:test",
                 confidence=0.8,
-                payload={"title": "提醒草稿", "action_type": "reminder_create"},
+                payload={"title": "鎻愰啋鑽夌", "action_type": "reminder_create"},
             )
         ]
 
@@ -97,16 +97,12 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         self._previous_shadow = settings.conversation_proposal_shadow_enabled
         self._previous_write = settings.conversation_proposal_write_enabled
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "migrations"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         self.household = create_household(
@@ -121,12 +117,12 @@ class ConversationProposalPipelineTests(unittest.TestCase):
             self.db,
             household_id=self.household.id,
             payload=AgentCreate(
-                display_name="笨笨",
+                display_name="绗ㄧ",
                 agent_type="butler",
-                self_identity="我是家庭管家",
-                role_summary="负责家庭问答",
-                personality_traits=["细心"],
-                service_focus=["聊天"],
+                self_identity="鎴戞槸瀹跺涵绠″",
+                role_summary="璐熻矗瀹跺涵闂瓟",
+                personality_traits=["缁嗗績"],
+                service_focus=["鑱婂ぉ"],
                 default_entry=True,
             ),
         )
@@ -158,14 +154,13 @@ class ConversationProposalPipelineTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         settings.conversation_proposal_shadow_enabled = self._previous_shadow
         settings.conversation_proposal_write_enabled = self._previous_write
         self._tempdir.cleanup()
 
     def test_registry_isolates_single_analyzer_failure(self) -> None:
-        context = self._build_context(user_text="明天提醒我开会", assistant_text="好的")
+        context = self._build_context(user_text="鏄庡ぉ鎻愰啋鎴戝紑浼?, assistant_text="濂界殑")
         registry = ProposalAnalyzerRegistry(analyzers=[_FailingAnalyzer(), _ReminderLikeAnalyzer()])
 
         drafts, failures = registry.run(context, ProposalBatchExtractionOutput())
@@ -176,15 +171,15 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         self.assertEqual("failing", failures[0].analyzer_name)
 
     def test_assistant_only_joke_does_not_create_memory_proposal(self) -> None:
-        context = self._build_context(user_text="讲个笑话", assistant_text="你最喜欢蓝色沙发，对吧？")
+        context = self._build_context(user_text="璁蹭釜绗戣瘽", assistant_text="浣犳渶鍠滄钃濊壊娌欏彂锛屽鍚э紵")
         extraction = ProposalBatchExtractionOutput(
             memory_items=[
                 ProposalExtractionItemOutput(
-                    title="用户喜欢蓝色沙发",
-                    summary="助手在笑话里说用户喜欢蓝色沙发。",
+                    title="鐢ㄦ埛鍠滄钃濊壊娌欏彂",
+                    summary="鍔╂墜鍦ㄧ瑧璇濋噷璇寸敤鎴峰枩娆㈣摑鑹叉矙鍙戙€?,
                     confidence=0.8,
                     evidence_message_ids=[context.turn_messages[1].message_id],
-                    payload={"memory_type": "preference", "summary": "喜欢蓝色沙发"},
+                    payload={"memory_type": "preference", "summary": "鍠滄钃濊壊娌欏彂"},
                 )
             ]
         )
@@ -194,7 +189,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         self.assertEqual([], drafts)
 
     def test_memory_proposal_analyzer_builds_summary_from_payload_when_missing(self) -> None:
-        context = self._build_context(user_text="记住我不喜欢吃辣椒", assistant_text="好的，我记住了。")
+        context = self._build_context(user_text="璁颁綇鎴戜笉鍠滄鍚冭荆妞?, assistant_text="濂界殑锛屾垜璁颁綇浜嗐€?)
         extraction = ProposalBatchExtractionOutput(
             memory_items=[
                 ProposalExtractionItemOutput(
@@ -202,7 +197,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
                     summary=None,
                     confidence=0.88,
                     evidence_message_ids=[context.turn_messages[0].message_id],
-                    payload={"不喜欢的食物": "辣椒"},
+                    payload={"涓嶅枩娆㈢殑椋熺墿": "杈ｆ"},
                 )
             ]
         )
@@ -211,7 +206,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
 
         self.assertEqual(1, len(drafts))
         self.assertEqual("memory_write", drafts[0].proposal_kind)
-        self.assertIn("辣椒", drafts[0].summary or "")
+        self.assertIn("杈ｆ", drafts[0].summary or "")
         self.assertEqual("preference", drafts[0].payload["memory_type"])
 
     def test_proposal_pipeline_filters_noop_config_draft_when_name_matches_current_agent(self) -> None:
@@ -224,13 +219,13 @@ class ConversationProposalPipelineTests(unittest.TestCase):
             active_agent_id=self.agent.id,
             current_request_id="req-test",
             last_event_seq=0,
-            title="测试对话",
+            title="娴嬭瘯瀵硅瘽",
             status="active",
             last_message_at=now,
             created_at=now,
             updated_at=now,
         )
-        context = self._build_context(user_text="记住我不喜欢吃辣椒", assistant_text="好的，我记住了。")
+        context = self._build_context(user_text="璁颁綇鎴戜笉鍠滄鍚冭荆妞?, assistant_text="濂界殑锛屾垜璁颁綇浜嗐€?)
         extraction = ProposalBatchExtractionOutput(
             memory_items=[
                 ProposalExtractionItemOutput(
@@ -238,13 +233,13 @@ class ConversationProposalPipelineTests(unittest.TestCase):
                     summary=None,
                     confidence=0.88,
                     evidence_message_ids=[context.turn_messages[0].message_id],
-                    payload={"不喜欢的食物": "辣椒"},
+                    payload={"涓嶅枩娆㈢殑椋熺墿": "杈ｆ"},
                 )
             ],
             config_items=[
                 ProposalExtractionItemOutput(
-                    title="应用 Agent 配置建议",
-                    summary="把名字改成当前名字。",
+                    title="搴旂敤 Agent 閰嶇疆寤鸿",
+                    summary="鎶婂悕瀛楁敼鎴愬綋鍓嶅悕瀛椼€?,
                     confidence=0.3,
                     evidence_message_ids=[context.turn_messages[0].message_id],
                     payload={"display_name": self.agent.display_name},
@@ -265,15 +260,15 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         self.assertEqual("memory_write", result.drafts[0].proposal_kind)
 
     def test_user_explicit_rename_creates_config_proposal(self) -> None:
-        context = self._build_context(user_text="以后你就叫阿福", assistant_text="好的，我记下了。")
+        context = self._build_context(user_text="浠ュ悗浣犲氨鍙樋绂?, assistant_text="濂界殑锛屾垜璁颁笅浜嗐€?)
         extraction = ProposalBatchExtractionOutput(
             config_items=[
                 ProposalExtractionItemOutput(
-                    title="应用 Agent 配置建议",
-                    summary="用户明确要求把名字改成阿福。",
+                    title="搴旂敤 Agent 閰嶇疆寤鸿",
+                    summary="鐢ㄦ埛鏄庣‘瑕佹眰鎶婂悕瀛楁敼鎴愰樋绂忋€?,
                     confidence=0.94,
                     evidence_message_ids=[context.turn_messages[0].message_id],
-                    payload={"display_name": "阿福", "speaking_style": None, "personality_traits": []},
+                    payload={"display_name": "闃跨", "speaking_style": None, "personality_traits": []},
                 )
             ]
         )
@@ -282,18 +277,18 @@ class ConversationProposalPipelineTests(unittest.TestCase):
 
         self.assertEqual(1, len(drafts))
         self.assertEqual("config_apply", drafts[0].proposal_kind)
-        self.assertEqual("阿福", drafts[0].payload["display_name"])
+        self.assertEqual("闃跨", drafts[0].payload["display_name"])
 
     def test_config_proposal_analyzer_normalizes_name_alias_to_display_name(self) -> None:
-        context = self._build_context(user_text="就叫豆豆吧", assistant_text="好，那我记一下。")
+        context = self._build_context(user_text="灏卞彨璞嗚眴鍚?, assistant_text="濂斤紝閭ｆ垜璁颁竴涓嬨€?)
         extraction = ProposalBatchExtractionOutput(
             config_items=[
                 ProposalExtractionItemOutput(
-                    title="应用 Agent 配置建议",
-                    summary="用户明确提出把名字改成豆豆。",
+                    title="搴旂敤 Agent 閰嶇疆寤鸿",
+                    summary="鐢ㄦ埛鏄庣‘鎻愬嚭鎶婂悕瀛楁敼鎴愯眴璞嗐€?,
                     confidence=0.92,
                     evidence_message_ids=[context.turn_messages[0].message_id],
-                    payload={"name": "豆豆"},
+                    payload={"name": "璞嗚眴"},
                 )
             ]
         )
@@ -301,7 +296,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         drafts = ConfigProposalAnalyzer().analyze(context, extraction)
 
         self.assertEqual(1, len(drafts))
-        self.assertEqual("豆豆", drafts[0].payload["display_name"])
+        self.assertEqual("璞嗚眴", drafts[0].payload["display_name"])
         self.assertNotIn("name", drafts[0].payload)
 
     def test_config_proposal_analyzer_normalizes_prefixed_evidence_message_id(self) -> None:
@@ -333,7 +328,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
                     summary=None,
                     confidence=0.86,
                     evidence_message_ids=[f"user_message:{context.turn_messages[0].message_id}"],
-                    payload={"food_preference": "喜欢吃甜"},
+                    payload={"food_preference": "鍠滄鍚冪敎"},
                 )
             ]
         )
@@ -348,22 +343,22 @@ class ConversationProposalPipelineTests(unittest.TestCase):
     @patch("app.modules.conversation.proposal_pipeline.invoke_llm")
     def test_extract_proposal_batch_redacts_assistant_reply_before_llm(self, invoke_llm_mock) -> None:
         context = self._build_context(
-            user_text="你知道我最喜欢吃什么吗",
-            assistant_text="根据我的记录，你特别喜欢巧克力蛋糕和甜食。",
+            user_text="浣犵煡閬撴垜鏈€鍠滄鍚冧粈涔堝悧",
+            assistant_text="鏍规嵁鎴戠殑璁板綍锛屼綘鐗瑰埆鍠滄宸у厠鍔涜泲绯曞拰鐢滈銆?,
         )
         invoke_llm_mock.return_value = SimpleNamespace(data=ProposalBatchExtractionOutput())
 
         extract_proposal_batch(self.db, context, self.household.id)
 
         variables = invoke_llm_mock.call_args.kwargs["variables"]
-        self.assertIn("你知道我最喜欢吃什么吗", variables["turn_messages"])
-        self.assertNotIn("巧克力蛋糕和甜食", variables["turn_messages"])
-        self.assertIn("仅作上下文", variables["turn_messages"])
-        self.assertNotIn("巧克力蛋糕和甜食", variables["main_reply_summary"])
-        self.assertIn("不能作为新增事实证据", variables["main_reply_summary"])
+        self.assertIn("浣犵煡閬撴垜鏈€鍠滄鍚冧粈涔堝悧", variables["turn_messages"])
+        self.assertNotIn("宸у厠鍔涜泲绯曞拰鐢滈", variables["turn_messages"])
+        self.assertIn("浠呬綔涓婁笅鏂?, variables["turn_messages"])
+        self.assertNotIn("宸у厠鍔涜泲绯曞拰鐢滈", variables["main_reply_summary"])
+        self.assertIn("涓嶈兘浣滀负鏂板浜嬪疄璇佹嵁", variables["main_reply_summary"])
 
     def test_once_schedule_intent_creates_scheduled_task_proposal(self) -> None:
-        context = self._build_context(user_text="明天上午10点提醒我开会", assistant_text="我来整理成一次性计划任务。")
+        context = self._build_context(user_text="鏄庡ぉ涓婂崍10鐐规彁閱掓垜寮€浼?, assistant_text="鎴戞潵鏁寸悊鎴愪竴娆℃€ц鍒掍换鍔°€?)
 
         result = ProposalPipeline(extractor=lambda db, turn_context, household_id: ProposalBatchExtractionOutput()).run(
             self.db,
@@ -395,7 +390,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
                 owner_scope="member",
                 owner_member_id=self.member.id,
                 code="take-medicine",
-                name="吃药提醒",
+                name="鍚冭嵂鎻愰啋",
                 trigger_type="schedule",
                 schedule_type="daily",
                 schedule_expr="21:00",
@@ -403,7 +398,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
                 target_ref_id=self.agent.id,
             ),
         )
-        context = self._build_context(user_text="把吃药提醒暂停", assistant_text="好的，我先给你确认。")
+        context = self._build_context(user_text="鎶婂悆鑽彁閱掓殏鍋?, assistant_text="濂界殑锛屾垜鍏堢粰浣犵‘璁ゃ€?)
 
         result = ProposalPipeline(extractor=lambda db, turn_context, household_id: ProposalBatchExtractionOutput()).run(
             self.db,
@@ -438,15 +433,15 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         self.assertEqual("Bubble", drafts[0].payload["display_name"])
 
     def test_config_proposal_analyzer_rejects_placeholder_name(self) -> None:
-        context = self._build_context(user_text="我给你改个名字吧", assistant_text="好呀，你想改成什么？")
+        context = self._build_context(user_text="鎴戠粰浣犳敼涓悕瀛楀惂", assistant_text="濂藉憖锛屼綘鎯虫敼鎴愪粈涔堬紵")
         extraction = ProposalBatchExtractionOutput(
             config_items=[
                 ProposalExtractionItemOutput(
-                    title="应用 Agent 配置建议",
-                    summary="用户表达了想改名，但还没给出具体名字。",
+                    title="搴旂敤 Agent 閰嶇疆寤鸿",
+                    summary="鐢ㄦ埛琛ㄨ揪浜嗘兂鏀瑰悕锛屼絾杩樻病缁欏嚭鍏蜂綋鍚嶅瓧銆?,
                     confidence=0.6,
                     evidence_message_ids=[context.turn_messages[0].message_id],
-                    payload={"name": "新名字"},
+                    payload={"name": "鏂板悕瀛?},
                 )
             ]
         )
@@ -460,9 +455,9 @@ class ConversationProposalPipelineTests(unittest.TestCase):
 
         messages = task.build_messages(
             variables={
-                "turn_messages": "[user_message] user(u1): 以后你就叫阿福",
+                "turn_messages": "[user_message] user(u1): 浠ュ悗浣犲氨鍙樋绂?,
                 "trusted_events": "[]",
-                "main_reply_summary": "好的，以后我就叫阿福。",
+                "main_reply_summary": "濂界殑锛屼互鍚庢垜灏卞彨闃跨銆?,
             },
             conversation_history=[],
         )
@@ -485,7 +480,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         proposal_run_mock.side_effect = RuntimeError("proposal pipeline down")
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="当然可以，我们先聊聊天。",
+            text="褰撶劧鍙互锛屾垜浠厛鑱婅亰澶┿€?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -500,11 +495,11 @@ class ConversationProposalPipelineTests(unittest.TestCase):
                 primary_intent=ConversationIntentLabel.FREE_CHAT,
                 route_intent=ConversationIntent.FREE_CHAT,
                 confidence=0.8,
-                reason="普通闲聊",
+                reason="鏅€氶棽鑱?,
                 lane_selection=ConversationLaneSelection(
                     lane=ConversationLane.FREE_CHAT,
                     confidence=0.8,
-                    reason="按 free_chat 处理",
+                    reason="鎸?free_chat 澶勭悊",
                     target_kind="none",
                     requires_clarification=False,
                     source="intent_mapping",
@@ -523,13 +518,13 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         turn = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="以后你叫阿福吧", channel="text"),
+            payload=ConversationTurnCreate(message="浠ュ悗浣犲彨闃跨鍚?, channel="text"),
             actor=self.actor,
         )
 
         self.assertEqual("completed", turn.outcome)
         self.assertIsNone(turn.error_message)
-        self.assertEqual("当然可以，我们先聊聊天。", turn.session.messages[-1].content)
+        self.assertEqual("褰撶劧鍙互锛屾垜浠厛鑱婅亰澶┿€?, turn.session.messages[-1].content)
         proposal_run_mock.assert_called_once()
 
     @patch("app.modules.conversation.service._append_debug_log")
@@ -546,11 +541,11 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         extraction_output = ProposalBatchExtractionOutput(
             config_items=[
                 ProposalExtractionItemOutput(
-                    title="应用 Agent 配置建议",
-                    summary="用户明确要求把名字改成阿福。",
+                    title="搴旂敤 Agent 閰嶇疆寤鸿",
+                    summary="鐢ㄦ埛鏄庣‘瑕佹眰鎶婂悕瀛楁敼鎴愰樋绂忋€?,
                     confidence=0.94,
                     evidence_message_ids=["u1"],
-                    payload={"display_name": "阿福", "speaking_style": None, "personality_traits": []},
+                    payload={"display_name": "闃跨", "speaking_style": None, "personality_traits": []},
                 )
             ]
         )
@@ -563,7 +558,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         )
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="好的，我们先聊聊天。",
+            text="濂界殑锛屾垜浠厛鑱婅亰澶┿€?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -578,11 +573,11 @@ class ConversationProposalPipelineTests(unittest.TestCase):
                 primary_intent=ConversationIntentLabel.FREE_CHAT,
                 route_intent=ConversationIntent.FREE_CHAT,
                 confidence=0.8,
-                reason="普通闲聊",
+                reason="鏅€氶棽鑱?,
                 lane_selection=ConversationLaneSelection(
                     lane=ConversationLane.FREE_CHAT,
                     confidence=0.8,
-                    reason="按 free_chat 处理",
+                    reason="鎸?free_chat 澶勭悊",
                     target_kind="none",
                     requires_clarification=False,
                     source="intent_mapping",
@@ -601,7 +596,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="以后你叫阿福吧", channel="text"),
+            payload=ConversationTurnCreate(message="浠ュ悗浣犲彨闃跨鍚?, channel="text"),
             actor=self.actor,
         )
 
@@ -611,7 +606,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
             if call.kwargs.get("stage") == "proposal.pipeline.completed"
         ]
         self.assertEqual(1, len(matched_payloads))
-        self.assertEqual("阿福", matched_payloads[0]["extraction_output"]["config_items"][0]["payload"]["display_name"])
+        self.assertEqual("闃跨", matched_payloads[0]["extraction_output"]["config_items"][0]["payload"]["display_name"])
         self.assertEqual("config_proposal_analyzer", matched_payloads[0]["analyzer_failures"][0]["analyzer_name"])
 
     def _build_context(self, *, user_text: str, assistant_text: str) -> TurnProposalContext:
@@ -624,7 +619,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
             active_agent_id=self.agent.id,
             current_request_id="req-test",
             last_event_seq=0,
-            title="测试对话",
+            title="娴嬭瘯瀵硅瘽",
             status="active",
             last_message_at=now,
             created_at=now,
@@ -699,7 +694,7 @@ class ConversationProposalPipelineTests(unittest.TestCase):
             active_agent_id=self.agent.id,
             current_request_id="req-test",
             last_event_seq=0,
-            title="测试对话",
+            title="娴嬭瘯瀵硅瘽",
             status="active",
             last_message_at=session_now,
             created_at=session_now,
@@ -709,3 +704,4 @@ class ConversationProposalPipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

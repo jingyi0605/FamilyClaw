@@ -1,4 +1,4 @@
-import json
+﻿import json
 import subprocess
 import sys
 import tempfile
@@ -61,7 +61,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-plugin",
-                        "name": "坏插件",
+                        "name": "鍧忔彃浠?,
                         "types": ["connector"],
                         "permissions": ["device.read"],
                         "risk_level": "low",
@@ -85,7 +85,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "region-context-plugin",
-                        "name": "地区上下文插件",
+                        "name": "鍦板尯涓婁笅鏂囨彃浠?,
                         "version": "0.1.0",
                         "types": ["connector"],
                         "permissions": ["region.read"],
@@ -121,7 +121,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "jp-region-provider",
-                        "name": "日本地区提供方",
+                        "name": "鏃ユ湰鍦板尯鎻愪緵鏂?,
                         "version": "0.1.0",
                         "types": ["region-provider"],
                         "permissions": ["region.read"],
@@ -154,7 +154,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "telegram-channel-plugin",
-                        "name": "Telegram 通讯通道插件",
+                        "name": "Telegram 閫氳閫氶亾鎻掍欢",
                         "version": "0.1.0",
                         "types": ["channel"],
                         "permissions": ["channel.receive", "channel.send"],
@@ -164,7 +164,7 @@ class PluginManifestTests(unittest.TestCase):
                         "config_specs": [
                             {
                                 "scope_type": "channel_account",
-                                "title": "Telegram 配置",
+                                "title": "Telegram 閰嶇疆",
                                 "schema_version": 1,
                                 "config_schema": {
                                     "fields": [
@@ -180,7 +180,7 @@ class PluginManifestTests(unittest.TestCase):
                                     "sections": [
                                         {
                                             "id": "basic",
-                                            "title": "连接参数",
+                                            "title": "杩炴帴鍙傛暟",
                                             "fields": ["bot_token"],
                                         }
                                     ],
@@ -188,7 +188,7 @@ class PluginManifestTests(unittest.TestCase):
                                         "bot_token": {
                                             "widget": "password",
                                             "placeholder": "123456:ABC",
-                                            "help_text": "机器人令牌",
+                                            "help_text": "鏈哄櫒浜轰护鐗?,
                                         }
                                     },
                                 },
@@ -236,7 +236,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-config-widget-plugin",
-                        "name": "坏配置插件",
+                        "name": "鍧忛厤缃彃浠?,
                         "version": "0.1.0",
                         "types": ["connector"],
                         "permissions": ["device.read"],
@@ -246,7 +246,7 @@ class PluginManifestTests(unittest.TestCase):
                         "config_specs": [
                             {
                                 "scope_type": "plugin",
-                                "title": "插件配置",
+                                "title": "鎻掍欢閰嶇疆",
                                 "schema_version": 1,
                                 "config_schema": {
                                     "fields": [
@@ -262,7 +262,7 @@ class PluginManifestTests(unittest.TestCase):
                                     "sections": [
                                         {
                                             "id": "basic",
-                                            "title": "连接参数",
+                                            "title": "杩炴帴鍙傛暟",
                                             "fields": ["api_key"],
                                         }
                                     ],
@@ -293,7 +293,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-config-scope-plugin",
-                        "name": "坏作用域插件",
+                        "name": "鍧忎綔鐢ㄥ煙鎻掍欢",
                         "version": "0.1.0",
                         "types": ["connector"],
                         "permissions": ["device.read"],
@@ -303,7 +303,7 @@ class PluginManifestTests(unittest.TestCase):
                         "config_specs": [
                             {
                                 "scope_type": "plugin",
-                                "title": "配置一",
+                                "title": "閰嶇疆涓€",
                                 "schema_version": 1,
                                 "config_schema": {
                                     "fields": [
@@ -311,12 +311,12 @@ class PluginManifestTests(unittest.TestCase):
                                     ]
                                 },
                                 "ui_schema": {
-                                    "sections": [{"id": "basic", "title": "基础", "fields": ["name"]}]
+                                    "sections": [{"id": "basic", "title": "鍩虹", "fields": ["name"]}]
                                 },
                             },
                             {
                                 "scope_type": "plugin",
-                                "title": "配置二",
+                                "title": "閰嶇疆浜?,
                                 "schema_version": 1,
                                 "config_schema": {
                                     "fields": [
@@ -324,7 +324,7 @@ class PluginManifestTests(unittest.TestCase):
                                     ]
                                 },
                                 "ui_schema": {
-                                    "sections": [{"id": "basic", "title": "基础", "fields": ["other"]}]
+                                    "sections": [{"id": "basic", "title": "鍩虹", "fields": ["other"]}]
                                 },
                             }
                         ],
@@ -346,7 +346,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-channel-plugin",
-                        "name": "坏通道插件",
+                        "name": "鍧忛€氶亾鎻掍欢",
                         "version": "0.1.0",
                         "types": ["channel"],
                         "permissions": ["channel.receive"],
@@ -379,7 +379,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "invalid-channel-plugin",
-                        "name": "非法通道插件",
+                        "name": "闈炴硶閫氶亾鎻掍欢",
                         "version": "0.1.0",
                         "types": ["channel"],
                         "permissions": ["channel.receive"],
@@ -413,7 +413,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "schedule-template-plugin",
-                        "name": "计划模板插件",
+                        "name": "璁″垝妯℃澘鎻掍欢",
                         "version": "0.1.0",
                         "types": ["connector"],
                         "permissions": ["health.read"],
@@ -423,8 +423,8 @@ class PluginManifestTests(unittest.TestCase):
                         "schedule_templates": [
                             {
                                 "code": "daily-check",
-                                "name": "每日巡检",
-                                "description": "每天帮我看一次",
+                                "name": "姣忔棩宸℃",
+                                "description": "姣忓ぉ甯垜鐪嬩竴娆?,
                                 "default_definition": {
                                     "trigger_type": "schedule",
                                     "schedule_type": "daily",
@@ -451,7 +451,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-schedule-template-plugin",
-                        "name": "坏模板插件",
+                        "name": "鍧忔ā鏉挎彃浠?,
                         "version": "0.1.0",
                         "types": ["connector"],
                         "permissions": ["health.read"],
@@ -461,7 +461,7 @@ class PluginManifestTests(unittest.TestCase):
                         "schedule_templates": [
                             {
                                 "code": "daily-check",
-                                "name": "每日巡检",
+                                "name": "姣忔棩宸℃",
                                 "default_definition": {"trigger_type": "schedule"},
                             }
                         ],
@@ -474,7 +474,7 @@ class PluginManifestTests(unittest.TestCase):
             with self.assertRaises(PluginManifestValidationError) as context:
                 load_plugin_manifest(manifest_path)
 
-        self.assertIn("triggers 必须包含 schedule", str(context.exception))
+        self.assertIn("triggers 蹇呴』鍖呭惈 schedule", str(context.exception))
 
     def test_reject_runtime_region_provider_without_required_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -483,7 +483,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-jp-region-provider",
-                        "name": "坏地区提供方",
+                        "name": "鍧忓湴鍖烘彁渚涙柟",
                         "version": "0.1.0",
                         "types": ["region-provider"],
                         "permissions": ["region.read"],
@@ -507,7 +507,7 @@ class PluginManifestTests(unittest.TestCase):
             with self.assertRaises(PluginManifestValidationError) as context:
                 load_plugin_manifest(manifest_path)
 
-        self.assertIn("至少要声明一个 country_code", str(context.exception))
+        self.assertIn("鑷冲皯瑕佸０鏄庝竴涓?country_code", str(context.exception))
 
     def test_discover_builtin_manifests(self) -> None:
         manifests = discover_plugin_manifests(self.builtin_root)
@@ -600,7 +600,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "channel-runtime-plugin",
-                        "name": "通道运行时插件",
+                        "name": "閫氶亾杩愯鏃舵彃浠?,
                         "version": "0.1.0",
                         "types": ["channel"],
                         "permissions": ["channel.receive", "channel.send"],
@@ -668,7 +668,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "demo-third-party-plugin",
-                        "name": "第三方演示插件",
+                        "name": "绗笁鏂规紨绀烘彃浠?,
                         "version": "0.1.0",
                         "types": ["connector"],
                         "permissions": ["health.read"],
@@ -947,7 +947,7 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual("plugin_execution_failed", result.error_code)
-        self.assertIn("已禁用", result.error_message or "")
+        self.assertIn("宸茬鐢?, result.error_message or "")
 
     def test_reject_locale_pack_manifest_without_locales(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -956,7 +956,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-locale-pack",
-                        "name": "坏语言包",
+                        "name": "鍧忚瑷€鍖?,
                         "version": "0.1.0",
                         "types": ["locale-pack"],
                         "permissions": [],
@@ -971,7 +971,7 @@ class PluginManifestTests(unittest.TestCase):
             with self.assertRaises(PluginManifestValidationError) as context:
                 load_plugin_manifest(manifest_path)
 
-        self.assertIn("至少要声明一个 locale", str(context.exception))
+        self.assertIn("鑷冲皯瑕佸０鏄庝竴涓?locale", str(context.exception))
 
     def test_execute_plugin_returns_failure_when_handler_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -982,7 +982,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-runtime-plugin",
-                        "name": "运行失败插件",
+                        "name": "杩愯澶辫触鎻掍欢",
                         "version": "0.1.0",
                         "types": ["connector"],
                         "permissions": ["health.read"],
@@ -1039,7 +1039,7 @@ class PluginManifestTests(unittest.TestCase):
         )
         self.assertFalse(failure_result.success)
         self.assertEqual("plugin_execution_failed", failure_result.error_code)
-        self.assertIn("插件不存在", failure_result.error_message or "")
+        self.assertIn("鎻掍欢涓嶅瓨鍦?, failure_result.error_message or "")
 
 
 class PluginEffectiveStateTests(unittest.TestCase):
@@ -1049,27 +1049,23 @@ class PluginEffectiveStateTests(unittest.TestCase):
         self.builtin_root = Path(__file__).resolve().parents[1] / "app" / "plugins" / "builtin"
         self.state_file = Path(self._tempdir.name) / "plugin_registry_state.json"
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_household_override_can_disable_builtin_plugin(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="状态家庭", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+            HouseholdCreate(name="鐘舵€佸搴?, city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
         )
         self.db.flush()
 
@@ -1087,7 +1083,7 @@ class PluginEffectiveStateTests(unittest.TestCase):
         self.assertTrue(updated.base_enabled)
         self.assertFalse(updated.enabled)
         self.assertEqual(False, updated.household_enabled)
-        self.assertIn("当前家庭", updated.disabled_reason or "")
+        self.assertIn("褰撳墠瀹跺涵", updated.disabled_reason or "")
 
         snapshot = list_registered_plugins_for_household(
             self.db,
@@ -1102,7 +1098,7 @@ class PluginEffectiveStateTests(unittest.TestCase):
     def test_effective_enabled_uses_base_and_household_state(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="状态合并家庭", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+            HouseholdCreate(name="鐘舵€佸悎骞跺搴?, city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
         )
         self.db.flush()
         disable_plugin("health-basic-reader", root_dir=self.builtin_root, state_file=self.state_file)
@@ -1120,4 +1116,5 @@ class PluginEffectiveStateTests(unittest.TestCase):
         self.assertFalse(updated.base_enabled)
         self.assertEqual(True, updated.household_enabled)
         self.assertFalse(updated.enabled)
-        self.assertIn("基础状态", updated.disabled_reason or "")
+        self.assertIn("鍩虹鐘舵€?, updated.disabled_reason or "")
+

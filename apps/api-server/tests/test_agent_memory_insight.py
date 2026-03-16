@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -28,21 +28,17 @@ class AgentMemoryInsightTests(unittest.TestCase):
         self._previous_database_url = settings.database_url
         self.builtin_root = Path(__file__).resolve().parents[1] / "app" / "plugins" / "builtin"
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_build_agent_memory_insight_uses_plugin_observations(self) -> None:
@@ -52,16 +48,16 @@ class AgentMemoryInsightTests(unittest.TestCase):
         )
         member = create_member(
             self.db,
-            MemberCreate(household_id=household.id, name="妈妈", role="adult"),
+            MemberCreate(household_id=household.id, name="濡堝", role="adult"),
         )
         agent = create_agent(
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="笨笨",
+                display_name="绗ㄧ",
                 agent_type="butler",
-                self_identity="我是笨笨",
-                role_summary="家庭 AI 管家",
+                self_identity="鎴戞槸绗ㄧ",
+                role_summary="瀹跺涵 AI 绠″",
                 created_by="test",
             ),
         )
@@ -78,12 +74,12 @@ class AgentMemoryInsightTests(unittest.TestCase):
 
         with patch.multiple(
             "app.modules.ha_integration.client.HomeAssistantClient",
-            get_device_registry=lambda self: [{"id": "ha-device-light-1", "name": "客厅主灯", "area_id": "area-living-room"}],
-            get_entity_registry=lambda self: [{"entity_id": "light.living_room_main", "device_id": "ha-device-light-1", "area_id": "area-living-room", "name": "客厅主灯", "disabled_by": None}],
-            get_area_registry=lambda self: [{"area_id": "area-living-room", "name": "客厅"}],
+            get_device_registry=lambda self: [{"id": "ha-device-light-1", "name": "瀹㈠巺涓荤伅", "area_id": "area-living-room"}],
+            get_entity_registry=lambda self: [{"entity_id": "light.living_room_main", "device_id": "ha-device-light-1", "area_id": "area-living-room", "name": "瀹㈠巺涓荤伅", "disabled_by": None}],
+            get_area_registry=lambda self: [{"area_id": "area-living-room", "name": "瀹㈠巺"}],
             get_states=lambda self: [
-                {"entity_id": "light.living_room_main", "state": "on", "attributes": {"friendly_name": "客厅主灯", "area_name": "客厅"}, "last_updated": "2026-03-15T12:00:00Z"},
-                {"entity_id": "sensor.living_room_temperature", "state": "23.5", "attributes": {"unit_of_measurement": "°C"}, "last_updated": "2026-03-15T12:00:00Z"},
+                {"entity_id": "light.living_room_main", "state": "on", "attributes": {"friendly_name": "瀹㈠巺涓荤伅", "area_name": "瀹㈠巺"}, "last_updated": "2026-03-15T12:00:00Z"},
+                {"entity_id": "sensor.living_room_temperature", "state": "23.5", "attributes": {"unit_of_measurement": "掳C"}, "last_updated": "2026-03-15T12:00:00Z"},
             ],
         ):
             run_plugin_sync_pipeline(
@@ -122,12 +118,12 @@ class AgentMemoryInsightTests(unittest.TestCase):
         )
 
         self.assertEqual(agent.id, result.agent_id)
-        self.assertIn("插件写入的家庭记忆", result.summary)
+        self.assertIn("鎻掍欢鍐欏叆鐨勫搴蹇?, result.summary)
         self.assertIn("health-basic-reader", result.used_plugins)
         self.assertIn("homeassistant", result.used_plugins)
         self.assertTrue(any(item.category == "sleep_duration" for item in result.facts))
         self.assertTrue(any(item.category == "room_temperature" for item in result.facts))
-        self.assertTrue(any("睡眠" in item for item in result.suggestions))
+        self.assertTrue(any("鐫＄湢" in item for item in result.suggestions))
 
     def test_build_agent_memory_insight_returns_empty_state_when_no_plugin_memory(self) -> None:
         household = create_household(
@@ -138,10 +134,10 @@ class AgentMemoryInsightTests(unittest.TestCase):
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="阿福",
+                display_name="闃跨",
                 agent_type="butler",
-                self_identity="我是阿福",
-                role_summary="家庭 AI 管家",
+                self_identity="鎴戞槸闃跨",
+                role_summary="瀹跺涵 AI 绠″",
                 created_by="test",
             ),
         )
@@ -155,8 +151,9 @@ class AgentMemoryInsightTests(unittest.TestCase):
 
         self.assertEqual([], result.used_plugins)
         self.assertEqual([], result.facts)
-        self.assertIn("还没有可用的插件记忆", result.summary)
+        self.assertIn("杩樻病鏈夊彲鐢ㄧ殑鎻掍欢璁板繂", result.summary)
 
 
 if __name__ == "__main__":
     unittest.main()
+

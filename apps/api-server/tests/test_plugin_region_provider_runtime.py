@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 import tempfile
 import unittest
@@ -30,27 +30,23 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_mounted_region_provider_supports_catalog_search_and_household_binding(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="插件地区家庭", timezone="Asia/Tokyo", locale="ja-JP"),
+            HouseholdCreate(name="鎻掍欢鍦板尯瀹跺涵", timezone="Asia/Tokyo", locale="ja-JP"),
         )
         self.db.flush()
 
@@ -80,7 +76,7 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
                 provider_code="plugin.jp-sample",
                 country_code="JP",
                 household_id=household.id,
-                keyword="新宿",
+                keyword="鏂板",
                 admin_level="district",
             )
 
@@ -98,17 +94,17 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
             self.db.flush()
             updated = build_household_read(self.db, updated_household)
 
-        self.assertEqual(["东京都"], [item.name for item in provinces])
-        self.assertEqual(["新宿区"], [item.name for item in matches])
+        self.assertEqual(["涓滀含閮?], [item.name for item in provinces])
+        self.assertEqual(["鏂板鍖?], [item.name for item in matches])
         self.assertEqual("plugin.jp-sample", updated.region.provider_code)
         self.assertEqual("JP", updated.region.country_code)
-        self.assertEqual("东京都 新宿区", updated.city)
+        self.assertEqual("涓滀含閮?鏂板鍖?, updated.city)
         self.assertEqual("Asia/Tokyo", updated.region.timezone)
 
     def test_provider_lifecycle_tracks_mount_enable_state(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="生命周期家庭", timezone="Asia/Tokyo", locale="ja-JP"),
+            HouseholdCreate(name="鐢熷懡鍛ㄦ湡瀹跺涵", timezone="Asia/Tokyo", locale="ja-JP"),
         )
         self.db.flush()
 
@@ -171,7 +167,7 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
     def test_provider_mount_conflict_rejects_same_provider_code_in_one_household(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="冲突家庭", timezone="Asia/Tokyo", locale="ja-JP"),
+            HouseholdCreate(name="鍐茬獊瀹跺涵", timezone="Asia/Tokyo", locale="ja-JP"),
         )
         self.db.flush()
 
@@ -208,7 +204,7 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
     def test_household_override_disables_region_provider_without_changing_mount_base_state(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="覆盖禁用家庭", timezone="Asia/Tokyo", locale="ja-JP"),
+            HouseholdCreate(name="瑕嗙洊绂佺敤瀹跺涵", timezone="Asia/Tokyo", locale="ja-JP"),
         )
         self.db.flush()
 
@@ -259,7 +255,7 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "日本地区提供方",
+                    "name": "鏃ユ湰鍦板尯鎻愪緵鏂?,
                     "version": "0.1.0",
                     "types": ["region-provider"],
                     "permissions": ["region.read"],
@@ -289,10 +285,10 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
             "        'region_code': '130000',\n"
             "        'parent_region_code': None,\n"
             "        'admin_level': 'province',\n"
-            "        'name': '东京都',\n"
-            "        'full_name': '东京都',\n"
+            "        'name': '涓滀含閮?,\n"
+            "        'full_name': '涓滀含閮?,\n"
             "        'path_codes': ['130000'],\n"
-            "        'path_names': ['东京都'],\n"
+            "        'path_names': ['涓滀含閮?],\n"
             "        'timezone': 'Asia/Tokyo',\n"
             "        'source_version': 'jp-v1'\n"
             "    },\n"
@@ -302,10 +298,10 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
             "        'region_code': '131000',\n"
             "        'parent_region_code': '130000',\n"
             "        'admin_level': 'city',\n"
-            "        'name': '东京都区部',\n"
-            "        'full_name': '东京都 / 东京都区部',\n"
+            "        'name': '涓滀含閮藉尯閮?,\n"
+            "        'full_name': '涓滀含閮?/ 涓滀含閮藉尯閮?,\n"
             "        'path_codes': ['130000', '131000'],\n"
-            "        'path_names': ['东京都', '东京都区部'],\n"
+            "        'path_names': ['涓滀含閮?, '涓滀含閮藉尯閮?],\n"
             "        'timezone': 'Asia/Tokyo',\n"
             "        'source_version': 'jp-v1'\n"
             "    },\n"
@@ -315,10 +311,10 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
             "        'region_code': '131004',\n"
             "        'parent_region_code': '131000',\n"
             "        'admin_level': 'district',\n"
-            "        'name': '新宿区',\n"
-            "        'full_name': '东京都 / 东京都区部 / 新宿区',\n"
+            "        'name': '鏂板鍖?,\n"
+            "        'full_name': '涓滀含閮?/ 涓滀含閮藉尯閮?/ 鏂板鍖?,\n"
             "        'path_codes': ['130000', '131000', '131004'],\n"
-            "        'path_names': ['东京都', '东京都区部', '新宿区'],\n"
+            "        'path_names': ['涓滀含閮?, '涓滀含閮藉尯閮?, '鏂板鍖?],\n"
             "        'timezone': 'Asia/Tokyo',\n"
             "        'source_version': 'jp-v1'\n"
             "    },\n"
@@ -328,10 +324,10 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
             "        'region_code': '131005',\n"
             "        'parent_region_code': '131000',\n"
             "        'admin_level': 'district',\n"
-            "        'name': '文京区',\n"
-            "        'full_name': '东京都 / 东京都区部 / 文京区',\n"
+            "        'name': '鏂囦含鍖?,\n"
+            "        'full_name': '涓滀含閮?/ 涓滀含閮藉尯閮?/ 鏂囦含鍖?,\n"
             "        'path_codes': ['130000', '131000', '131005'],\n"
-            "        'path_names': ['东京都', '东京都区部', '文京区'],\n"
+            "        'path_names': ['涓滀含閮?, '涓滀含閮藉尯閮?, '鏂囦含鍖?],\n"
             "        'timezone': 'Asia/Tokyo',\n"
             "        'source_version': 'jp-v1'\n"
             "    }\n"
@@ -378,3 +374,4 @@ class PluginRegionProviderRuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -4,9 +4,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 import app.db.models  # noqa: F401
@@ -19,22 +16,16 @@ from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.plugin.schemas import PluginMountCreate
 from app.modules.plugin.service import register_plugin_mount
+from tests.test_db_support import PostgresTestDatabase
 
 
 class ChannelDeliveryServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
-        self._previous_database_url = settings.database_url
-
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         self.household = create_household(
@@ -69,8 +60,7 @@ class ChannelDeliveryServiceTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_send_reply_records_sent_delivery(self) -> None:

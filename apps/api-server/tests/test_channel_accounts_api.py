@@ -1,4 +1,4 @@
-import json
+﻿import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,15 +40,12 @@ class ChannelAccountsApiTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         app = FastAPI()
         app.include_router(channel_accounts_router, prefix=settings.api_v1_prefix)
@@ -85,8 +82,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     @patch("app.plugins.builtin.channel_telegram.channel.httpx.get")
@@ -100,7 +96,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
             json={
                 "plugin_id": "channel-telegram",
                 "account_code": "telegram-main",
-                "display_name": "Telegram 主账号",
+                "display_name": "Telegram 涓昏处鍙?,
                 "connection_mode": "polling",
                 "config": {
                     "bot_token": "telegram-token-001",
@@ -122,12 +118,12 @@ class ChannelAccountsApiTests(unittest.TestCase):
         update_response = self.client.put(
             f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts/{account_id}",
             json={
-                "display_name": "Telegram 正式账号",
+                "display_name": "Telegram 姝ｅ紡璐﹀彿",
                 "status": "active",
             },
         )
         self.assertEqual(200, update_response.status_code)
-        self.assertEqual("Telegram 正式账号", update_response.json()["display_name"])
+        self.assertEqual("Telegram 姝ｅ紡璐﹀彿", update_response.json()["display_name"])
 
         with self.SessionLocal() as db:
             record_channel_inbound_event(
@@ -238,7 +234,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
             json={
                 "plugin_id": "channel-dingtalk",
                 "account_code": "dingtalk-main",
-                "display_name": "钉钉主账号",
+                "display_name": "閽夐拤涓昏处鍙?,
                 "connection_mode": "polling",
                 "config": {
                     "app_key": "ding-app-key",
@@ -256,7 +252,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
             json={
                 "plugin_id": "channel-telegram",
                 "account_code": "telegram-main",
-                "display_name": "Telegram 主账号",
+                "display_name": "Telegram 涓昏处鍙?,
                 "connection_mode": "polling",
                 "config": {
                     "bot_token": "telegram-token-001",
@@ -288,7 +284,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
             json={
                 "plugin_id": "channel-telegram",
                 "account_code": "telegram-main",
-                "display_name": "Telegram 主账号",
+                "display_name": "Telegram 涓昏处鍙?,
                 "connection_mode": "polling",
                 "config": {
                     "bot_token": "telegram-token-001",
@@ -318,3 +314,4 @@ class ChannelAccountsApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

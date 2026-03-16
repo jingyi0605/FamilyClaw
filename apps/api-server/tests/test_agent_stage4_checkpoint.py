@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
@@ -23,15 +23,12 @@ class AgentStage4CheckpointTests(unittest.TestCase):
         self._previous_database_url = settings.database_url
         self.builtin_root = Path(__file__).resolve().parents[1] / "app" / "plugins" / "builtin"
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         from app.modules.plugin import service as plugin_service_module
@@ -44,8 +41,7 @@ class AgentStage4CheckpointTests(unittest.TestCase):
 
         plugin_service_module.BUILTIN_PLUGIN_ROOT = self._original_builtin_root
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_stage4_checkpoint_runs_plugin_pipeline_and_reads_memory(self) -> None:
@@ -55,16 +51,16 @@ class AgentStage4CheckpointTests(unittest.TestCase):
         )
         member = create_member(
             self.db,
-            MemberCreate(household_id=household.id, name="妈妈", role="adult"),
+            MemberCreate(household_id=household.id, name="濡堝", role="adult"),
         )
         agent = create_agent(
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="笨笨",
+                display_name="绗ㄧ",
                 agent_type="butler",
-                self_identity="我是笨笨",
-                role_summary="家庭 AI 管家",
+                self_identity="鎴戞槸绗ㄧ",
+                role_summary="瀹跺涵 AI 绠″",
                 created_by="test",
             ),
         )
@@ -88,8 +84,9 @@ class AgentStage4CheckpointTests(unittest.TestCase):
         self.assertGreater(result.memory_card_count, 0)
         self.assertIn("health-basic-reader", result.insight.used_plugins)
         self.assertTrue(any(fact.category == "daily_steps" for fact in result.insight.facts))
-        self.assertIn("插件写入的家庭记忆", result.insight.summary)
+        self.assertIn("鎻掍欢鍐欏叆鐨勫搴蹇?, result.insight.summary)
 
 
 if __name__ == "__main__":
     unittest.main()
+

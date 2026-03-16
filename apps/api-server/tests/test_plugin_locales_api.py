@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import sys
 import tempfile
@@ -30,15 +30,12 @@ class PluginLocalesApiTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self._previous_session_local = db_session_module.SessionLocal
         db_session_module.SessionLocal = self.SessionLocal
         self.db: Session = self.SessionLocal()
@@ -50,7 +47,7 @@ class PluginLocalesApiTests(unittest.TestCase):
         )
         self.member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="管理员", role="admin"),
+            MemberCreate(household_id=self.household.id, name="绠＄悊鍛?, role="admin"),
         )
         self.db.commit()
 
@@ -109,8 +106,8 @@ class PluginLocalesApiTests(unittest.TestCase):
                     self.assertIn("zh-HK", by_locale)
                     self.assertEqual("locale-zh-tw", by_locale["zh-TW"]["plugin_id"])
                     self.assertEqual("third_party", by_locale["zh-HK"]["source_type"])
-                    self.assertEqual("中文（香港）", by_locale["zh-HK"]["native_label"])
-                    self.assertEqual("儲存", by_locale["zh-HK"]["messages"]["common.save"])
+                    self.assertEqual("涓枃锛堥娓級", by_locale["zh-HK"]["native_label"])
+                    self.assertEqual("鍎插瓨", by_locale["zh-HK"]["messages"]["common.save"])
 
             asyncio.run(run_case())
 
@@ -120,8 +117,8 @@ class PluginLocalesApiTests(unittest.TestCase):
                 Path(plugin_tempdir),
                 plugin_id="third-party-zh-tw-pack",
                 locale_id="zh-TW",
-                native_label="第三方繁體中文",
-                messages={"common.save": "第三方儲存"},
+                native_label="绗笁鏂圭箒楂斾腑鏂?,
+                messages={"common.save": "绗笁鏂瑰劜瀛?},
             )
             register_plugin_mount(
                 self.db,
@@ -148,7 +145,7 @@ class PluginLocalesApiTests(unittest.TestCase):
                     zh_tw = by_locale["zh-TW"]
                     self.assertEqual("locale-zh-tw", zh_tw["plugin_id"])
                     self.assertIn("third-party-zh-tw-pack", zh_tw["overridden_plugin_ids"])
-                    self.assertEqual("儲存", zh_tw["messages"]["common.save"])
+                    self.assertEqual("鍎插瓨", zh_tw["messages"]["common.save"])
 
             asyncio.run(run_case())
 
@@ -181,7 +178,7 @@ class PluginLocalesApiTests(unittest.TestCase):
         *,
         plugin_id: str,
         locale_id: str,
-        native_label: str = "中文（香港）",
+        native_label: str = "涓枃锛堥娓級",
         messages: dict[str, str] | None = None,
     ) -> Path:
         plugin_root = root / plugin_id
@@ -191,7 +188,7 @@ class PluginLocalesApiTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "第三方语言包",
+                    "name": "绗笁鏂硅瑷€鍖?,
                     "version": "0.1.0",
                     "types": ["locale-pack"],
                     "permissions": [],
@@ -215,8 +212,8 @@ class PluginLocalesApiTests(unittest.TestCase):
         (locale_dir / f"{locale_id}.json").write_text(
             json.dumps(
                 messages or {
-                    "common.save": "儲存",
-                    "common.cancel": "取消",
+                    "common.save": "鍎插瓨",
+                    "common.cancel": "鍙栨秷",
                 },
                 ensure_ascii=False,
             ),
@@ -227,3 +224,4 @@ class PluginLocalesApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

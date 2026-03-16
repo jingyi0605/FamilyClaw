@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 import tempfile
 import unittest
@@ -30,21 +30,17 @@ class AgentPluginBridgeTests(unittest.TestCase):
         self.builtin_root = Path(__file__).resolve().parents[1] / "app" / "plugins" / "builtin"
         self.state_file = Path(self._tempdir.name) / "plugin_registry_state.json"
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_invoke_agent_plugin_returns_success_and_records_audit(self) -> None:
@@ -54,16 +50,16 @@ class AgentPluginBridgeTests(unittest.TestCase):
         )
         member = create_member(
             self.db,
-            MemberCreate(household_id=household.id, name="妈妈", role="adult"),
+            MemberCreate(household_id=household.id, name="濡堝", role="adult"),
         )
         agent = create_agent(
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="笨笨",
+                display_name="绗ㄧ",
                 agent_type="butler",
-                self_identity="我是笨笨",
-                role_summary="家庭 AI 管家",
+                self_identity="鎴戞槸绗ㄧ",
+                role_summary="瀹跺涵 AI 绠″",
                 created_by="test",
             ),
         )
@@ -98,7 +94,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(agent.id, result.agent_id)
-        self.assertEqual("笨笨", result.agent_name)
+        self.assertEqual("绗ㄧ", result.agent_name)
         self.assertEqual("health-basic-reader", result.plugin_id)
         self.assertEqual("connector", result.plugin_type)
         self.assertTrue(result.queued)
@@ -126,16 +122,16 @@ class AgentPluginBridgeTests(unittest.TestCase):
         )
         member = create_member(
             self.db,
-            MemberCreate(household_id=household.id, name="爸爸", role="adult"),
+            MemberCreate(household_id=household.id, name="鐖哥埜", role="adult"),
         )
         agent = create_agent(
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="阿福",
+                display_name="闃跨",
                 agent_type="butler",
-                self_identity="我是阿福",
-                role_summary="家庭 AI 管家",
+                self_identity="鎴戞槸闃跨",
+                role_summary="瀹跺涵 AI 绠″",
                 created_by="test",
             ),
         )
@@ -171,7 +167,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual("agent_plugin_invoke_failed", result.error_code)
-        self.assertIn("当前家庭停用", result.error_message or "")
+        self.assertIn("褰撳墠瀹跺涵鍋滅敤", result.error_message or "")
 
         audit_stmt = select(AuditLog).where(
             AuditLog.action == "agent.plugin.invoke",
@@ -189,16 +185,16 @@ class AgentPluginBridgeTests(unittest.TestCase):
         )
         member = create_member(
             self.db,
-            MemberCreate(household_id=household.id, name="妈妈", role="adult"),
+            MemberCreate(household_id=household.id, name="濡堝", role="adult"),
         )
         agent = create_agent(
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="外部助手",
+                display_name="澶栭儴鍔╂墜",
                 agent_type="butler",
-                self_identity="我是外部助手",
-                role_summary="第三方插件测试 Agent",
+                self_identity="鎴戞槸澶栭儴鍔╂墜",
+                role_summary="绗笁鏂规彃浠舵祴璇?Agent",
                 created_by="test",
             ),
         )
@@ -255,16 +251,16 @@ class AgentPluginBridgeTests(unittest.TestCase):
         )
         member = create_member(
             self.db,
-            MemberCreate(household_id=household.id, name="妈妈", role="adult"),
+            MemberCreate(household_id=household.id, name="濡堝", role="adult"),
         )
         agent = create_agent(
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="外部助手",
+                display_name="澶栭儴鍔╂墜",
                 agent_type="butler",
-                self_identity="我是外部助手",
-                role_summary="第三方插件测试 Agent",
+                self_identity="鎴戞槸澶栭儴鍔╂墜",
+                role_summary="绗笁鏂规彃浠舵祴璇?Agent",
                 created_by="test",
             ),
         )
@@ -318,7 +314,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual("agent_plugin_invoke_failed", result.error_code)
-        self.assertIn("当前家庭停用", result.error_message or "")
+        self.assertIn("褰撳墠瀹跺涵鍋滅敤", result.error_message or "")
 
     def _create_third_party_connector_plugin(self, root: Path, *, plugin_id: str) -> Path:
         plugin_root = root / plugin_id
@@ -329,7 +325,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "第三方 Agent 插件",
+                    "name": "绗笁鏂?Agent 鎻掍欢",
                     "version": "0.1.0",
                     "types": ["connector"],
                     "permissions": ["health.read"],
@@ -352,3 +348,4 @@ class AgentPluginBridgeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

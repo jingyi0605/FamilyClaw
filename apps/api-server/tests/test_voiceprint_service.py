@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
@@ -54,16 +54,12 @@ class VoiceprintServiceTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        alembic_config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "migrations"))
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         with self.SessionLocal() as db:
             household = create_household(
@@ -73,7 +69,7 @@ class VoiceprintServiceTests(unittest.TestCase):
             room = create_room(
                 db,
                 household_id=household.id,
-                name="客厅",
+                name="瀹㈠巺",
                 room_type="living_room",
                 privacy_level="public",
             )
@@ -81,7 +77,7 @@ class VoiceprintServiceTests(unittest.TestCase):
                 db,
                 MemberCreate(
                     household_id=household.id,
-                    name="妈妈",
+                    name="濡堝",
                     role="adult",
                 ),
             )
@@ -89,7 +85,7 @@ class VoiceprintServiceTests(unittest.TestCase):
                 id=new_uuid(),
                 household_id=household.id,
                 room_id=room.id,
-                name="客厅小爱",
+                name="瀹㈠巺灏忕埍",
                 device_type="speaker",
                 vendor="xiaomi",
                 status="active",
@@ -103,7 +99,7 @@ class VoiceprintServiceTests(unittest.TestCase):
                 member_id=member.id,
                 terminal_id=device.id,
                 status="pending",
-                expected_phrase="我是妈妈",
+                expected_phrase="鎴戞槸濡堝",
                 sample_goal=3,
                 sample_count=0,
             )
@@ -116,8 +112,7 @@ class VoiceprintServiceTests(unittest.TestCase):
             self.enrollment_id = enrollment.id
 
     def tearDown(self) -> None:
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_process_samples_builds_profile_and_supports_household_search_verify(self) -> None:
@@ -137,7 +132,7 @@ class VoiceprintServiceTests(unittest.TestCase):
                 result = process_voiceprint_enrollment_sample(
                     db,
                     enrollment_id=self.enrollment_id,
-                    transcript_text="我是妈妈",
+                    transcript_text="鎴戞槸濡堝",
                     artifact_id=f"artifact-{index}",
                     artifact_path=sample_path,
                     artifact_sha256=f"sha-{index}",
@@ -206,7 +201,7 @@ class VoiceprintServiceTests(unittest.TestCase):
             result = process_voiceprint_enrollment_sample(
                 db,
                 enrollment_id=self.enrollment_id,
-                transcript_text="我是妈妈",
+                transcript_text="鎴戞槸濡堝",
                 artifact_id="artifact-failed",
                 artifact_path=sample_path,
                 artifact_sha256="sha-failed",
@@ -256,7 +251,7 @@ class VoiceprintServiceTests(unittest.TestCase):
                 process_voiceprint_enrollment_sample(
                     db,
                     enrollment_id=self.enrollment_id,
-                    transcript_text="我是妈妈",
+                    transcript_text="鎴戞槸濡堝",
                     artifact_id=f"artifact-primary-{index}",
                     artifact_path=sample_path,
                     artifact_sha256=f"sha-primary-{index}",
@@ -302,7 +297,7 @@ class VoiceprintServiceTests(unittest.TestCase):
                 process_voiceprint_enrollment_sample(
                     db,
                     enrollment_id=self.enrollment_id,
-                    transcript_text="我是妈妈",
+                    transcript_text="鎴戞槸濡堝",
                     artifact_id=f"artifact-ok-{index}",
                     artifact_path=sample_path,
                     artifact_sha256=f"sha-ok-{index}",
@@ -332,7 +327,7 @@ class VoiceprintServiceTests(unittest.TestCase):
             result = process_voiceprint_enrollment_sample(
                 db,
                 enrollment_id=self.enrollment_id,
-                transcript_text="我不是妈妈",
+                transcript_text="鎴戜笉鏄濡?,
                 artifact_id="artifact-mismatch",
                 artifact_path=sample_path,
                 artifact_sha256="sha-mismatch",
@@ -377,7 +372,7 @@ class VoiceprintServiceTests(unittest.TestCase):
             db,
             MemberCreate(
                 household_id=self.household_id,
-                name="爸爸",
+                name="鐖哥埜",
                 role="adult",
             ),
         )
@@ -387,7 +382,7 @@ class VoiceprintServiceTests(unittest.TestCase):
             member_id=other_member.id,
             terminal_id=self.terminal_id,
             status="pending",
-            expected_phrase="我是爸爸",
+            expected_phrase="鎴戞槸鐖哥埜",
             sample_goal=3,
             sample_count=0,
         )
@@ -398,7 +393,7 @@ class VoiceprintServiceTests(unittest.TestCase):
             process_voiceprint_enrollment_sample(
                 db,
                 enrollment_id=other_enrollment.id,
-                transcript_text="我是爸爸",
+                transcript_text="鎴戞槸鐖哥埜",
                 artifact_id=f"artifact-other-{index}",
                 artifact_path=artifact_path,
                 artifact_sha256=f"sha-other-{index}",
@@ -413,3 +408,4 @@ class VoiceprintServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

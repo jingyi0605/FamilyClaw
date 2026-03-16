@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import hashlib
 import tempfile
 import unittest
@@ -28,15 +28,12 @@ class ChannelGatewayWecomHandshakeTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         app = FastAPI()
         app.include_router(channel_gateways_router, prefix=settings.api_v1_prefix)
@@ -53,8 +50,7 @@ class ChannelGatewayWecomHandshakeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_wecom_app_builtin_get_handshake_returns_plaintext(self) -> None:
@@ -75,7 +71,7 @@ class ChannelGatewayWecomHandshakeTests(unittest.TestCase):
                 payload=ChannelAccountCreate(
                     plugin_id="channel-wecom-app",
                     account_code="wecom-main",
-                    display_name="企微主账号",
+                    display_name="浼佸井涓昏处鍙?,
                     connection_mode="webhook",
                     config={
                         "callback_token": token,
@@ -121,3 +117,4 @@ class ChannelGatewayWecomHandshakeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

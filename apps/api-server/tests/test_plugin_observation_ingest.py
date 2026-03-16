@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -31,21 +31,17 @@ class PluginObservationIngestTests(unittest.TestCase):
         self._previous_database_url = settings.database_url
         self.builtin_root = Path(__file__).resolve().parents[1] / "app" / "plugins" / "builtin"
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_ingest_health_raw_records_to_observation_memory_cards(self) -> None:
@@ -55,7 +51,7 @@ class PluginObservationIngestTests(unittest.TestCase):
         )
         member = create_member(
             self.db,
-            MemberCreate(household_id=household.id, name="妈妈", role="adult"),
+            MemberCreate(household_id=household.id, name="濡堝", role="adult"),
         )
         self.db.flush()
 
@@ -115,12 +111,12 @@ class PluginObservationIngestTests(unittest.TestCase):
 
         with patch.multiple(
             "app.modules.ha_integration.client.HomeAssistantClient",
-            get_device_registry=lambda self: [{"id": "ha-device-light-1", "name": "客厅主灯", "area_id": "area-living-room"}],
-            get_entity_registry=lambda self: [{"entity_id": "light.living_room_main", "device_id": "ha-device-light-1", "area_id": "area-living-room", "name": "客厅主灯", "disabled_by": None}],
-            get_area_registry=lambda self: [{"area_id": "area-living-room", "name": "客厅"}],
+            get_device_registry=lambda self: [{"id": "ha-device-light-1", "name": "瀹㈠巺涓荤伅", "area_id": "area-living-room"}],
+            get_entity_registry=lambda self: [{"entity_id": "light.living_room_main", "device_id": "ha-device-light-1", "area_id": "area-living-room", "name": "瀹㈠巺涓荤伅", "disabled_by": None}],
+            get_area_registry=lambda self: [{"area_id": "area-living-room", "name": "瀹㈠巺"}],
             get_states=lambda self: [
-                {"entity_id": "light.living_room_main", "state": "on", "attributes": {"friendly_name": "客厅主灯", "area_name": "客厅"}, "last_updated": "2026-03-15T12:00:00Z"},
-                {"entity_id": "sensor.living_room_temperature", "state": "23.5", "attributes": {"unit_of_measurement": "°C"}, "last_updated": "2026-03-15T12:00:00Z"},
+                {"entity_id": "light.living_room_main", "state": "on", "attributes": {"friendly_name": "瀹㈠巺涓荤伅", "area_name": "瀹㈠巺"}, "last_updated": "2026-03-15T12:00:00Z"},
+                {"entity_id": "sensor.living_room_temperature", "state": "23.5", "attributes": {"unit_of_measurement": "掳C"}, "last_updated": "2026-03-15T12:00:00Z"},
                 {"entity_id": "sensor.living_room_humidity", "state": "48", "attributes": {"unit_of_measurement": "%", "device_class": "humidity"}, "last_updated": "2026-03-15T12:00:00Z"},
             ],
         ):
@@ -172,3 +168,4 @@ class PluginObservationIngestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

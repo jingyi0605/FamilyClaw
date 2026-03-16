@@ -5,9 +5,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import HTTPException
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -30,6 +27,7 @@ from app.modules.member.service import create_member
 from app.modules.region.schemas import RegionCatalogImportItem, RegionSelection
 from app.modules.region.service import import_region_catalog
 from app.modules.room.service import create_room
+from tests.test_db_support import PostgresTestDatabase
 
 
 class AuthBootstrapFlowTests(unittest.TestCase):
@@ -37,21 +35,14 @@ class AuthBootstrapFlowTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_bootstrap_username = os.environ.get("FAMILYCLAW_BOOTSTRAP_HOUSEHOLD_USERNAME")
         self._previous_bootstrap_password = os.environ.get("FAMILYCLAW_BOOTSTRAP_HOUSEHOLD_PASSWORD")
-        self._previous_database_url = settings.database_url
         self._previous_auth_session_touch_interval_seconds = settings.auth_session_touch_interval_seconds
         os.environ["FAMILYCLAW_BOOTSTRAP_HOUSEHOLD_USERNAME"] = "user"
         os.environ["FAMILYCLAW_BOOTSTRAP_HOUSEHOLD_PASSWORD"] = "user"
 
-        db_path = os.path.join(self._tempdir.name, "test.db")
-        settings.database_url = f"sqlite:///{db_path}"
-        project_root = Path(__file__).resolve().parents[1]
-        alembic_config = Config(str(project_root / "alembic.ini"))
-        alembic_config.set_main_option("script_location", str(project_root / "migrations"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(f"sqlite:///{db_path}", future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
         import_region_catalog(
             self.db,
@@ -90,8 +81,7 @@ class AuthBootstrapFlowTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         settings.auth_session_touch_interval_seconds = self._previous_auth_session_touch_interval_seconds
         self._tempdir.cleanup()
 

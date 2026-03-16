@@ -1,14 +1,9 @@
 import tempfile
 import unittest
-from pathlib import Path
 
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
-from app.core.config import settings
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.conversation import repository as conversation_repository
 from app.modules.conversation.models import ConversationMessage, ConversationProposalBatch, ConversationProposalItem, ConversationSession
@@ -16,23 +11,17 @@ from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
+from tests.test_db_support import PostgresTestDatabase
 
 
 class ConversationProposalRepositoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
-        self._previous_database_url = settings.database_url
-        self.db_path = Path(self._tempdir.name) / "test.db"
-        self.database_url = f"sqlite:///{self.db_path}"
-        settings.database_url = self.database_url
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "migrations"))
-        alembic_config.set_main_option("sqlalchemy.url", self.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(self.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         self.household = create_household(
@@ -43,6 +32,7 @@ class ConversationProposalRepositoryTests(unittest.TestCase):
             self.db,
             MemberCreate(household_id=self.household.id, name="Owner", role="admin"),
         )
+        self.db.flush()
         now = utc_now_iso()
         self.session = ConversationSession(
             id=new_uuid(),
@@ -59,6 +49,8 @@ class ConversationProposalRepositoryTests(unittest.TestCase):
             updated_at=now,
         )
         conversation_repository.add_session(self.db, self.session)
+        self.db.flush()
+
         self.user_message = ConversationMessage(
             id=new_uuid(),
             session_id=self.session.id,
@@ -66,7 +58,7 @@ class ConversationProposalRepositoryTests(unittest.TestCase):
             seq=1,
             role="user",
             message_type="text",
-            content="明天早上八点提醒我开会",
+            content="明天早上八点提醒我开会。",
             status="completed",
             effective_agent_id=None,
             ai_provider_code=None,
@@ -83,8 +75,7 @@ class ConversationProposalRepositoryTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_repository_can_create_proposal_batch_and_items(self) -> None:
@@ -107,7 +98,7 @@ class ConversationProposalRepositoryTests(unittest.TestCase):
             proposal_kind="memory_write",
             policy_category="ask",
             status="pending_policy",
-            title="记住用户对会议提醒敏感",
+            title="记住用户有会议安排",
             summary="用户提到明天早上八点要开会。",
             evidence_message_ids_json='["%s"]' % self.user_message.id,
             evidence_roles_json='["user"]',
@@ -123,7 +114,7 @@ class ConversationProposalRepositoryTests(unittest.TestCase):
             proposal_kind="reminder_create",
             policy_category="ask",
             status="pending_policy",
-            title="提醒草稿",
+            title="提醒开会",
             summary="明天早上八点提醒开会。",
             evidence_message_ids_json='["%s"]' % self.user_message.id,
             evidence_roles_json='["user"]',

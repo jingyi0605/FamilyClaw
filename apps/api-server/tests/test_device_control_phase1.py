@@ -65,13 +65,13 @@ class DeviceControlPhase1Tests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
+        from tests.test_db_support import PostgresTestDatabase
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-        command.upgrade(_build_alembic_config(settings.database_url), "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         with self.SessionLocal() as db:
             household = create_household(
@@ -165,8 +165,7 @@ class DeviceControlPhase1Tests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_router_uses_formal_plugin_binding(self) -> None:
@@ -218,18 +217,22 @@ class DeviceControlPhase1Tests(unittest.TestCase):
 class DeviceBindingMigrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
-        self.database_url = f"sqlite:///{Path(self._tempdir.name) / 'migration.db'}"
         self._previous_database_url = settings.database_url
+        from tests.test_db_support import PostgresTestDatabase
+
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup(upgrade_head=False)
+        self.database_url = self._db_helper.database_url
         settings.database_url = self.database_url
         self.alembic_config = _build_alembic_config(self.database_url)
 
     def tearDown(self) -> None:
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_upgrade_backfills_home_assistant_plugin_id_for_existing_bindings(self) -> None:
         command.upgrade(self.alembic_config, "20260315_0033")
-        engine = create_engine(self.database_url, future=True, connect_args={"check_same_thread": False})
+        engine = create_engine(self.database_url, future=True)
         try:
             with engine.begin() as conn:
                 household_id = new_uuid()

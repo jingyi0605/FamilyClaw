@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -49,20 +49,12 @@ class ConversationShadowModeTests(unittest.TestCase):
         self._previous_proposal_shadow = settings.conversation_proposal_shadow_enabled
         self._previous_proposal_write = settings.conversation_proposal_write_enabled
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-        settings.conversation_lane_shadow_enabled = False
-        settings.conversation_lane_takeover_enabled = True
-        settings.conversation_proposal_shadow_enabled = False
-        settings.conversation_proposal_write_enabled = True
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "migrations"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         self.household = create_household(
@@ -77,12 +69,12 @@ class ConversationShadowModeTests(unittest.TestCase):
             self.db,
             household_id=self.household.id,
             payload=AgentCreate(
-                display_name="笨笨",
+                display_name="绗ㄧ",
                 agent_type="butler",
-                self_identity="我是家庭管家",
-                role_summary="负责家庭问答",
-                personality_traits=["细心"],
-                service_focus=["聊天"],
+                self_identity="鎴戞槸瀹跺涵绠″",
+                role_summary="璐熻矗瀹跺涵闂瓟",
+                personality_traits=["缁嗗績"],
+                service_focus=["鑱婂ぉ"],
                 default_entry=True,
             ),
         )
@@ -104,8 +96,7 @@ class ConversationShadowModeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         settings.conversation_lane_shadow_enabled = self._previous_lane_shadow
         settings.conversation_lane_takeover_enabled = self._previous_takeover
         settings.conversation_proposal_shadow_enabled = self._previous_proposal_shadow
@@ -134,18 +125,18 @@ class ConversationShadowModeTests(unittest.TestCase):
                     primary_intent="config_change",
                     secondary_intents=[],
                     confidence=0.95,
-                    reason="用户明确想给助手改名。",
+                    reason="鐢ㄦ埛鏄庣‘鎯崇粰鍔╂墜鏀瑰悕銆?,
                     candidate_actions=[],
                 )
             ),
             _FakeLlmResult(
-                data=type("_ConfigDraft", (), {"display_name": "阿福", "speaking_style": None, "personality_traits": []})()
+                data=type("_ConfigDraft", (), {"display_name": "闃跨", "speaking_style": None, "personality_traits": []})()
             ),
         ]
         select_lane_mock.return_value = ConversationLaneSelection(
             lane=ConversationLane.REALTIME_QUERY,
             confidence=0.82,
-            reason="影子模式下语义路由认为更像实时查询。",
+            reason="褰卞瓙妯″紡涓嬭涔夎矾鐢辫涓烘洿鍍忓疄鏃舵煡璇€?,
             target_kind="state_query",
             requires_clarification=False,
             source="intent_mapping",
@@ -154,13 +145,13 @@ class ConversationShadowModeTests(unittest.TestCase):
         result = run_orchestrated_turn(
             self.db,
             session=session,
-            message="以后你就叫阿福",
+            message="浠ュ悗浣犲氨鍙樋绂?,
             actor=self.actor,
             conversation_history=[],
         )
 
         self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
-        self.assertEqual("阿福", result.config_suggestion["display_name"])
+        self.assertEqual("闃跨", result.config_suggestion["display_name"])
         logged_payloads = "".join(str(call.args[0]) for call in debug_logger_mock.return_value.info.call_args_list)
         self.assertIn("lane.shadow.evaluated", logged_payloads)
 
@@ -174,12 +165,12 @@ class ConversationShadowModeTests(unittest.TestCase):
         settings.conversation_proposal_shadow_enabled = True
         settings.conversation_proposal_write_enabled = False
         run_orchestrated_turn_mock.return_value = _FakeLlmResult(
-            text="好的，我记住了。",
+            text="濂界殑锛屾垜璁颁綇浜嗐€?,
             data=None,
         )
         run_orchestrated_turn_mock.return_value = __import__("types").SimpleNamespace(
             intent=ConversationIntent.FREE_CHAT,
-            text="好的，我记住了。",
+            text="濂界殑锛屾垜璁颁綇浜嗐€?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -193,7 +184,7 @@ class ConversationShadowModeTests(unittest.TestCase):
             lane_selection=ConversationLaneSelection(
                 lane=ConversationLane.FREE_CHAT,
                 confidence=0.8,
-                reason="普通聊天",
+                reason="鏅€氳亰澶?,
                 target_kind="none",
                 requires_clarification=False,
                 source="intent_mapping",
@@ -202,7 +193,7 @@ class ConversationShadowModeTests(unittest.TestCase):
                 primary_intent=ConversationIntentLabel.FREE_CHAT,
                 route_intent=ConversationIntent.FREE_CHAT,
                 confidence=0.8,
-                reason="普通聊天",
+                reason="鏅€氳亰澶?,
             ),
         )
         proposal_pipeline_mock.return_value = ProposalPipelineResult(
@@ -212,13 +203,13 @@ class ConversationShadowModeTests(unittest.TestCase):
                 ProposalDraft(
                     proposal_kind="memory_write",
                     policy_category="ask",
-                    title="不吃香菜",
-                    summary="用户明确表示自己不吃香菜。",
+                    title="涓嶅悆棣欒彍",
+                    summary="鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?,
                     evidence_message_ids=["u1"],
                     evidence_roles=["user"],
                     dedupe_key="memory:shadow:diet",
                     confidence=0.9,
-                    payload={"memory_type": "preference", "summary": "用户明确表示自己不吃香菜。"},
+                    payload={"memory_type": "preference", "summary": "鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?},
                 )
             ],
             failures=[],
@@ -233,7 +224,7 @@ class ConversationShadowModeTests(unittest.TestCase):
         turn = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="记住，我不吃香菜"),
+            payload=ConversationTurnCreate(message="璁颁綇锛屾垜涓嶅悆棣欒彍"),
             actor=self.actor,
         )
 
@@ -243,3 +234,4 @@ class ConversationShadowModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

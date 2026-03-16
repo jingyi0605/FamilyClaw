@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
@@ -29,15 +29,12 @@ class VoiceprintsApiTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         with self.SessionLocal() as db:
             household = create_household(
@@ -47,7 +44,7 @@ class VoiceprintsApiTests(unittest.TestCase):
             room = create_room(
                 db,
                 household_id=household.id,
-                name="客厅",
+                name="瀹㈠巺",
                 room_type="living_room",
                 privacy_level="public",
             )
@@ -55,7 +52,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                 db,
                 MemberCreate(
                     household_id=household.id,
-                    name="妈妈",
+                    name="濡堝",
                     role="adult",
                 ),
             )
@@ -63,7 +60,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                 id=new_uuid(),
                 household_id=household.id,
                 room_id=room.id,
-                name="客厅小爱",
+                name="瀹㈠巺灏忕埍",
                 device_type="speaker",
                 vendor="xiaomi",
                 status="active",
@@ -107,8 +104,7 @@ class VoiceprintsApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_create_enrollment_uses_default_three_samples(self) -> None:
@@ -118,7 +114,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                 "household_id": self.household_id,
                 "member_id": self.member_id,
                 "terminal_id": self.terminal_id,
-                "expected_phrase": "我是妈妈",
+                "expected_phrase": "鎴戞槸濡堝",
             },
         )
 
@@ -127,7 +123,7 @@ class VoiceprintsApiTests(unittest.TestCase):
         self.assertEqual("pending", payload["status"])
         self.assertEqual(3, payload["sample_goal"])
         self.assertEqual(0, payload["sample_count"])
-        self.assertEqual("我是妈妈", payload["expected_phrase"])
+        self.assertEqual("鎴戞槸濡堝", payload["expected_phrase"])
         self.assertIsNotNone(payload["expires_at"])
 
     def test_create_enrollment_rejects_terminal_conflict(self) -> None:
@@ -151,7 +147,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                 "household_id": self.household_id,
                 "member_id": self.member_id,
                 "terminal_id": self.terminal_id,
-                "expected_phrase": "我是妈妈",
+                "expected_phrase": "鎴戞槸濡堝",
             },
         )
 
@@ -165,7 +161,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                 "household_id": self.household_id,
                 "member_id": self.member_id,
                 "terminal_id": self.terminal_id,
-                "expected_phrase": "我是妈妈",
+                "expected_phrase": "鎴戞槸濡堝",
                 "sample_goal": 3,
             },
         )
@@ -196,7 +192,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                     member_id=self.member_id,
                     terminal_id=self.terminal_id,
                     status="pending",
-                    expected_phrase="我是妈妈",
+                    expected_phrase="鎴戞槸濡堝",
                     sample_goal=3,
                     sample_count=1,
                 )
@@ -227,7 +223,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                     channels=1,
                     sample_width=2,
                     duration_ms=1200,
-                    transcript_text="我是妈妈",
+                    transcript_text="鎴戞槸濡堝",
                     status="accepted",
                 )
             )
@@ -263,7 +259,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                 db,
                 MemberCreate(
                     household_id=self.household_id,
-                    name="爸爸",
+                    name="鐖哥埜",
                     role="adult",
                 ),
             )
@@ -271,7 +267,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                 db,
                 MemberCreate(
                     household_id=self.household_id,
-                    name="奶奶",
+                    name="濂跺ザ",
                     role="elder",
                 ),
             )
@@ -289,7 +285,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                     member_id=self.member_id,
                     terminal_id=self.terminal_id,
                     status="pending",
-                    expected_phrase="我是妈妈",
+                    expected_phrase="鎴戞槸濡堝",
                     sample_goal=3,
                     sample_count=2,
                     expires_at="2026-03-16T12:00:00+08:00",
@@ -313,7 +309,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                     member_id=failed_member_id,
                     terminal_id=self.terminal_id,
                     status="failed",
-                    expected_phrase="我是爸爸",
+                    expected_phrase="鎴戞槸鐖哥埜",
                     sample_goal=3,
                     sample_count=1,
                     error_code="voiceprint_provider_unavailable",
@@ -341,3 +337,4 @@ class VoiceprintsApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -45,15 +45,12 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         app = FastAPI()
         app.include_router(channel_accounts_router, prefix=settings.api_v1_prefix)
@@ -83,8 +80,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def _poll_account(self, household_id: str, account_id: str) -> None:
@@ -111,7 +107,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                         "update_id": 1001,
                         "message": {
                             "message_id": 2001,
-                            "text": "先来打个招呼",
+                            "text": "鍏堟潵鎵撲釜鎷涘懠",
                             "chat": {"id": 3001, "type": "private"},
                             "from": {
                                 "id": 4001,
@@ -124,7 +120,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                         "update_id": 1002,
                         "message": {
                             "message_id": 2002,
-                            "text": "这是更新的一条消息",
+                            "text": "杩欐槸鏇存柊鐨勪竴鏉℃秷鎭?,
                             "chat": {"id": 3001, "type": "private"},
                             "from": {
                                 "id": 4001,
@@ -143,7 +139,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                         "update_id": 1003,
                         "message": {
                             "message_id": 2003,
-                            "text": "另一个 bot 的消息",
+                            "text": "鍙︿竴涓?bot 鐨勬秷鎭?,
                             "chat": {"id": 3002, "type": "private"},
                             "from": {
                                 "id": 4001,
@@ -161,7 +157,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                         "update_id": 1004,
                         "message": {
                             "message_id": 2004,
-                            "text": "绑定后再发一条",
+                            "text": "缁戝畾鍚庡啀鍙戜竴鏉?,
                             "chat": {"id": 3001, "type": "private"},
                             "from": {
                                 "id": 4001,
@@ -191,32 +187,32 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
         with self.SessionLocal() as db:
             household = create_household(
                 db,
-                HouseholdCreate(name="候选绑定家庭", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
+                HouseholdCreate(name="鍊欓€夌粦瀹氬搴?, city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
             )
             member_x = create_member(
                 db,
-                MemberCreate(household_id=household.id, name="成员 X", role="adult"),
+                MemberCreate(household_id=household.id, name="鎴愬憳 X", role="adult"),
             )
             create_member(
                 db,
-                MemberCreate(household_id=household.id, name="成员 Y", role="adult"),
+                MemberCreate(household_id=household.id, name="鎴愬憳 Y", role="adult"),
             )
             agent = create_agent(
                 db,
                 household_id=household.id,
                 payload=AgentCreate(
-                    display_name="阿福",
+                    display_name="闃跨",
                     agent_type="butler",
-                    self_identity="我是家庭管家",
-                    role_summary="负责家庭问答",
-                    personality_traits=["细心"],
-                    service_focus=["聊天"],
+                    self_identity="鎴戞槸瀹跺涵绠″",
+                    role_summary="璐熻矗瀹跺涵闂瓟",
+                    personality_traits=["缁嗗績"],
+                    service_focus=["鑱婂ぉ"],
                     default_entry=True,
                 ),
             )
             run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
                 intent=ConversationIntent.FREE_CHAT,
-                text="我已经收到并处理了消息。",
+                text="鎴戝凡缁忔敹鍒板苟澶勭悊浜嗘秷鎭€?,
                 degraded=False,
                 facts=[],
                 suggestions=[],
@@ -273,7 +269,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
         self.assertEqual("3001", candidates_a[0]["external_chat_id"])
         self.assertEqual("Alice Wong", candidates_a[0]["sender_display_name"])
         self.assertEqual("candidate_a_latest", candidates_a[0]["username"])
-        self.assertEqual("这是更新的一条消息", candidates_a[0]["last_message_text"])
+        self.assertEqual("杩欐槸鏇存柊鐨勪竴鏉℃秷鎭?, candidates_a[0]["last_message_text"])
         self.assertEqual(account_a_id, candidates_a[0]["channel_account_id"])
         self.assertEqual("telegram", candidates_a[0]["platform_code"])
 
@@ -283,7 +279,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
         self.assertEqual(200, candidates_b_response.status_code)
         candidates_b = candidates_b_response.json()
         self.assertEqual(1, len(candidates_b))
-        self.assertEqual("另一个 bot 的消息", candidates_b[0]["last_message_text"])
+        self.assertEqual("鍙︿竴涓?bot 鐨勬秷鎭?, candidates_b[0]["last_message_text"])
 
         create_binding_response = self.client.post(
             f"{settings.api_v1_prefix}/ai-config/{household_id}/channel-accounts/{account_a_id}/bindings",
@@ -292,7 +288,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                 "member_id": member_x_id,
                 "external_user_id": "4001",
                 "external_chat_id": "3001",
-                "display_hint": "从候选预填",
+                "display_hint": "浠庡€欓€夐濉?,
                 "binding_status": "active",
             },
         )
@@ -338,7 +334,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
             )
             member = create_member(
                 db,
-                MemberCreate(household_id=household.id, name="成员 X", role="adult"),
+                MemberCreate(household_id=household.id, name="鎴愬憳 X", role="adult"),
             )
             account = create_channel_account(
                 db,
@@ -395,32 +391,32 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
         with self.SessionLocal() as db:
             household = create_household(
                 db,
-                HouseholdCreate(name="候选绑定家庭", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
+                HouseholdCreate(name="鍊欓€夌粦瀹氬搴?, city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
             )
             member_x = create_member(
                 db,
-                MemberCreate(household_id=household.id, name="成员 X", role="adult"),
+                MemberCreate(household_id=household.id, name="鎴愬憳 X", role="adult"),
             )
             create_member(
                 db,
-                MemberCreate(household_id=household.id, name="成员 Y", role="adult"),
+                MemberCreate(household_id=household.id, name="鎴愬憳 Y", role="adult"),
             )
             agent = create_agent(
                 db,
                 household_id=household.id,
                 payload=AgentCreate(
-                    display_name="阿福",
+                    display_name="闃跨",
                     agent_type="butler",
-                    self_identity="我是家庭管家",
-                    role_summary="负责家庭问答",
-                    personality_traits=["细心"],
-                    service_focus=["聊天"],
+                    self_identity="鎴戞槸瀹跺涵绠″",
+                    role_summary="璐熻矗瀹跺涵闂瓟",
+                    personality_traits=["缁嗗績"],
+                    service_focus=["鑱婂ぉ"],
                     default_entry=True,
                 ),
             )
             run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
                 intent=ConversationIntent.FREE_CHAT,
-                text="我已经收到并处理了消息。",
+                text="鎴戝凡缁忔敹鍒板苟澶勭悊浜嗘秷鎭€?,
                 degraded=False,
                 facts=[],
                 suggestions=[],
@@ -470,7 +466,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                 "update_id": 1001,
                 "message": {
                     "message_id": 2001,
-                    "text": "先来打个招呼",
+                    "text": "鍏堟潵鎵撲釜鎷涘懠",
                     "chat": {"id": 3001, "type": "private"},
                     "from": {
                         "id": 4001,
@@ -489,7 +485,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                 "update_id": 1002,
                 "message": {
                     "message_id": 2002,
-                    "text": "这是更新的一条消息",
+                    "text": "杩欐槸鏇存柊鐨勪竴鏉℃秷鎭?,
                     "chat": {"id": 3001, "type": "private"},
                     "from": {
                         "id": 4001,
@@ -509,7 +505,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                 "update_id": 1003,
                 "message": {
                     "message_id": 2003,
-                    "text": "另一个 bot 的消息",
+                    "text": "鍙︿竴涓?bot 鐨勬秷鎭?,
                     "chat": {"id": 3002, "type": "private"},
                     "from": {
                         "id": 4001,
@@ -531,7 +527,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
         self.assertEqual("3001", candidates_a[0]["external_chat_id"])
         self.assertEqual("Alice Wong", candidates_a[0]["sender_display_name"])
         self.assertEqual("candidate_a_latest", candidates_a[0]["username"])
-        self.assertEqual("这是更新的一条消息", candidates_a[0]["last_message_text"])
+        self.assertEqual("杩欐槸鏇存柊鐨勪竴鏉℃秷鎭?, candidates_a[0]["last_message_text"])
         self.assertEqual(account_a_id, candidates_a[0]["channel_account_id"])
         self.assertEqual("telegram", candidates_a[0]["platform_code"])
 
@@ -541,7 +537,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
         self.assertEqual(200, candidates_b_response.status_code)
         candidates_b = candidates_b_response.json()
         self.assertEqual(1, len(candidates_b))
-        self.assertEqual("另一个 bot 的消息", candidates_b[0]["last_message_text"])
+        self.assertEqual("鍙︿竴涓?bot 鐨勬秷鎭?, candidates_b[0]["last_message_text"])
 
         create_binding_response = self.client.post(
             f"{settings.api_v1_prefix}/ai-config/{household_id}/channel-accounts/{account_a_id}/bindings",
@@ -550,7 +546,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                 "member_id": member_x_id,
                 "external_user_id": "4001",
                 "external_chat_id": "3001",
-                "display_hint": "从候选预填",
+                "display_hint": "浠庡€欓€夐濉?,
                 "binding_status": "active",
             },
         )
@@ -568,7 +564,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
                 "update_id": 1004,
                 "message": {
                     "message_id": 2004,
-                    "text": "绑定后再发一条",
+                    "text": "缁戝畾鍚庡啀鍙戜竴鏉?,
                     "chat": {"id": 3001, "type": "private"},
                     "from": {
                         "id": 4001,
@@ -616,7 +612,7 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
             )
             member = create_member(
                 db,
-                MemberCreate(household_id=household.id, name="成员 X", role="adult"),
+                MemberCreate(household_id=household.id, name="鎴愬憳 X", role="adult"),
             )
             account = create_channel_account(
                 db,
@@ -664,3 +660,4 @@ class ChannelBindingCandidatesApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

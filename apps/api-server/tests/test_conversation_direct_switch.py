@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -41,18 +41,12 @@ class ConversationDirectSwitchTests(unittest.TestCase):
         self._previous_takeover = settings.conversation_lane_takeover_enabled
         self._previous_write_enabled = settings.conversation_proposal_write_enabled
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-        settings.conversation_lane_takeover_enabled = True
-        settings.conversation_proposal_write_enabled = True
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "migrations"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         self.household = create_household(
@@ -67,12 +61,12 @@ class ConversationDirectSwitchTests(unittest.TestCase):
             self.db,
             household_id=self.household.id,
             payload=AgentCreate(
-                display_name="笨笨",
+                display_name="绗ㄧ",
                 agent_type="butler",
-                self_identity="我是家庭管家",
-                role_summary="负责家庭问答",
-                personality_traits=["细心"],
-                service_focus=["聊天"],
+                self_identity="鎴戞槸瀹跺涵绠″",
+                role_summary="璐熻矗瀹跺涵闂瓟",
+                personality_traits=["缁嗗績"],
+                service_focus=["鑱婂ぉ"],
                 default_entry=True,
             ),
         )
@@ -94,8 +88,7 @@ class ConversationDirectSwitchTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         settings.conversation_lane_takeover_enabled = self._previous_takeover
         settings.conversation_proposal_write_enabled = self._previous_write_enabled
         self._tempdir.cleanup()
@@ -122,7 +115,7 @@ class ConversationDirectSwitchTests(unittest.TestCase):
         session = self._create_session()
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="好的，我先记下这件事。",
+            text="濂界殑锛屾垜鍏堣涓嬭繖浠朵簨銆?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -155,13 +148,13 @@ class ConversationDirectSwitchTests(unittest.TestCase):
                 proposal_kind="memory_write",
                 policy_category="ask",
                 status="pending_confirmation",
-                title="不吃香菜",
-                summary="用户明确表示自己不吃香菜。",
+                title="涓嶅悆棣欒彍",
+                summary="鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?,
                 evidence_message_ids_json=dump_json([user_message.id]) or "[]",
                 evidence_roles_json=dump_json(["user"]) or "[]",
                 dedupe_key="memory:test:diet",
                 confidence=0.93,
-                payload_json=dump_json({"memory_type": "preference", "summary": "用户不吃香菜"}) or "{}",
+                payload_json=dump_json({"memory_type": "preference", "summary": "鐢ㄦ埛涓嶅悆棣欒彍"}) or "{}",
                 created_at=utc_now_iso(),
                 updated_at=utc_now_iso(),
             )
@@ -174,13 +167,13 @@ class ConversationDirectSwitchTests(unittest.TestCase):
                     ProposalDraft(
                         proposal_kind="memory_write",
                         policy_category="ask",
-                        title="不吃香菜",
-                        summary="用户明确表示自己不吃香菜。",
+                        title="涓嶅悆棣欒彍",
+                        summary="鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?,
                         evidence_message_ids=[user_message.id],
                         evidence_roles=["user"],
                         dedupe_key="memory:test:diet",
                         confidence=0.93,
-                        payload={"memory_type": "preference", "summary": "用户不吃香菜"},
+                        payload={"memory_type": "preference", "summary": "鐢ㄦ埛涓嶅悆棣欒彍"},
                     )
                 ],
                 failures=[],
@@ -192,7 +185,7 @@ class ConversationDirectSwitchTests(unittest.TestCase):
         turn = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="记住，我不吃香菜"),
+            payload=ConversationTurnCreate(message="璁颁綇锛屾垜涓嶅悆棣欒彍"),
             actor=self.actor,
         )
 
@@ -212,7 +205,7 @@ class ConversationDirectSwitchTests(unittest.TestCase):
         memory_card = memory_repository.get_memory_card(self.db, result.affected_target_id)
         self.assertIsNotNone(memory_card)
         assert memory_card is not None
-        self.assertEqual("不吃香菜", memory_card.title)
+        self.assertEqual("涓嶅悆棣欒彍", memory_card.title)
         refreshed_batch = conversation_repository.get_proposal_batch(self.db, batch.id)
         self.assertEqual("completed", refreshed_batch.status)
 
@@ -246,7 +239,7 @@ class ConversationDirectSwitchTests(unittest.TestCase):
             seq=1,
             role="user",
             message_type="text",
-            content="记住，我不吃香菜",
+            content="璁颁綇锛屾垜涓嶅悆棣欒彍",
             status="completed",
             effective_agent_id=self.agent.id,
             ai_provider_code=None,
@@ -277,13 +270,13 @@ class ConversationDirectSwitchTests(unittest.TestCase):
             proposal_kind="memory_write",
             policy_category="ask",
             status="pending_confirmation",
-            title="不吃香菜",
-            summary="用户明确表示自己不吃香菜。",
+            title="涓嶅悆棣欒彍",
+            summary="鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?,
             evidence_message_ids_json=dump_json([user_message.id]) or "[]",
             evidence_roles_json=dump_json(["user"]) or "[]",
             dedupe_key="memory:switch:diet",
             confidence=0.95,
-            payload_json=dump_json({"memory_type": "preference", "summary": "用户不吃香菜"}) or "{}",
+            payload_json=dump_json({"memory_type": "preference", "summary": "鐢ㄦ埛涓嶅悆棣欒彍"}) or "{}",
             created_at=now,
             updated_at=now,
         )
@@ -294,3 +287,4 @@ class ConversationDirectSwitchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

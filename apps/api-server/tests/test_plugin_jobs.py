@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 from pathlib import Path
 import tempfile
 import json
@@ -63,16 +63,12 @@ class PluginJobTests(unittest.TestCase):
         self._previous_database_url = settings.database_url
         self._previous_worker_enabled = settings.plugin_job_worker_enabled
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-        settings.plugin_job_worker_enabled = False
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self._previous_session_local = db_session_module.SessionLocal
         db_session_module.SessionLocal = self.SessionLocal
         self.db: Session = self.SessionLocal()
@@ -84,7 +80,7 @@ class PluginJobTests(unittest.TestCase):
         )
         self.member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="妈妈", role="admin"),
+            MemberCreate(household_id=self.household.id, name="濡堝", role="admin"),
         )
         self.db.commit()
         bootstrap = authenticate_account(self.db, "user", "user")
@@ -103,10 +99,10 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             household_id=self.household.id,
             payload=AgentCreate(
-                display_name="笨笨",
+                display_name="绗ㄧ",
                 agent_type="butler",
-                self_identity="我是笨笨",
-                role_summary="家庭助手",
+                self_identity="鎴戞槸绗ㄧ",
+                role_summary="瀹跺涵鍔╂墜",
                 created_by="test",
             ),
         )
@@ -183,7 +179,7 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             attempt_id=first_attempt.id,
             error_code="job_execution_failed",
-            error_message="上游暂时不可用",
+            error_message="涓婃父鏆傛椂涓嶅彲鐢?,
             retryable=True,
         )
         self.assertEqual("retry_waiting", retried.status)
@@ -226,7 +222,7 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             attempt_id=attempt.id,
             error_code="job_response_required",
-            error_message="需要人工确认",
+            error_message="闇€瑕佷汉宸ョ‘璁?,
             response_required=True,
             response_deadline_at="2026-03-15T00:00:00Z",
         )
@@ -384,7 +380,7 @@ class PluginJobTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "慢速同步插件",
+                    "name": "鎱㈤€熷悓姝ユ彃浠?,
                     "version": "0.1.0",
                     "types": ["connector", "memory-ingestor"],
                     "permissions": ["health.read", "memory.write.observation"],
@@ -430,7 +426,7 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             attempt_id=attempt.id,
             error_code="job_response_required",
-            error_message="需要人工确认",
+            error_message="闇€瑕佷汉宸ョ‘璁?,
             response_required=True,
             response_deadline_at="2026-03-16T00:00:00Z",
         )
@@ -450,7 +446,7 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             attempt_id=failed_attempt.id,
             error_code="job_execution_failed",
-            error_message="接口测试失败",
+            error_message="鎺ュ彛娴嬭瘯澶辫触",
         )
         self.db.commit()
 
@@ -652,3 +648,4 @@ class PluginJobTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

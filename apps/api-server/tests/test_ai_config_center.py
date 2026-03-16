@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 import json
@@ -35,15 +35,12 @@ class AiConfigCenterTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
         import_region_catalog(
             self.db,
@@ -52,28 +49,28 @@ class AiConfigCenterTests(unittest.TestCase):
                     region_code="110000",
                     parent_region_code=None,
                     admin_level="province",
-                    name="北京市",
-                    full_name="北京市",
+                    name="鍖椾含甯?,
+                    full_name="鍖椾含甯?,
                     path_codes=["110000"],
-                    path_names=["北京市"],
+                    path_names=["鍖椾含甯?],
                 ),
                 RegionCatalogImportItem(
                     region_code="110100",
                     parent_region_code="110000",
                     admin_level="city",
-                    name="北京市",
-                    full_name="北京市 / 北京市",
+                    name="鍖椾含甯?,
+                    full_name="鍖椾含甯?/ 鍖椾含甯?,
                     path_codes=["110000", "110100"],
-                    path_names=["北京市", "北京市"],
+                    path_names=["鍖椾含甯?, "鍖椾含甯?],
                 ),
                 RegionCatalogImportItem(
                     region_code="110105",
                     parent_region_code="110100",
                     admin_level="district",
-                    name="朝阳区",
-                    full_name="北京市 / 北京市 / 朝阳区",
+                    name="鏈濋槼鍖?,
+                    full_name="鍖椾含甯?/ 鍖椾含甯?/ 鏈濋槼鍖?,
                     path_codes=["110000", "110100", "110105"],
-                    path_names=["北京市", "北京市", "朝阳区"],
+                    path_names=["鍖椾含甯?, "鍖椾含甯?, "鏈濋槼鍖?],
                 ),
             ],
             source_version="test-v1",
@@ -82,8 +79,7 @@ class AiConfigCenterTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_provider_adapter_registry_exposes_core_adapters(self) -> None:
@@ -103,7 +99,7 @@ class AiConfigCenterTests(unittest.TestCase):
             self.db,
             AiProviderProfileCreate(
                 provider_code="family-siliconflow-main",
-                display_name="SiliconFlow 主模型",
+                display_name="SiliconFlow 涓绘ā鍨?,
                 transport_type="openai_compatible",
                 api_family="openai_chat_completions",
                 base_url="https://api.siliconflow.cn/v1",
@@ -140,12 +136,12 @@ class AiConfigCenterTests(unittest.TestCase):
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="主管家一号",
+                display_name="涓荤瀹朵竴鍙?,
                 agent_type="butler",
-                self_identity="我是主管家一号",
-                role_summary="负责家庭事务",
-                personality_traits=["稳"],
-                service_focus=["问答"],
+                self_identity="鎴戞槸涓荤瀹朵竴鍙?,
+                role_summary="璐熻矗瀹跺涵浜嬪姟",
+                personality_traits=["绋?],
+                service_focus=["闂瓟"],
                 default_entry=False,
             ),
         )
@@ -153,12 +149,12 @@ class AiConfigCenterTests(unittest.TestCase):
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="主管家二号",
+                display_name="涓荤瀹朵簩鍙?,
                 agent_type="butler",
-                self_identity="我是主管家二号",
-                role_summary="负责家庭事务",
-                personality_traits=["稳"],
-                service_focus=["提醒"],
+                self_identity="鎴戞槸涓荤瀹朵簩鍙?,
+                role_summary="璐熻矗瀹跺涵浜嬪姟",
+                personality_traits=["绋?],
+                service_focus=["鎻愰啋"],
                 default_entry=False,
             ),
         )
@@ -227,7 +223,7 @@ class AiConfigCenterTests(unittest.TestCase):
             self.db,
             AiProviderProfileCreate(
                 provider_code="family-chatgpt-main",
-                display_name="家庭主模型",
+                display_name="瀹跺涵涓绘ā鍨?,
                 transport_type="openai_compatible",
                 api_family="openai_chat_completions",
                 base_url="https://api.openai.com/v1",
@@ -265,12 +261,12 @@ class AiConfigCenterTests(unittest.TestCase):
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="小爪管家",
+                display_name="灏忕埅绠″",
                 agent_type="butler",
-                self_identity="我是家庭主管家",
-                role_summary="负责家庭问答和提醒",
-                personality_traits=["细心"],
-                service_focus=["家庭问答", "提醒"],
+                self_identity="鎴戞槸瀹跺涵涓荤瀹?,
+                role_summary="璐熻矗瀹跺涵闂瓟鍜屾彁閱?,
+                personality_traits=["缁嗗績"],
+                service_focus=["瀹跺涵闂瓟", "鎻愰啋"],
                 default_entry=True,
             ),
         )
@@ -292,7 +288,7 @@ class AiConfigCenterTests(unittest.TestCase):
             self.db,
             AiProviderProfileCreate(
                 provider_code="bootstrap-chatgpt-main",
-                display_name="Bootstrap 模型",
+                display_name="Bootstrap 妯″瀷",
                 transport_type="openai_compatible",
                 api_family="openai_chat_completions",
                 base_url="https://api.openai.com/v1",
@@ -334,7 +330,7 @@ class AiConfigCenterTests(unittest.TestCase):
             household_id=household.id,
             session_id=session.session_id,
             payload=ButlerBootstrapMessageCreate(
-                message="阿福",
+                message="闃跨",
                 draft=session.draft,
                 pending_field=session.pending_field,
             ),
@@ -344,7 +340,7 @@ class AiConfigCenterTests(unittest.TestCase):
             household_id=household.id,
             session_id=session.session_id,
             payload=ButlerBootstrapMessageCreate(
-                message="负责家庭问答、提醒和成员关怀",
+                message="璐熻矗瀹跺涵闂瓟銆佹彁閱掑拰鎴愬憳鍏虫€€",
                 draft=session.draft,
                 pending_field=session.pending_field,
             ),
@@ -354,7 +350,7 @@ class AiConfigCenterTests(unittest.TestCase):
             household_id=household.id,
             session_id=session.session_id,
             payload=ButlerBootstrapMessageCreate(
-                message="温和直接，少废话",
+                message="娓╁拰鐩存帴锛屽皯搴熻瘽",
                 draft=session.draft,
                 pending_field=session.pending_field,
             ),
@@ -364,7 +360,7 @@ class AiConfigCenterTests(unittest.TestCase):
             household_id=household.id,
             session_id=session.session_id,
             payload=ButlerBootstrapMessageCreate(
-                message="细心，稳重，有边界感",
+                message="缁嗗績锛岀ǔ閲嶏紝鏈夎竟鐣屾劅",
                 draft=session.draft,
                 pending_field=session.pending_field,
             ),
@@ -374,7 +370,7 @@ class AiConfigCenterTests(unittest.TestCase):
             household_id=household.id,
             session_id=session.session_id,
             payload=ButlerBootstrapMessageCreate(
-                message="家庭问答，提醒复盘，成员关怀",
+                message="瀹跺涵闂瓟锛屾彁閱掑鐩橈紝鎴愬憳鍏虫€€",
                 draft=session.draft,
                 pending_field=session.pending_field,
             ),
@@ -382,7 +378,7 @@ class AiConfigCenterTests(unittest.TestCase):
 
         self.assertEqual("reviewing", session.status)
         self.assertTrue(session.can_confirm)
-        self.assertEqual(["细心", "稳重", "有边界感"], session.draft.personality_traits)
+        self.assertEqual(["缁嗗績", "绋抽噸", "鏈夎竟鐣屾劅"], session.draft.personality_traits)
 
         created = confirm_butler_bootstrap_session(
             self.db,
@@ -392,12 +388,12 @@ class AiConfigCenterTests(unittest.TestCase):
         )
         self.db.commit()
 
-        self.assertEqual("阿福", created.display_name)
+        self.assertEqual("闃跨", created.display_name)
         self.assertEqual("butler", created.agent_type)
         self.assertIsNotNone(created.soul)
         assert created.soul is not None
-        self.assertEqual("负责家庭问答、提醒和成员关怀", created.soul.role_summary)
-        self.assertEqual(["家庭问答", "提醒复盘", "成员关怀"], created.soul.service_focus)
+        self.assertEqual("璐熻矗瀹跺涵闂瓟銆佹彁閱掑拰鎴愬憳鍏虫€€", created.soul.role_summary)
+        self.assertEqual(["瀹跺涵闂瓟", "鎻愰啋澶嶇洏", "鎴愬憳鍏虫€€"], created.soul.service_focus)
 
         message_rows = agent_repository.list_bootstrap_messages(self.db, session_id=session.session_id)
         request_rows = agent_repository.list_bootstrap_requests(self.db, session_id=session.session_id)
@@ -415,9 +411,10 @@ class AiConfigCenterTests(unittest.TestCase):
         )
         self.db.flush()
 
-        with self.assertRaisesRegex(Exception, "请先完成 AI 供应商配置"):
+        with self.assertRaisesRegex(Exception, "璇峰厛瀹屾垚 AI 渚涘簲鍟嗛厤缃?):
             start_butler_bootstrap_session(self.db, household_id=household.id)
 
 
 if __name__ == "__main__":
     unittest.main()
+

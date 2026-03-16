@@ -1,4 +1,4 @@
-"""
+﻿"""
 Tests for channel member binding service.
 """
 
@@ -40,15 +40,12 @@ class ChannelBindingTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         import_region_catalog(
@@ -81,11 +78,11 @@ class ChannelBindingTests(unittest.TestCase):
 
         self.member1 = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="成员 1", role="adult"),
+            MemberCreate(household_id=self.household.id, name="鎴愬憳 1", role="adult"),
         )
         self.member2 = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="成员 2", role="adult"),
+            MemberCreate(household_id=self.household.id, name="鎴愬憳 2", role="adult"),
         )
         self.db.commit()
 
@@ -103,8 +100,7 @@ class ChannelBindingTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_create_binding_success(self) -> None:
@@ -113,7 +109,7 @@ class ChannelBindingTests(unittest.TestCase):
             member_id=self.member1.id,
             external_user_id="  telegram_user_123  ",
             external_chat_id=" chat_789 ",
-            display_hint=" 妈妈的 Telegram ",
+            display_hint=" 濡堝鐨?Telegram ",
         )
 
         result = create_channel_account_binding(
@@ -127,7 +123,7 @@ class ChannelBindingTests(unittest.TestCase):
         self.assertEqual(result.channel_account_id, self.account_a.id)
         self.assertEqual(result.external_user_id, "telegram_user_123")
         self.assertEqual(result.external_chat_id, "chat_789")
-        self.assertEqual(result.display_hint, "妈妈的 Telegram")
+        self.assertEqual(result.display_hint, "濡堝鐨?Telegram")
         self.assertEqual(result.binding_status, "active")
 
     def test_same_channel_account_rejects_duplicate_external_user(self) -> None:
@@ -375,40 +371,40 @@ class ChannelBindingTests(unittest.TestCase):
             external_event_id="evt-001",
             external_user_id="candidate-user",
             received_at="2026-03-16T10:00:00Z",
-            text="第一条消息",
+            text="绗竴鏉℃秷鎭?,
             chat_id="chat-001",
             username="candidate_old",
-            sender_display_name="候选人",
+            sender_display_name="鍊欓€変汉",
         )
         self._create_candidate_event(
             account=self.account_a,
             external_event_id="evt-002",
             external_user_id="candidate-user",
             received_at="2026-03-16T10:05:00Z",
-            text="第二条消息",
+            text="绗簩鏉℃秷鎭?,
             chat_id="chat-001",
             username="candidate_new",
-            sender_display_name="候选人",
+            sender_display_name="鍊欓€変汉",
         )
         self._create_candidate_event(
             account=self.account_a,
             external_event_id="evt-003",
             external_user_id="bound-user",
             received_at="2026-03-16T10:06:00Z",
-            text="已绑定用户消息",
+            text="宸茬粦瀹氱敤鎴锋秷鎭?,
             chat_id="chat-002",
             username="bound",
-            sender_display_name="已绑定",
+            sender_display_name="宸茬粦瀹?,
         )
         self._create_candidate_event(
             account=self.account_b,
             external_event_id="evt-004",
             external_user_id="candidate-user",
             received_at="2026-03-16T10:07:00Z",
-            text="另一个账号的消息",
+            text="鍙︿竴涓处鍙风殑娑堟伅",
             chat_id="chat-003",
             username="account_b",
-            sender_display_name="另一个账号候选",
+            sender_display_name="鍙︿竴涓处鍙峰€欓€?,
         )
         self.db.commit()
 
@@ -425,13 +421,13 @@ class ChannelBindingTests(unittest.TestCase):
 
         self.assertEqual(1, len(result_a))
         self.assertEqual("candidate-user", result_a[0].external_user_id)
-        self.assertEqual("第二条消息", result_a[0].last_message_text)
+        self.assertEqual("绗簩鏉℃秷鎭?, result_a[0].last_message_text)
         self.assertEqual("candidate_new", result_a[0].username)
         self.assertEqual("chat-001", result_a[0].external_chat_id)
 
         self.assertEqual(1, len(result_b))
         self.assertEqual("candidate-user", result_b[0].external_user_id)
-        self.assertEqual("另一个账号的消息", result_b[0].last_message_text)
+        self.assertEqual("鍙︿竴涓处鍙风殑娑堟伅", result_b[0].last_message_text)
         self.assertEqual(self.account_b.id, result_b[0].channel_account_id)
 
     def _create_test_channel_account(
@@ -504,3 +500,4 @@ class ChannelBindingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

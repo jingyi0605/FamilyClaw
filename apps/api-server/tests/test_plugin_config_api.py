@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 import tempfile
 import unittest
@@ -32,16 +32,12 @@ class PluginConfigApiTests(unittest.TestCase):
         self._previous_database_url = settings.database_url
         self._previous_secret_seed = settings.plugin_config_secret_seed
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-        settings.plugin_config_secret_seed = "test-plugin-config-seed"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         app = FastAPI()
         app.include_router(ai_config_router, prefix=settings.api_v1_prefix)
@@ -71,7 +67,7 @@ class PluginConfigApiTests(unittest.TestCase):
         with self.SessionLocal() as db:
             household = create_household(
                 db,
-                HouseholdCreate(name="插件配置家庭", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
+                HouseholdCreate(name="鎻掍欢閰嶇疆瀹跺涵", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
             )
             self.household_id = household.id
             db.commit()
@@ -93,8 +89,7 @@ class PluginConfigApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         settings.plugin_config_secret_seed = self._previous_secret_seed
         self._tempdir.cleanup()
 
@@ -116,7 +111,7 @@ class PluginConfigApiTests(unittest.TestCase):
                 "scope_key": "default",
                 "values": {
                     "base_url": "https://example.com/api",
-                    "notes": "第一版说明",
+                    "notes": "绗竴鐗堣鏄?,
                     "retry_limit": 5,
                     "temperature": 0.7,
                     "enabled": True,
@@ -153,7 +148,7 @@ class PluginConfigApiTests(unittest.TestCase):
                 "scope_key": "default",
                 "values": {
                     "base_url": "https://example.com/v2",
-                    "notes": "第二版说明",
+                    "notes": "绗簩鐗堣鏄?,
                 },
             },
         )
@@ -196,7 +191,7 @@ class PluginConfigApiTests(unittest.TestCase):
                 payload=ChannelAccountCreate(
                     plugin_id="channel-telegram",
                     account_code="telegram-main",
-                    display_name="Telegram 主账号",
+                    display_name="Telegram 涓昏处鍙?,
                     connection_mode="polling",
                     config={
                         "bot_token": "legacy-token-001",
@@ -258,7 +253,7 @@ class PluginConfigApiTests(unittest.TestCase):
 
         manifest = {
             "id": "demo-plugin-config",
-            "name": "演示插件配置",
+            "name": "婕旂ず鎻掍欢閰嶇疆",
             "version": "0.1.0",
             "types": ["connector"],
             "permissions": ["health.read"],
@@ -270,46 +265,46 @@ class PluginConfigApiTests(unittest.TestCase):
             "config_specs": [
                 {
                     "scope_type": "plugin",
-                    "title": "演示插件配置",
-                    "description": "用来覆盖插件级配置协议的最小可用场景。",
+                    "title": "婕旂ず鎻掍欢閰嶇疆",
+                    "description": "鐢ㄦ潵瑕嗙洊鎻掍欢绾ч厤缃崗璁殑鏈€灏忓彲鐢ㄥ満鏅€?,
                     "schema_version": 1,
                     "config_schema": {
                         "fields": [
-                            {"key": "base_url", "label": "基础地址", "type": "string", "required": True},
-                            {"key": "notes", "label": "备注", "type": "text", "required": False},
-                            {"key": "retry_limit", "label": "重试次数", "type": "integer", "required": False, "default": 3},
-                            {"key": "temperature", "label": "温度", "type": "number", "required": False},
-                            {"key": "enabled", "label": "启用", "type": "boolean", "required": False, "default": True},
+                            {"key": "base_url", "label": "鍩虹鍦板潃", "type": "string", "required": True},
+                            {"key": "notes", "label": "澶囨敞", "type": "text", "required": False},
+                            {"key": "retry_limit", "label": "閲嶈瘯娆℃暟", "type": "integer", "required": False, "default": 3},
+                            {"key": "temperature", "label": "娓╁害", "type": "number", "required": False},
+                            {"key": "enabled", "label": "鍚敤", "type": "boolean", "required": False, "default": True},
                             {
                                 "key": "mode",
-                                "label": "模式",
+                                "label": "妯″紡",
                                 "type": "enum",
                                 "required": True,
                                 "enum_options": [
-                                    {"value": "strict", "label": "严格"},
-                                    {"value": "loose", "label": "宽松"},
+                                    {"value": "strict", "label": "涓ユ牸"},
+                                    {"value": "loose", "label": "瀹芥澗"},
                                 ],
                                 "default": "strict",
                             },
                             {
                                 "key": "tags",
-                                "label": "标签",
+                                "label": "鏍囩",
                                 "type": "multi_enum",
                                 "required": False,
                                 "enum_options": [
-                                    {"value": "stable", "label": "稳定"},
-                                    {"value": "beta", "label": "测试"},
+                                    {"value": "stable", "label": "绋冲畾"},
+                                    {"value": "beta", "label": "娴嬭瘯"},
                                 ],
                             },
                             {"key": "api_key", "label": "API Key", "type": "secret", "required": True},
-                            {"key": "metadata", "label": "额外配置", "type": "json", "required": False},
+                            {"key": "metadata", "label": "棰濆閰嶇疆", "type": "json", "required": False},
                         ]
                     },
                     "ui_schema": {
                         "sections": [
                             {
                                 "id": "basic",
-                                "title": "基础参数",
+                                "title": "鍩虹鍙傛暟",
                                 "fields": [
                                     "base_url",
                                     "notes",
@@ -344,3 +339,4 @@ class PluginConfigApiTests(unittest.TestCase):
             encoding="utf-8",
         )
         return plugin_root
+

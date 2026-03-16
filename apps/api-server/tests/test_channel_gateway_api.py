@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 import tempfile
 import unittest
@@ -38,15 +38,12 @@ class ChannelGatewayApiTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         app = FastAPI()
         app.include_router(channel_gateways_router, prefix=settings.api_v1_prefix)
@@ -63,8 +60,7 @@ class ChannelGatewayApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     @patch("app.modules.conversation.service._run_orchestrated_turn")
@@ -74,7 +70,7 @@ class ChannelGatewayApiTests(unittest.TestCase):
     ) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="你好，我已经收到消息。",
+            text="浣犲ソ锛屾垜宸茬粡鏀跺埌娑堟伅銆?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -84,7 +80,7 @@ class ChannelGatewayApiTests(unittest.TestCase):
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id="agent-placeholder",
-            effective_agent_name="阿福",
+            effective_agent_name="闃跨",
         )
         with self.SessionLocal() as db:
             household = create_household(
@@ -94,25 +90,25 @@ class ChannelGatewayApiTests(unittest.TestCase):
             db.flush()
             member = create_member(
                 db,
-                MemberCreate(household_id=household.id, name="爸爸", role="admin"),
+                MemberCreate(household_id=household.id, name="鐖哥埜", role="admin"),
             )
             agent = create_agent(
                 db,
                 household_id=household.id,
                 payload=AgentCreate(
-                    display_name="阿福",
+                    display_name="闃跨",
                     agent_type="butler",
-                    self_identity="我是家庭管家",
-                    role_summary="负责家庭问答",
-                    personality_traits=["细心"],
-                    service_focus=["聊天"],
+                    self_identity="鎴戞槸瀹跺涵绠″",
+                    role_summary="璐熻矗瀹跺涵闂瓟",
+                    personality_traits=["缁嗗績"],
+                    service_focus=["鑱婂ぉ"],
                     default_entry=True,
                 ),
             )
             db.flush()
             run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
                 intent=ConversationIntent.FREE_CHAT,
-                text="你好，我已经收到消息。",
+                text="浣犲ソ锛屾垜宸茬粡鏀跺埌娑堟伅銆?,
                 degraded=False,
                 facts=[],
                 suggestions=[],
@@ -148,7 +144,7 @@ class ChannelGatewayApiTests(unittest.TestCase):
                 payload=ChannelAccountCreate(
                     plugin_id="gateway-channel-plugin",
                     account_code="gateway-main",
-                    display_name="Gateway 主账号",
+                    display_name="Gateway 涓昏处鍙?,
                     connection_mode="webhook",
                     config={},
                     status="active",
@@ -181,7 +177,7 @@ class ChannelGatewayApiTests(unittest.TestCase):
             self.assertEqual(member.id, payload["member_id"])
             self.assertIsNotNone(payload["conversation_session_id"])
             self.assertIsNotNone(payload["assistant_message_id"])
-            self.assertIn("收到消息", payload["reply_text"])
+            self.assertIn("鏀跺埌娑堟伅", payload["reply_text"])
             self.assertEqual("sent", payload["delivery_status"])
             self.assertIsNotNone(payload["delivery_id"])
             self.assertEqual("provider-delivery-001", payload["provider_message_ref"])
@@ -214,7 +210,7 @@ class ChannelGatewayApiTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "Gateway 通道插件",
+                    "name": "Gateway 閫氶亾鎻掍欢",
                     "version": "0.1.0",
                     "types": ["channel"],
                     "permissions": ["channel.receive"],
@@ -272,3 +268,4 @@ class ChannelGatewayApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

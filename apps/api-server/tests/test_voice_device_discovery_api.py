@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
@@ -31,15 +31,12 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         self._previous_database_url = settings.database_url
         voice_terminal_discovery_registry.reset()
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         with self.SessionLocal() as db:
             household = create_household(
@@ -49,7 +46,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             room = create_room(
                 db,
                 household_id=household.id,
-                name="客厅",
+                name="瀹㈠巺",
                 room_type="living_room",
                 privacy_level="public",
             )
@@ -87,8 +84,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         voice_terminal_discovery_registry.reset()
         self._tempdir.cleanup()
 
@@ -136,12 +132,12 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             json={
                 "household_id": self.household_id,
                 "room_id": self.room_id,
-                "terminal_name": "客厅音箱",
+                "terminal_name": "瀹㈠巺闊崇",
             },
         )
 
         self.assertEqual(200, claim_response.status_code)
-        self.assertEqual("客厅音箱", claim_response.json()["terminal_name"])
+        self.assertEqual("瀹㈠巺闊崇", claim_response.json()["terminal_name"])
 
         binding_response = self.client.get(
             f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/binding",
@@ -152,7 +148,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         self.assertTrue(binding_payload["claimed"])
         self.assertEqual(self.household_id, binding_payload["binding"]["household_id"])
         self.assertFalse(binding_payload["binding"]["voice_auto_takeover_enabled"])
-        self.assertEqual(["请"], binding_payload["binding"]["voice_takeover_prefixes"])
+        self.assertEqual(["璇?], binding_payload["binding"]["voice_takeover_prefixes"])
 
         with self.SessionLocal() as db:
             device = db.scalar(select(Device).where(Device.id == binding_payload["binding"]["terminal_id"]))
@@ -169,7 +165,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             self.assertEqual("xiaomi", device.vendor)
             self.assertEqual(self.room_id, device.room_id)
             self.assertEqual(0, device.voice_auto_takeover_enabled)
-            self.assertEqual(["请"], device.voice_takeover_prefixes)
+            self.assertEqual(["璇?], device.voice_takeover_prefixes)
 
     def test_device_takeover_settings_update_flow_back_to_binding_snapshot(self) -> None:
         fingerprint = "open_xiaoai:LX06:SN002"
@@ -180,7 +176,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             json={
                 "household_id": self.household_id,
                 "room_id": self.room_id,
-                "terminal_name": "餐厅音箱",
+                "terminal_name": "椁愬巺闊崇",
             },
         )
         self.assertEqual(200, claim_response.status_code)
@@ -191,14 +187,14 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             json={
                 "voice_auto_takeover_enabled": True,
                 "voiceprint_identity_enabled": True,
-                "voice_takeover_prefixes": ["请", "帮我"],
+                "voice_takeover_prefixes": ["璇?, "甯垜"],
             },
         )
         self.assertEqual(200, update_response.status_code)
         updated_payload = update_response.json()
         self.assertTrue(updated_payload["voice_auto_takeover_enabled"])
         self.assertTrue(updated_payload["voiceprint_identity_enabled"])
-        self.assertEqual(["请", "帮我"], updated_payload["voice_takeover_prefixes"])
+        self.assertEqual(["璇?, "甯垜"], updated_payload["voice_takeover_prefixes"])
 
         binding_response = self.client.get(
             f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/binding",
@@ -207,7 +203,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         self.assertEqual(200, binding_response.status_code)
         binding_payload = binding_response.json()
         self.assertTrue(binding_payload["binding"]["voice_auto_takeover_enabled"])
-        self.assertEqual(["请", "帮我"], binding_payload["binding"]["voice_takeover_prefixes"])
+        self.assertEqual(["璇?, "甯垜"], binding_payload["binding"]["voice_takeover_prefixes"])
 
     def test_binding_query_returns_pending_voiceprint_enrollment(self) -> None:
         fingerprint = "open_xiaoai:LX06:SN003"
@@ -218,7 +214,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             json={
                 "household_id": self.household_id,
                 "room_id": self.room_id,
-                "terminal_name": "主卧音箱",
+                "terminal_name": "涓诲崸闊崇",
             },
         )
         self.assertEqual(200, claim_response.status_code)
@@ -229,7 +225,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
                 db,
                 MemberCreate(
                     household_id=self.household_id,
-                    name="妈妈",
+                    name="濡堝",
                     role="adult",
                 ),
             )
@@ -241,7 +237,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
                     member_id=member.id,
                     terminal_id=terminal_id,
                     status="pending",
-                    expected_phrase="我是妈妈",
+                    expected_phrase="鎴戞槸濡堝",
                     sample_goal=3,
                     sample_count=1,
                     expires_at="2026-03-16T12:00:00+08:00",
@@ -257,7 +253,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         binding_payload = binding_response.json()
         pending = binding_payload["binding"]["pending_voiceprint_enrollment"]
         self.assertIsNotNone(pending)
-        self.assertEqual("我是妈妈", pending["expected_phrase"])
+        self.assertEqual("鎴戞槸濡堝", pending["expected_phrase"])
         self.assertEqual(3, pending["sample_goal"])
         self.assertEqual(1, pending["sample_count"])
 
@@ -271,7 +267,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             json={
                 "household_id": self.household_id,
                 "room_id": self.room_id,
-                "terminal_name": "书房音箱",
+                "terminal_name": "涔︽埧闊崇",
                 "model": "LX06",
                 "sn": "SN001",
                 "connection_status": "online",
@@ -279,7 +275,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         )
 
         self.assertEqual(200, claim_response.status_code)
-        self.assertEqual("书房音箱", claim_response.json()["terminal_name"])
+        self.assertEqual("涔︽埧闊崇", claim_response.json()["terminal_name"])
 
         with self.SessionLocal() as db:
             binding = db.scalar(
@@ -296,7 +292,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             json={
                 "household_id": self.household_id,
                 "room_id": self.room_id,
-                "terminal_name": "客厅音箱",
+                "terminal_name": "瀹㈠巺闊崇",
             },
         )
 
@@ -321,7 +317,7 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             json={
                 "household_id": self.household_id,
                 "room_id": self.room_id,
-                "terminal_name": "书房小爱音箱",
+                "terminal_name": "涔︽埧灏忕埍闊崇",
             },
         )
         self.assertEqual(200, claim_response.status_code)
@@ -355,3 +351,4 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

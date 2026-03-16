@@ -1,4 +1,4 @@
-import json
+﻿import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,15 +34,12 @@ class ChannelConversationBridgeTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         self.household = create_household(
@@ -51,18 +48,18 @@ class ChannelConversationBridgeTests(unittest.TestCase):
         )
         self.member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="妈妈", role="admin"),
+            MemberCreate(household_id=self.household.id, name="濡堝", role="admin"),
         )
         self.agent = create_agent(
             self.db,
             household_id=self.household.id,
             payload=AgentCreate(
-                display_name="阿福",
+                display_name="闃跨",
                 agent_type="butler",
-                self_identity="我是家庭管家",
-                role_summary="负责家庭问答",
-                personality_traits=["细心"],
-                service_focus=["聊天"],
+                self_identity="鎴戞槸瀹跺涵绠″",
+                role_summary="璐熻矗瀹跺涵闂瓟",
+                personality_traits=["缁嗗績"],
+                service_focus=["鑱婂ぉ"],
                 default_entry=True,
             ),
         )
@@ -84,7 +81,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
             payload=ChannelAccountCreate(
                 plugin_id="bridge-channel-plugin",
                 account_code="bridge-main",
-                display_name="Bridge 主账号",
+                display_name="Bridge 涓昏处鍙?,
                 connection_mode="webhook",
                 config={},
                 status="active",
@@ -94,8 +91,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_unbound_direct_message_is_ignored_with_fixed_prompt(self) -> None:
@@ -104,7 +100,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
             external_user_id="tg-user-unbound",
             external_conversation_key="chat:unbound",
             normalized_payload={
-                "text": "你好",
+                "text": "浣犲ソ",
                 "chat_type": "direct",
             },
         )
@@ -119,7 +115,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
 
         self.assertEqual("ignored", result.disposition)
         self.assertEqual("direct_unbound_prompt", result.binding_strategy)
-        self.assertIn("绑定", result.reply_text or "")
+        self.assertIn("缁戝畾", result.reply_text or "")
 
     @patch("app.modules.channel.conversation_bridge.create_conversation_turn", side_effect=AssertionError("command should not create turn"))
     def test_new_command_creates_new_binding_without_running_normal_turn(self, create_turn_mock) -> None:
@@ -159,7 +155,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
         self.assertTrue(result.created_conversation_binding)
         self.assertIsNone(result.request_id)
         self.assertIsNone(result.assistant_message_id)
-        self.assertIn("新会话", result.reply_text or "")
+        self.assertIn("鏂颁細璇?, result.reply_text or "")
 
         binding = channel_repository.get_channel_conversation_binding_by_external_key(
             self.db,
@@ -174,7 +170,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
     def test_reset_command_switches_existing_binding_to_new_session(self, run_orchestrated_turn_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="好的，我记住了。",
+            text="濂界殑锛屾垜璁颁綇浜嗐€?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -203,7 +199,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
             external_user_id="tg-user-reset",
             external_conversation_key="chat:reset",
             normalized_payload={
-                "text": "第一条消息",
+                "text": "绗竴鏉℃秷鎭?,
                 "chat_type": "direct",
             },
         )
@@ -239,7 +235,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
 
         create_turn_mock.assert_not_called()
         self.assertNotEqual(first_result.conversation_session_id, reset_result.conversation_session_id)
-        self.assertIn("重置", reset_result.reply_text or "")
+        self.assertIn("閲嶇疆", reset_result.reply_text or "")
         turn_sources_after = list_turn_sources(self.db, session_id=first_result.conversation_session_id)
         self.assertEqual(len(turn_sources_before), len(turn_sources_after))
 
@@ -256,7 +252,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
     def test_bound_message_reuses_same_conversation_binding(self, run_orchestrated_turn_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="你好，我已经收到消息。",
+            text="浣犲ソ锛屾垜宸茬粡鏀跺埌娑堟伅銆?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -285,7 +281,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
             external_user_id="tg-user-001",
             external_conversation_key="chat:bound",
             normalized_payload={
-                "text": "第一条消息",
+                "text": "绗竴鏉℃秷鎭?,
                 "chat_type": "direct",
             },
         )
@@ -302,7 +298,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
             external_user_id="tg-user-001",
             external_conversation_key="chat:bound",
             normalized_payload={
-                "text": "第二条消息",
+                "text": "绗簩鏉℃秷鎭?,
                 "chat_type": "direct",
             },
         )
@@ -322,7 +318,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
         self.assertEqual(first_result.conversation_session_id, second_result.conversation_session_id)
         self.assertFalse(second_result.created_session)
         self.assertFalse(second_result.created_conversation_binding)
-        self.assertIn("收到消息", second_result.reply_text or "")
+        self.assertIn("鏀跺埌娑堟伅", second_result.reply_text or "")
 
         turn_sources = list_turn_sources(self.db, session_id=first_result.conversation_session_id)
         self.assertEqual(2, len(turn_sources))
@@ -334,7 +330,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
     def test_group_threads_are_isolated_and_same_thread_reuses_binding(self, run_orchestrated_turn_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="线程消息已收到。",
+            text="绾跨▼娑堟伅宸叉敹鍒般€?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -367,7 +363,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
                 external_user_id="tg-user-thread",
                 external_conversation_key="chat:group-1",
                 normalized_payload={
-                    "text": "线程 A 第一条",
+                    "text": "绾跨▼ A 绗竴鏉?,
                     "chat_type": "group",
                     "thread_key": "101",
                 },
@@ -384,7 +380,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
                 external_user_id="tg-user-thread",
                 external_conversation_key="chat:group-1",
                 normalized_payload={
-                    "text": "线程 A 第二条",
+                    "text": "绾跨▼ A 绗簩鏉?,
                     "chat_type": "group",
                     "thread_key": "101",
                 },
@@ -401,7 +397,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
                 external_user_id="tg-user-thread",
                 external_conversation_key="chat:group-1",
                 normalized_payload={
-                    "text": "线程 B 第一条",
+                    "text": "绾跨▼ B 绗竴鏉?,
                     "chat_type": "group",
                     "thread_key": "202",
                 },
@@ -438,7 +434,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
     def test_thread_reset_only_switches_current_thread(self, run_orchestrated_turn_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="线程消息已收到。",
+            text="绾跨▼娑堟伅宸叉敹鍒般€?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -471,7 +467,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
                 external_user_id="tg-user-thread-reset",
                 external_conversation_key="chat:group-2",
                 normalized_payload={
-                    "text": "线程 A 原消息",
+                    "text": "绾跨▼ A 鍘熸秷鎭?,
                     "chat_type": "group",
                     "thread_key": "301",
                 },
@@ -486,7 +482,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
                 external_user_id="tg-user-thread-reset",
                 external_conversation_key="chat:group-2",
                 normalized_payload={
-                    "text": "线程 B 原消息",
+                    "text": "绾跨▼ B 鍘熸秷鎭?,
                     "chat_type": "group",
                     "thread_key": "302",
                 },
@@ -527,7 +523,7 @@ class ChannelConversationBridgeTests(unittest.TestCase):
                 external_user_id="tg-user-thread-reset",
                 external_conversation_key="chat:group-2",
                 normalized_payload={
-                    "text": "线程 B 继续发言",
+                    "text": "绾跨▼ B 缁х画鍙戣█",
                     "chat_type": "group",
                     "thread_key": "302",
                 },
@@ -598,3 +594,4 @@ class ChannelConversationBridgeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

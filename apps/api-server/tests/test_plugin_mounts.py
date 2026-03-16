@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 import tempfile
 import unittest
@@ -28,21 +28,17 @@ class PluginMountTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_register_update_delete_plugin_mount(self) -> None:
@@ -106,7 +102,7 @@ class PluginMountTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "第三方插件",
+                    "name": "绗笁鏂规彃浠?,
                     "version": "0.1.0",
                     "types": ["connector", "memory-ingestor"],
                     "permissions": ["health.read", "memory.write.observation"],
@@ -134,3 +130,4 @@ class PluginMountTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

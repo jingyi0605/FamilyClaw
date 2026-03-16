@@ -1,15 +1,10 @@
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
-from app.core.config import settings
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.agent import repository as agent_repository
 from app.modules.agent.bootstrap_service import restart_butler_bootstrap_session
@@ -25,23 +20,19 @@ from app.modules.household.service import create_household
 class BootstrapStorageTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
-        self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
+        from tests.test_db_support import PostgresTestDatabase
 
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_bootstrap_session_message_and_request_tables_support_basic_read_write(self) -> None:
@@ -131,6 +122,8 @@ class BootstrapStorageTests(unittest.TestCase):
             updated_at=utc_now_iso(),
         )
         agent_repository.add_bootstrap_session(self.db, session)
+        self.db.flush()
+
         user_message = FamilyAgentBootstrapMessage(
             id=new_uuid(),
             session_id=session.id,

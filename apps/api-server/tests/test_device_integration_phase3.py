@@ -1,4 +1,4 @@
-import inspect
+﻿import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,12 +35,12 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-        command.upgrade(_build_alembic_config(settings.database_url), "head")
-
-        self.engine = create_engine(settings.database_url, future=True, connect_args={"check_same_thread": False})
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
 
         with self.SessionLocal() as db:
             household = create_household(
@@ -90,8 +90,7 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_candidate_endpoint_uses_unified_homeassistant_plugin(self) -> None:
@@ -102,8 +101,8 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
         items = response.json()["items"]
         self.assertEqual(1, len(items))
         self.assertEqual("ha-device-light-1", items[0]["external_device_id"])
-        self.assertEqual("客厅主灯", items[0]["name"])
-        self.assertEqual("客厅", items[0]["room_name"])
+        self.assertEqual("瀹㈠巺涓荤伅", items[0]["name"])
+        self.assertEqual("瀹㈠巺", items[0]["room_name"])
         self.assertEqual("light", items[0]["device_type"])
         source = inspect.getsource(ha_integration_service_module)
         self.assertNotIn("async_list_home_assistant_device_candidates", source)
@@ -140,7 +139,7 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
             get_device_registry=lambda self: [
                 {
                     "id": "ha-device-light-1",
-                    "name": "客厅主灯",
+                    "name": "瀹㈠巺涓荤伅",
                     "name_by_user": None,
                     "manufacturer": "Philips",
                     "model": "Hue",
@@ -152,17 +151,17 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
                     "entity_id": "light.living_room_main",
                     "device_id": "ha-device-light-1",
                     "area_id": "area-living-room",
-                    "name": "客厅主灯",
+                    "name": "瀹㈠巺涓荤伅",
                     "original_name": "Living Room Main",
                     "disabled_by": None,
                 }
             ],
-            get_area_registry=lambda self: [{"area_id": "area-living-room", "name": "客厅"}],
+            get_area_registry=lambda self: [{"area_id": "area-living-room", "name": "瀹㈠巺"}],
             get_states=lambda self: [
                 {
                     "entity_id": "light.living_room_main",
                     "state": "on",
-                    "attributes": {"friendly_name": "客厅主灯", "area_name": "客厅"},
+                    "attributes": {"friendly_name": "瀹㈠巺涓荤伅", "area_name": "瀹㈠巺"},
                     "last_updated": "2026-03-15T12:00:00Z",
                 }
             ],
@@ -171,3 +170,4 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

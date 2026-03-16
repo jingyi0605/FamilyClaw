@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 import tempfile
 import unittest
@@ -24,15 +24,12 @@ class PluginRegionBridgeTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
         import_region_catalog(
             self.db,
@@ -41,28 +38,28 @@ class PluginRegionBridgeTests(unittest.TestCase):
                     region_code="110000",
                     parent_region_code=None,
                     admin_level="province",
-                    name="北京市",
-                    full_name="北京市",
+                    name="鍖椾含甯?,
+                    full_name="鍖椾含甯?,
                     path_codes=["110000"],
-                    path_names=["北京市"],
+                    path_names=["鍖椾含甯?],
                 ),
                 RegionCatalogImportItem(
                     region_code="110100",
                     parent_region_code="110000",
                     admin_level="city",
-                    name="北京市",
-                    full_name="北京市 / 北京市",
+                    name="鍖椾含甯?,
+                    full_name="鍖椾含甯?/ 鍖椾含甯?,
                     path_codes=["110000", "110100"],
-                    path_names=["北京市", "北京市"],
+                    path_names=["鍖椾含甯?, "鍖椾含甯?],
                 ),
                 RegionCatalogImportItem(
                     region_code="110105",
                     parent_region_code="110100",
                     admin_level="district",
-                    name="朝阳区",
-                    full_name="北京市 / 北京市 / 朝阳区",
+                    name="鏈濋槼鍖?,
+                    full_name="鍖椾含甯?/ 鍖椾含甯?/ 鏈濋槼鍖?,
                     path_codes=["110000", "110100", "110105"],
-                    path_names=["北京市", "北京市", "朝阳区"],
+                    path_names=["鍖椾含甯?, "鍖椾含甯?, "鏈濋槼鍖?],
                 ),
             ],
             source_version="plugin-region-test-v1",
@@ -70,7 +67,7 @@ class PluginRegionBridgeTests(unittest.TestCase):
         self.household = create_household(
             self.db,
             HouseholdCreate(
-                name="地区插件家庭",
+                name="鍦板尯鎻掍欢瀹跺涵",
                 timezone="Asia/Shanghai",
                 locale="zh-CN",
                 region_selection=RegionSelection(
@@ -84,8 +81,7 @@ class PluginRegionBridgeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_plugin_can_resolve_household_region_context_through_controlled_entry(self) -> None:
@@ -132,7 +128,7 @@ class PluginRegionBridgeTests(unittest.TestCase):
         system_context = result.output["system_context"]
         self.assertEqual("region.resolve_household_context", system_context["region"]["entry"])
         self.assertEqual("110105", system_context["region"]["household_context"]["region_code"])
-        self.assertEqual("北京市 朝阳区", system_context["region"]["household_context"]["display_name"])
+        self.assertEqual("鍖椾含甯?鏈濋槼鍖?, system_context["region"]["household_context"]["display_name"])
 
     def _create_region_reader_plugin(self, root: Path) -> Path:
         plugin_root = root / "region-context-reader"
@@ -143,7 +139,7 @@ class PluginRegionBridgeTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": "region-context-reader",
-                    "name": "地区上下文读取插件",
+                    "name": "鍦板尯涓婁笅鏂囪鍙栨彃浠?,
                     "version": "0.1.0",
                     "types": ["connector"],
                     "permissions": ["region.read"],
@@ -177,3 +173,4 @@ class PluginRegionBridgeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

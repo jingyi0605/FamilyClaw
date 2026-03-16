@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
@@ -27,15 +27,12 @@ class NonWebConversationDataTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         self.household = create_household(
@@ -44,7 +41,7 @@ class NonWebConversationDataTests(unittest.TestCase):
         )
         self.member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="濡堝", role="adult"),
+            MemberCreate(household_id=self.household.id, name="婵″牆顩?, role="adult"),
         )
         now = utc_now_iso()
         self.session_one = ConversationSession(
@@ -55,7 +52,7 @@ class NonWebConversationDataTests(unittest.TestCase):
             active_agent_id=None,
             current_request_id=None,
             last_event_seq=0,
-            title="鍦烘櫙涓€",
+            title="閸︾儤娅欐稉鈧?,
             status="active",
             last_message_at=now,
             created_at=now,
@@ -69,7 +66,7 @@ class NonWebConversationDataTests(unittest.TestCase):
             active_agent_id=None,
             current_request_id=None,
             last_event_seq=0,
-            title="鍦烘櫙浜?",
+            title="閸︾儤娅欐禍?",
             status="active",
             last_message_at=now,
             created_at=now,
@@ -81,7 +78,7 @@ class NonWebConversationDataTests(unittest.TestCase):
             plugin_id="channel-telegram",
             platform_code="telegram",
             account_code="telegram-main",
-            display_name="Telegram 涓昏处鍙?",
+            display_name="Telegram 娑撴槒澶勯崣?",
             connection_mode="polling",
             config_json="{}",
             status="active",
@@ -97,7 +94,7 @@ class NonWebConversationDataTests(unittest.TestCase):
             event_type="message",
             external_user_id="tg-user-001",
             external_conversation_key="chat:data",
-            normalized_payload_json='{"text":"浣犲ソ"}',
+            normalized_payload_json='{"text":"娴ｇ姴銈?}',
             status="received",
             conversation_session_id=None,
             error_code=None,
@@ -110,8 +107,7 @@ class NonWebConversationDataTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_record_conversation_turn_source_is_idempotent_per_turn(self) -> None:
@@ -184,3 +180,4 @@ class NonWebConversationDataTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,16 +72,12 @@ class ConversationFoundationTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "migrations"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
         self.household = create_household(
@@ -96,12 +92,12 @@ class ConversationFoundationTests(unittest.TestCase):
             self.db,
             household_id=self.household.id,
             payload=AgentCreate(
-                display_name="笨笨",
+                display_name="绗ㄧ",
                 agent_type="butler",
-                self_identity="我是家庭主管家",
-                role_summary="负责家庭问答",
-                personality_traits=["细心", "稳重"],
-                service_focus=["家庭问答", "提醒"],
+                self_identity="鎴戞槸瀹跺涵涓荤瀹?,
+                role_summary="璐熻矗瀹跺涵闂瓟",
+                personality_traits=["缁嗗績", "绋抽噸"],
+                service_focus=["瀹跺涵闂瓟", "鎻愰啋"],
                 default_entry=True,
             ),
         )
@@ -170,8 +166,7 @@ class ConversationFoundationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def _persist_mock_proposal_result(
@@ -255,7 +250,7 @@ class ConversationFoundationTests(unittest.TestCase):
             seq=conversation_repository.get_next_message_seq(self.db, session_id=session.id),
             role="user",
             message_type="text",
-            content="你好",
+            content="浣犲ソ",
             status="completed",
             effective_agent_id=self.agent.id,
             ai_provider_code=None,
@@ -276,7 +271,7 @@ class ConversationFoundationTests(unittest.TestCase):
             seq=conversation_repository.get_next_message_seq(self.db, session_id=session.id),
             role="assistant",
             message_type="text",
-            content="你好，我在。",
+            content="浣犲ソ锛屾垜鍦ㄣ€?,
             status="completed",
             effective_agent_id=self.agent.id,
             ai_provider_code="test-provider",
@@ -284,7 +279,7 @@ class ConversationFoundationTests(unittest.TestCase):
             degraded=False,
             error_code=None,
             facts_json=dump_json([{"type": "active_member", "label": "Owner"}]),
-            suggestions_json=dump_json(["现在家里什么状态？"]),
+            suggestions_json=dump_json(["鐜板湪瀹堕噷浠€涔堢姸鎬侊紵"]),
             created_at=utc_now_iso(),
             updated_at=utc_now_iso(),
         )
@@ -308,8 +303,8 @@ class ConversationFoundationTests(unittest.TestCase):
             proposal_kind="memory_write",
             policy_category="ask",
             status="pending_confirmation",
-            title="用户向管家打招呼",
-            summary="用户与管家完成了首次问候。",
+            title="鐢ㄦ埛鍚戠瀹舵墦鎷涘懠",
+            summary="鐢ㄦ埛涓庣瀹跺畬鎴愪簡棣栨闂€欍€?,
             evidence_message_ids_json=dump_json([assistant_message.id]) or "[]",
             evidence_roles_json=dump_json(["assistant"]) or "[]",
             dedupe_key="memory:greeting",
@@ -325,16 +320,16 @@ class ConversationFoundationTests(unittest.TestCase):
 
         self.assertEqual(2, len(detail.messages))
         self.assertEqual(["user", "assistant"], [item.role for item in detail.messages])
-        self.assertEqual("你好，我在。", detail.messages[1].content)
+        self.assertEqual("浣犲ソ锛屾垜鍦ㄣ€?, detail.messages[1].content)
         self.assertEqual(1, len(detail.proposal_batches))
         self.assertEqual("memory_write", detail.proposal_batches[0].items[0].proposal_kind)
-        self.assertEqual("笨笨", detail.active_agent_name)
+        self.assertEqual("绗ㄧ", detail.active_agent_name)
 
     def test_build_agent_runtime_context_prefers_member_preferred_name(self) -> None:
         upsert_member_preferences(
             self.db,
             member_id=self.member.id,
-            payload=MemberPreferenceUpsert(preferred_name="宝宝"),
+            payload=MemberPreferenceUpsert(preferred_name="瀹濆疂"),
         )
         self.db.commit()
 
@@ -347,13 +342,13 @@ class ConversationFoundationTests(unittest.TestCase):
 
         requester_profile = runtime_context.get("requester_member_profile")
         assert isinstance(requester_profile, dict)
-        self.assertEqual("宝宝", requester_profile.get("preferred_display_name"))
+        self.assertEqual("瀹濆疂", requester_profile.get("preferred_display_name"))
 
     def test_build_qa_fact_view_prefers_member_preferred_name(self) -> None:
         upsert_member_preferences(
             self.db,
             member_id=self.member.id,
-            payload=MemberPreferenceUpsert(preferred_name="宝宝"),
+            payload=MemberPreferenceUpsert(preferred_name="瀹濆疂"),
         )
         self.db.commit()
 
@@ -363,13 +358,13 @@ class ConversationFoundationTests(unittest.TestCase):
             requester_member_id=self.member.id,
             agent_id=self.agent.id,
             actor=self.actor,
-            question="我现在在哪",
+            question="鎴戠幇鍦ㄥ湪鍝?,
         )
 
         self.assertIsNotNone(fact_view.active_member)
         assert fact_view.active_member is not None
-        self.assertEqual("宝宝", fact_view.active_member.name)
-        self.assertIn("宝宝", [item.name for item in fact_view.member_states])
+        self.assertEqual("瀹濆疂", fact_view.active_member.name)
+        self.assertIn("瀹濆疂", [item.name for item in fact_view.member_states])
 
     def test_build_memory_context_bundle_uses_bound_member_for_channel_system_actor(self) -> None:
         target_member = create_member(
@@ -378,9 +373,9 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         self._create_memory_card_for_member(
             member_id=target_member.id,
-            title="爱好是唱歌",
-            summary="Jack 的爱好是唱歌。",
-            normalized_text="爱好 喜欢唱歌 唱歌",
+            title="鐖卞ソ鏄敱姝?,
+            summary="Jack 鐨勭埍濂芥槸鍞辨瓕銆?,
+            normalized_text="鐖卞ソ 鍠滄鍞辨瓕 鍞辨瓕",
             memory_type="preference",
         )
         self.db.commit()
@@ -390,13 +385,13 @@ class ConversationFoundationTests(unittest.TestCase):
             household_id=self.household.id,
             actor=self._build_channel_system_actor(member_id=target_member.id),
             requester_member_id=target_member.id,
-            question="你知道我的爱好吗",
+            question="浣犵煡閬撴垜鐨勭埍濂藉悧",
             capability="conversation_free_chat",
         )
 
         self.assertEqual(1, bundle.hot_summary.total_visible_cards)
         self.assertEqual(1, bundle.query_result.total)
-        self.assertEqual("爱好是唱歌", bundle.query_result.items[0].card.title)
+        self.assertEqual("鐖卞ソ鏄敱姝?, bundle.query_result.items[0].card.title)
 
     def test_build_qa_fact_view_reads_memory_for_channel_system_actor(self) -> None:
         target_member = create_member(
@@ -405,9 +400,9 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         self._create_memory_card_for_member(
             member_id=target_member.id,
-            title="爱好是唱歌",
-            summary="Jack 的爱好是唱歌。",
-            normalized_text="爱好 喜欢唱歌 唱歌",
+            title="鐖卞ソ鏄敱姝?,
+            summary="Jack 鐨勭埍濂芥槸鍞辨瓕銆?,
+            normalized_text="鐖卞ソ 鍠滄鍞辨瓕 鍞辨瓕",
             memory_type="preference",
         )
         self.db.commit()
@@ -418,12 +413,12 @@ class ConversationFoundationTests(unittest.TestCase):
             requester_member_id=target_member.id,
             agent_id=self.agent.id,
             actor=self._build_channel_system_actor(member_id=target_member.id),
-            question="你知道我的爱好吗",
+            question="浣犵煡閬撴垜鐨勭埍濂藉悧",
         )
 
         self.assertEqual("available", fact_view.memory_summary.status)
         self.assertEqual(1, len(fact_view.memory_summary.items))
-        self.assertEqual("爱好是唱歌", fact_view.memory_summary.items[0].label)
+        self.assertEqual("鐖卞ソ鏄敱姝?, fact_view.memory_summary.items[0].label)
 
     def test_list_conversation_debug_logs_reflects_env_switch(self) -> None:
         session = create_conversation_session(
@@ -451,7 +446,7 @@ class ConversationFoundationTests(unittest.TestCase):
     def test_create_conversation_turn_writes_debug_logs_when_enabled(self, run_orchestrated_turn_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="你好，我在。",
+            text="浣犲ソ锛屾垜鍦ㄣ€?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -461,7 +456,7 @@ class ConversationFoundationTests(unittest.TestCase):
             ai_trace_id="trace-debug",
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
         session = create_conversation_session(
             self.db,
@@ -477,7 +472,7 @@ class ConversationFoundationTests(unittest.TestCase):
             result = create_conversation_turn(
                 self.db,
                 session_id=session.id,
-                payload=ConversationTurnCreate(message="你好"),
+                payload=ConversationTurnCreate(message="浣犲ソ"),
                 actor=self.actor,
             )
             self.db.commit()
@@ -504,7 +499,7 @@ class ConversationFoundationTests(unittest.TestCase):
             payload=ConversationSessionCreate(
                 household_id=self.household.id,
                 active_agent_id=self.agent.id,
-                title="我的会话",
+                title="鎴戠殑浼氳瘽",
             ),
             actor=self.actor,
         )
@@ -533,7 +528,7 @@ class ConversationFoundationTests(unittest.TestCase):
             payload=ConversationSessionCreate(
                 household_id=self.household.id,
                 active_agent_id=self.agent.id,
-                title="别人的会话",
+                title="鍒汉鐨勪細璇?,
             ),
             actor=another_actor,
         )
@@ -548,23 +543,23 @@ class ConversationFoundationTests(unittest.TestCase):
 
         self.assertEqual(1, len(result.items))
         self.assertEqual(own_session.id, result.items[0].id)
-        self.assertEqual("我的会话", result.items[0].title)
+        self.assertEqual("鎴戠殑浼氳瘽", result.items[0].title)
 
     @patch("app.modules.conversation.service._run_orchestrated_turn")
     def test_create_conversation_turn_persists_completed_messages(self, run_orchestrated_turn_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.STRUCTURED_QA,
-            text="你好，我是笨笨。",
+            text="浣犲ソ锛屾垜鏄绗ㄣ€?,
             degraded=False,
             facts=[],
-            suggestions=["继续问一个问题"],
+            suggestions=["缁х画闂竴涓棶棰?],
             memory_candidate_payloads=[],
             config_suggestion=None,
             action_payloads=[],
             ai_trace_id="trace-sync",
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
         session = create_conversation_session(
             self.db,
@@ -578,7 +573,7 @@ class ConversationFoundationTests(unittest.TestCase):
         result = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="你好"),
+            payload=ConversationTurnCreate(message="浣犲ソ"),
             actor=self.actor,
         )
         self.db.commit()
@@ -589,7 +584,7 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("user", result.session.messages[0].role)
         self.assertEqual("assistant", result.session.messages[1].role)
         self.assertEqual("completed", result.session.messages[1].status)
-        self.assertEqual("你好，我是笨笨。", result.session.messages[1].content)
+        self.assertEqual("浣犲ソ锛屾垜鏄绗ㄣ€?, result.session.messages[1].content)
 
     @patch("app.modules.conversation.service._run_orchestrated_turn")
     def test_create_conversation_turn_persists_failed_assistant_message(self, run_orchestrated_turn_mock) -> None:
@@ -608,7 +603,7 @@ class ConversationFoundationTests(unittest.TestCase):
         result = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="你好"),
+            payload=ConversationTurnCreate(message="浣犲ソ"),
             actor=self.actor,
         )
         self.db.commit()
@@ -641,7 +636,7 @@ class ConversationFoundationTests(unittest.TestCase):
             seq=conversation_repository.get_next_message_seq(self.db, session_id=session.id),
             role="user",
             message_type="text",
-            content="上一次的问题",
+            content="涓婁竴娆＄殑闂",
             status="completed",
             effective_agent_id=self.agent.id,
             ai_provider_code=None,
@@ -661,7 +656,7 @@ class ConversationFoundationTests(unittest.TestCase):
             seq=conversation_repository.get_next_message_seq(self.db, session_id=session.id),
             role="assistant",
             message_type="text",
-            content="上一次的回答",
+            content="涓婁竴娆＄殑鍥炵瓟",
             status="completed",
             effective_agent_id=self.agent.id,
             ai_provider_code="mock-provider",
@@ -680,8 +675,8 @@ class ConversationFoundationTests(unittest.TestCase):
             _ = session, message, actor
             self.assertEqual(
                 [
-                    {"role": "user", "content": "上一次的问题"},
-                    {"role": "assistant", "content": "上一次的回答"},
+                    {"role": "user", "content": "涓婁竴娆＄殑闂"},
+                    {"role": "assistant", "content": "涓婁竴娆＄殑鍥炵瓟"},
                 ],
                 conversation_history,
             )
@@ -692,7 +687,7 @@ class ConversationFoundationTests(unittest.TestCase):
             self.assertTrue(isinstance(request_context.get("request_id"), str) and request_context.get("request_id"))
             return ConversationOrchestratorResult(
                 intent=ConversationIntent.STRUCTURED_QA,
-                text="这是新一轮回答",
+                text="杩欐槸鏂颁竴杞洖绛?,
                 degraded=False,
                 facts=[],
                 suggestions=[],
@@ -702,7 +697,7 @@ class ConversationFoundationTests(unittest.TestCase):
                 ai_trace_id="trace-history",
                 ai_provider_code="mock-provider",
                 effective_agent_id=self.agent.id,
-                effective_agent_name="笨笨",
+                effective_agent_name="绗ㄧ",
             )
 
         run_orchestrated_turn_mock.side_effect = _fake_run
@@ -710,20 +705,20 @@ class ConversationFoundationTests(unittest.TestCase):
         result = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="新的问题"),
+            payload=ConversationTurnCreate(message="鏂扮殑闂"),
             actor=self.actor,
         )
         self.db.commit()
 
         self.assertEqual("completed", result.outcome)
-        self.assertEqual("这是新一轮回答", result.session.messages[-1].content)
+        self.assertEqual("杩欐槸鏂颁竴杞洖绛?, result.session.messages[-1].content)
 
     @patch("app.modules.conversation.service._run_proposal_pipeline_for_turn")
     @patch("app.modules.conversation.service._run_orchestrated_turn")
     def test_create_conversation_turn_writes_new_proposal_batches(self, run_orchestrated_turn_mock, proposal_pipeline_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="记下来了，你不吃香菜。",
+            text="璁颁笅鏉ヤ簡锛屼綘涓嶅悆棣欒彍銆?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -733,7 +728,7 @@ class ConversationFoundationTests(unittest.TestCase):
             ai_trace_id="trace-memory",
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
         def _persist_proposal_result(*args, **kwargs):
             user_message = kwargs["user_message"]
@@ -755,13 +750,13 @@ class ConversationFoundationTests(unittest.TestCase):
                 proposal_kind="memory_write",
                 policy_category="ask",
                 status="pending_confirmation",
-                title="不吃香菜",
-                summary="用户明确表示自己不吃香菜。",
+                title="涓嶅悆棣欒彍",
+                summary="鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?,
                 evidence_message_ids_json=dump_json([user_message.id]) or "[]",
                 evidence_roles_json=dump_json(["user"]) or "[]",
                 dedupe_key="memory:test:diet",
                 confidence=0.93,
-                payload_json=dump_json({"memory_type": "preference", "summary": "用户明确表示自己不吃香菜。"}) or "{}",
+                payload_json=dump_json({"memory_type": "preference", "summary": "鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?}) or "{}",
                 created_at=utc_now_iso(),
                 updated_at=utc_now_iso(),
             )
@@ -774,13 +769,13 @@ class ConversationFoundationTests(unittest.TestCase):
                     ProposalDraft(
                         proposal_kind="memory_write",
                         policy_category="ask",
-                        title="不吃香菜",
-                        summary="用户明确表示自己不吃香菜。",
+                        title="涓嶅悆棣欒彍",
+                        summary="鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?,
                         evidence_message_ids=[user_message.id],
                         evidence_roles=["user"],
                         dedupe_key="memory:test:diet",
                         confidence=0.93,
-                        payload={"memory_type": "preference", "summary": "用户明确表示自己不吃香菜。"},
+                        payload={"memory_type": "preference", "summary": "鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?},
                     )
                 ],
                 failures=[],
@@ -801,7 +796,7 @@ class ConversationFoundationTests(unittest.TestCase):
         result = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="记住，我不吃香菜"),
+            payload=ConversationTurnCreate(message="璁颁綇锛屾垜涓嶅悆棣欒彍"),
             actor=self.actor,
         )
         self.db.commit()
@@ -833,7 +828,7 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="名字我记下了。",
+            text="鍚嶅瓧鎴戣涓嬩簡銆?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -843,7 +838,7 @@ class ConversationFoundationTests(unittest.TestCase):
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
 
         def _persist(*args, **kwargs):
@@ -853,9 +848,9 @@ class ConversationFoundationTests(unittest.TestCase):
                 request_id=kwargs["request_id"],
                 evidence_message_id=turn_context.user_messages[0].message_id,
                 proposal_kind="config_apply",
-                payload={"display_name": "泡泡"},
-                title="应用 Agent 配置建议",
-                summary="用户想把助手名字改成泡泡。",
+                payload={"display_name": "娉℃场"},
+                title="搴旂敤 Agent 閰嶇疆寤鸿",
+                summary="鐢ㄦ埛鎯虫妸鍔╂墜鍚嶅瓧鏀规垚娉℃场銆?,
                 dedupe_key="config:test:bubble",
             )
 
@@ -870,7 +865,7 @@ class ConversationFoundationTests(unittest.TestCase):
         turn = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="叫泡泡怎么样"),
+            payload=ConversationTurnCreate(message="鍙场娉℃€庝箞鏍?),
             actor=self.actor,
         )
         self.db.commit()
@@ -880,7 +875,7 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("config_apply", item.proposal_kind)
         self.assertEqual("notify", item.policy_category)
         self.assertEqual("completed", item.status)
-        self.assertEqual("泡泡", get_conversation_session_detail(self.db, session_id=session.id, actor=self.actor).active_agent_name)
+        self.assertEqual("娉℃场", get_conversation_session_detail(self.db, session_id=session.id, actor=self.actor).active_agent_name)
 
     @patch("app.modules.conversation.service.ProposalPipeline.run")
     @patch("app.modules.conversation.service._run_orchestrated_turn")
@@ -903,7 +898,7 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="这件事我记下了。",
+            text="杩欎欢浜嬫垜璁颁笅浜嗐€?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -913,7 +908,7 @@ class ConversationFoundationTests(unittest.TestCase):
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
 
         def _persist(*args, **kwargs):
@@ -923,9 +918,9 @@ class ConversationFoundationTests(unittest.TestCase):
                 request_id=kwargs["request_id"],
                 evidence_message_id=turn_context.user_messages[0].message_id,
                 proposal_kind="memory_write",
-                payload={"memory_type": "preference", "summary": "用户不吃香菜"},
-                title="不吃香菜",
-                summary="用户不吃香菜",
+                payload={"memory_type": "preference", "summary": "鐢ㄦ埛涓嶅悆棣欒彍"},
+                title="涓嶅悆棣欒彍",
+                summary="鐢ㄦ埛涓嶅悆棣欒彍",
                 dedupe_key="memory:test:diet",
             )
 
@@ -940,7 +935,7 @@ class ConversationFoundationTests(unittest.TestCase):
         turn = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="记住，我不吃香菜"),
+            payload=ConversationTurnCreate(message="璁颁綇锛屾垜涓嶅悆棣欒彍"),
             actor=self.actor,
         )
         self.db.commit()
@@ -957,7 +952,7 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("auto", item.policy_category)
         self.assertEqual("completed", item.status)
         self.assertEqual(1, total)
-        self.assertEqual("不吃香菜", cards[0].title)
+        self.assertEqual("涓嶅悆棣欒彍", cards[0].title)
 
     @patch("app.modules.conversation.service.ProposalPipeline.run")
     @patch("app.modules.conversation.service._run_orchestrated_turn")
@@ -980,7 +975,7 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.FREE_CHAT,
-            text="提醒我已经安排好了。",
+            text="鎻愰啋鎴戝凡缁忓畨鎺掑ソ浜嗐€?,
             degraded=False,
             facts=[],
             suggestions=[],
@@ -990,7 +985,7 @@ class ConversationFoundationTests(unittest.TestCase):
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
 
         def _persist(*args, **kwargs):
@@ -1002,12 +997,12 @@ class ConversationFoundationTests(unittest.TestCase):
                 proposal_kind="reminder_create",
                 payload={
                     "action_type": "reminder_create",
-                    "title": "开会",
+                    "title": "寮€浼?,
                     "trigger_at": "2026-03-15T08:00:00+08:00",
-                    "description": "提醒我参加晨会",
+                    "description": "鎻愰啋鎴戝弬鍔犳櫒浼?,
                 },
-                title="创建提醒：开会",
-                summary="提醒我明天早上开会。",
+                title="鍒涘缓鎻愰啋锛氬紑浼?,
+                summary="鎻愰啋鎴戞槑澶╂棭涓婂紑浼氥€?,
                 dedupe_key="reminder:test:meeting",
             )
 
@@ -1022,7 +1017,7 @@ class ConversationFoundationTests(unittest.TestCase):
         turn = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="提醒我明天早上八点开会"),
+            payload=ConversationTurnCreate(message="鎻愰啋鎴戞槑澶╂棭涓婂叓鐐瑰紑浼?),
             actor=self.actor,
         )
         self.db.commit()
@@ -1034,7 +1029,7 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("notify", item.policy_category)
         self.assertEqual("completed", item.status)
         self.assertEqual(1, len(tasks))
-        self.assertEqual("开会", tasks[0].title)
+        self.assertEqual("寮€浼?, tasks[0].title)
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_detect_conversation_intent_routes_story_to_free_chat(self, invoke_llm_mock) -> None:
@@ -1051,19 +1046,19 @@ class ConversationFoundationTests(unittest.TestCase):
                 primary_intent="free_chat",
                 secondary_intents=[],
                 confidence=0.93,
-                reason="这是普通创作闲聊。",
+                reason="杩欐槸鏅€氬垱浣滈棽鑱娿€?,
                 candidate_actions=[],
             )
         )
-        intent = detect_conversation_intent(self.db, session=session, message="讲500字的科幻故事")
+        intent = detect_conversation_intent(self.db, session=session, message="璁?00瀛楃殑绉戝够鏁呬簨")
         self.assertEqual(ConversationIntentLabel.FREE_CHAT, intent.primary_intent)
         self.assertEqual(ConversationIntent.FREE_CHAT, intent.route_intent)
 
     def test_parse_intent_detection_output_from_dirty_text(self) -> None:
         parsed = parse_to_model(
-            """这是补充说明，不该出现。
+            """杩欐槸琛ュ厖璇存槑锛屼笉璇ュ嚭鐜般€?
 <output>
-{"primary_intent":"free_chat","secondary_intents":[],"confidence":0.91,"reason":"普通问候","candidate_actions":[]}
+{"primary_intent":"free_chat","secondary_intents":[],"confidence":0.91,"reason":"鏅€氶棶鍊?,"candidate_actions":[]}
 </output>""",
             ConversationIntentDetectionOutput,
         )
@@ -1074,7 +1069,7 @@ class ConversationFoundationTests(unittest.TestCase):
     def test_parse_intent_detection_output_tolerates_string_candidate_actions(self) -> None:
         parsed = parse_to_model(
             """<output>
-{"primary_intent":"free_chat","secondary_intents":[],"confidence":0.6,"reason":"普通寒暄","candidate_actions":["继续进行一般性对话","提醒我明天开会"]}
+{"primary_intent":"free_chat","secondary_intents":[],"confidence":0.6,"reason":"鏅€氬瘨鏆?,"candidate_actions":["缁х画杩涜涓€鑸€у璇?,"鎻愰啋鎴戞槑澶╁紑浼?]}
 </output>""",
             ConversationIntentDetectionOutput,
         )
@@ -1097,9 +1092,9 @@ class ConversationFoundationTests(unittest.TestCase):
     def test_template_fallback_for_free_chat_returns_human_greeting(self) -> None:
         output = build_template_fallback_output(
             capability="qa_generation",
-            payload={"task_type": "free_chat", "user_message": "你好"},
+            payload={"task_type": "free_chat", "user_message": "浣犲ソ"},
         )
-        self.assertIn("你好，我在", str(output.get("text") or ""))
+        self.assertIn("浣犲ソ锛屾垜鍦?, str(output.get("text") or ""))
 
     @patch("app.modules.conversation.orchestrator.get_conversation_debug_logger")
     @patch("app.modules.conversation.orchestrator.build_memory_context_bundle")
@@ -1113,8 +1108,8 @@ class ConversationFoundationTests(unittest.TestCase):
         get_conversation_debug_logger_mock,
     ) -> None:
         build_agent_runtime_context_mock.return_value = {
-            "agent": {"name": "笨笨"},
-            "identity": {"role_summary": "AI管家", "speaking_style": "自然亲切"},
+            "agent": {"name": "绗ㄧ"},
+            "identity": {"role_summary": "AI绠″", "speaking_style": "鑷劧浜插垏"},
         }
         get_context_overview_mock.return_value = SimpleNamespace(
             active_member=SimpleNamespace(name="Owner"),
@@ -1126,18 +1121,18 @@ class ConversationFoundationTests(unittest.TestCase):
             hot_summary=SimpleNamespace(
                 total_visible_cards=2,
                 top_memories=[
-                    SimpleNamespace(memory_id="memory-1", title="给管家改名", memory_type="preference", summary="用户想把AI管家改名为暖暖。", updated_at="2026-03-14T00:00:00Z"),
+                    SimpleNamespace(memory_id="memory-1", title="缁欑瀹舵敼鍚?, memory_type="preference", summary="鐢ㄦ埛鎯虫妸AI绠″鏀瑰悕涓烘殩鏆栥€?, updated_at="2026-03-14T00:00:00Z"),
                 ],
-                preference_highlights=["用户想把AI管家改名为暖暖。"],
+                preference_highlights=["鐢ㄦ埛鎯虫妸AI绠″鏀瑰悕涓烘殩鏆栥€?],
                 recent_event_highlights=[],
             ),
             query_result=SimpleNamespace(
                 total=1,
                 items=[
                     SimpleNamespace(
-                        card=SimpleNamespace(id="memory-1", title="给管家改名", memory_type="preference", summary="用户想把AI管家改名为暖暖。"),
+                        card=SimpleNamespace(id="memory-1", title="缁欑瀹舵敼鍚?, memory_type="preference", summary="鐢ㄦ埛鎯虫妸AI绠″鏀瑰悕涓烘殩鏆栥€?),
                         score=48,
-                        matched_terms=["暖暖"],
+                        matched_terms=["鏆栨殩"],
                     )
                 ],
             ),
@@ -1157,11 +1152,11 @@ class ConversationFoundationTests(unittest.TestCase):
             self.db,
             session=session,
             actor=self.actor,
-            user_message="你叫什么来着",
+            user_message="浣犲彨浠€涔堟潵鐫€",
             request_context={"request_id": "req-1", "session_id": session.id},
             log_memory_context=True,
         )
-        self.assertIn("暖暖", variables["memory_context"])
+        self.assertIn("鏆栨殩", variables["memory_context"])
         logger_mock.info.assert_called_once()
         logged_text = logger_mock.info.call_args[0][0]
         self.assertIn("memory_context.read", logged_text)
@@ -1177,13 +1172,13 @@ class ConversationFoundationTests(unittest.TestCase):
         upsert_member_preferences(
             self.db,
             member_id=self.member.id,
-            payload=MemberPreferenceUpsert(preferred_name="宝宝"),
+            payload=MemberPreferenceUpsert(preferred_name="瀹濆疂"),
         )
         self.db.commit()
 
         build_agent_runtime_context_mock.return_value = {
-            "agent": {"name": "绗ㄧ"},
-            "identity": {"role_summary": "AI绠″", "speaking_style": "鑷劧浜插垏"},
+            "agent": {"name": "缁椼劎顑?},
+            "identity": {"role_summary": "AI缁犫€愁啀", "speaking_style": "閼奉亞鍔ф禍鎻掑瀼"},
         }
         build_memory_context_bundle_mock.return_value = SimpleNamespace(
             hot_summary=SimpleNamespace(
@@ -1204,10 +1199,10 @@ class ConversationFoundationTests(unittest.TestCase):
             self.db,
             session=session,
             actor=self.actor,
-            user_message="你记得我吗",
+            user_message="浣犺寰楁垜鍚?,
         )
 
-        self.assertIn("宝宝", variables["household_context"])
+        self.assertIn("瀹濆疂", variables["household_context"])
         self.assertNotIn("Owner", variables["household_context"])
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
@@ -1225,11 +1220,11 @@ class ConversationFoundationTests(unittest.TestCase):
                 primary_intent="structured_qa",
                 secondary_intents=["free_chat"],
                 confidence=0.96,
-                reason="用户在问家庭状态。",
+                reason="鐢ㄦ埛鍦ㄩ棶瀹跺涵鐘舵€併€?,
                 candidate_actions=[],
             )
         )
-        intent = detect_conversation_intent(self.db, session=session, message="现在家里是什么状态？")
+        intent = detect_conversation_intent(self.db, session=session, message="鐜板湪瀹堕噷鏄粈涔堢姸鎬侊紵")
         self.assertEqual(ConversationIntentLabel.STRUCTURED_QA, intent.primary_intent)
         self.assertEqual(ConversationIntent.STRUCTURED_QA, intent.route_intent)
 
@@ -1248,11 +1243,11 @@ class ConversationFoundationTests(unittest.TestCase):
                 primary_intent="config_change",
                 secondary_intents=[],
                 confidence=0.97,
-                reason="用户明确想改助手名字和说话风格。",
+                reason="鐢ㄦ埛鏄庣‘鎯虫敼鍔╂墜鍚嶅瓧鍜岃璇濋鏍笺€?,
                 candidate_actions=[],
             )
         )
-        intent = detect_conversation_intent(self.db, session=session, message="以后你就叫阿福，说话风格温柔一点")
+        intent = detect_conversation_intent(self.db, session=session, message="浠ュ悗浣犲氨鍙樋绂忥紝璇磋瘽椋庢牸娓╂煍涓€鐐?)
         self.assertEqual(ConversationIntentLabel.CONFIG_CHANGE, intent.primary_intent)
         self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, intent.route_intent)
 
@@ -1271,11 +1266,11 @@ class ConversationFoundationTests(unittest.TestCase):
                 primary_intent="free_chat",
                 secondary_intents=["config_change"],
                 confidence=0.9,
-                reason="这是在问助手名字，不是在改配置。",
+                reason="杩欐槸鍦ㄩ棶鍔╂墜鍚嶅瓧锛屼笉鏄湪鏀归厤缃€?,
                 candidate_actions=[],
             )
         )
-        intent = detect_conversation_intent(self.db, session=session, message="你叫什么")
+        intent = detect_conversation_intent(self.db, session=session, message="浣犲彨浠€涔?)
         self.assertEqual(ConversationIntentLabel.FREE_CHAT, intent.primary_intent)
         self.assertEqual(ConversationIntent.FREE_CHAT, intent.route_intent)
 
@@ -1294,11 +1289,11 @@ class ConversationFoundationTests(unittest.TestCase):
                 primary_intent="config_change",
                 secondary_intents=["free_chat"],
                 confidence=0.42,
-                reason="可能像是在改配置，但不够明确。",
+                reason="鍙兘鍍忔槸鍦ㄦ敼閰嶇疆锛屼絾涓嶅鏄庣‘銆?,
                 candidate_actions=[],
             )
         )
-        intent = detect_conversation_intent(self.db, session=session, message="你觉得阿福这个名字怎么样")
+        intent = detect_conversation_intent(self.db, session=session, message="浣犺寰楅樋绂忚繖涓悕瀛楁€庝箞鏍?)
         self.assertEqual(ConversationIntentLabel.CONFIG_CHANGE, intent.primary_intent)
         self.assertEqual(ConversationIntent.FREE_CHAT, intent.route_intent)
 
@@ -1312,7 +1307,7 @@ class ConversationFoundationTests(unittest.TestCase):
             ),
             actor=self.actor,
         )
-        intent = detect_conversation_intent(self.db, session=session, message="你叫什么")
+        intent = detect_conversation_intent(self.db, session=session, message="浣犲彨浠€涔?)
         self.assertEqual(ConversationIntentLabel.CONFIG_CHANGE, intent.primary_intent)
         self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, intent.route_intent)
         self.assertEqual("session_mode.agent_config", intent.guardrail_rule)
@@ -1336,15 +1331,15 @@ class ConversationFoundationTests(unittest.TestCase):
                         primary_intent="reminder_create",
                         secondary_intents=[],
                         confidence=0.95,
-                        reason="用户明确要求创建提醒。",
+                        reason="鐢ㄦ埛鏄庣‘瑕佹眰鍒涘缓鎻愰啋銆?,
                         candidate_actions=[],
                     )
                 ),
                 _FakeLlmResult(
                     data=ReminderExtractionOutput(
                         should_create=True,
-                        title="带钥匙",
-                        description="出门前检查钥匙",
+                        title="甯﹂挜鍖?,
+                        description="鍑洪棬鍓嶆鏌ラ挜鍖?,
                         trigger_at="2026-03-14T08:00:00+08:00",
                     )
                 ),
@@ -1352,7 +1347,7 @@ class ConversationFoundationTests(unittest.TestCase):
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="明天早上八点提醒我带钥匙",
+                message="鏄庡ぉ鏃╀笂鍏偣鎻愰啋鎴戝甫閽ュ寵",
                 actor=self.actor,
                 conversation_history=[],
             )
@@ -1382,7 +1377,7 @@ class ConversationFoundationTests(unittest.TestCase):
                         primary_intent="config_change",
                         secondary_intents=[],
                         confidence=0.95,
-                        reason="用户明确想给助手改名。",
+                        reason="鐢ㄦ埛鏄庣‘鎯崇粰鍔╂墜鏀瑰悕銆?,
                         candidate_actions=[],
                     )
                 ),
@@ -1391,7 +1386,7 @@ class ConversationFoundationTests(unittest.TestCase):
                         "_ConfigDraft",
                         (),
                         {
-                            "display_name": "阿福",
+                            "display_name": "闃跨",
                             "speaking_style": None,
                             "personality_traits": [],
                         },
@@ -1401,15 +1396,15 @@ class ConversationFoundationTests(unittest.TestCase):
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="以后你就叫阿福",
+                message="浠ュ悗浣犲氨鍙樋绂?,
                 actor=self.actor,
                 conversation_history=[],
             )
         finally:
             settings.conversation_lane_takeover_enabled = previous_takeover
         self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
-        self.assertEqual("好，那我以后就叫阿福。你还想顺手调整一下我说话的风格，或者补几个性格标签吗？", result.text)
-        self.assertEqual("阿福", result.config_suggestion["display_name"])
+        self.assertEqual("濂斤紝閭ｆ垜浠ュ悗灏卞彨闃跨銆備綘杩樻兂椤烘墜璋冩暣涓€涓嬫垜璇磋瘽鐨勯鏍硷紝鎴栬€呰ˉ鍑犱釜鎬ф牸鏍囩鍚楋紵", result.text)
+        self.assertEqual("闃跨", result.config_suggestion["display_name"])
         self.assertEqual([], invoke_llm_mock.call_args_list[1].kwargs["conversation_history"])
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
@@ -1431,7 +1426,7 @@ class ConversationFoundationTests(unittest.TestCase):
                         primary_intent="config_change",
                         secondary_intents=[],
                         confidence=0.95,
-                        reason="用户在继续补充助手名字。",
+                        reason="鐢ㄦ埛鍦ㄧ户缁ˉ鍏呭姪鎵嬪悕瀛椼€?,
                         candidate_actions=[],
                     )
                 ),
@@ -1440,7 +1435,7 @@ class ConversationFoundationTests(unittest.TestCase):
                         "_ConfigDraft",
                         (),
                         {
-                            "display_name": "暖暖",
+                            "display_name": "鏆栨殩",
                             "speaking_style": None,
                             "personality_traits": [],
                         },
@@ -1448,21 +1443,21 @@ class ConversationFoundationTests(unittest.TestCase):
                 ),
             ]
             history = [
-                {"role": "user", "content": "给你改个名字好不好"},
-                {"role": "assistant", "content": "当然可以，你想给我起什么新名字？"},
+                {"role": "user", "content": "缁欎綘鏀逛釜鍚嶅瓧濂戒笉濂?},
+                {"role": "assistant", "content": "褰撶劧鍙互锛屼綘鎯崇粰鎴戣捣浠€涔堟柊鍚嶅瓧锛?},
             ]
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="叫暖暖吧",
+                message="鍙殩鏆栧惂",
                 actor=self.actor,
                 conversation_history=history,
             )
         finally:
             settings.conversation_lane_takeover_enabled = previous_takeover
         self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
-        self.assertEqual("暖暖", result.config_suggestion["display_name"])
-        self.assertEqual("好，那我以后就叫暖暖。你还想顺手调整一下我说话的风格，或者补几个性格标签吗？", result.text)
+        self.assertEqual("鏆栨殩", result.config_suggestion["display_name"])
+        self.assertEqual("濂斤紝閭ｆ垜浠ュ悗灏卞彨鏆栨殩銆備綘杩樻兂椤烘墜璋冩暣涓€涓嬫垜璇磋瘽鐨勯鏍硷紝鎴栬€呰ˉ鍑犱釜鎬ф牸鏍囩鍚楋紵", result.text)
         self.assertEqual(history, invoke_llm_mock.call_args_list[1].kwargs["conversation_history"])
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
@@ -1484,7 +1479,7 @@ class ConversationFoundationTests(unittest.TestCase):
                         primary_intent="config_change",
                         secondary_intents=[],
                         confidence=0.92,
-                        reason="用户想讨论改名。",
+                        reason="鐢ㄦ埛鎯宠璁烘敼鍚嶃€?,
                         candidate_actions=[],
                     )
                 ),
@@ -1494,26 +1489,26 @@ class ConversationFoundationTests(unittest.TestCase):
                         (),
                         {
                             "display_name": self.agent.display_name,
-                            "speaking_style": "幽默风趣",
-                            "personality_traits": ["细心", "乐于助人"],
+                            "speaking_style": "骞介粯椋庤叮",
+                            "personality_traits": ["缁嗗績", "涔愪簬鍔╀汉"],
                         },
                     )()
                 ),
-                _FakeLlmResult(text="当然可以，你想给我起什么新名字？也可以顺手告诉我想换成什么说话风格。"),
+                _FakeLlmResult(text="褰撶劧鍙互锛屼綘鎯崇粰鎴戣捣浠€涔堟柊鍚嶅瓧锛熶篃鍙互椤烘墜鍛婅瘔鎴戞兂鎹㈡垚浠€涔堣璇濋鏍笺€?),
             ]
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="我给你改个名怎么样",
+                message="鎴戠粰浣犳敼涓悕鎬庝箞鏍?,
                 actor=self.actor,
                 conversation_history=[
-                    {"role": "assistant", "content": f"哈哈，我是{self.agent.display_name}，你的家庭AI管家哦！"}
+                    {"role": "assistant", "content": f"鍝堝搱锛屾垜鏄瘂self.agent.display_name}锛屼綘鐨勫搴瑼I绠″鍝︼紒"}
                 ],
             )
         finally:
             settings.conversation_lane_takeover_enabled = previous_takeover
         self.assertEqual(ConversationIntent.CONFIG_EXTRACTION, result.intent)
-        self.assertEqual("当然可以，你想给我起什么新名字？也可以顺手告诉我想换成什么说话风格。", result.text)
+        self.assertEqual("褰撶劧鍙互锛屼綘鎯崇粰鎴戣捣浠€涔堟柊鍚嶅瓧锛熶篃鍙互椤烘墜鍛婅瘔鎴戞兂鎹㈡垚浠€涔堣璇濋鏍笺€?, result.text)
         self.assertIsNone(result.config_suggestion)
         self.assertEqual([], result.facts)
 
@@ -1533,22 +1528,22 @@ class ConversationFoundationTests(unittest.TestCase):
                     primary_intent="config_change",
                     secondary_intents=["free_chat"],
                     confidence=0.35,
-                    reason="只是随口聊名字，不够像配置修改。",
+                    reason="鍙槸闅忓彛鑱婂悕瀛楋紝涓嶅鍍忛厤缃慨鏀广€?,
                     candidate_actions=[],
                 )
             ),
-            _FakeLlmResult(text="我现在叫笨笨，你想给我起新名字也可以。"),
+            _FakeLlmResult(text="鎴戠幇鍦ㄥ彨绗ㄧ锛屼綘鎯崇粰鎴戣捣鏂板悕瀛椾篃鍙互銆?),
         ]
         result = run_orchestrated_turn(
             self.db,
             session=session,
-            message="你叫什么",
+            message="浣犲彨浠€涔?,
             actor=self.actor,
             conversation_history=[],
         )
         self.assertEqual(ConversationIntent.FREE_CHAT, result.intent)
         self.assertIsNone(result.config_suggestion)
-        self.assertEqual("我现在叫笨笨，你想给我起新名字也可以。", result.text)
+        self.assertEqual("鎴戠幇鍦ㄥ彨绗ㄧ锛屼綘鎯崇粰鎴戣捣鏂板悕瀛椾篃鍙互銆?, result.text)
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_run_orchestrated_turn_with_lane_takeover_routes_config_change_to_free_chat(self, invoke_llm_mock) -> None:
@@ -1569,16 +1564,16 @@ class ConversationFoundationTests(unittest.TestCase):
                         primary_intent="config_change",
                         secondary_intents=[],
                         confidence=0.95,
-                        reason="用户明确想给助手改名。",
+                        reason="鐢ㄦ埛鏄庣‘鎯崇粰鍔╂墜鏀瑰悕銆?,
                         candidate_actions=[],
                     )
                 ),
-                _FakeLlmResult(text="好的，我们先按聊天继续。你想让我改成什么名字？"),
+                _FakeLlmResult(text="濂界殑锛屾垜浠厛鎸夎亰澶╃户缁€備綘鎯宠鎴戞敼鎴愪粈涔堝悕瀛楋紵"),
             ]
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="以后你就叫阿福",
+                message="浠ュ悗浣犲氨鍙樋绂?,
                 actor=self.actor,
                 conversation_history=[],
             )
@@ -1588,7 +1583,7 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual(ConversationIntent.FREE_CHAT, result.intent)
         self.assertEqual("free_chat", result.lane_selection.lane.value)
         self.assertIsNone(result.config_suggestion)
-        self.assertEqual("好的，我们先按聊天继续。你想让我改成什么名字？", result.text)
+        self.assertEqual("濂界殑锛屾垜浠厛鎸夎亰澶╃户缁€備綘鎯宠鎴戞敼鎴愪粈涔堝悕瀛楋紵", result.text)
 
     @patch("app.modules.conversation.orchestrator.query_family_qa")
     @patch("app.modules.conversation.orchestrator.invoke_llm")
@@ -1609,12 +1604,12 @@ class ConversationFoundationTests(unittest.TestCase):
                     primary_intent="structured_qa",
                     secondary_intents=[],
                     confidence=0.95,
-                    reason="用户在查家庭状态。",
+                    reason="鐢ㄦ埛鍦ㄦ煡瀹跺涵鐘舵€併€?,
                     candidate_actions=[],
                 )
             )
             query_family_qa_mock.return_value = SimpleNamespace(
-                answer="现在家里有人。",
+                answer="鐜板湪瀹堕噷鏈変汉銆?,
                 degraded=False,
                 ai_degraded=False,
                 facts=[],
@@ -1627,7 +1622,7 @@ class ConversationFoundationTests(unittest.TestCase):
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="现在家里有人吗",
+                message="鐜板湪瀹堕噷鏈変汉鍚?,
                 actor=self.actor,
                 conversation_history=[],
             )
@@ -1662,20 +1657,20 @@ class ConversationFoundationTests(unittest.TestCase):
                     primary_intent="free_chat",
                     secondary_intents=[],
                     confidence=0.62,
-                    reason="旧意图识别先按 free_chat 兜底。",
+                    reason="鏃ф剰鍥捐瘑鍒厛鎸?free_chat 鍏滃簳銆?,
                     candidate_actions=[],
                 )
             )
             select_lane_mock.return_value = ConversationLaneSelection(
                 lane=ConversationLane.REALTIME_QUERY,
                 confidence=0.89,
-                reason="语义路由命中状态查询车道。",
+                reason="璇箟璺敱鍛戒腑鐘舵€佹煡璇㈣溅閬撱€?,
                 target_kind="state_query",
                 requires_clarification=False,
                 source="intent_mapping",
             )
             query_family_qa_mock.return_value = SimpleNamespace(
-                answer="现在家里有人。",
+                answer="鐜板湪瀹堕噷鏈変汉銆?,
                 degraded=False,
                 ai_degraded=False,
                 facts=[],
@@ -1689,7 +1684,7 @@ class ConversationFoundationTests(unittest.TestCase):
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="现在家里有人吗",
+                message="鐜板湪瀹堕噷鏈変汉鍚?,
                 actor=self.actor,
                 conversation_history=[],
             )
@@ -1698,7 +1693,7 @@ class ConversationFoundationTests(unittest.TestCase):
 
         self.assertEqual(ConversationIntent.STRUCTURED_QA, result.intent)
         self.assertEqual("realtime_query", result.lane_selection.lane.value)
-        self.assertEqual("现在家里有人。", result.text)
+        self.assertEqual("鐜板湪瀹堕噷鏈変汉銆?, result.text)
         query_family_qa_mock.assert_called_once()
 
     @patch("app.modules.conversation.orchestrator.query_family_qa")
@@ -1726,20 +1721,20 @@ class ConversationFoundationTests(unittest.TestCase):
                     primary_intent="free_chat",
                     secondary_intents=[],
                     confidence=0.51,
-                    reason="旧意图识别无法稳定判断。",
+                    reason="鏃ф剰鍥捐瘑鍒棤娉曠ǔ瀹氬垽鏂€?,
                     candidate_actions=[],
                 )
             )
             select_lane_mock.return_value = ConversationLaneSelection(
                 lane=ConversationLane.REALTIME_QUERY,
                 confidence=0.84,
-                reason="语义路由命中实时取数。",
+                reason="璇箟璺敱鍛戒腑瀹炴椂鍙栨暟銆?,
                 target_kind="state_query",
                 requires_clarification=False,
                 source="intent_mapping",
             )
             query_family_qa_mock.return_value = SimpleNamespace(
-                answer="客厅温度是 24 度。",
+                answer="瀹㈠巺娓╁害鏄?24 搴︺€?,
                 degraded=False,
                 ai_degraded=False,
                 facts=[],
@@ -1753,7 +1748,7 @@ class ConversationFoundationTests(unittest.TestCase):
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="客厅温度多少",
+                message="瀹㈠巺娓╁害澶氬皯",
                 actor=self.actor,
                 conversation_history=[],
             )
@@ -1761,7 +1756,7 @@ class ConversationFoundationTests(unittest.TestCase):
             settings.conversation_lane_takeover_enabled = previous_takeover
 
         self.assertEqual(ConversationIntent.STRUCTURED_QA, result.intent)
-        self.assertEqual("客厅温度是 24 度。", result.text)
+        self.assertEqual("瀹㈠巺娓╁害鏄?24 搴︺€?, result.text)
         self.assertIsNone(result.config_suggestion)
         self.assertEqual([], result.memory_candidate_payloads)
 
@@ -1789,7 +1784,7 @@ class ConversationFoundationTests(unittest.TestCase):
                 id=new_uuid(),
                 household_id=self.household.id,
                 room_id=None,
-                name="客厅灯",
+                name="瀹㈠巺鐏?,
                 device_type="light",
                 vendor="ha",
                 status="active",
@@ -1804,24 +1799,24 @@ class ConversationFoundationTests(unittest.TestCase):
                     primary_intent="free_chat",
                     secondary_intents=[],
                     confidence=0.7,
-                    reason="先按普通聊天兜底。",
+                    reason="鍏堟寜鏅€氳亰澶╁厹搴曘€?,
                     candidate_actions=[],
                 )
             )
             select_lane_mock.return_value = ConversationLaneSelection(
                 lane=ConversationLane.FAST_ACTION,
                 confidence=0.9,
-                reason="命中设备控制车道。",
+                reason="鍛戒腑璁惧鎺у埗杞﹂亾銆?,
                 target_kind="device_action",
                 requires_clarification=False,
                 source="test",
             )
             execute_device_action_mock.return_value = (
                 SimpleNamespace(
-                    device=SimpleNamespace(name="客厅灯"),
+                    device=SimpleNamespace(name="瀹㈠巺鐏?),
                     action="turn_off",
                     model_dump=lambda mode="json": {
-                        "device": {"name": "客厅灯"},
+                        "device": {"name": "瀹㈠巺鐏?},
                         "action": "turn_off",
                         "result": "success",
                     },
@@ -1832,7 +1827,7 @@ class ConversationFoundationTests(unittest.TestCase):
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="把客厅灯关掉",
+                message="鎶婂鍘呯伅鍏虫帀",
                 actor=self.actor,
                 conversation_history=[],
             )
@@ -1841,7 +1836,7 @@ class ConversationFoundationTests(unittest.TestCase):
 
         self.assertEqual(ConversationIntent.FAST_ACTION, result.intent)
         self.assertEqual("fast_action", result.lane_selection.lane.value)
-        self.assertEqual("已为你关闭客厅灯。", result.text)
+        self.assertEqual("宸蹭负浣犲叧闂鍘呯伅銆?, result.text)
         self.assertEqual("fast_action_receipt", result.facts[0]["type"])
         execute_device_action_mock.assert_called_once()
 
@@ -1863,7 +1858,7 @@ class ConversationFoundationTests(unittest.TestCase):
                 ),
                 actor=self.actor,
             )
-            for device_name in ("客厅灯", "卧室灯"):
+            for device_name in ("瀹㈠巺鐏?, "鍗у鐏?):
                 self.db.add(
                     Device(
                         id=new_uuid(),
@@ -1884,14 +1879,14 @@ class ConversationFoundationTests(unittest.TestCase):
                     primary_intent="free_chat",
                     secondary_intents=[],
                     confidence=0.7,
-                    reason="先按普通聊天兜底。",
+                    reason="鍏堟寜鏅€氳亰澶╁厹搴曘€?,
                     candidate_actions=[],
                 )
             )
             select_lane_mock.return_value = ConversationLaneSelection(
                 lane=ConversationLane.FAST_ACTION,
                 confidence=0.9,
-                reason="命中设备控制车道。",
+                reason="鍛戒腑璁惧鎺у埗杞﹂亾銆?,
                 target_kind="device_action",
                 requires_clarification=False,
                 source="test",
@@ -1900,7 +1895,7 @@ class ConversationFoundationTests(unittest.TestCase):
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="把灯关掉",
+                message="鎶婄伅鍏虫帀",
                 actor=self.actor,
                 conversation_history=[],
             )
@@ -1908,8 +1903,8 @@ class ConversationFoundationTests(unittest.TestCase):
             settings.conversation_lane_takeover_enabled = previous_takeover
 
         self.assertEqual(ConversationIntent.FAST_ACTION, result.intent)
-        self.assertIn("多个可能的设备", result.text)
-        self.assertCountEqual(["卧室灯", "客厅灯"], result.suggestions)
+        self.assertIn("澶氫釜鍙兘鐨勮澶?, result.text)
+        self.assertCountEqual(["鍗у鐏?, "瀹㈠巺鐏?], result.suggestions)
 
     @patch("app.modules.conversation.orchestrator.select_conversation_lane")
     @patch("app.modules.conversation.orchestrator.invoke_llm")
@@ -1947,7 +1942,7 @@ class ConversationFoundationTests(unittest.TestCase):
                     id=new_uuid(),
                     household_id=self.household.id,
                     room_id=None,
-                    name="客厅灯",
+                    name="瀹㈠巺鐏?,
                     device_type="light",
                     vendor="ha",
                     status="active",
@@ -1962,14 +1957,14 @@ class ConversationFoundationTests(unittest.TestCase):
                     primary_intent="free_chat",
                     secondary_intents=[],
                     confidence=0.7,
-                    reason="先按普通聊天兜底。",
+                    reason="鍏堟寜鏅€氳亰澶╁厹搴曘€?,
                     candidate_actions=[],
                 )
             )
             select_lane_mock.return_value = ConversationLaneSelection(
                 lane=ConversationLane.FAST_ACTION,
                 confidence=0.9,
-                reason="命中设备控制车道。",
+                reason="鍛戒腑璁惧鎺у埗杞﹂亾銆?,
                 target_kind="device_action",
                 requires_clarification=False,
                 source="test",
@@ -1978,7 +1973,7 @@ class ConversationFoundationTests(unittest.TestCase):
             result = run_orchestrated_turn(
                 self.db,
                 session=session,
-                message="把客厅灯关掉",
+                message="鎶婂鍘呯伅鍏虫帀",
                 actor=viewer_actor,
                 conversation_history=[],
             )
@@ -1986,7 +1981,7 @@ class ConversationFoundationTests(unittest.TestCase):
             settings.conversation_lane_takeover_enabled = previous_takeover
 
         self.assertEqual(ConversationIntent.FAST_ACTION, result.intent)
-        self.assertIn("没有设备快控权限", result.text)
+        self.assertIn("娌℃湁璁惧蹇帶鏉冮檺", result.text)
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     @patch("app.modules.conversation.service._run_orchestrated_turn")
@@ -1994,17 +1989,17 @@ class ConversationFoundationTests(unittest.TestCase):
         _ = invoke_llm_mock
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.CONFIG_EXTRACTION,
-            text="我已经把这轮表达整理成 Agent 配置建议：\n- 名称建议：阿福",
+            text="鎴戝凡缁忔妸杩欒疆琛ㄨ揪鏁寸悊鎴?Agent 閰嶇疆寤鸿锛歕n- 鍚嶇О寤鸿锛氶樋绂?,
             degraded=False,
-            facts=[{"type": "config_suggestion", "label": "Agent 配置建议", "source": "conversation_orchestrator", "extra": {"display_name": "阿福"}}],
-            suggestions=["去 AI 配置"],
+            facts=[{"type": "config_suggestion", "label": "Agent 閰嶇疆寤鸿", "source": "conversation_orchestrator", "extra": {"display_name": "闃跨"}}],
+            suggestions=["鍘?AI 閰嶇疆"],
             memory_candidate_payloads=[],
-            config_suggestion={"display_name": "阿福"},
+            config_suggestion={"display_name": "闃跨"},
             action_payloads=[],
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
         session = create_conversation_session(
             self.db,
@@ -2018,13 +2013,13 @@ class ConversationFoundationTests(unittest.TestCase):
         result = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="以后你就叫阿福"),
+            payload=ConversationTurnCreate(message="浠ュ悗浣犲氨鍙樋绂?),
             actor=self.actor,
         )
         self.db.commit()
 
         self.assertEqual("completed", result.outcome)
-        self.assertIn("Agent 配置建议", result.session.messages[1].content)
+        self.assertIn("Agent 閰嶇疆寤鸿", result.session.messages[1].content)
 
     @patch("app.modules.conversation.service.invoke_llm")
     @patch("app.modules.conversation.service._run_orchestrated_turn")
@@ -2032,15 +2027,15 @@ class ConversationFoundationTests(unittest.TestCase):
         _ = invoke_llm_mock
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.MEMORY_EXTRACTION,
-            text="我已经从这轮内容里整理出记忆候选，右侧可以直接确认写入。",
+            text="鎴戝凡缁忎粠杩欒疆鍐呭閲屾暣鐞嗗嚭璁板繂鍊欓€夛紝鍙充晶鍙互鐩存帴纭鍐欏叆銆?,
             degraded=False,
             facts=[],
-            suggestions=["确认写入记忆"],
+            suggestions=["纭鍐欏叆璁板繂"],
             memory_candidate_payloads=[
                 {
                     "memory_type": "preference",
-                    "title": "不吃香菜",
-                    "summary": "用户明确表示自己不吃香菜。",
+                    "title": "涓嶅悆棣欒彍",
+                    "summary": "鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?,
                     "content": {"source": "conversation"},
                     "confidence": 0.92,
                 }
@@ -2050,7 +2045,7 @@ class ConversationFoundationTests(unittest.TestCase):
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
         session = create_conversation_session(
             self.db,
@@ -2064,7 +2059,7 @@ class ConversationFoundationTests(unittest.TestCase):
         result = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="记住，我不吃香菜"),
+            payload=ConversationTurnCreate(message="璁颁綇锛屾垜涓嶅悆棣欒彍"),
             actor=self.actor,
         )
         self.db.commit()
@@ -2090,17 +2085,17 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.CONFIG_EXTRACTION,
-            text="我已经整理好了配置建议。",
+            text="鎴戝凡缁忔暣鐞嗗ソ浜嗛厤缃缓璁€?,
             degraded=False,
             facts=[],
             suggestions=[],
             memory_candidate_payloads=[],
-            config_suggestion={"display_name": "阿福", "speaking_style": "温和直接", "personality_traits": ["稳重"]},
+            config_suggestion={"display_name": "闃跨", "speaking_style": "娓╁拰鐩存帴", "personality_traits": ["绋抽噸"]},
             action_payloads=[],
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
         session = create_conversation_session(
             self.db,
@@ -2111,7 +2106,7 @@ class ConversationFoundationTests(unittest.TestCase):
         turn = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="以后你就叫阿福，说话温和直接一点"),
+            payload=ConversationTurnCreate(message="浠ュ悗浣犲氨鍙樋绂忥紝璇磋瘽娓╁拰鐩存帴涓€鐐?),
             actor=self.actor,
         )
         self.db.commit()
@@ -2121,21 +2116,21 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("config_apply", item.proposal_kind)
         self.assertEqual("notify", item.policy_category)
         self.assertEqual("completed", item.status)
-        self.assertEqual("阿福", get_conversation_session_detail(self.db, session_id=session.id, actor=self.actor).active_agent_name)
+        self.assertEqual("闃跨", get_conversation_session_detail(self.db, session_id=session.id, actor=self.actor).active_agent_name)
 
     @patch("app.modules.conversation.service._run_orchestrated_turn")
     def test_confirm_pending_memory_proposal_creates_memory(self, run_orchestrated_turn_mock) -> None:
         run_orchestrated_turn_mock.return_value = ConversationOrchestratorResult(
             intent=ConversationIntent.MEMORY_EXTRACTION,
-            text="我已经整理出了记忆候选。",
+            text="鎴戝凡缁忔暣鐞嗗嚭浜嗚蹇嗗€欓€夈€?,
             degraded=False,
             facts=[],
             suggestions=[],
             memory_candidate_payloads=[
                 {
                     "memory_type": "preference",
-                    "title": "不吃香菜",
-                    "summary": "用户明确表示自己不吃香菜。",
+                    "title": "涓嶅悆棣欒彍",
+                    "summary": "鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?,
                     "content": {"source": "conversation"},
                     "confidence": 0.92,
                 }
@@ -2145,7 +2140,7 @@ class ConversationFoundationTests(unittest.TestCase):
             ai_trace_id=None,
             ai_provider_code="mock-provider",
             effective_agent_id=self.agent.id,
-            effective_agent_name="笨笨",
+            effective_agent_name="绗ㄧ",
         )
         session = create_conversation_session(
             self.db,
@@ -2156,7 +2151,7 @@ class ConversationFoundationTests(unittest.TestCase):
         turn = create_conversation_turn(
             self.db,
             session_id=session.id,
-            payload=ConversationTurnCreate(message="记住，我不吃香菜"),
+            payload=ConversationTurnCreate(message="璁颁綇锛屾垜涓嶅悆棣欒彍"),
             actor=self.actor,
         )
         self.db.commit()
@@ -2187,7 +2182,7 @@ class ConversationFoundationTests(unittest.TestCase):
             seq=conversation_repository.get_next_message_seq(self.db, session_id=session.id),
             role="assistant",
             message_type="text",
-            content="我记住了，你不吃香菜。",
+            content="鎴戣浣忎簡锛屼綘涓嶅悆棣欒彍銆?,
             status="completed",
             effective_agent_id=self.agent.id,
             ai_provider_code="mock-provider",
@@ -2218,8 +2213,8 @@ class ConversationFoundationTests(unittest.TestCase):
             proposal_kind="memory_write",
             policy_category="ask",
             status="pending_confirmation",
-            title="不吃香菜",
-            summary="用户明确表示自己不吃香菜。",
+            title="涓嶅悆棣欒彍",
+            summary="鐢ㄦ埛鏄庣‘琛ㄧず鑷繁涓嶅悆棣欒彍銆?,
             evidence_message_ids_json=dump_json([assistant_message.id]) or "[]",
             evidence_roles_json=dump_json(["assistant"]) or "[]",
             dedupe_key="memory:manual:diet",
@@ -2244,7 +2239,7 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertIsNotNone(created_memory)
         assert created_memory is not None
         self.assertEqual("preference", created_memory.memory_type)
-        self.assertEqual("不吃香菜", created_memory.title)
+        self.assertEqual("涓嶅悆棣欒彍", created_memory.title)
 
     def test_dismiss_conversation_proposal_marks_item_dismissed(self) -> None:
         session = create_conversation_session(
@@ -2275,8 +2270,8 @@ class ConversationFoundationTests(unittest.TestCase):
             proposal_kind="memory_write",
             policy_category="ask",
             status="pending_confirmation",
-            title="待忽略候选",
-            summary="这条候选应该被忽略。",
+            title="寰呭拷鐣ュ€欓€?,
+            summary="杩欐潯鍊欓€夊簲璇ヨ蹇界暐銆?,
             evidence_message_ids_json="[]",
             evidence_roles_json="[]",
             dedupe_key="memory:dismiss:test",
@@ -2301,3 +2296,4 @@ class ConversationFoundationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

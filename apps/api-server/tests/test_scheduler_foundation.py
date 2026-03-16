@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 import asyncio
 import json
@@ -52,15 +52,12 @@ class SchedulerFoundationTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self._previous_session_local = db_session_module.SessionLocal
         db_session_module.SessionLocal = self.SessionLocal
         self.db: Session = self.SessionLocal()
@@ -72,24 +69,24 @@ class SchedulerFoundationTests(unittest.TestCase):
         )
         self.admin_member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="管理员", role="admin"),
+            MemberCreate(household_id=self.household.id, name="绠＄悊鍛?, role="admin"),
         )
         self.user_member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="普通成员", role="adult"),
+            MemberCreate(household_id=self.household.id, name="鏅€氭垚鍛?, role="adult"),
         )
         self.child_member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="小朋友", role="child"),
+            MemberCreate(household_id=self.household.id, name="灏忔湅鍙?, role="child"),
         )
         self.elder_member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="长辈", role="elder"),
+            MemberCreate(household_id=self.household.id, name="闀胯緢", role="elder"),
         )
         self.living_room = create_room(
             self.db,
             household_id=self.household.id,
-            name="客厅",
+            name="瀹㈠巺",
             room_type="living_room",
             privacy_level="public",
         )
@@ -98,10 +95,10 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             household_id=self.household.id,
             payload=AgentCreate(
-                display_name="家庭管家",
+                display_name="瀹跺涵绠″",
                 agent_type="butler",
-                self_identity="我是家庭管家",
-                role_summary="负责家庭主动提醒",
+                self_identity="鎴戞槸瀹跺涵绠″",
+                role_summary="璐熻矗瀹跺涵涓诲姩鎻愰啋",
                 created_by="test",
             ),
         )
@@ -189,7 +186,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 household_id=self.household.id,
                 owner_scope="household",
                 code="family-daily-sync",
-                name="全家晚间同步",
+                name="鍏ㄥ鏅氶棿鍚屾",
                 trigger_type="schedule",
                 schedule_type="daily",
                 schedule_expr="21:00",
@@ -206,7 +203,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 owner_scope="member",
                 owner_member_id=self.user_member.id,
                 code="member-heartbeat-check",
-                name="成员状态检查",
+                name="鎴愬憳鐘舵€佹鏌?,
                 trigger_type="heartbeat",
                 heartbeat_interval_seconds=1800,
                 target_type="agent_reminder",
@@ -232,7 +229,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                     household_id=self.household.id,
                     owner_scope="household",
                     code="blocked-household-task",
-                    name="不该成功",
+                    name="涓嶈鎴愬姛",
                     trigger_type="schedule",
                     schedule_type="daily",
                     schedule_expr="08:00",
@@ -249,7 +246,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                     owner_scope="member",
                     owner_member_id=self.admin_member.id,
                     code="blocked-other-member-task",
-                    name="不该成功",
+                    name="涓嶈鎴愬姛",
                     trigger_type="heartbeat",
                     heartbeat_interval_seconds=600,
                     target_type="agent_reminder",
@@ -265,7 +262,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 household_id=self.household.id,
                 owner_scope="household",
                 code="due-schedule-task",
-                name="到点任务",
+                name="鍒扮偣浠诲姟",
                 trigger_type="schedule",
                 schedule_type="interval",
                 schedule_expr="300",
@@ -282,7 +279,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 owner_scope="member",
                 owner_member_id=self.user_member.id,
                 code="due-heartbeat-task",
-                name="到点巡检",
+                name="鍒扮偣宸℃",
                 trigger_type="heartbeat",
                 heartbeat_interval_seconds=120,
                 target_type="agent_reminder",
@@ -323,7 +320,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 household_id=self.household.id,
                 owner_scope="household",
                 code="plugin-schedule-task",
-                name="插件同步任务",
+                name="鎻掍欢鍚屾浠诲姟",
                 trigger_type="schedule",
                 schedule_type="interval",
                 schedule_expr="60",
@@ -358,7 +355,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 household_id=self.household.id,
                 owner_scope="household",
                 code="plugin-schedule-homeassistant",
-                name="HA 计划同步",
+                name="HA 璁″垝鍚屾",
                 trigger_type="schedule",
                 schedule_type="interval",
                 schedule_expr="60",
@@ -378,7 +375,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 owner_scope="member",
                 owner_member_id=self.user_member.id,
                 code="self-private-task",
-                name="自己的任务",
+                name="鑷繁鐨勪换鍔?,
                 trigger_type="heartbeat",
                 heartbeat_interval_seconds=600,
                 target_type="agent_reminder",
@@ -393,7 +390,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 owner_scope="member",
                 owner_member_id=self.admin_member.id,
                 code="admin-private-task",
-                name="管理员私有任务",
+                name="绠＄悊鍛樼鏈変换鍔?,
                 trigger_type="heartbeat",
                 heartbeat_interval_seconds=900,
                 target_type="agent_reminder",
@@ -407,7 +404,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 household_id=self.household.id,
                 owner_scope="household",
                 code="household-public-task",
-                name="家庭公共任务",
+                name="瀹跺涵鍏叡浠诲姟",
                 trigger_type="schedule",
                 schedule_type="interval",
                 schedule_expr="1200",
@@ -447,7 +444,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                         "household_id": self.household.id,
                         "owner_scope": "household",
                         "code": "api-blocked-household",
-                        "name": "家庭任务",
+                        "name": "瀹跺涵浠诲姟",
                         "trigger_type": "schedule",
                         "schedule_type": "interval",
                         "schedule_expr": "300",
@@ -471,7 +468,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                         "household_id": self.household.id,
                         "owner_scope": "household",
                         "code": "api-plugin-chain-task",
-                        "name": "计划同步任务",
+                        "name": "璁″垝鍚屾浠诲姟",
                         "trigger_type": "schedule",
                         "schedule_type": "interval",
                         "schedule_expr": "60",
@@ -539,7 +536,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                     household_id=self.household.id,
                     owner_scope="household",
                     code="duplicate-window-task",
-                    name="重复窗口任务",
+                    name="閲嶅绐楀彛浠诲姟",
                     trigger_type="schedule",
                     schedule_type="interval",
                     schedule_expr="60",
@@ -579,7 +576,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             child_protection_enabled=False,
             elder_care_watch_enabled=True,
         )
-        self._add_device(name="门锁", status="offline", controllable=1)
+        self._add_device(name="闂ㄩ攣", status="offline", controllable=1)
         self._mark_member_presence(self.child_member.id, status="home")
         self.db.commit()
 
@@ -720,7 +717,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 household_id=self.household.id,
                 owner_scope="household",
                 code="failing-system-notice-task",
-                name="失败任务",
+                name="澶辫触浠诲姟",
                 trigger_type="schedule",
                 schedule_type="interval",
                 schedule_expr="60",
@@ -757,7 +754,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                     "/api/v1/scheduled-task-drafts/from-conversation",
                     json={
                         "household_id": self.household.id,
-                        "text": "每天晚上九点提醒我吃药",
+                        "text": "姣忓ぉ鏅氫笂涔濈偣鎻愰啋鎴戝悆鑽?,
                     },
                 )
                 self.assertEqual(200, draft_response.status_code)
@@ -794,7 +791,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                     "/api/v1/scheduled-task-drafts/from-conversation",
                     json={
                         "household_id": self.household.id,
-                        "text": "提醒我吃药",
+                        "text": "鎻愰啋鎴戝悆鑽?,
                     },
                 )
                 self.assertEqual(200, draft_response.status_code)
@@ -804,7 +801,7 @@ class SchedulerFoundationTests(unittest.TestCase):
 
                 confirm_response = await client.post(
                     f"/api/v1/scheduled-task-drafts/{draft['draft_id']}/confirm",
-                    json={"schedule_expr": "21:00", "name": "吃药"},
+                    json={"schedule_expr": "21:00", "name": "鍚冭嵂"},
                 )
                 self.assertEqual(200, confirm_response.status_code)
                 result = confirm_response.json()
@@ -824,7 +821,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                         "household_id": self.household.id,
                         "owner_scope": "household",
                         "code": "stage3-agent-reminder-checkpoint",
-                        "name": "儿童在家提醒",
+                        "name": "鍎跨鍦ㄥ鎻愰啋",
                         "trigger_type": "heartbeat",
                         "heartbeat_interval_seconds": 60,
                         "target_type": "agent_reminder",
@@ -892,7 +889,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                     "/api/v1/scheduled-task-drafts/from-conversation",
                     json={
                         "household_id": self.household.id,
-                        "text": "每天晚上九点提醒我吃药",
+                        "text": "姣忓ぉ鏅氫笂涔濈偣鎻愰啋鎴戝悆鑽?,
                     },
                 )
                 self.assertEqual(200, draft_response.status_code)
@@ -1019,7 +1016,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "第三方计划插件",
+                    "name": "绗笁鏂硅鍒掓彃浠?,
                     "version": "0.1.0",
                     "types": ["connector"],
                     "permissions": ["health.read"],
@@ -1038,3 +1035,4 @@ class SchedulerFoundationTests(unittest.TestCase):
             encoding="utf-8",
         )
         return plugin_root
+

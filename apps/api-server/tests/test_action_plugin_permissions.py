@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 import tempfile
 import unittest
@@ -37,25 +37,21 @@ class ActionPluginPermissionTests(unittest.TestCase):
         self.builtin_root = Path(__file__).resolve().parents[1] / "app" / "plugins" / "builtin"
         self.state_file = Path(self._tempdir.name) / "plugin_registry_state.json"
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_action_plugin_is_denied_without_execute_permission(self) -> None:
-        household, member, agent, actor = self._create_agent_context("No Permission Home", "妈妈", "笨笨")
+        household, member, agent, actor = self._create_agent_context("No Permission Home", "濡堝", "绗ㄧ")
 
         result = invoke_agent_action_plugin(
             self.db,
@@ -74,10 +70,10 @@ class ActionPluginPermissionTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual("denied", result.authorization_status)
         self.assertEqual("agent_action_plugin_denied", result.error_code)
-        self.assertIn("没有动作执行权限", result.error_message or "")
+        self.assertIn("娌℃湁鍔ㄤ綔鎵ц鏉冮檺", result.error_message or "")
 
     def test_readonly_plugin_cannot_be_executed_as_action(self) -> None:
-        household, member, agent, actor = self._create_agent_context("Readonly Home", "爸爸", "阿福")
+        household, member, agent, actor = self._create_agent_context("Readonly Home", "鐖哥埜", "闃跨")
         replace_member_permissions(
             self.db,
             member_id=member.id,
@@ -112,7 +108,7 @@ class ActionPluginPermissionTests(unittest.TestCase):
         self.assertIn("action", result.error_message or "")
 
     def test_action_plugin_runs_after_permission_check(self) -> None:
-        household, member, agent, actor = self._create_agent_context("Action Home", "妈妈", "小管家")
+        household, member, agent, actor = self._create_agent_context("Action Home", "濡堝", "灏忕瀹?)
         replace_member_permissions(
             self.db,
             member_id=member.id,
@@ -169,7 +165,7 @@ class ActionPluginPermissionTests(unittest.TestCase):
         self.assertEqual("medium", details["risk_level"])
 
     def test_high_risk_action_requires_confirmation_before_execution(self) -> None:
-        household, member, agent, actor = self._create_agent_context("High Risk Home", "妈妈", "守门员")
+        household, member, agent, actor = self._create_agent_context("High Risk Home", "濡堝", "瀹堥棬鍛?)
         replace_member_permissions(
             self.db,
             member_id=member.id,
@@ -247,7 +243,7 @@ class ActionPluginPermissionTests(unittest.TestCase):
         self.assertEqual("success", confirm_audit.result)
 
     def test_third_party_action_plugin_runs_with_runner_mount(self) -> None:
-        household, member, agent, actor = self._create_agent_context("Third Party Action Home", "妈妈", "外部执行器")
+        household, member, agent, actor = self._create_agent_context("Third Party Action Home", "濡堝", "澶栭儴鎵ц鍣?)
         replace_member_permissions(
             self.db,
             member_id=member.id,
@@ -317,8 +313,8 @@ class ActionPluginPermissionTests(unittest.TestCase):
             payload=AgentCreate(
                 display_name=agent_name,
                 agent_type="butler",
-                self_identity=f"我是{agent_name}",
-                role_summary="家庭 AI 管家",
+                self_identity=f"鎴戞槸{agent_name}",
+                role_summary="瀹跺涵 AI 绠″",
                 created_by="test",
             ),
         )
@@ -346,7 +342,7 @@ class ActionPluginPermissionTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "第三方动作插件",
+                    "name": "绗笁鏂瑰姩浣滄彃浠?,
                     "version": "0.1.0",
                     "types": ["action"],
                     "permissions": ["device.control"],
@@ -374,3 +370,5 @@ class ActionPluginPermissionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

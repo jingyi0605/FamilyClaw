@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
@@ -43,21 +43,17 @@ class ChannelRepositoryTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
 
-        db_path = Path(self._tempdir.name) / "test.db"
-        settings.database_url = f"sqlite:///{db_path}"
-
-        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
-        command.upgrade(alembic_config, "head")
-
-        self.engine = create_engine(settings.database_url, future=True)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, future=True)
+        from tests.test_db_support import PostgresTestDatabase
+        self._db_helper = PostgresTestDatabase(test_id=self.id())
+        self._db_helper.setup()
+        self.database_url = self._db_helper.database_url
+        self.engine = self._db_helper.engine
+        self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
 
     def tearDown(self) -> None:
         self.db.close()
-        self.engine.dispose()
-        settings.database_url = self._previous_database_url
+        self._db_helper.close()
         self._tempdir.cleanup()
 
     def test_channel_account_and_member_binding_constraints(self) -> None:
@@ -66,7 +62,7 @@ class ChannelRepositoryTests(unittest.TestCase):
         sibling_account = self._create_channel_account(
             household_id=household.id,
             account_code="telegram-secondary",
-            display_name="Telegram 次账号",
+            display_name="Telegram 娆¤处鍙?,
         )
         self.db.flush()
 
@@ -81,7 +77,7 @@ class ChannelRepositoryTests(unittest.TestCase):
             platform_code="telegram",
             external_user_id="tg-user-001",
             external_chat_id="tg-chat-001",
-            display_hint="妈妈的 Telegram",
+            display_hint="濡堝鐨?Telegram",
             binding_status="active",
             created_at=utc_now_iso(),
             updated_at=utc_now_iso(),
@@ -110,7 +106,7 @@ class ChannelRepositoryTests(unittest.TestCase):
             platform_code="telegram",
             external_user_id="tg-user-001",
             external_chat_id="tg-chat-002",
-            display_hint="同 household 不同 bot",
+            display_hint="鍚?household 涓嶅悓 bot",
             binding_status="active",
             created_at=utc_now_iso(),
             updated_at=utc_now_iso(),
@@ -125,7 +121,7 @@ class ChannelRepositoryTests(unittest.TestCase):
             plugin_id="channel-telegram",
             platform_code="telegram",
             account_code=account.account_code,
-            display_name="重复账号",
+            display_name="閲嶅璐﹀彿",
             connection_mode="webhook",
             config_json="{}",
             status="draft",
@@ -146,7 +142,7 @@ class ChannelRepositoryTests(unittest.TestCase):
             platform_code="telegram",
             external_user_id="tg-user-001",
             external_chat_id="tg-chat-003",
-            display_hint="当前 bot 下重复绑定",
+            display_hint="褰撳墠 bot 涓嬮噸澶嶇粦瀹?,
             binding_status="active",
             created_at=utc_now_iso(),
             updated_at=utc_now_iso(),
@@ -190,7 +186,7 @@ class ChannelRepositoryTests(unittest.TestCase):
             event_type="message",
             external_user_id="tg-user-001",
             external_conversation_key="chat:12345",
-            normalized_payload_json='{"text":"你好"}',
+            normalized_payload_json='{"text":"浣犲ソ"}',
             status="matched",
             conversation_session_id=session.id,
             error_code=None,
@@ -209,7 +205,7 @@ class ChannelRepositoryTests(unittest.TestCase):
             assistant_message_id=assistant_message.id,
             external_conversation_key="chat:12345",
             delivery_type="reply",
-            request_payload_json='{"text":"收到"}',
+            request_payload_json='{"text":"鏀跺埌"}',
             provider_message_ref="provider-msg-001",
             status="sent",
             attempt_count=1,
@@ -261,7 +257,7 @@ class ChannelRepositoryTests(unittest.TestCase):
             self.db,
             MemberCreate(
                 household_id=household.id,
-                name="妈妈",
+                name="濡堝",
                 role="adult",
             ),
         )
@@ -273,7 +269,7 @@ class ChannelRepositoryTests(unittest.TestCase):
         *,
         household_id: str,
         account_code: str = "telegram-main",
-        display_name: str = "Telegram 主账号",
+        display_name: str = "Telegram 涓昏处鍙?,
     ) -> ChannelPluginAccount:
         account = ChannelPluginAccount(
             id=new_uuid(),
@@ -306,7 +302,7 @@ class ChannelRepositoryTests(unittest.TestCase):
             active_agent_id=None,
             current_request_id=None,
             last_event_seq=0,
-            title="外部会话",
+            title="澶栭儴浼氳瘽",
             status="active",
             last_message_at=now,
             created_at=now,
@@ -321,7 +317,7 @@ class ChannelRepositoryTests(unittest.TestCase):
             seq=1,
             role="assistant",
             message_type="text",
-            content="收到",
+            content="鏀跺埌",
             status="completed",
             effective_agent_id=None,
             ai_provider_code=None,
@@ -344,3 +340,4 @@ class ChannelRepositoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
