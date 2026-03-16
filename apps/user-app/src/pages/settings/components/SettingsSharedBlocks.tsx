@@ -1,5 +1,6 @@
 import { EmptyStateCard } from '@familyclaw/user-ui';
 import { type FormEventHandler, type PropsWithChildren, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Card } from '../../family/base';
 
 type SettingsNoticeTone = 'info' | 'success' | 'error';
@@ -105,7 +106,7 @@ export function SettingsDialog(props: PropsWithChildren<{
     </>
   );
 
-  return (
+  const overlay = (
     <div className="member-modal-overlay" onClick={closeDisabled ? undefined : onClose}>
       <div className={`member-modal ${className ?? ''}`.trim()} onClick={(event) => event.stopPropagation()}>
         {onSubmit ? (
@@ -116,4 +117,10 @@ export function SettingsDialog(props: PropsWithChildren<{
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined') {
+    return overlay;
+  }
+
+  return createPortal(overlay, document.body);
 }

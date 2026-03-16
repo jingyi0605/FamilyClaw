@@ -5990,7 +5990,7 @@ body::before {
 
 // 详情弹窗样式 - 使用固定 px
 .ai-provider-detail-modal {
-  width: min(480px, 100%);
+  width: min(820px, calc(100vw - 48px));
 }
 
 .ai-detail-modal__hero {
@@ -6102,6 +6102,12 @@ body::before {
 
 .ai-detail-modal__list-item span {
   color: var(--text-secondary);
+}
+
+@media (max-width: 900px) {
+  .ai-provider-detail-modal {
+    width: min(100%, calc(100vw - 32px));
+  }
 }
 
 .agent-config-center {
