@@ -87,9 +87,9 @@ function formatStatus(status: string): { label: string; tone: 'success' | 'warni
     case 'active':
       return { label: '已启用', tone: 'success' };
     case 'draft':
-      return { label: '草稿', tone: 'secondary' };
+      return { label: '待启用', tone: 'secondary' };
     case 'degraded':
-      return { label: '降级', tone: 'warning' };
+      return { label: '连接异常', tone: 'warning' };
     case 'disabled':
       return { label: '已停用', tone: 'secondary' };
     default:
@@ -98,17 +98,36 @@ function formatStatus(status: string): { label: string; tone: 'success' | 'warni
 }
 
 function formatProbeStatus(status: string | null): { label: string; tone: 'success' | 'warning' | 'secondary' | 'danger' } {
-  if (!status) return { label: '未探测', tone: 'secondary' };
+  if (!status) return { label: '未检查', tone: 'secondary' };
   switch (status) {
     case 'ok':
-      return { label: '正常', tone: 'success' };
+      return { label: '连接正常', tone: 'success' };
     case 'failed':
-      return { label: '失败', tone: 'danger' };
+      return { label: '检查失败', tone: 'danger' };
     case 'pending':
-      return { label: '探测中', tone: 'warning' };
+      return { label: '检查中', tone: 'warning' };
     default:
       return { label: status, tone: 'secondary' };
   }
+}
+
+function formatConnectionMode(mode: 'webhook' | 'polling' | 'websocket') {
+  switch (mode) {
+    case 'webhook':
+      return '自动接收消息';
+    case 'polling':
+      return '定时拉取消息';
+    case 'websocket':
+      return '长连接';
+    default:
+      return mode;
+  }
+}
+
+function getProbeMessageClassName(account: ChannelAccountRead): string {
+  return account.last_probe_status === 'ok'
+    ? 'channel-account-card__success'
+    : 'channel-account-card__error';
 }
 
 function formatTimestamp(value: string | null) {
@@ -118,6 +137,37 @@ function formatTimestamp(value: string | null) {
   } catch {
     return value;
   }
+}
+
+function formatApiErrorMessage(error: ApiError): string {
+  const payload = error.payload as { detail?: unknown } | undefined;
+  const detail = payload?.detail;
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+  if (Array.isArray(detail) && detail.length > 0) {
+    const messages = detail
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+        const message = 'msg' in item && typeof item.msg === 'string' ? item.msg : null;
+        const location = 'loc' in item && Array.isArray(item.loc)
+          ? item.loc
+            .filter((part: unknown): part is string | number => typeof part === 'string' || typeof part === 'number')
+            .join('.')
+          : '';
+        if (message && location) {
+          return `${location}: ${message}`;
+        }
+        return message;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (messages.length > 0) {
+      return messages.join('；');
+    }
+  }
+  return error.message || '保存失败';
 }
 
 function SettingsChannelAccessContent() {
@@ -137,7 +187,6 @@ function SettingsChannelAccessContent() {
   const [editingAccount, setEditingAccount] = useState<ChannelAccountRead | null>(null);
   const [accountForm, setAccountForm] = useState({
     plugin_id: '',
-    account_code: '',
     display_name: '',
     connection_mode: 'webhook' as 'webhook' | 'polling' | 'websocket',
     config: {} as Record<string, unknown>,
@@ -249,7 +298,6 @@ function SettingsChannelAccessContent() {
     setEditingAccount(null);
     setAccountForm({
       plugin_id: '',
-      account_code: '',
       display_name: '',
       connection_mode: 'webhook',
       config: {},
@@ -262,7 +310,6 @@ function SettingsChannelAccessContent() {
     setEditingAccount(account);
     setAccountForm({
       plugin_id: account.plugin_id,
-      account_code: account.account_code,
       display_name: account.display_name,
       connection_mode: account.connection_mode,
       config: account.config,
@@ -289,11 +336,10 @@ function SettingsChannelAccessContent() {
         };
         const result = await settingsApi.updateChannelAccount(currentHouseholdId, editingAccount.id, payload);
         setAccounts((current) => current.map((item) => item.id === result.id ? result : item));
-        setStatus('平台账号已更新');
+        setStatus('聊天平台已更新');
       } else {
         const payload: ChannelAccountCreate = {
           plugin_id: accountForm.plugin_id,
-          account_code: accountForm.account_code,
           display_name: accountForm.display_name,
           connection_mode: accountForm.connection_mode,
           config: accountForm.config,
@@ -301,13 +347,13 @@ function SettingsChannelAccessContent() {
         };
         const result = await settingsApi.createChannelAccount(currentHouseholdId, payload);
         setAccounts((current) => [result, ...current]);
-        setStatus('平台账号已创建');
+        setStatus('聊天平台已添加');
       }
       setAccountModalOpen(false);
     } catch (saveError) {
       setError(
         saveError instanceof ApiError
-          ? ((saveError.payload as { detail?: string } | undefined)?.detail ?? saveError.message)
+          ? formatApiErrorMessage(saveError)
           : saveError instanceof Error
             ? saveError.message
             : '保存失败',
@@ -327,9 +373,9 @@ function SettingsChannelAccessContent() {
       if (expandedAccountId === accountId) {
         setAccountStatus(result);
       }
-      setStatus('探测完成');
+      setStatus('连接检查已完成');
     } catch (probeError) {
-      setError(probeError instanceof Error ? probeError.message : '探测失败');
+      setError(probeError instanceof Error ? probeError.message : '连接检查失败');
     } finally {
       setLoading(false);
     }
@@ -355,15 +401,15 @@ function SettingsChannelAccessContent() {
   return (
     <SettingsPageShell activeKey="channel-access">
       <div className="settings-page">
-        <Section title="通讯平台接入">
+        <Section title="聊天平台">
           <Card className="channel-access-notice">
             <div className="channel-access-notice__content">
-              <h3>关于通讯平台接入</h3>
-              <p>这里配置 Telegram、Discord、飞书这类外部聊天平台账号，让家庭成员直接在常用聊天工具里和系统对话。</p>
+              <h3>把常用聊天工具接进来</h3>
+              <p>把 Telegram、Discord、飞书这类聊天工具接进来后，家庭成员就能直接在熟悉的聊天窗口里和系统沟通。</p>
               <ul>
-                <li><strong>平台账号</strong>：每个平台的机器人接入配置。</li>
-                <li><strong>成员绑定</strong>：把外部平台用户 ID 绑定到家庭成员，别让系统认错人。</li>
-                <li><strong>状态监控</strong>：看连接状态和最近失败记录，别瞎猜。</li>
+                <li><strong>聊天平台</strong>：每个平台各有一套接入信息。</li>
+                <li><strong>成员关联</strong>：把平台账号和家庭成员对应起来，系统才知道是谁在发消息。</li>
+                <li><strong>连接情况</strong>：这里可以查看是否连通，以及最近有没有收发失败。</li>
               </ul>
             </div>
           </Card>
@@ -373,19 +419,19 @@ function SettingsChannelAccessContent() {
 
           <div className="channel-account-list">
             {loading && accounts.length === 0 ? (
-              <div className="text-text-secondary">正在加载平台账号...</div>
+              <div className="text-text-secondary">正在加载聊天平台...</div>
             ) : accounts.length === 0 ? (
               <EmptyState
                 icon="🔌"
-                title="还没有配置平台账号"
-                description="先把第一个通讯平台机器人接进来。"
-                action={<button className="btn btn--primary" onClick={openCreateModal} disabled={availableChannelPlugins.length === 0}>新增平台账号</button>}
+                title="还没有接入聊天平台"
+                description="先添加一个家里常用的聊天工具。"
+                action={<button className="btn btn--primary" onClick={openCreateModal} disabled={availableChannelPlugins.length === 0}>添加平台</button>}
               />
             ) : (
               <>
                 <div className="channel-account-list__header">
-                  <span>已配置 {accounts.length} 个平台账号</span>
-                  <button className="btn btn--primary btn--sm" onClick={openCreateModal} disabled={availableChannelPlugins.length === 0}>新增平台账号</button>
+                  <span>已接入 {accounts.length} 个聊天平台</span>
+                  <button className="btn btn--primary btn--sm" onClick={openCreateModal} disabled={availableChannelPlugins.length === 0}>添加平台</button>
                 </div>
 
                 {accounts.map((account) => {
@@ -395,7 +441,7 @@ function SettingsChannelAccessContent() {
                   const isExpanded = expandedAccountId === account.id;
                   const pluginState = getAccountPluginState(account);
                   const pluginDisabled = isAccountPluginDisabled(account);
-                  const pluginDisabledReason = pluginState?.disabled_reason ?? '当前家庭已经停用这个通道插件';
+                  const pluginDisabledReason = pluginState?.disabled_reason ?? '当前家庭已经停用了这个聊天平台能力';
 
                   return (
                     <Card key={account.id} className="channel-account-card">
@@ -408,23 +454,25 @@ function SettingsChannelAccessContent() {
                             <span className={`badge badge--${probeInfo.tone}`}>{probeInfo.label}</span>
                           </div>
                           <div className="channel-account-card__meta">
-                            {platform.name} · {account.connection_mode}
-                            {pluginDisabled ? <span className="channel-account-card__error"> · 插件已停用</span> : null}
-                            {account.last_error_message ? <span className="channel-account-card__error"> · {account.last_error_message}</span> : null}
+                            {platform.name} · {formatConnectionMode(account.connection_mode)}
+                            {pluginDisabled ? <span className="channel-account-card__error"> · 当前不可用</span> : null}
+                            {account.last_error_message ? (
+                              <span className={getProbeMessageClassName(account)}> · {account.last_error_message}</span>
+                            ) : null}
                           </div>
                           {pluginDisabled ? <div className="channel-account-card__times">{pluginDisabledReason}</div> : null}
                           <div className="channel-account-card__times">
-                            最近入站：{formatTimestamp(account.last_inbound_at)} · 最近出站：{formatTimestamp(account.last_outbound_at)}
+                            最近收到消息：{formatTimestamp(account.last_inbound_at)} · 最近发送消息：{formatTimestamp(account.last_outbound_at)}
                           </div>
                         </div>
                         <div className="channel-account-card__actions">
-                          <button className="btn btn--outline btn--sm" onClick={() => openEditModal(account)} disabled={loading || pluginDisabled}>编辑</button>
-                          <button className="btn btn--outline btn--sm" onClick={() => void handleProbeAccount(account.id)} disabled={loading || pluginDisabled}>立即探测</button>
+                          <button className="btn btn--outline btn--sm" onClick={() => openEditModal(account)} disabled={loading || pluginDisabled}>修改</button>
+                          <button className="btn btn--outline btn--sm" onClick={() => void handleProbeAccount(account.id)} disabled={loading || pluginDisabled}>检查连接</button>
                           <button className="btn btn--outline btn--sm" onClick={() => void handleToggleAccountStatus(account)} disabled={loading || pluginDisabled}>
                             {account.status === 'disabled' ? '启用' : '停用'}
                           </button>
                           <button className="btn btn--outline btn--sm" onClick={() => toggleAccountExpand(account.id)}>
-                            {isExpanded ? '收起详情' : '展开详情'}
+                            {isExpanded ? '收起详情' : '查看详情'}
                           </button>
                         </div>
                       </div>
@@ -437,24 +485,24 @@ function SettingsChannelAccessContent() {
                             <>
                               {accountStatus ? (
                                 <div className="channel-detail-section">
-                                  <h4>状态摘要</h4>
+                                  <h4>连接情况</h4>
                                   <div className="channel-detail-stats">
                                     <div className="channel-detail-stat">
                                       <span className="channel-detail-stat__value">{accountStatus.recent_failure_summary.recent_failure_count}</span>
-                                      <span className="channel-detail-stat__label">最近失败数</span>
+                                      <span className="channel-detail-stat__label">最近失败次数</span>
                                     </div>
                                     <div className="channel-detail-stat">
                                       <span className="channel-detail-stat__value">{accountStatus.recent_delivery_count}</span>
-                                      <span className="channel-detail-stat__label">最近出站数</span>
+                                      <span className="channel-detail-stat__label">最近发送消息</span>
                                     </div>
                                     <div className="channel-detail-stat">
                                       <span className="channel-detail-stat__value">{accountStatus.recent_inbound_count}</span>
-                                      <span className="channel-detail-stat__label">最近入站数</span>
+                                      <span className="channel-detail-stat__label">最近收到消息</span>
                                     </div>
                                   </div>
                                   {accountStatus.recent_failure_summary.last_error_message ? (
                                     <div className="channel-detail-error">
-                                      <strong>最近错误：</strong>
+                                      <strong>最近一次失败：</strong>
                                       {accountStatus.recent_failure_summary.last_error_message}
                                       <span className="channel-detail-error__time">（{formatTimestamp(accountStatus.recent_failure_summary.last_failed_at)}）</span>
                                     </div>
@@ -469,10 +517,10 @@ function SettingsChannelAccessContent() {
 
                               {failedDeliveries.length > 0 || failedInboundEvents.length > 0 ? (
                                 <div className="channel-detail-section">
-                                  <h4>最近失败记录</h4>
+                                  <h4>最近未成功处理的消息</h4>
                                   {failedDeliveries.length > 0 ? (
                                     <div className="channel-failure-list">
-                                      <h5>出站失败（最近 5 条）</h5>
+                                      <h5>发送失败（最近 5 条）</h5>
                                       {failedDeliveries.map((item) => (
                                         <div key={item.id} className="channel-failure-item">
                                           <span className="channel-failure-item__type">{item.delivery_type}</span>
@@ -484,7 +532,7 @@ function SettingsChannelAccessContent() {
                                   ) : null}
                                   {failedInboundEvents.length > 0 ? (
                                     <div className="channel-failure-list">
-                                      <h5>入站失败（最近 5 条）</h5>
+                                      <h5>接收失败（最近 5 条）</h5>
                                       {failedInboundEvents.map((item) => (
                                         <div key={item.id} className="channel-failure-item">
                                           <span className="channel-failure-item__type">{item.event_type}</span>
@@ -512,12 +560,12 @@ function SettingsChannelAccessContent() {
           <div className="member-modal-overlay" onClick={() => setAccountModalOpen(false)}>
             <div className="member-modal" onClick={(event) => event.stopPropagation()}>
               <div className="member-modal__header">
-                <h3>{editingAccount ? '编辑平台账号' : '新增平台账号'}</h3>
-                <p>配置外部通讯平台的机器人接入。</p>
+                <h3>{editingAccount ? '修改平台接入' : '添加平台接入'}</h3>
+                <p>填好对应平台提供的信息后，家庭成员就能在这个聊天工具里联系系统，账号标识由系统自动生成。</p>
               </div>
               <form className="settings-form" onSubmit={handleSaveAccount}>
                 <div className="form-group">
-                  <label>平台类型</label>
+                  <label>平台</label>
                   <select
                     className="form-select"
                     value={accountForm.plugin_id}
@@ -532,38 +580,27 @@ function SettingsChannelAccessContent() {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>账号代码</label>
-                  <input
-                    className="form-input"
-                    value={accountForm.account_code}
-                    onChange={(event) => setAccountForm((current) => ({ ...current, account_code: event.target.value }))}
-                    disabled={Boolean(editingAccount)}
-                    placeholder="my-telegram-bot"
-                    required
-                  />
-                  <div className="form-help">家庭内唯一英文标识，创建后别改。</div>
-                </div>
-                <div className="form-group">
                   <label>显示名称</label>
                   <input
                     className="form-input"
                     value={accountForm.display_name}
                     onChange={(event) => setAccountForm((current) => ({ ...current, display_name: event.target.value }))}
-                    placeholder="我的 Telegram 机器人"
+                    placeholder="例如：家庭 Telegram 助手"
                     required
                   />
                 </div>
                 <div className="form-group">
-                  <label>连接方式</label>
+                  <label>接入方式</label>
                   <select
                     className="form-select"
                     value={accountForm.connection_mode}
                     onChange={(event) => setAccountForm((current) => ({ ...current, connection_mode: event.target.value as 'webhook' | 'polling' | 'websocket' }))}
                   >
-                    <option value="webhook">Webhook</option>
+                    <option value="webhook">Webhook（推荐）</option>
                     <option value="polling">Polling</option>
                     <option value="websocket">WebSocket</option>
                   </select>
+                  <div className="form-help">大多数平台直接用 Webhook 就够了，只有你明确知道要改时再换。</div>
                 </div>
                 <div className="form-group">
                   <label>状态</label>
@@ -572,11 +609,11 @@ function SettingsChannelAccessContent() {
                     value={accountForm.status}
                     onChange={(event) => setAccountForm((current) => ({ ...current, status: event.target.value as 'draft' | 'active' | 'degraded' | 'disabled' }))}
                   >
-                    <option value="draft">草稿</option>
+                    <option value="draft">先保存，暂不启用</option>
                     <option value="active">启用</option>
                     <option value="disabled">停用</option>
                   </select>
-                  <div className="form-help">建议先设成草稿，真通了再启用。</div>
+                  <div className="form-help">建议先保存，确认能正常收发消息后再启用。</div>
                 </div>
 
                 {(() => {
@@ -587,7 +624,7 @@ function SettingsChannelAccessContent() {
                   }
                   return (
                     <div className="form-group channel-config-section">
-                      <label>平台配置</label>
+                      <label>接入信息</label>
                       <div className="channel-config-fields">
                         {configFields.map((field) => (
                           <div key={field.key} className="channel-config-field">

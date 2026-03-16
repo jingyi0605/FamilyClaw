@@ -7,6 +7,37 @@ import type {
   MemberChannelBindingUpdate,
 } from '../settingsTypes';
 
+function formatApiErrorMessage(error: ApiError): string {
+  const payload = error.payload as { detail?: unknown } | undefined;
+  const detail = payload?.detail;
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+  if (Array.isArray(detail) && detail.length > 0) {
+    const messages = detail
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+        const message = 'msg' in item && typeof item.msg === 'string' ? item.msg : null;
+        const location = 'loc' in item && Array.isArray(item.loc)
+          ? item.loc
+            .filter((part: unknown): part is string | number => typeof part === 'string' || typeof part === 'number')
+            .join('.')
+          : '';
+        if (message && location) {
+          return `${location}: ${message}`;
+        }
+        return message;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (messages.length > 0) {
+      return messages.join('；');
+    }
+  }
+  return error.message || '保存失败';
+}
+
 export function ChannelAccountBindingsPanel(props: {
   householdId: string;
   accountId: string;
@@ -49,7 +80,7 @@ export function ChannelAccountBindingsPanel(props: {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : '加载绑定失败');
+          setError(loadError instanceof Error ? loadError.message : '加载成员关联失败');
         }
       } finally {
         if (!cancelled) {
@@ -109,15 +140,15 @@ export function ChannelAccountBindingsPanel(props: {
         };
         const result = await settingsApi.updateChannelAccountBinding(householdId, accountId, editingBinding.id, payload);
         setBindings((current) => current.map((item) => item.id === result.id ? result : item));
-        setStatus('绑定已更新');
+        setStatus('成员关联已更新');
       } else {
         if (!form.member_id) {
-          setFormError('请选择要绑定的家庭成员');
+          setFormError('请选择要关联的家庭成员');
           setModalLoading(false);
           return;
         }
         if (!form.external_user_id.trim()) {
-          setFormError('请填写外部用户 ID');
+          setFormError('请填写平台用户 ID');
           setModalLoading(false);
           return;
         }
@@ -131,12 +162,12 @@ export function ChannelAccountBindingsPanel(props: {
         };
         const result = await settingsApi.createChannelAccountBinding(householdId, accountId, payload);
         setBindings((current) => [result, ...current]);
-        setStatus('绑定已创建');
+        setStatus('成员关联已添加');
       }
       setModalOpen(false);
     } catch (saveError) {
       const errorMessage = saveError instanceof ApiError
-        ? ((saveError.payload as { detail?: string } | undefined)?.detail ?? saveError.message)
+        ? formatApiErrorMessage(saveError)
         : saveError instanceof Error
           ? saveError.message
           : '保存失败';
@@ -159,7 +190,7 @@ export function ChannelAccountBindingsPanel(props: {
         binding_status: nextStatus,
       });
       setBindings((current) => current.map((item) => item.id === result.id ? result : item));
-      setStatus(nextStatus === 'active' ? '绑定已恢复' : '绑定已停用');
+      setStatus(nextStatus === 'active' ? '成员关联已恢复' : '成员关联已停用');
     } catch (toggleError) {
       setError(toggleError instanceof Error ? toggleError.message : '操作失败');
     } finally {
@@ -181,17 +212,17 @@ export function ChannelAccountBindingsPanel(props: {
       {status ? <div className="settings-note"><span>✓</span> {status}</div> : null}
 
       {loading && bindings.length === 0 ? (
-        <div className="text-text-secondary">加载绑定中...</div>
+        <div className="text-text-secondary">加载成员关联中...</div>
       ) : bindings.length === 0 ? (
         <div className="channel-bindings-empty">
-          <p>还没有绑定成员。</p>
-          <button className="btn btn--primary btn--sm" onClick={openCreateModal}>新增绑定</button>
+          <p>还没有关联成员。</p>
+          <button className="btn btn--primary btn--sm" onClick={openCreateModal}>添加关联</button>
         </div>
       ) : (
         <>
           <div className="channel-bindings-header">
-            <span>已绑定 {bindings.length} 个成员</span>
-            <button className="btn btn--primary btn--sm" onClick={openCreateModal}>新增绑定</button>
+            <span>已关联 {bindings.length} 位成员</span>
+            <button className="btn btn--primary btn--sm" onClick={openCreateModal}>添加关联</button>
           </div>
 
           <div className="channel-bindings-list">
@@ -203,19 +234,19 @@ export function ChannelAccountBindingsPanel(props: {
                   <div className="channel-binding-item__info">
                     <span className="channel-binding-item__member">{member?.name ?? '未知成员'}</span>
                     <span className="channel-binding-item__external">
-                      外部 ID：{binding.external_user_id}
-                      {binding.external_chat_id ? ` · 会话：${binding.external_chat_id}` : ''}
+                      平台用户 ID：{binding.external_user_id}
+                      {binding.external_chat_id ? ` · 聊天窗口：${binding.external_chat_id}` : ''}
                     </span>
                     {binding.display_hint ? <span className="channel-binding-item__hint">{binding.display_hint}</span> : null}
                   </div>
                   <div className="channel-binding-item__meta">
-                    <span className={`badge badge--${isActive ? 'success' : 'secondary'}`}>{isActive ? '生效中' : '已停用'}</span>
+                    <span className={`badge badge--${isActive ? 'success' : 'secondary'}`}>{isActive ? '已生效' : '已停用'}</span>
                     <span className="channel-binding-item__time">{formatTimestamp(binding.updated_at)}</span>
                   </div>
                   <div className="channel-binding-item__actions">
-                    <button className="btn btn--outline btn--sm" onClick={() => openEditModal(binding)} disabled={loading}>编辑</button>
+                    <button className="btn btn--outline btn--sm" onClick={() => openEditModal(binding)} disabled={loading}>修改</button>
                     <button className="btn btn--outline btn--sm" onClick={() => void handleToggleBinding(binding)} disabled={loading}>
-                      {isActive ? '停用' : '恢复'}
+                      {isActive ? '停用' : '恢复使用'}
                     </button>
                   </div>
                 </div>
@@ -229,8 +260,8 @@ export function ChannelAccountBindingsPanel(props: {
         <div className="member-modal-overlay" onClick={() => setModalOpen(false)}>
           <div className="member-modal" onClick={(event) => event.stopPropagation()}>
             <div className="member-modal__header">
-              <h3>{editingBinding ? '编辑成员绑定' : '新增成员绑定'}</h3>
-              <p>把平台用户 ID 绑定到家庭成员，让系统知道是谁在说话。</p>
+              <h3>{editingBinding ? '修改成员关联' : '添加成员关联'}</h3>
+              <p>把聊天平台上的账号和家庭成员对应起来，系统才知道是谁在发消息。</p>
             </div>
             <form className="settings-form" onSubmit={handleSaveBinding}>
               <div className="form-group">
@@ -249,7 +280,7 @@ export function ChannelAccountBindingsPanel(props: {
                 </select>
               </div>
               <div className="form-group">
-                <label>外部用户 ID</label>
+                <label>平台用户 ID</label>
                 <input
                   className="form-input"
                   value={form.external_user_id}
@@ -259,7 +290,7 @@ export function ChannelAccountBindingsPanel(props: {
                 />
               </div>
               <div className="form-group">
-                <label>外部会话 ID（可选）</label>
+                <label>聊天窗口 ID（可选）</label>
                 <input
                   className="form-input"
                   value={form.external_chat_id}
@@ -268,7 +299,7 @@ export function ChannelAccountBindingsPanel(props: {
                 />
               </div>
               <div className="form-group">
-                <label>备注（可选）</label>
+                <label>备注名称（可选）</label>
                 <input
                   className="form-input"
                   value={form.display_hint}

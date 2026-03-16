@@ -40,6 +40,7 @@ function SettingsNotice(props: {
 
 function useContextConfigSettings() {
   const { currentHouseholdId } = useHouseholdContext();
+  const { t } = useI18n();
   const [config, setConfig] = useState<ContextConfigRead | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -65,7 +66,7 @@ function useContextConfigSettings() {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : '加载设置失败');
+          setError(loadError instanceof Error ? loadError.message : t('settings.error.loadFailed'));
         }
       } finally {
         if (!cancelled) {
@@ -79,7 +80,7 @@ function useContextConfigSettings() {
     return () => {
       cancelled = true;
     };
-  }, [currentHouseholdId]);
+  }, [currentHouseholdId, t]);
 
   async function savePatch(
     patch: Partial<Omit<ContextConfigRead, 'household_id' | 'version' | 'updated_by' | 'updated_at'>>,
@@ -111,9 +112,9 @@ function useContextConfigSettings() {
         ...patch,
       });
       setConfig(result);
-      setStatus('设置已保存。');
+      setStatus(t('settings.status.saved'));
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : '保存设置失败');
+      setError(saveError instanceof Error ? saveError.message : t('settings.error.saveFailed'));
     } finally {
       setLoading(false);
     }
@@ -124,10 +125,11 @@ function useContextConfigSettings() {
 
 function SettingsAppearanceSection() {
   const { themeId, themeList, setTheme } = useTheme();
+  const { t } = useI18n();
 
   return (
     <div className="settings-page">
-      <Section title="主题模式">
+      <Section title={t('settings.appearance.title')}>
         <div className="theme-grid">
           {themeList.map((theme) => (
             <div
@@ -171,7 +173,7 @@ function SettingsAppearanceSection() {
 }
 
 function SettingsLanguageSection() {
-  const { locale, locales, setLocale, formatLocaleLabel } = useI18n();
+  const { locale, locales, setLocale, formatLocaleLabel, t } = useI18n();
   const {
     currentHouseholdId,
     currentHousehold,
@@ -194,6 +196,15 @@ function SettingsLanguageSection() {
     { value: 'UTC', label: 'UTC (UTC+0)' },
   ], []);
 
+  const localeSourceLabels = useMemo(
+    () => ({
+      builtin: t('locale.source.builtin'),
+      official: t('locale.source.official'),
+      third_party: t('locale.source.thirdParty'),
+    }),
+    [t],
+  );
+
   useEffect(() => {
     if (currentHousehold?.timezone) {
       setTimezone(currentHousehold.timezone);
@@ -205,7 +216,7 @@ function SettingsLanguageSection() {
     successMessage: string,
   ) {
     if (!currentHouseholdId) {
-      setError('请先选择家庭');
+      setError(t('settings.language.noHousehold'));
       setStatus('');
       return false;
     }
@@ -221,7 +232,7 @@ function SettingsLanguageSection() {
       setStatus(successMessage);
       return true;
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : '保存语言设置失败');
+      setError(saveError instanceof Error ? saveError.message : t('settings.language.saveFailed'));
       return false;
     } finally {
       setSaving(false);
@@ -234,7 +245,7 @@ function SettingsLanguageSection() {
 
     const saved = await saveHouseholdLanguageSettings(
       { locale: nextLocale },
-      '界面语言已更新。',
+      t('settings.language.localeSaved'),
     );
 
     if (!saved) {
@@ -248,7 +259,7 @@ function SettingsLanguageSection() {
 
     const saved = await saveHouseholdLanguageSettings(
       { timezone: nextTimezone },
-      '时区已更新。',
+      t('settings.language.timezoneSaved'),
     );
 
     if (!saved) {
@@ -258,25 +269,30 @@ function SettingsLanguageSection() {
 
   return (
     <div className="settings-page">
-      <Section title="语言与地区">
+      <Section title={t('settings.language.title')}>
         <div className="settings-form">
           <div className="form-group">
-            <label>界面语言</label>
+            <label>{t('settings.language.interface')}</label>
             <select
               className="form-select"
               value={locale}
               onChange={(event) => void handleLocaleChange(event.target.value)}
               disabled={saving}
             >
-              {locales.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {formatLocaleLabel(item)} · {getLocaleSourceLabel(item)}
-                </option>
-              ))}
+              {locales.map((item) => {
+                const sourceKey = getLocaleSourceLabel(item) as keyof typeof localeSourceLabels;
+                const sourceLabel = localeSourceLabels[sourceKey] ?? getLocaleSourceLabel(item);
+
+                return (
+                  <option key={item.id} value={item.id}>
+                    {formatLocaleLabel(item)} · {sourceLabel}
+                  </option>
+                );
+              })}
             </select>
           </div>
           <div className="form-group">
-            <label>时区</label>
+            <label>{t('settings.language.timezone')}</label>
             <select
               className="form-select"
               value={timezone}
@@ -303,48 +319,51 @@ function SettingsLanguageSection() {
 
 function SettingsNotificationsSection() {
   const { config, loading, error, status, savePatch } = useContextConfigSettings();
+  const { t } = useI18n();
+  const quietHoursDescription = t('settings.notifications.quietHoursDesc')
+    .replace('{start}', config?.quiet_hours_start ?? '22:00')
+    .replace('{end}', config?.quiet_hours_end ?? '07:00');
 
   return (
     <div className="settings-page">
-      <Section title="通知偏好">
+      <Section title={t('settings.notifications.title')}>
         <div className="settings-form">
           <div className="form-group">
-            <label>通知方式</label>
-            <select className="form-select" value="浏览器通知 + 站内消息" disabled>
-              <option>浏览器通知 + 站内消息</option>
-              <option>仅站内消息</option>
-              <option>全部关闭</option>
+            <label>{t('settings.notifications.channel')}</label>
+            <select className="form-select" value={t('settings.notifications.channelBrowserAndInApp')} disabled>
+              <option>{t('settings.notifications.channelBrowserAndInApp')}</option>
+              <option>{t('settings.notifications.channelInAppOnly')}</option>
+              <option>{t('settings.notifications.channelOff')}</option>
             </select>
             <div className="form-help">
-              通知方式还没有稳定后端字段，先展示默认方案，不乱写假映射。
+              {t('settings.notifications.channelHint')}
             </div>
           </div>
 
           <div className="settings-toggles">
             <ToggleSwitch
               checked={config?.quiet_hours_enabled ?? false}
-              label="免打扰"
-              description={`开启后在 ${config?.quiet_hours_start ?? '22:00'}-${config?.quiet_hours_end ?? '07:00'} 不发送通知`}
+              label={t('settings.notifications.quietHours')}
+              description={quietHoursDescription}
               onChange={(value) => void savePatch({ quiet_hours_enabled: value })}
             />
           </div>
 
           <div className="form-group">
-            <label>通知范围</label>
+            <label>{t('settings.notifications.scope')}</label>
             <select className="form-select" disabled>
-              <option>全部通知</option>
-              <option>仅紧急通知</option>
-              <option>仅与我相关</option>
+              <option>{t('settings.notifications.scopeAll')}</option>
+              <option>{t('settings.notifications.scopeUrgent')}</option>
+              <option>{t('settings.notifications.scopeMine')}</option>
             </select>
+            <div className="form-help">
+              {t('settings.notifications.scopeHint')}
+            </div>
           </div>
         </div>
-
-        <SettingsNotice icon="ℹ️">
-          当前真正接入的只有免打扰开关和时段。其他字段后端还没稳定，先别自作聪明编状态。
-        </SettingsNotice>
         {error ? <SettingsNotice tone="error" icon="⚠️">{error}</SettingsNotice> : null}
         {status ? <SettingsNotice tone="success" icon="✓">{status}</SettingsNotice> : null}
-        {loading ? <SettingsNotice icon="⏳">正在保存...</SettingsNotice> : null}
+        {loading ? <SettingsNotice icon="⏳">{t('settings.notifications.loading')}</SettingsNotice> : null}
       </Section>
     </div>
   );
@@ -352,27 +371,26 @@ function SettingsNotificationsSection() {
 
 function SettingsAccessibilitySection() {
   const { themeId, setTheme } = useTheme();
+  const { t } = useI18n();
   const isElder = themeId === 'ming-cha-qiu-hao';
 
   return (
     <div className="settings-page">
-      <Section title="长辈友好">
+      <Section title={t('settings.accessibility.title')}>
         <div className="settings-toggles">
           <ToggleSwitch
             checked={isElder}
-            label="启用长辈友好模式"
-            description="切换到更大字号和更高对比度"
+            label={t('settings.accessibility.elderMode')}
+            description={t('settings.accessibility.elderModeDesc')}
             onChange={(value) => setTheme(value ? 'ming-cha-qiu-hao' : 'chun-he-jing-ming')}
           />
         </div>
 
         <div className="elder-preview">
           <Card className="elder-preview-card">
-            <h3>预览效果</h3>
+            <h3>{t('settings.accessibility.previewTitle')}</h3>
             <p style={{ fontSize: isElder ? '1.125rem' : '0.9375rem' }}>
-              {isElder
-                ? '长辈友好模式已开启，界面会使用更大的字号和更高的对比度。'
-                : '当前是标准模式。开启后会更适合年长用户阅读和操作。'}
+              {isElder ? t('settings.accessibility.previewEnabled') : t('settings.accessibility.previewDisabled')}
             </p>
           </Card>
         </div>

@@ -249,7 +249,7 @@ function SettingsIntegrationsContent() {
     if (!currentHouseholdId) return;
     await runAction(async () => {
       const result = await settingsApi.syncSelectedHomeAssistantDevices(currentHouseholdId, selectedExternalDeviceIds);
-      setSyncSummary(result); setDeviceModalOpen(false); await reloadWorkspace(); setStatus(`Home Assistant 同步完成，本次处理 ${result.created_devices + result.updated_devices} 台设备。`);
+      setSyncSummary(result); setDeviceModalOpen(false); await reloadWorkspace(); setStatus(`已从 Home Assistant 导入 ${result.created_devices + result.updated_devices} 台设备。`);
     });
   }
 
@@ -268,14 +268,14 @@ function SettingsIntegrationsContent() {
     if (!currentHouseholdId) return;
     await runAction(async () => {
       const result = await settingsApi.syncSelectedHomeAssistantRooms(currentHouseholdId, selectedRoomNames);
-      setRoomSyncSummary(result); setRoomModalOpen(false); await reloadWorkspace(); setStatus(`已从 HA 同步 ${result.created_rooms} 个房间。`);
+      setRoomSyncSummary(result); setRoomModalOpen(false); await reloadWorkspace(); setStatus(`已从 Home Assistant 导入 ${result.created_rooms} 个房间。`);
     });
   }
 
   function toggleRoomSelection(roomName: string) { setSelectedRoomNames((current) => current.includes(roomName) ? current.filter((item) => item !== roomName) : [...current, roomName]); }
   function toggleDeviceSelection(externalDeviceId: string) { setSelectedExternalDeviceIds((current) => current.includes(externalDeviceId) ? current.filter((item) => item !== externalDeviceId) : [...current, externalDeviceId]); }
   function toggleDeviceRoomSelection(deviceIds: string[]) { setSelectedExternalDeviceIds((current) => deviceIds.every((id) => current.includes(id)) ? current.filter((id) => !deviceIds.includes(id)) : Array.from(new Set([...current, ...deviceIds]))); }
-  async function handleSaveDevice(deviceId: string) { const draft = deviceDrafts[deviceId]; if (!draft) return; await runAction(async () => { await settingsApi.updateDevice(deviceId, draft); await reloadWorkspace(); setStatus('设备信息已更新'); }); }
+  async function handleSaveDevice(deviceId: string) { const draft = deviceDrafts[deviceId]; if (!draft) return; await runAction(async () => { await settingsApi.updateDevice(deviceId, draft); await reloadWorkspace(); setStatus('设备设置已保存'); }); }
   function openSpeakerSettings(device: Device) { setSpeakerSettingsError(''); setSpeakerDetailDeviceId(device.id); }
   async function handleSaveSpeakerSettings(payload: { voice_auto_takeover_enabled: boolean; voice_takeover_prefixes: string[] }) {
     if (!speakerDetailDeviceId) return;
@@ -283,9 +283,9 @@ function SettingsIntegrationsContent() {
     try {
       await settingsApi.updateDevice(speakerDetailDeviceId, payload);
       await reloadWorkspace();
-      setStatus('音箱设备详情已保存');
+      setStatus('音箱设置已保存');
     } catch (actionError) {
-      setSpeakerSettingsError(actionError instanceof Error ? actionError.message : '设备详情保存失败');
+      setSpeakerSettingsError(actionError instanceof Error ? actionError.message : '音箱设置保存失败');
     } finally {
       setLoading(false);
     }
@@ -403,14 +403,14 @@ function SettingsIntegrationsContent() {
   const formatVoiceDiscoveryStatus = (value: VoiceDiscoveryTerminal['connection_status']) => value === 'online' ? '在线' : '最近在线';
   const formatVoiceDiscoveryTime = (value: string) => Number.isNaN(new Date(value).getTime()) ? value : new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   const formatVoiceDiscoverySerial = (sn: string) => sn.trim().length <= 4 ? sn.trim() : sn.trim().slice(-4);
-  const formatHaStatus = (config: HomeAssistantConfig | null, statusValue: ContextOverviewRead['home_assistant_status'] | undefined) => !config?.base_url || !config?.token_configured ? { label: '未配置', tone: 'idle' as const } : statusValue === 'healthy' ? { label: '已连接', tone: 'online' as const } : statusValue === 'degraded' ? { label: '部分降级', tone: 'warning' as const } : statusValue === 'offline' ? { label: '连接离线', tone: 'offline' as const } : { label: '待检测', tone: 'warning' as const };
+  const formatHaStatus = (config: HomeAssistantConfig | null, statusValue: ContextOverviewRead['home_assistant_status'] | undefined) => !config?.base_url || !config?.token_configured ? { label: '未配置', tone: 'idle' as const } : statusValue === 'healthy' ? { label: '已连接', tone: 'online' as const } : statusValue === 'degraded' ? { label: '部分可用', tone: 'warning' as const } : statusValue === 'offline' ? { label: '暂时连不上', tone: 'offline' as const } : { label: '等待检查', tone: 'warning' as const };
   const haStatus = formatHaStatus(haConfig, overview?.home_assistant_status);
   const lastSyncText = syncSummary ? '刚刚' : haConfig?.last_device_sync_at ?? (overview ? '已加载当前状态' : '暂无记录');
   const haAddressText = haConfig?.base_url ?? '未配置';
   const canOperateHa = Boolean(haConfig?.base_url && haConfig?.token_configured);
-  const syncButtonLabel = canOperateHa ? (loading ? '同步中...' : '立即同步') : '请先配置 HA 连接';
-  const syncRoomsButtonLabel = canOperateHa ? '从 HA 同步房间' : '请先配置 HA 连接';
-  const disabledHaActionTooltip = canOperateHa ? undefined : '先把 HA 地址和 Token 配好';
+  const syncButtonLabel = canOperateHa ? (loading ? '导入中...' : '导入设备') : '请先连接 Home Assistant';
+  const syncRoomsButtonLabel = canOperateHa ? '导入房间' : '请先连接 Home Assistant';
+  const disabledHaActionTooltip = canOperateHa ? undefined : '先完成 Home Assistant 连接设置';
   const canManageVoiceprint = actor?.member_role === 'admin';
   const speakerDetailDevice = useMemo(
     () => devices.find((device) => device.id === speakerDetailDeviceId) ?? null,
@@ -420,41 +420,41 @@ function SettingsIntegrationsContent() {
   return (
     <SettingsPageShell activeKey="integrations">
       <div className="settings-page">
-        <Section title="Home Assistant 连接状态">
+        <Section title="Home Assistant 连接">
           <Card className="integration-status-card">
             <div className="integration-status">
               <span className={`integration-status__indicator integration-status__indicator--${haStatus.tone}`} />
               <div className="integration-status__text">
                 <span className="integration-status__label">Home Assistant</span>
-                <span className="integration-status__detail">{haStatus.label} · 上次同步：{lastSyncText}</span>
-                <span className="integration-status__detail">HA 地址：{haAddressText}</span>
+                <span className="integration-status__detail">连接状态：{haStatus.label} · 最近同步：{lastSyncText}</span>
+                <span className="integration-status__detail">连接地址：{haAddressText}</span>
               </div>
               <div className="integration-actions">
-                <button className="btn btn--outline btn--sm" type="button" onClick={() => setConfigModalOpen(true)} disabled={loading}>配置连接</button>
+                <button className="btn btn--outline btn--sm" type="button" onClick={() => setConfigModalOpen(true)} disabled={loading}>连接设置</button>
                 <span className="integration-action-tooltip" title={disabledHaActionTooltip}><button className="btn btn--outline btn--sm" onClick={openDeviceSyncModal} disabled={loading || deviceModalLoading || !canOperateHa}>{syncButtonLabel}</button></span>
                 <span className="integration-action-tooltip" title={disabledHaActionTooltip}><button className="btn btn--outline btn--sm" onClick={openRoomSyncModal} disabled={loading || roomModalLoading || !canOperateHa}>{syncRoomsButtonLabel}</button></span>
               </div>
             </div>
-            {syncSummary ? <div className="integration-status__detail" style={{ marginTop: '0.75rem' }}>本次同步新增 {syncSummary.created_devices} 台、更新 {syncSummary.updated_devices} 台、创建房间 {syncSummary.created_rooms} 个、自动分配房间 {syncSummary.assigned_rooms} 台、失败 {syncSummary.failed_entities} 项。</div> : null}
-            {roomSyncSummary ? <div className="integration-status__detail" style={{ marginTop: '0.5rem' }}>房间同步创建 {roomSyncSummary.created_rooms} 个房间，匹配实体 {roomSyncSummary.matched_entities} 项，跳过 {roomSyncSummary.skipped_entities} 项。</div> : null}
+            {syncSummary ? <div className="integration-status__detail" style={{ marginTop: '0.75rem' }}>这次导入新增了 {syncSummary.created_devices} 台设备，更新了 {syncSummary.updated_devices} 台设备，为 {syncSummary.assigned_rooms} 台设备补上了房间；另有 {syncSummary.failed_entities} 项没有导入成功。</div> : null}
+            {roomSyncSummary ? <div className="integration-status__detail" style={{ marginTop: '0.5rem' }}>这次导入了 {roomSyncSummary.created_rooms} 个房间，识别到 {roomSyncSummary.matched_entities} 项关联内容，跳过了 {roomSyncSummary.skipped_entities} 项重复内容。</div> : null}
             {status ? <div className="integration-status__detail" style={{ marginTop: '0.5rem' }}>{status}</div> : null}
             {error ? <div className="integration-status__detail" style={{ marginTop: '0.5rem' }}>{error}</div> : null}
           </Card>
         </Section>
 
-        <Section title="发现到的新音箱">
+        <Section title="待添加的音箱">
           <Card className="integration-status-card">
             <div className="integration-status" style={{ alignItems: 'flex-start' }}>
               <div className="integration-status__text">
-                <span className="integration-status__label">局域网发现</span>
-                <span className="integration-status__detail">系统会持续发现局域网里的可接入音箱。补完名称和房间后，才能拿来做语音控制。</span>
-                <span className="integration-status__detail">音箱和当前服务不在一个局域网，就别指望这里有结果。</span>
+                <span className="integration-status__label">自动发现</span>
+                <span className="integration-status__detail">系统会持续查找同一局域网里的可接入音箱。填好名称和房间后，就能把它加入当前家庭。</span>
+                <span className="integration-status__detail">如果这里一直没有结果，先确认音箱和当前服务连的是同一个局域网。</span>
               </div>
             </div>
             {voiceDiscoveryError ? <div className="integration-status__detail" style={{ marginTop: '0.75rem' }}>{voiceDiscoveryError}</div> : null}
             <div className="device-list" style={{ marginTop: '1rem' }}>
               {voiceDiscoveries.length === 0 ? (
-                <div className="integration-status__detail">暂时没有发现新的音箱。</div>
+                <div className="integration-status__detail">暂时还没有发现可添加的音箱。</div>
               ) : voiceDiscoveries.map((item) => {
                 const draft = getVoiceDiscoveryDraft(item.fingerprint);
                 const isClaiming = voiceClaimingFingerprint === item.fingerprint;
@@ -463,7 +463,7 @@ function SettingsIntegrationsContent() {
                     <div className="device-card__editor-grid">
                       <div className="device-card__info">
                         <span className="device-card__name">{item.model}</span>
-                        <span className="device-card__room">设备编号尾号 {formatVoiceDiscoverySerial(item.sn)} · {formatVoiceDiscoveryStatus(item.connection_status)} · 最近发现于 {formatVoiceDiscoveryTime(item.last_seen_at)}</span>
+                        <span className="device-card__room">设备尾号 {formatVoiceDiscoverySerial(item.sn)} · {formatVoiceDiscoveryStatus(item.connection_status)} · 最近出现于 {formatVoiceDiscoveryTime(item.last_seen_at)}</span>
                       </div>
                       <input className="form-input" value={draft.terminal_name} placeholder="例如：客厅音箱" onChange={(event) => updateVoiceDiscoveryDraft(item.fingerprint, { terminal_name: event.target.value })} />
                       <select className="form-select" value={draft.room_id} onChange={(event) => updateVoiceDiscoveryDraft(item.fingerprint, { room_id: event.target.value })} disabled={rooms.length === 0}>
@@ -472,7 +472,7 @@ function SettingsIntegrationsContent() {
                     </div>
                     <div className="device-card__actions">
                       <span className={`badge badge--${item.connection_status === 'online' ? 'success' : 'secondary'}`}>{formatVoiceDiscoveryStatus(item.connection_status)}</span>
-                      <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleClaimVoiceDiscovery(item.fingerprint)} disabled={isClaiming || rooms.length === 0}>{isClaiming ? '添加中...' : '添加到家庭'}</button>
+                      <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleClaimVoiceDiscovery(item.fingerprint)} disabled={isClaiming || rooms.length === 0}>{isClaiming ? '添加中...' : '加入家庭'}</button>
                     </div>
                   </Card>
                 );
@@ -492,7 +492,7 @@ function SettingsIntegrationsContent() {
                     <div className="device-card__info">
                       <span className="device-card__name">{device.name}</span>
                       <span className="device-card__room">{roomNameMap[device.room_id ?? ''] ?? '未分配房间'} · {formatDeviceType(device.device_type)}</span>
-                      {supportsVoiceSettings ? <span className="integration-status__detail">{device.voice_auto_takeover_enabled ? '当前设置：默认接管所有语音请求' : `当前设置：只响应 ${device.voice_takeover_prefixes.join('、')} 开头的请求`}</span> : null}
+                      {supportsVoiceSettings ? <span className="integration-status__detail">{device.voice_auto_takeover_enabled ? '当前接管方式：默认响应所有语音请求' : `当前接管方式：只响应以 ${device.voice_takeover_prefixes.join('、')} 开头的话`}</span> : null}
                     </div>
                     <input className="form-input" value={draft.name} onChange={(event) => setDeviceDrafts((current) => ({ ...current, [device.id]: { ...draft, name: event.target.value } }))} />
                     <select className="form-select" value={draft.room_id ?? ''} onChange={(event) => setDeviceDrafts((current) => ({ ...current, [device.id]: { ...draft, room_id: event.target.value || null } }))}>{roomOptions.map((option) => <option key={option.id || 'unassigned'} value={option.id}>{option.name}</option>)}</select>
@@ -501,8 +501,8 @@ function SettingsIntegrationsContent() {
                   </div>
                   <div className="device-card__actions">
                     <span className={`badge badge--${device.status === 'active' ? 'success' : 'secondary'}`}>{device.status === 'active' ? '在线' : device.status === 'offline' ? '离线' : '未启用'}</span>
-                    {supportsVoiceSettings ? <button className="btn btn--outline btn--sm" type="button" onClick={() => openSpeakerSettings(device)} disabled={loading}>设备详情</button> : null}
-                    <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleSaveDevice(device.id)} disabled={loading}>保存设备</button>
+                    {supportsVoiceSettings ? <button className="btn btn--outline btn--sm" type="button" onClick={() => openSpeakerSettings(device)} disabled={loading}>更多设置</button> : null}
+                    <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleSaveDevice(device.id)} disabled={loading}>保存修改</button>
                   </div>
                 </Card>
               );
@@ -551,22 +551,22 @@ function SettingsIntegrationsContent() {
         {roomModalOpen ? (
           <div className="member-modal-overlay" onClick={() => setRoomModalOpen(false)}>
             <div className="member-modal ha-room-modal" onClick={(event) => event.stopPropagation()}>
-              <div className="member-modal__header"><div><h3>选择要同步的 HA 房间</h3><p>这里只做房间导入。已经同名的房间会被禁用，别制造重复数据。</p></div></div>
+              <div className="member-modal__header"><div><h3>选择要导入的房间</h3><p>这里只会导入当前家庭里还没有的房间，已经同名的会自动跳过。</p></div></div>
               <div className="ha-room-modal__list">{roomCandidates.length === 0 ? <div className="integration-status__detail">HA 里没有可识别的房间。</div> : roomCandidates.map((candidate) => (
                 <label key={candidate.name} className={`ha-room-option ${candidate.can_sync ? '' : 'ha-room-option--disabled'}`}>
                   <input type="checkbox" checked={selectedRoomNames.includes(candidate.name)} disabled={!candidate.can_sync || loading} onChange={() => toggleRoomSelection(candidate.name)} />
-                  <div className="ha-room-option__body"><div className="ha-room-option__title-row"><strong>{candidate.name}</strong><span className={`badge badge--${candidate.can_sync ? 'success' : 'warning'}`}>{candidate.can_sync ? '可同步' : '本地重名'}</span></div><div className="integration-status__detail">HA 关联实体 {candidate.entity_count} 项{candidate.exists_locally ? ' · 本地已经有同名房间' : ''}</div></div>
+                  <div className="ha-room-option__body"><div className="ha-room-option__title-row"><strong>{candidate.name}</strong><span className={`badge badge--${candidate.can_sync ? 'success' : 'warning'}`}>{candidate.can_sync ? '可导入' : '已存在'}</span></div><div className="integration-status__detail">{candidate.exists_locally ? '当前家庭里已经有同名房间。' : '导入后可直接给设备分配房间。'}</div></div>
                 </label>
               ))}</div>
-              <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setRoomModalOpen(false)} disabled={loading}>取消</button><button className="btn btn--outline btn--sm" type="button" onClick={() => void handleConfirmRoomSync()} disabled={loading || selectedRoomNames.length === 0}>同步选中房间</button></div>
+              <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setRoomModalOpen(false)} disabled={loading}>取消</button><button className="btn btn--outline btn--sm" type="button" onClick={() => void handleConfirmRoomSync()} disabled={loading || selectedRoomNames.length === 0}>导入选中房间</button></div>
             </div>
           </div>
         ) : null}
         {deviceModalOpen ? (
           <div className="member-modal-overlay" onClick={() => setDeviceModalOpen(false)}>
             <div className="member-modal ha-device-modal" onClick={(event) => event.stopPropagation()}>
-              <div className="member-modal__header"><div><h3>选择要同步的 HA 设备</h3><p>设备按房间分组展示。你可以整组选，也可以单独勾。</p></div></div>
-              <div className="ha-device-modal__list">{deviceCandidateGroups.length === 0 ? <div className="integration-status__detail">HA 里没有可同步的设备。</div> : deviceCandidateGroups.map((group) => {
+              <div className="member-modal__header"><div><h3>选择要导入的设备</h3><p>设备会按房间分组显示。你可以整组选，也可以逐个挑。</p></div></div>
+              <div className="ha-device-modal__list">{deviceCandidateGroups.length === 0 ? <div className="integration-status__detail">暂时没有可导入的设备。</div> : deviceCandidateGroups.map((group) => {
                 const deviceIds = group.items.map((item) => item.external_device_id);
                 const selectedCount = deviceIds.filter((id) => selectedExternalDeviceIds.includes(id)).length;
                 const allSelected = selectedCount === deviceIds.length;
@@ -576,25 +576,25 @@ function SettingsIntegrationsContent() {
                     <div className="ha-device-group__items">{group.items.map((candidate) => (
                       <label key={candidate.external_device_id} className="ha-device-option">
                         <input type="checkbox" checked={selectedExternalDeviceIds.includes(candidate.external_device_id)} onChange={() => toggleDeviceSelection(candidate.external_device_id)} disabled={loading} />
-                        <div className="ha-device-option__body"><div className="ha-device-option__title-row"><strong>{candidate.name}</strong><span className={`badge badge--${candidate.already_synced ? 'secondary' : 'success'}`}>{candidate.already_synced ? '已同步过' : '新设备'}</span></div><div className="integration-status__detail">{candidate.device_type} · 主实体 {candidate.primary_entity_id} · 关联实体 {candidate.entity_count} 项</div></div>
+                        <div className="ha-device-option__body"><div className="ha-device-option__title-row"><strong>{candidate.name}</strong><span className={`badge badge--${candidate.already_synced ? 'secondary' : 'success'}`}>{candidate.already_synced ? '已导入过' : '新设备'}</span></div><div className="integration-status__detail">{formatDeviceType(candidate.device_type as Device['device_type'])} · {candidate.already_synced ? '再次导入会更新它的名称和房间信息。' : '导入后会加入当前家庭设备列表。'}</div></div>
                       </label>
                     ))}</div>
                   </div>
                 );
               })}</div>
-              <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setDeviceModalOpen(false)} disabled={loading}>取消</button><button className="btn btn--outline btn--sm" type="button" onClick={() => void handleConfirmDeviceSync()} disabled={loading || selectedExternalDeviceIds.length === 0}>同步选中设备</button></div>
+              <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setDeviceModalOpen(false)} disabled={loading}>取消</button><button className="btn btn--outline btn--sm" type="button" onClick={() => void handleConfirmDeviceSync()} disabled={loading || selectedExternalDeviceIds.length === 0}>导入选中设备</button></div>
             </div>
           </div>
         ) : null}
         {configModalOpen ? (
           <div className="member-modal-overlay" onClick={() => setConfigModalOpen(false)}>
             <div className="member-modal ha-config-modal" onClick={(event) => event.stopPropagation()}>
-              <div className="member-modal__header"><div><h3>配置 Home Assistant 连接</h3><p>这里保存的是当前家庭专属配置，不会影响别的家庭。</p></div></div>
+              <div className="member-modal__header"><div><h3>连接 Home Assistant</h3><p>这里只影响当前家庭，其他家庭不会受影响。</p></div></div>
               <form className="settings-form integration-config-form" onSubmit={handleSaveHaConfig}>
-                <div className="form-group"><label>HA 地址</label><input className="form-input" value={haForm.base_url} onChange={(event) => setHaForm((current) => ({ ...current, base_url: event.target.value }))} placeholder="http://homeassistant.local:8123" /><div className="form-help">主页只展示地址和状态，具体编辑放在这个弹窗里。</div></div>
-                <div className="form-group"><label>Long-Lived Token</label><input className="form-input" type="password" value={haForm.access_token} onChange={(event) => setHaForm((current) => ({ ...current, access_token: event.target.value, clear_access_token: false }))} placeholder={haConfig?.token_configured ? '已配置，留空表示不改' : '请输入当前家庭专用 Token'} /><div className="form-help">当前状态：{haConfig?.token_configured ? '已保存 Token' : '还没有 Token'}。</div></div>
-                <div className="integration-config-grid"><div className="form-group"><label>房间同步策略</label><select className="form-select" value={haForm.sync_rooms_enabled ? 'true' : 'false'} onChange={(event) => setHaForm((current) => ({ ...current, sync_rooms_enabled: event.target.value === 'true' }))}><option value="false">只同步设备</option><option value="true">同步设备时尝试关联已有房间</option></select></div><div className="form-group"><label>Token 操作</label><select className="form-select" value={haForm.clear_access_token ? 'clear' : 'keep'} onChange={(event) => setHaForm((current) => ({ ...current, clear_access_token: event.target.value === 'clear', access_token: event.target.value === 'clear' ? '' : current.access_token }))}><option value="keep">保留现有 Token</option><option value="clear">清空现有 Token</option></select></div></div>
-                <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setConfigModalOpen(false)} disabled={loading}>取消</button><button className="btn btn--outline btn--sm" type="submit" disabled={loading}>{loading ? '保存中...' : '保存连接配置'}</button></div>
+                <div className="form-group"><label>Home Assistant 地址</label><input className="form-input" value={haForm.base_url} onChange={(event) => setHaForm((current) => ({ ...current, base_url: event.target.value }))} placeholder="http://homeassistant.local:8123" /><div className="form-help">这里填写你的 Home Assistant 地址。保存后，这一页会显示连接情况。</div></div>
+                <div className="form-group"><label>访问密钥（Long-Lived Token）</label><input className="form-input" type="password" value={haForm.access_token} onChange={(event) => setHaForm((current) => ({ ...current, access_token: event.target.value, clear_access_token: false }))} placeholder={haConfig?.token_configured ? '已配置，留空表示不改' : '请输入当前家庭使用的访问密钥'} /><div className="form-help">如果之前已经填过，留空就是保持不变。当前：{haConfig?.token_configured ? '已保存' : '未填写'}。</div></div>
+                <div className="integration-config-grid"><div className="form-group"><label>导入房间时</label><select className="form-select" value={haForm.sync_rooms_enabled ? 'true' : 'false'} onChange={(event) => setHaForm((current) => ({ ...current, sync_rooms_enabled: event.target.value === 'true' }))}><option value="false">只导入设备</option><option value="true">导入设备时，顺便匹配已有房间</option></select></div><div className="form-group"><label>访问密钥处理</label><select className="form-select" value={haForm.clear_access_token ? 'clear' : 'keep'} onChange={(event) => setHaForm((current) => ({ ...current, clear_access_token: event.target.value === 'clear', access_token: event.target.value === 'clear' ? '' : current.access_token }))}><option value="keep">保留现有访问密钥</option><option value="clear">清空现有访问密钥</option></select></div></div>
+                <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setConfigModalOpen(false)} disabled={loading}>取消</button><button className="btn btn--outline btn--sm" type="submit" disabled={loading}>{loading ? '保存中...' : '保存连接设置'}</button></div>
               </form>
             </div>
           </div>
