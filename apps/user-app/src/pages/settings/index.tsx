@@ -1,16 +1,15 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Taro, { useRouter } from '@tarojs/taro';
 import { getLocaleSourceLabel } from '@familyclaw/user-core';
 import { PageSection, ToggleSwitch, UiCard, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
 import { GuardedPage, useHouseholdContext } from '../../runtime';
 import { useI18n, useTheme } from '../../runtime/h5-shell';
 import { SettingsPageShell } from './SettingsPageShell';
+import { SettingsNotice } from './components/SettingsSharedBlocks';
 import { settingsApi } from './settingsApi';
 import type { ContextConfigRead } from './settingsTypes';
 
 type SettingsSection = 'appearance' | 'language' | 'notifications' | 'accessibility';
-type SettingsNoticeTone = 'info' | 'success' | 'error';
-
 function resolveSection(value?: string | string[]): SettingsSection {
   const raw = Array.isArray(value) ? value[0] : value;
   if (raw === 'language' || raw === 'notifications' || raw === 'accessibility') {
@@ -67,25 +66,6 @@ function getLocalizedThemeMeta(
     default:
       return null;
   }
-}
-
-function SettingsNotice(props: {
-  tone?: SettingsNoticeTone;
-  icon: ReactNode;
-  children: ReactNode;
-}) {
-  const toneClass = props.tone === 'success'
-    ? 'settings-note--success'
-    : props.tone === 'error'
-      ? 'settings-note--error'
-      : '';
-
-  return (
-    <div className={`settings-note ${toneClass}`.trim()}>
-      <span>{props.icon}</span>
-      <span>{props.children}</span>
-    </div>
-  );
 }
 
 function useContextConfigSettings() {

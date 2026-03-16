@@ -281,6 +281,16 @@
     2. `pages/setup/base.tsx` 与 `pages/family/base.tsx` 已降成共享组件兼容包装层，`setup/index.h5.tsx` 继续走现有页面结构，但公共页头、卡片、空态已经不再维护私有视觉实现。
     3. `pages/home/page.h5.tsx`、`pages/assistant/index.h5.tsx` 已把高频 `Card / EmptyState` 接到共享层，先收掉最容易继续扩散的私有基础块；保留仪表盘卡片布局、对话动作卡等业务专有结构不做过度重构。
     4. 本轮明确没有去碰 `LegacyFamilyPage.tsx` 一类重历史页面，范围控制符合 spec 要求。
+  - 本轮追加结果（2026-03-16）：
+    1. 已新增 `pages/settings/components/SettingsSharedBlocks.tsx`，把设置页反复出现的提示条、面板头、空态卡和弹窗壳层收成最小共享业务块，不再让 `channel-access`、`agent/provider`、声纹弹窗各自继续拼一套。
+    2. `pages/settings/components/AgentConfigPanel.tsx` 与 `pages/settings/components/AiProviderConfigPanel.tsx` 已接入共享面板头和共享空态，顶部配置卡与“无数据”状态不再各写一套标题区、操作区和空态壳。
+    3. `pages/settings/components/AiProviderEditorDialog.tsx`、`pages/settings/channel-access/index.tsx`、`pages/settings/components/ChannelAccountBindingsPanel.tsx` 已接入共享弹窗壳和共享提示条，配置表单弹窗不再重复手写 overlay/header/actions 结构。
+    4. `pages/settings/components/SpeakerDeviceDetailDialog.tsx`、`pages/settings/components/SpeakerVoiceprintTab.tsx`、`pages/settings/components/VoiceprintEnrollmentWizard.tsx` 已把设备详情、声纹空态和录入向导接到同一套设置页弹窗/空态模式，继续压缩设置页重业务区块里的视觉私货。
+    5. `pages/assistant/index.h5.tsx` 已补 assistant 右侧上下文面板的 recent facts 去重逻辑，并把事实项 key 从 ``${type}-${label}`` 改成稳定身份键，避免同一成员事实重复时触发 React duplicate key 警告，导致上下文块渲染错乱。
+    6. `pages/assistant/index.h5.tsx` 已修正 assistant 页 JSX 壳层错位问题：补回右侧 `assistant-panel` 的闭合与主内容 `assistant-main` 包裹层，并恢复顶部工具栏、移动端头部与历史会话弹层，解决对话主区域被错误包进右侧隐藏面板后整页看起来空白的问题。
+  - 本轮验证补充（2026-03-16）：
+    1. `npm.cmd --prefix apps/user-app run check:style-guard` 通过。
+    2. 在补完 `pages/assistant/index.h5.tsx` 的重复 key 问题后，`npm.cmd --prefix apps/user-app run typecheck` 已恢复通过。
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 5
   - 对应设计：`design.md` 3.5、5.1、5.2、5.3
 

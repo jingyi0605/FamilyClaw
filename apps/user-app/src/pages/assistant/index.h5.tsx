@@ -78,6 +78,17 @@ function formatLocalizedList(items: string[], locale: string) {
   }, '');
 }
 
+function buildFactIdentity(item: ConversationMessage['facts'][number]) {
+  return [
+    item.type,
+    item.label,
+    item.source,
+    item.occurred_at ?? '',
+    item.visibility,
+    item.inferred ? '1' : '0',
+  ].join('::');
+}
+
 function upsertSession(sessions: ConversationSession[], next: ConversationSession) {
   return [next, ...sessions.filter(item => item.id !== next.id)];
 }
@@ -269,10 +280,25 @@ function AssistantPageContent() {
     [agents, defaultAgent, selectedAgentId],
   );
   const canSwitchAgent = conversationAgents.length > 1;
-  const recentFacts = useMemo(
-    () => (activeSessionDetail?.messages ?? []).filter(item => item.role === 'assistant').flatMap(item => item.facts).slice(0, 3),
-    [activeSessionDetail],
-  );
+  const recentFacts = useMemo(() => {
+    const uniqueFacts: ConversationMessage['facts'] = [];
+    const seen = new Set<string>();
+
+    for (const message of activeSessionDetail?.messages ?? []) {
+      if (message.role !== 'assistant') continue;
+      for (const fact of message.facts) {
+        const identity = buildFactIdentity(fact);
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        uniqueFacts.push(fact);
+        if (uniqueFacts.length >= 3) {
+          return uniqueFacts;
+        }
+      }
+    }
+
+    return uniqueFacts;
+  }, [activeSessionDetail]);
   const actionRecords = useMemo(() => activeSessionDetail?.action_records ?? [], [activeSessionDetail]);
   const proposalBatches = useMemo(() => activeSessionDetail?.proposal_batches ?? [], [activeSessionDetail]);
   const actionsByMessageId = useMemo(() => {
@@ -980,7 +1006,7 @@ function AssistantPageContent() {
             <div className="context-memory-list">
               {recentFacts.length > 0 ? (
                 recentFacts.map(item => (
-                  <div key={`${item.type}-${item.label}`} className="context-memory-item">
+                  <div key={buildFactIdentity(item)} className="context-memory-item">
                     <span>{listBullet}</span> {item.label}
                   </div>
                 ))
@@ -1023,6 +1049,83 @@ function AssistantPageContent() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="assistant-main">
+        <div className="assistant-toolbar">
+          <div className="assistant-toolbar__history-wrapper">
+            <button className="assistant-toolbar__btn" onClick={() => setIsSidebarOpen(prev => !prev)} title={t('nav.assistant')}>
+              <History size={18} />
+              <span>{t('nav.assistant')}</span>
+            </button>
+          </div>
+          <div className="assistant-toolbar__title">{activeSessionDetail?.title || t('nav.assistant')}</div>
+          <div className="assistant-toolbar__actions">
+            <button className="assistant-toolbar__btn" onClick={() => void handleNewChat()} title={t('assistant.newChat')}>
+              <MessageSquarePlus size={18} />
+              <span>{t('assistant.newChat')}</span>
+            </button>
+            <button className="assistant-toolbar__btn" onClick={() => setContextPanelOpen(true)} title={t('assistant.panel.details')}>
+              <Info size={18} />
+              <span>{t('assistant.panel.details')}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="assistant-mobile-header">
+          <button className="btn btn--icon btn--ghost p-sm assistant-menu-btn" onClick={() => setIsSidebarOpen(prev => !prev)}>
+            <Menu size={24} />
+          </button>
+          <div className="assistant-mobile-title">{activeSessionDetail?.title || t('nav.assistant')}</div>
+          <button className="btn btn--icon btn--ghost p-sm" onClick={() => void handleNewChat()} title={t('assistant.newChat')}>
+            <MessageSquarePlus size={20} />
+          </button>
+          <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(true)} title={t('assistant.panel.details')}>
+            <Info size={20} />
+          </button>
+        </div>
+
+        {isSidebarOpen ? (
+          <>
+            <div className="assistant-popover-overlay" onClick={() => setIsSidebarOpen(false)} />
+            <div className="assistant-popover">
+              <div className="assistant-popover__header">
+                <span>{t('nav.assistant')}</span>
+                <button className="btn btn--icon btn--ghost p-xs" onClick={() => void handleNewChat()} title={t('assistant.newChat')}>
+                  <MessageSquarePlus size={16} />
+                </button>
+              </div>
+              <div className="assistant-popover__content">
+                {loading ? (
+                  <div className="context-memory-item">
+                    <span>⏳</span> {t('assistant.error.loadConversations')}
+                  </div>
+                ) : sessions.length === 0 ? (
+                  <div className="context-memory-item">
+                    <span>📝</span> {t('assistant.noSessions')}
+                  </div>
+                ) : (
+                  sessions.map(session => (
+                    <div
+                      key={session.id}
+                      className={`session-item session-item--compact ${activeSessionId === session.id ? 'session-item--active' : ''}`.trim()}
+                      onClick={() => {
+                        setActiveSessionId(session.id);
+                        setIsSidebarOpen(false);
+                      }}
+                    >
+                      <div className="session-item__content">
+                        <span className="session-item__title">{session.title}</span>
+                        <span className="session-item__preview">{session.latest_message_preview ?? t('assistant.welcomeHint')}</span>
+                      </div>
+                      <span className="session-item__time">{formatRelativeTime(session.last_message_at, locale)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        ) : null}
 
         <div className="conversation-agent-banner">
           <div className="conversation-agent-banner__main">

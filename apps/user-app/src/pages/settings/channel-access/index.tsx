@@ -5,6 +5,7 @@ import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils'
 import { Card, EmptyState, Section } from '../../family/base';
 import { SettingsPageShell } from '../SettingsPageShell';
 import { ChannelAccountBindingsPanel } from '../components/ChannelAccountBindingsPanel';
+import { SettingsDialog, SettingsNotice } from '../components/SettingsSharedBlocks';
 import { ApiError, settingsApi } from '../settingsApi';
 import type {
   ChannelAccountCreate,
@@ -622,8 +623,8 @@ function SettingsChannelAccessContent() {
               <p>{t('settings.channelAccess.notice.description')}</p>
             </div>
           </Card>
-          {error ? <div className="settings-note settings-note--error"><span>⚠️</span> {error}</div> : null}
-          {status ? <div className="settings-note settings-note--success"><span>✅</span> {status}</div> : null}
+          {error ? <SettingsNotice tone="error" icon="⚠️">{error}</SettingsNotice> : null}
+          {status ? <SettingsNotice tone="success" icon="✓">{status}</SettingsNotice> : null}
           <div className="channel-account-list">
             {loading && accounts.length === 0 ? <div className="text-text-secondary">{t('settings.channelAccess.list.loading')}</div> : null}
             {!loading && accounts.length === 0 ? (
@@ -822,131 +823,129 @@ function SettingsChannelAccessContent() {
             ) : null}
           </div>
         </Section>
-        {accountModalOpen ? (
-          <div className="member-modal-overlay" onClick={() => setAccountModalOpen(false)}>
-            <div className="member-modal" onClick={(event) => event.stopPropagation()}>
-              <div className="member-modal__header">
-                <h3>{editingAccount ? t('settings.channelAccess.modal.editTitle') : t('settings.channelAccess.modal.createTitle')}</h3>
-                <p>{t('settings.channelAccess.modal.description')}</p>
-              </div>
-              <form className="settings-form" onSubmit={handleSaveAccount}>
-                <div className="form-group">
-                  <label>{t('settings.channelAccess.form.platformType')}</label>
-                  <select
-                    className="form-select"
-                    value={accountForm.plugin_id}
-                    onChange={(event) => {
-                      const nextPlugin = channelPluginMap.get(event.target.value) ?? null;
-                      setAccountForm((current) => ({
-                        ...current,
-                        plugin_id: event.target.value,
-                        connection_mode: resolveDefaultConnectionMode(nextPlugin),
-                      }));
-                    }}
-                    disabled={Boolean(editingAccount)}
-                    required
-                  >
-                    <option value="">{t('settings.channelAccess.form.platformPlaceholder')}</option>
-                    {availableChannelPlugins.map((plugin) => (
-                      <option key={plugin.pluginId} value={plugin.pluginId}>
-                        {plugin.icon} {plugin.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>{t('settings.channelAccess.form.displayName')}</label>
-                  <input
-                    className="form-input"
-                    value={accountForm.display_name}
-                    onChange={(event) => setAccountForm((current) => ({ ...current, display_name: event.target.value }))}
-                    placeholder={t('settings.channelAccess.form.displayNamePlaceholder')}
-                    required
-                  />
-                </div>
-                <div className="form-group">
-                  <label>{t('settings.channelAccess.form.connectionMode')}</label>
-                  {supportedConnectionModes.length > 1 ? (
-                    <select
-                      className="form-select"
-                      value={accountForm.connection_mode}
-                      onChange={(event) => setAccountForm((current) => ({
-                        ...current,
-                        connection_mode: event.target.value as ChannelConnectionMode,
-                      }))}
-                    >
-                      {supportedConnectionModes.map((mode) => (
-                        <option key={mode} value={mode}>{formatConnectionMode(mode, locale)}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="form-input form-input--readonly">{formatConnectionMode(accountForm.connection_mode, locale)}</div>
-                  )}
-                  <div className="form-help">
-                    {supportedConnectionModes.length <= 1
-                      ? t('settings.channelAccess.form.connectionModeSingleHelp')
-                      : t('settings.channelAccess.form.connectionModeMultiHelp')}
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label>{t('settings.channelAccess.form.status')}</label>
-                  <select
-                    className="form-select"
-                    value={accountForm.status}
-                    onChange={(event) => setAccountForm((current) => ({
-                      ...current,
-                      status: event.target.value as ChannelAccountStatus,
-                    }))}
-                  >
-                    <option value="draft">{t('settings.channelAccess.accountStatus.draft')}</option>
-                    <option value="active">{t('settings.channelAccess.accountStatus.active')}</option>
-                    <option value="disabled">{t('settings.channelAccess.accountStatus.disabled')}</option>
-                  </select>
-                </div>
-                {configFields.length > 0 ? (
-                  <div className="form-group channel-config-section">
-                    <label>{t('settings.channelAccess.form.platformConfig')}</label>
-                    <div className="channel-config-fields">
-                      {configFields.map((field) => (
-                        <div key={field.key} className="channel-config-field">
-                          <label className="channel-config-field__label">
-                            {field.label}
-                            {field.required ? <span className="required-mark">*</span> : null}
-                          </label>
-                          <input
-                            type={field.type}
-                            className="form-input"
-                            value={String(accountForm.config[field.key] ?? '')}
-                            onChange={(event) => setAccountForm((current) => ({
-                              ...current,
-                              config: { ...current.config, [field.key]: event.target.value },
-                            }))}
-                            placeholder={field.placeholder}
-                            required={field.required}
-                          />
-                          {field.helpText ? <div className="form-help">{field.helpText}</div> : null}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                <div className="member-modal__actions">
-                  <button
-                    className="btn btn--outline btn--sm"
-                    type="button"
-                    onClick={() => setAccountModalOpen(false)}
-                    disabled={modalLoading}
-                  >
-                    {t('settings.channelAccess.actions.cancel')}
-                  </button>
-                  <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading}>
-                    {modalLoading ? t('settings.channelAccess.actions.saving') : t('settings.channelAccess.actions.save')}
-                  </button>
-                </div>
-              </form>
+        <SettingsDialog
+          open={accountModalOpen}
+          title={editingAccount ? t('settings.channelAccess.modal.editTitle') : t('settings.channelAccess.modal.createTitle')}
+          description={t('settings.channelAccess.modal.description')}
+          onClose={() => setAccountModalOpen(false)}
+          onSubmit={handleSaveAccount}
+          actions={(
+            <>
+              <button
+                className="btn btn--outline btn--sm"
+                type="button"
+                onClick={() => setAccountModalOpen(false)}
+                disabled={modalLoading}
+              >
+                {t('settings.channelAccess.actions.cancel')}
+              </button>
+              <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading}>
+                {modalLoading ? t('settings.channelAccess.actions.saving') : t('settings.channelAccess.actions.save')}
+              </button>
+            </>
+          )}
+        >
+          <div className="form-group">
+            <label>{t('settings.channelAccess.form.platformType')}</label>
+            <select
+              className="form-select"
+              value={accountForm.plugin_id}
+              onChange={(event) => {
+                const nextPlugin = channelPluginMap.get(event.target.value) ?? null;
+                setAccountForm((current) => ({
+                  ...current,
+                  plugin_id: event.target.value,
+                  connection_mode: resolveDefaultConnectionMode(nextPlugin),
+                }));
+              }}
+              disabled={Boolean(editingAccount)}
+              required
+            >
+              <option value="">{t('settings.channelAccess.form.platformPlaceholder')}</option>
+              {availableChannelPlugins.map((plugin) => (
+                <option key={plugin.pluginId} value={plugin.pluginId}>
+                  {plugin.icon} {plugin.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>{t('settings.channelAccess.form.displayName')}</label>
+            <input
+              className="form-input"
+              value={accountForm.display_name}
+              onChange={(event) => setAccountForm((current) => ({ ...current, display_name: event.target.value }))}
+              placeholder={t('settings.channelAccess.form.displayNamePlaceholder')}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>{t('settings.channelAccess.form.connectionMode')}</label>
+            {supportedConnectionModes.length > 1 ? (
+              <select
+                className="form-select"
+                value={accountForm.connection_mode}
+                onChange={(event) => setAccountForm((current) => ({
+                  ...current,
+                  connection_mode: event.target.value as ChannelConnectionMode,
+                }))}
+              >
+                {supportedConnectionModes.map((mode) => (
+                  <option key={mode} value={mode}>{formatConnectionMode(mode, locale)}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="form-input form-input--readonly">{formatConnectionMode(accountForm.connection_mode, locale)}</div>
+            )}
+            <div className="form-help">
+              {supportedConnectionModes.length <= 1
+                ? t('settings.channelAccess.form.connectionModeSingleHelp')
+                : t('settings.channelAccess.form.connectionModeMultiHelp')}
             </div>
           </div>
-        ) : null}
+          <div className="form-group">
+            <label>{t('settings.channelAccess.form.status')}</label>
+            <select
+              className="form-select"
+              value={accountForm.status}
+              onChange={(event) => setAccountForm((current) => ({
+                ...current,
+                status: event.target.value as ChannelAccountStatus,
+              }))}
+            >
+              <option value="draft">{t('settings.channelAccess.accountStatus.draft')}</option>
+              <option value="active">{t('settings.channelAccess.accountStatus.active')}</option>
+              <option value="disabled">{t('settings.channelAccess.accountStatus.disabled')}</option>
+            </select>
+          </div>
+          {configFields.length > 0 ? (
+            <div className="form-group channel-config-section">
+              <label>{t('settings.channelAccess.form.platformConfig')}</label>
+              <div className="channel-config-fields">
+                {configFields.map((field) => (
+                  <div key={field.key} className="channel-config-field">
+                    <label className="channel-config-field__label">
+                      {field.label}
+                      {field.required ? <span className="required-mark">*</span> : null}
+                    </label>
+                    <input
+                      type={field.type}
+                      className="form-input"
+                      value={String(accountForm.config[field.key] ?? '')}
+                      onChange={(event) => setAccountForm((current) => ({
+                        ...current,
+                        config: { ...current.config, [field.key]: event.target.value },
+                      }))}
+                      placeholder={field.placeholder}
+                      required={field.required}
+                    />
+                    {field.helpText ? <div className="form-help">{field.helpText}</div> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </SettingsDialog>
       </div>
     </SettingsPageShell>
   );

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useI18n } from '../../../runtime';
 import { ToggleSwitch } from '../../family/base';
+import { SettingsDialog } from './SettingsSharedBlocks';
 import type { Device } from '../settingsTypes';
 
 type SpeakerTakeoverDraft = {
@@ -24,21 +26,23 @@ export function SpeakerDeviceDetailDialog(props: {
   onClose: () => void;
   onSaveTakeover: (payload: { voice_auto_takeover_enabled: boolean; voice_takeover_prefixes: string[] }) => Promise<void>;
 }) {
+  const { t } = useI18n();
   const { device } = props;
+  const defaultPrefix = t('speaker.detail.defaultPrefix');
   const [activeTab, setActiveTab] = useState<'takeover' | 'voiceprint'>('takeover');
   const [draft, setDraft] = useState<SpeakerTakeoverDraft>({
     voice_auto_takeover_enabled: device.voice_auto_takeover_enabled,
-    voice_takeover_prefixes_text: (device.voice_takeover_prefixes.length > 0 ? device.voice_takeover_prefixes : ['请']).join(', '),
+    voice_takeover_prefixes_text: (device.voice_takeover_prefixes.length > 0 ? device.voice_takeover_prefixes : [defaultPrefix]).join(', '),
   });
   const [validationError, setValidationError] = useState('');
 
   useEffect(() => {
     setDraft({
       voice_auto_takeover_enabled: device.voice_auto_takeover_enabled,
-      voice_takeover_prefixes_text: (device.voice_takeover_prefixes.length > 0 ? device.voice_takeover_prefixes : ['请']).join(', '),
+      voice_takeover_prefixes_text: (device.voice_takeover_prefixes.length > 0 ? device.voice_takeover_prefixes : [defaultPrefix]).join(', '),
     });
     setValidationError('');
-  }, [device]);
+  }, [defaultPrefix, device]);
 
   const normalizedPrefixes = useMemo(
     () => normalizeTakeoverPrefixes(draft.voice_takeover_prefixes_text),
@@ -47,41 +51,54 @@ export function SpeakerDeviceDetailDialog(props: {
 
   async function handleSave() {
     if (!draft.voice_auto_takeover_enabled && normalizedPrefixes.length === 0) {
-      setValidationError('至少填一个请求前缀，例如“请”。');
+      setValidationError(t('speaker.detail.validationPrefix'));
       return;
     }
     setValidationError('');
     await props.onSaveTakeover({
       voice_auto_takeover_enabled: draft.voice_auto_takeover_enabled,
-      voice_takeover_prefixes: normalizedPrefixes.length > 0 ? normalizedPrefixes : ['请'],
+      voice_takeover_prefixes: normalizedPrefixes.length > 0 ? normalizedPrefixes : [defaultPrefix],
     });
   }
 
   return (
-    <div className="member-modal-overlay" onClick={props.onClose}>
-      <div className="member-modal speaker-device-detail-dialog" onClick={(event) => event.stopPropagation()}>
-        <div className="member-modal__header">
-          <div>
-            <h3>{device.name} · 设备详情</h3>
-            <p>先把这台音箱的设备级入口立住，后面语音接管和声纹管理都从这里进，不再继续堆零散弹窗。</p>
-          </div>
-          <span className={`badge badge--${device.status === 'active' ? 'success' : 'secondary'}`}>
-            {device.status === 'active' ? '在线' : device.status === 'offline' ? '离线' : '未启用'}
-          </span>
-        </div>
-
+    <SettingsDialog
+      title={t('speaker.detail.title', { name: device.name })}
+      description={t('speaker.detail.desc')}
+      className="speaker-device-detail-dialog"
+      onClose={props.onClose}
+      headerExtra={(
+        <span className={`badge badge--${device.status === 'active' ? 'success' : 'secondary'}`}>
+          {device.status === 'active' ? t('speaker.detail.status.online') : device.status === 'offline' ? t('speaker.detail.status.offline') : t('speaker.detail.status.inactive')}
+        </span>
+      )}
+      actions={(
+        <>
+          <button className="btn btn--outline btn--sm" type="button" onClick={props.onClose} disabled={props.saving}>{t('speaker.detail.close')}</button>
+          {activeTab === 'takeover' ? (
+            <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleSave()} disabled={props.saving}>
+              {props.saving ? t('speaker.detail.saving') : t('speaker.detail.save')}
+            </button>
+          ) : null}
+        </>
+      )}
+    >
         <div className="speaker-device-detail-dialog__summary">
           <div className="speaker-device-detail-dialog__summary-item">
-            <span className="speaker-device-detail-dialog__summary-label">所在房间</span>
+            <span className="speaker-device-detail-dialog__summary-label">{t('speaker.detail.summary.room')}</span>
             <strong>{props.roomName}</strong>
           </div>
           <div className="speaker-device-detail-dialog__summary-item">
-            <span className="speaker-device-detail-dialog__summary-label">设备厂商</span>
-            <strong>小米小爱音箱</strong>
+            <span className="speaker-device-detail-dialog__summary-label">{t('speaker.detail.summary.vendor')}</span>
+            <strong>{t('speaker.detail.summary.vendorName')}</strong>
           </div>
           <div className="speaker-device-detail-dialog__summary-item">
-            <span className="speaker-device-detail-dialog__summary-label">当前语音策略</span>
-            <strong>{draft.voice_auto_takeover_enabled ? '默认接管全部请求' : `仅响应 ${normalizedPrefixes.join('、') || '请'} 开头的请求`}</strong>
+            <span className="speaker-device-detail-dialog__summary-label">{t('speaker.detail.summary.strategy')}</span>
+            <strong>
+              {draft.voice_auto_takeover_enabled
+                ? t('speaker.detail.summary.strategy.all')
+                : t('speaker.detail.summary.strategy.prefixes', { prefixes: normalizedPrefixes.join('、') || defaultPrefix })}
+            </strong>
           </div>
         </div>
 
@@ -91,22 +108,22 @@ export function SpeakerDeviceDetailDialog(props: {
             className={`speaker-device-detail-dialog__tab ${activeTab === 'takeover' ? 'speaker-device-detail-dialog__tab--active' : ''}`}
             onClick={() => setActiveTab('takeover')}
           >
-            语音接管
+            {t('speaker.detail.tab.takeover')}
           </button>
           <button
             type="button"
             className={`speaker-device-detail-dialog__tab ${activeTab === 'voiceprint' ? 'speaker-device-detail-dialog__tab--active' : ''}`}
             onClick={() => setActiveTab('voiceprint')}
           >
-            声纹管理
+            {t('speaker.detail.tab.voiceprint')}
           </button>
         </div>
 
         {activeTab === 'takeover' ? (
           <div className="speaker-device-detail-dialog__panel">
             <div className="speaker-device-detail-dialog__panel-header">
-              <h4>语音接管</h4>
-              <p>这里只控制这台音箱何时把请求交给 FamilyClaw。现有语音接管能力不重做，只换到正式设备详情里。</p>
+              <h4>{t('speaker.detail.panel.title')}</h4>
+              <p>{t('speaker.detail.panel.desc')}</p>
             </div>
             <div className="settings-form">
               {validationError ? <div className="form-error">{validationError}</div> : null}
@@ -114,35 +131,25 @@ export function SpeakerDeviceDetailDialog(props: {
               <div className="speaker-device-detail-dialog__toggle-card">
                 <ToggleSwitch
                   checked={draft.voice_auto_takeover_enabled}
-                  label="默认接管所有语音请求"
-                  description="打开后，这台音箱的请求会优先进入 FamilyClaw，不用再依赖前缀词。"
+                  label={t('speaker.detail.toggle.label')}
+                  description={t('speaker.detail.toggle.desc')}
                   onChange={(value) => setDraft((current) => ({ ...current, voice_auto_takeover_enabled: value }))}
                   disabled={props.saving}
                 />
               </div>
               <div className="form-group">
-                <label>仅响应这些开头词</label>
+                <label>{t('speaker.detail.prefixLabel')}</label>
                 <input
                   className="form-input"
                   value={draft.voice_takeover_prefixes_text}
                   onChange={(event) => setDraft((current) => ({ ...current, voice_takeover_prefixes_text: event.target.value }))}
-                  placeholder="请，帮我"
+                  placeholder={t('speaker.detail.prefixPlaceholder')}
                 />
-                <div className="form-hint">只有在关闭“默认接管所有语音请求”时才生效，多个前缀用逗号分隔。</div>
+                <div className="form-hint">{t('speaker.detail.prefixHint')}</div>
               </div>
             </div>
           </div>
         ) : props.voiceprintTab}
-
-        <div className="member-modal__actions">
-          <button className="btn btn--outline btn--sm" type="button" onClick={props.onClose} disabled={props.saving}>关闭</button>
-          {activeTab === 'takeover' ? (
-            <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleSave()} disabled={props.saving}>
-              {props.saving ? '保存中...' : '保存设备详情'}
-            </button>
-          ) : null}
-        </div>
-      </div>
-    </div>
+    </SettingsDialog>
   );
 }

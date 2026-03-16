@@ -3,6 +3,7 @@ import Taro from '@tarojs/taro';
 import { useI18n } from '../../../runtime';
 import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { ApiError, settingsApi } from '../settingsApi';
+import { SettingsDialog, SettingsEmptyState, SettingsNotice } from './SettingsSharedBlocks';
 import type {
   ChannelBindingCandidateRead,
   Member,
@@ -348,8 +349,8 @@ export function ChannelAccountBindingsPanel({
 
   return (
     <div className="channel-bindings-panel">
-      {error ? <div className="settings-note settings-note--error">{error}</div> : null}
-      {status ? <div className="settings-note settings-note--success">{status}</div> : null}
+      {error ? <SettingsNotice tone="error" icon="⚠️">{error}</SettingsNotice> : null}
+      {status ? <SettingsNotice tone="success" icon="✓">{status}</SettingsNotice> : null}
 
       <div className="channel-detail-section">
         <h5>{labels.candidateTitle}</h5>
@@ -404,12 +405,17 @@ export function ChannelAccountBindingsPanel({
       {loading && bindings.length === 0 ? (
         <div className="text-text-secondary">{copy.loading}</div>
       ) : bindings.length === 0 ? (
-        <div className="channel-bindings-empty">
-          <p>{copy.empty}</p>
-          <button className="btn btn--primary btn--sm" type="button" onClick={() => openCreateModal()}>
-            {copy.add}
-          </button>
-        </div>
+        <SettingsEmptyState
+          className="channel-bindings-empty"
+          icon="🔗"
+          title={copy.empty}
+          description={labels.candidateHelpText}
+          action={(
+            <button className="btn btn--primary btn--sm" type="button" onClick={() => openCreateModal()}>
+              {copy.add}
+            </button>
+          )}
+        />
       ) : (
         <>
           <div className="channel-bindings-header">
@@ -463,94 +469,91 @@ export function ChannelAccountBindingsPanel({
         </>
       )}
 
-      {modalOpen ? (
-        <div className="member-modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="member-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="member-modal__header">
-              <h3>{editingBinding ? copy.modalEditTitle : copy.modalCreateTitle}</h3>
-              <p>{copy.modalDesc}</p>
-            </div>
-            <form className="settings-form" onSubmit={handleSaveBinding}>
-              <div className="form-group">
-                <label>{copy.memberLabel}</label>
-                <select
-                  className="form-select"
-                  value={form.member_id}
-                  onChange={(event) => setForm((current) => ({ ...current, member_id: event.target.value }))}
-                  disabled={Boolean(editingBinding)}
-                  required
-                >
-                  <option value="">{copy.memberPlaceholder}</option>
-                  {members.map((member) => (
-                    <option key={member.id} value={member.id}>
-                      {member.name} ({member.role})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>{labels.identityLabel}</label>
-                <input
-                  className="form-input"
-                  value={form.external_user_id}
-                  onChange={(event) => setForm((current) => ({ ...current, external_user_id: event.target.value }))}
-                  placeholder={labels.identityPlaceholder}
-                  required
-                />
-                <div className="form-help">{labels.identityHelpText}</div>
-              </div>
-
-              <div className="form-group">
-                <label>{labels.chatLabel}</label>
-                <input
-                  className="form-input"
-                  value={form.external_chat_id}
-                  onChange={(event) => setForm((current) => ({ ...current, external_chat_id: event.target.value }))}
-                  placeholder={labels.chatPlaceholder}
-                />
-                <div className="form-help">{labels.chatHelpText}</div>
-              </div>
-
-              <div className="form-group">
-                <label>{copy.noteLabel}</label>
-                <input
-                  className="form-input"
-                  value={form.display_hint}
-                  onChange={(event) => setForm((current) => ({ ...current, display_hint: event.target.value }))}
-                  placeholder={copy.notePlaceholder}
-                />
-              </div>
-
-              <div className="form-group">
-                <label>{copy.statusLabel}</label>
-                <select
-                  className="form-select"
-                  value={form.binding_status}
-                  onChange={(event) => setForm((current) => ({
-                    ...current,
-                    binding_status: event.target.value as 'active' | 'disabled',
-                  }))}
-                >
-                  <option value="active">{copy.active}</option>
-                  <option value="disabled">{copy.inactive}</option>
-                </select>
-              </div>
-
-              {formError ? <div className="settings-note settings-note--error">{formError}</div> : null}
-
-              <div className="member-modal__actions">
-                <button className="btn btn--outline btn--sm" type="button" onClick={() => setModalOpen(false)} disabled={modalLoading}>
-                  {copy.cancel}
-                </button>
-                <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading}>
-                  {modalLoading ? copy.saving : copy.save}
-                </button>
-              </div>
-            </form>
-          </div>
+      <SettingsDialog
+        open={modalOpen}
+        title={editingBinding ? copy.modalEditTitle : copy.modalCreateTitle}
+        description={copy.modalDesc}
+        onClose={() => setModalOpen(false)}
+        onSubmit={handleSaveBinding}
+        actions={(
+          <>
+            <button className="btn btn--outline btn--sm" type="button" onClick={() => setModalOpen(false)} disabled={modalLoading}>
+              {copy.cancel}
+            </button>
+            <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading}>
+              {modalLoading ? copy.saving : copy.save}
+            </button>
+          </>
+        )}
+      >
+        <div className="form-group">
+          <label>{copy.memberLabel}</label>
+          <select
+            className="form-select"
+            value={form.member_id}
+            onChange={(event) => setForm((current) => ({ ...current, member_id: event.target.value }))}
+            disabled={Boolean(editingBinding)}
+            required
+          >
+            <option value="">{copy.memberPlaceholder}</option>
+            {members.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.name} ({member.role})
+              </option>
+            ))}
+          </select>
         </div>
-      ) : null}
+
+        <div className="form-group">
+          <label>{labels.identityLabel}</label>
+          <input
+            className="form-input"
+            value={form.external_user_id}
+            onChange={(event) => setForm((current) => ({ ...current, external_user_id: event.target.value }))}
+            placeholder={labels.identityPlaceholder}
+            required
+          />
+          <div className="form-help">{labels.identityHelpText}</div>
+        </div>
+
+        <div className="form-group">
+          <label>{labels.chatLabel}</label>
+          <input
+            className="form-input"
+            value={form.external_chat_id}
+            onChange={(event) => setForm((current) => ({ ...current, external_chat_id: event.target.value }))}
+            placeholder={labels.chatPlaceholder}
+          />
+          <div className="form-help">{labels.chatHelpText}</div>
+        </div>
+
+        <div className="form-group">
+          <label>{copy.noteLabel}</label>
+          <input
+            className="form-input"
+            value={form.display_hint}
+            onChange={(event) => setForm((current) => ({ ...current, display_hint: event.target.value }))}
+            placeholder={copy.notePlaceholder}
+          />
+        </div>
+
+        <div className="form-group">
+          <label>{copy.statusLabel}</label>
+          <select
+            className="form-select"
+            value={form.binding_status}
+            onChange={(event) => setForm((current) => ({
+              ...current,
+              binding_status: event.target.value as 'active' | 'disabled',
+            }))}
+          >
+            <option value="active">{copy.active}</option>
+            <option value="disabled">{copy.inactive}</option>
+          </select>
+        </div>
+
+        {formError ? <SettingsNotice tone="error" icon="⚠️">{formError}</SettingsNotice> : null}
+      </SettingsDialog>
     </div>
   );
 }

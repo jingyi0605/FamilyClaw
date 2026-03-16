@@ -3,6 +3,7 @@ import { useI18n } from '../../../runtime';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel } from '../../assistant/assistant.agents';
 import { Card } from '../../family/base';
 import { parseTags, stringifyTags } from '../../setup/setupAiConfig';
+import { SettingsDialog, SettingsEmptyState, SettingsPanelCard } from './SettingsSharedBlocks';
 import { settingsApi } from '../settingsApi';
 import type { AgentDetail, AgentSummary, Member } from '../settingsTypes';
 
@@ -429,22 +430,17 @@ export function AgentConfigPanel(props: {
 
   return (
     <div className="agent-config-center">
-      <Card className="ai-config-detail-card">
-        <div className="agent-config-center__toolbar">
-          <div className="agent-config-center__intro">
-            <h3>{compact ? copy.panelTitleCompact : (onlyButler ? copy.panelTitleButler : copy.panelTitleAgent)}</h3>
-            <p>
-              {compact
-                ? copy.panelDescriptionCompact
-                : copy.panelDescriptionDefault}
-            </p>
-          </div>
+      <SettingsPanelCard
+        title={compact ? copy.panelTitleCompact : (onlyButler ? copy.panelTitleButler : copy.panelTitleAgent)}
+        description={compact ? copy.panelDescriptionCompact : copy.panelDescriptionDefault}
+        actions={(
           <button className="btn btn--primary" type="button" onClick={openCreateModal}>
             {createActionLabel}
           </button>
-        </div>
+        )}
+      >
         {status ? <div className="setup-form-status">{status}</div> : null}
-      </Card>
+      </SettingsPanelCard>
 
       {error ? <Card><p className="form-error">{error}</p></Card> : null}
       {loading ? <div className="settings-loading-copy settings-loading-copy--center">{copy.loading}</div> : null}
@@ -542,48 +538,53 @@ export function AgentConfigPanel(props: {
             ) : null}
           </>
         ) : (
-          <Card className="ai-config-detail-card agent-config-empty">
-            <h4>{onlyButler ? copy.emptyButlerTitle : copy.emptyAgentTitle}</h4>
-            <p className="ai-config-muted">{copy.emptyDescription}</p>
-          </Card>
+          <SettingsEmptyState
+            icon={onlyButler ? '🧑‍💼' : '🤖'}
+            title={onlyButler ? copy.emptyButlerTitle : copy.emptyAgentTitle}
+            description={copy.emptyDescription}
+            action={(
+              <button className="btn btn--primary" type="button" onClick={openCreateModal}>
+                {createActionLabel}
+              </button>
+            )}
+          />
         )
       ) : null}
 
-      {createModalOpen ? (
-        <div className="member-modal-overlay" onClick={saving ? undefined : closeCreateModal}>
-          <div className="member-modal agent-create-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="member-modal__header">
-              <div>
-                <h3>{createActionLabel}</h3>
-                <p>{copy.createModalDescription}</p>
-              </div>
+      <SettingsDialog
+        open={createModalOpen}
+        title={createActionLabel}
+        description={copy.createModalDescription}
+        className="agent-create-modal"
+        formClassName="agent-create-form"
+        closeDisabled={saving}
+        onClose={closeCreateModal}
+        onSubmit={handleCreate}
+        actions={(
+          <>
+            <button className="btn btn--outline btn--sm" type="button" onClick={closeCreateModal} disabled={saving}>{copy.cancel}</button>
+            <button className="btn btn--primary btn--sm" type="submit" disabled={createDisabled}>{saving ? t('common.saving') : createActionLabel}</button>
+          </>
+        )}
+      >
+        <div className="setup-form-grid">
+          {!onlyButler ? (
+            <div className="form-group">
+              <label htmlFor={`agent-type-${householdId}`}>{copy.agentTypeLabel}</label>
+              <select id={`agent-type-${householdId}`} className="form-select" value={createForm.agentType} onChange={(event) => setCreateForm(current => ({ ...current, agentType: event.target.value as CreateFormState['agentType'] }))}>
+                {agentTypeOptions.map(option => <option key={option} value={option}>{getAgentTypeLabel(option, t)}</option>)}
+              </select>
             </div>
-            <form className="settings-form agent-create-form" onSubmit={handleCreate}>
-              <div className="setup-form-grid">
-                {!onlyButler ? (
-                  <div className="form-group">
-                    <label htmlFor={`agent-type-${householdId}`}>{copy.agentTypeLabel}</label>
-                    <select id={`agent-type-${householdId}`} className="form-select" value={createForm.agentType} onChange={(event) => setCreateForm(current => ({ ...current, agentType: event.target.value as CreateFormState['agentType'] }))}>
-                      {agentTypeOptions.map(option => <option key={option} value={option}>{getAgentTypeLabel(option, t)}</option>)}
-                    </select>
-                  </div>
-                ) : null}
-                <div className="form-group"><label>{copy.displayNameLabel}</label><input className="form-input" value={createForm.displayName} onChange={(event) => setCreateForm(current => ({ ...current, displayName: event.target.value }))} /></div>
-                <div className="form-group"><label>{copy.selfIdentityLabel}</label><textarea className="form-input setup-textarea" value={createForm.selfIdentity} onChange={(event) => setCreateForm(current => ({ ...current, selfIdentity: event.target.value }))} /></div>
-                <div className="form-group"><label>{copy.roleSummaryLabel}</label><textarea className="form-input setup-textarea" value={createForm.roleSummary} onChange={(event) => setCreateForm(current => ({ ...current, roleSummary: event.target.value }))} /></div>
-                <div className="form-group"><label>{copy.introMessageLabel}</label><input className="form-input" value={createForm.introMessage} onChange={(event) => setCreateForm(current => ({ ...current, introMessage: event.target.value }))} /></div>
-                <div className="form-group"><label>{copy.speakingStyleLabel}</label><input className="form-input" value={createForm.speakingStyle} onChange={(event) => setCreateForm(current => ({ ...current, speakingStyle: event.target.value }))} /></div>
-                <div className="form-group"><label>{copy.personalityTraitsLabel}</label><input className="form-input" value={createForm.personalityTraits} onChange={(event) => setCreateForm(current => ({ ...current, personalityTraits: event.target.value }))} /><div className="form-help">{copy.personalityTraitsHint}</div></div>
-                <div className="form-group"><label>{copy.serviceFocusLabel}</label><input className="form-input" value={createForm.serviceFocus} onChange={(event) => setCreateForm(current => ({ ...current, serviceFocus: event.target.value }))} /><div className="form-help">{copy.serviceFocusHint}</div></div>
-              </div>
-              <div className="member-modal__actions">
-                <button className="btn btn--outline btn--sm" type="button" onClick={closeCreateModal} disabled={saving}>{copy.cancel}</button>
-                <button className="btn btn--primary btn--sm" type="submit" disabled={createDisabled}>{saving ? t('common.saving') : createActionLabel}</button>
-              </div>
-            </form>
-          </div>
+          ) : null}
+          <div className="form-group"><label>{copy.displayNameLabel}</label><input className="form-input" value={createForm.displayName} onChange={(event) => setCreateForm(current => ({ ...current, displayName: event.target.value }))} /></div>
+          <div className="form-group"><label>{copy.selfIdentityLabel}</label><textarea className="form-input setup-textarea" value={createForm.selfIdentity} onChange={(event) => setCreateForm(current => ({ ...current, selfIdentity: event.target.value }))} /></div>
+          <div className="form-group"><label>{copy.roleSummaryLabel}</label><textarea className="form-input setup-textarea" value={createForm.roleSummary} onChange={(event) => setCreateForm(current => ({ ...current, roleSummary: event.target.value }))} /></div>
+          <div className="form-group"><label>{copy.introMessageLabel}</label><input className="form-input" value={createForm.introMessage} onChange={(event) => setCreateForm(current => ({ ...current, introMessage: event.target.value }))} /></div>
+          <div className="form-group"><label>{copy.speakingStyleLabel}</label><input className="form-input" value={createForm.speakingStyle} onChange={(event) => setCreateForm(current => ({ ...current, speakingStyle: event.target.value }))} /></div>
+          <div className="form-group"><label>{copy.personalityTraitsLabel}</label><input className="form-input" value={createForm.personalityTraits} onChange={(event) => setCreateForm(current => ({ ...current, personalityTraits: event.target.value }))} /><div className="form-help">{copy.personalityTraitsHint}</div></div>
+          <div className="form-group"><label>{copy.serviceFocusLabel}</label><input className="form-input" value={createForm.serviceFocus} onChange={(event) => setCreateForm(current => ({ ...current, serviceFocus: event.target.value }))} /><div className="form-help">{copy.serviceFocusHint}</div></div>
         </div>
-      ) : null}
+      </SettingsDialog>
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { useI18n } from '../../../runtime';
 import { ToggleSwitch } from '../../family/base';
 import type {
   Device,
@@ -8,19 +9,20 @@ import {
   getVoiceprintConversationCopy,
   getVoiceprintMemberStatusMeta,
 } from './speakerVoiceprintHelpers';
+import { SettingsEmptyState } from './SettingsSharedBlocks';
 
 function formatMemberRole(role: string) {
   switch (role) {
     case 'admin':
-      return '管理员';
+      return 'voiceprint.wizard.member.admin';
     case 'elder':
-      return '长辈';
+      return 'voiceprint.wizard.member.elder';
     case 'child':
-      return '儿童';
+      return 'voiceprint.wizard.member.child';
     case 'guest':
-      return '访客';
+      return 'voiceprint.memberRole.guest';
     default:
-      return '家庭成员';
+      return 'voiceprint.wizard.member.default';
   }
 }
 
@@ -37,24 +39,25 @@ export function SpeakerVoiceprintTab(props: {
   onUpdateVoiceprint: (memberId: string) => void;
   onResumeEnrollment: (enrollmentId: string, memberId: string) => void;
 }) {
+  const { t, locale } = useI18n();
   const voiceprintEnabled = props.summary?.voiceprint_identity_enabled ?? props.device.voiceprint_identity_enabled;
-  const conversationCopy = getVoiceprintConversationCopy(voiceprintEnabled);
+  const conversationCopy = getVoiceprintConversationCopy(voiceprintEnabled, t);
   const pendingEnrollment = props.summary?.pending_enrollment ?? null;
   const canOpenWizard = props.canManage && !props.loading && !props.error && Boolean(props.summary) && (props.summary?.members.length ?? 0) > 0;
-  const headerActionLabel = pendingEnrollment ? '查看进行中任务' : '开始录入';
+  const headerActionLabel = pendingEnrollment ? t('voiceprint.tab.headerAction.pending') : t('voiceprint.tab.headerAction.start');
 
   return (
     <div className="speaker-voiceprint-tab">
       <div className="speaker-device-detail-dialog__panel">
         <div className="speaker-device-detail-dialog__panel-header">
-          <h4>设备级身份策略</h4>
-          <p>这一块决定这台设备是按公开对话处理，还是优先按声纹识别成员并路由到对应成员对话。</p>
+          <h4>{t('voiceprint.tab.strategyTitle')}</h4>
+          <p>{t('voiceprint.tab.strategyDesc')}</p>
         </div>
         <div className="speaker-device-detail-dialog__toggle-card">
           <ToggleSwitch
             checked={voiceprintEnabled}
-            label="开启声纹识别"
-            description={props.canManage ? '打开后，这台设备会优先按声纹识别成员；关闭后按公开对话处理。' : '你当前只有查看权限，不能修改这台设备的声纹策略。'}
+            label={t('voiceprint.tab.toggleLabel')}
+            description={props.canManage ? t('voiceprint.tab.toggleDescEnabled') : t('voiceprint.tab.toggleDescReadonly')}
             onChange={props.onToggleVoiceprintEnabled}
             disabled={props.switchSaving || !props.canManage}
           />
@@ -71,8 +74,8 @@ export function SpeakerVoiceprintTab(props: {
 
       <div className="speaker-device-detail-dialog__panel">
         <div className="speaker-device-detail-dialog__panel-header">
-          <h4>家庭成员声纹状态</h4>
-          <p>先看清谁还没建档、谁在处理中、谁已经可用，再决定要不要发起首次录入或更新。</p>
+          <h4>{t('voiceprint.tab.memberTitle')}</h4>
+          <p>{t('voiceprint.tab.memberDesc')}</p>
         </div>
         <div className="speaker-voiceprint-tab__header-actions">
           <button
@@ -81,23 +84,28 @@ export function SpeakerVoiceprintTab(props: {
             onClick={() => (pendingEnrollment ? props.onResumeEnrollment(pendingEnrollment.enrollment_id, pendingEnrollment.target_member_id) : props.onStartEnrollment())}
             disabled={!props.canManage || (!pendingEnrollment && !canOpenWizard)}
           >
-            {props.canManage ? headerActionLabel : '仅管理员可录入'}
+            {props.canManage ? headerActionLabel : t('voiceprint.tab.onlyAdminEnroll')}
           </button>
         </div>
 
-        {props.loading ? <div className="speaker-voiceprint-tab__empty">正在加载声纹状态…</div> : null}
+        {props.loading ? <div className="speaker-voiceprint-tab__empty">{t('voiceprint.tab.loading')}</div> : null}
         {!props.loading && props.error ? (
-          <div className="speaker-voiceprint-tab__error-card">
-            <strong>声纹区域加载失败</strong>
-            <p>{props.error}</p>
-            <button className="btn btn--outline btn--sm" type="button" onClick={props.onRetry}>重试</button>
-          </div>
+          <SettingsEmptyState
+            className="speaker-voiceprint-tab__error-card"
+            icon="⚠️"
+            title={t('voiceprint.tab.loadFailed')}
+            description={props.error}
+            action={<button className="btn btn--outline btn--sm" type="button" onClick={props.onRetry}>{t('voiceprint.tab.retry')}</button>}
+          />
         ) : null}
 
         {!props.loading && !props.error && props.summary?.pending_enrollment ? (
           <div className="speaker-voiceprint-tab__pending-banner">
-            <span className="badge badge--info">有进行中的录入任务</span>
-            <p>当前设备还有一条未完成的建档任务，样本进度 {props.summary.pending_enrollment.sample_count} / {props.summary.pending_enrollment.sample_goal}。</p>
+            <span className="badge badge--info">{t('voiceprint.tab.pendingTitle')}</span>
+            <p>{t('voiceprint.tab.pendingProgress', {
+              count: props.summary.pending_enrollment.sample_count,
+              goal: props.summary.pending_enrollment.sample_goal,
+            })}</p>
             {props.canManage ? (
               <div className="speaker-voiceprint-tab__pending-actions">
                 <button
@@ -105,7 +113,7 @@ export function SpeakerVoiceprintTab(props: {
                   type="button"
                   onClick={() => props.onResumeEnrollment(props.summary!.pending_enrollment!.enrollment_id, props.summary!.pending_enrollment!.target_member_id)}
                 >
-                  继续查看进度
+                  {t('voiceprint.tab.pendingAction')}
                 </button>
               </div>
             ) : null}
@@ -115,20 +123,20 @@ export function SpeakerVoiceprintTab(props: {
         {!props.loading && !props.error ? (
           <div className="speaker-voiceprint-tab__member-list">
             {props.summary?.members.map((member) => {
-              const meta = getVoiceprintMemberStatusMeta(member);
+              const meta = getVoiceprintMemberStatusMeta(member, t);
               return (
                 <div key={member.member_id} className="speaker-voiceprint-tab__member-card">
                   <div className="speaker-voiceprint-tab__member-header">
                     <div>
                       <strong>{member.member_name}</strong>
-                      <span>{formatMemberRole(member.member_role)}</span>
+                      <span>{t(formatMemberRole(member.member_role))}</span>
                     </div>
                     <span className={`badge badge--${meta.tone}`}>{meta.label}</span>
                   </div>
                   <p className="speaker-voiceprint-tab__member-desc">{meta.description}</p>
                   <div className="speaker-voiceprint-tab__member-meta">
-                    <span>最近更新：{formatVoiceprintTime(member.updated_at)}</span>
-                    <span>样本轮数：{member.sample_count}</span>
+                    <span>{t('voiceprint.tab.recentUpdated', { time: formatVoiceprintTime(member.updated_at, locale, t) })}</span>
+                    <span>{t('voiceprint.tab.sampleCount', { count: member.sample_count })}</span>
                   </div>
                   <div className="speaker-voiceprint-tab__member-actions">
                     <button
@@ -147,7 +155,7 @@ export function SpeakerVoiceprintTab(props: {
                       }}
                       disabled={!props.canManage || (member.status === 'pending' ? !member.pending_enrollment_id : meta.disabled)}
                     >
-                      {props.canManage ? meta.actionLabel : '仅管理员可操作'}
+                      {props.canManage ? meta.actionLabel : t('voiceprint.tab.onlyAdminAction')}
                     </button>
                     {member.error_message ? <span className="speaker-voiceprint-tab__member-error">{member.error_message}</span> : null}
                   </div>
@@ -158,7 +166,11 @@ export function SpeakerVoiceprintTab(props: {
         ) : null}
 
         {!props.loading && !props.error && props.summary && props.summary.members.length === 0 ? (
-          <div className="speaker-voiceprint-tab__empty">当前家庭还没有可展示的成员。</div>
+          <SettingsEmptyState
+            icon="🎙️"
+            title={t('voiceprint.tab.memberTitle')}
+            description={t('voiceprint.tab.empty')}
+          />
         ) : null}
       </div>
     </div>

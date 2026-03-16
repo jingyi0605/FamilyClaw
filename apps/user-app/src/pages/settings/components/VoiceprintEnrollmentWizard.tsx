@@ -7,6 +7,7 @@ import {
   formatVoiceprintTime,
   type VoiceprintWizardState,
 } from './speakerVoiceprintHelpers';
+import { SettingsDialog } from './SettingsSharedBlocks';
 
 function getWizardTitle(
   mode: VoiceprintWizardState['mode'],
@@ -50,7 +51,7 @@ export function VoiceprintEnrollmentWizard(props: {
   onContinue: () => void;
   onStart: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const selectedMember = getSelectedMember(props.members, props.wizard.memberId);
   const isWaiting = props.wizard.step === 'waiting';
   const progressCount = props.enrollment?.sample_count ?? 0;
@@ -58,15 +59,47 @@ export function VoiceprintEnrollmentWizard(props: {
   const memberName = selectedMember?.member_name ?? t('voiceprint.wizard.noMember');
 
   return (
-    <div className="member-modal-overlay" onClick={props.busy || isWaiting ? undefined : props.onClose}>
-      <div className="member-modal speaker-voiceprint-wizard" onClick={(event) => event.stopPropagation()}>
-        <div className="member-modal__header">
-          <div>
-            <h3>{getWizardTitle(props.wizard.mode, props.wizard.step, t)}</h3>
-            <p>{t('voiceprint.wizard.intro')}</p>
-          </div>
-        </div>
-
+    <SettingsDialog
+      title={getWizardTitle(props.wizard.mode, props.wizard.step, t)}
+      description={t('voiceprint.wizard.intro')}
+      className="speaker-voiceprint-wizard"
+      closeDisabled={props.busy || isWaiting}
+      onClose={props.onClose}
+      actions={(
+        <>
+          {props.wizard.step === 'select_member' ? (
+            <>
+              <button className="btn btn--outline btn--sm" type="button" onClick={props.onClose} disabled={props.busy}>{t('voiceprint.wizard.cancel')}</button>
+              <button className="btn btn--outline btn--sm" type="button" onClick={props.onContinue} disabled={!props.wizard.memberId || props.busy}>{t('voiceprint.wizard.next')}</button>
+            </>
+          ) : null}
+          {props.wizard.step === 'confirm' ? (
+            <>
+              <button className="btn btn--outline btn--sm" type="button" onClick={props.onBack} disabled={props.busy || Boolean(props.wizard.lockedMemberId)}>{t('voiceprint.wizard.back')}</button>
+              <button className="btn btn--outline btn--sm" type="button" onClick={() => void props.onStart()} disabled={props.busy || !props.wizard.memberId}>
+                {props.busy ? t('voiceprint.wizard.creating') : (props.wizard.mode === 'update' ? t('voiceprint.wizard.startUpdate') : t('voiceprint.wizard.createTask'))}
+              </button>
+            </>
+          ) : null}
+          {props.wizard.step === 'creating' || props.wizard.step === 'waiting' ? (
+            <button className="btn btn--outline btn--sm" type="button" disabled>
+              {t('voiceprint.wizard.pleaseWait')}
+            </button>
+          ) : null}
+          {props.wizard.step === 'success' ? (
+            <button className="btn btn--outline btn--sm" type="button" onClick={props.onClose}>{t('voiceprint.wizard.done')}</button>
+          ) : null}
+          {props.wizard.step === 'failed' ? (
+            <>
+              <button className="btn btn--outline btn--sm" type="button" onClick={props.onClose}>{t('voiceprint.wizard.close')}</button>
+              <button className="btn btn--outline btn--sm" type="button" onClick={props.onStart} disabled={props.busy || !props.wizard.memberId}>
+                {props.busy ? t('voiceprint.wizard.retrying') : t('voiceprint.wizard.restart')}
+              </button>
+            </>
+          ) : null}
+        </>
+      )}
+    >
         {props.wizard.step === 'select_member' ? (
           <div className="speaker-voiceprint-wizard__body">
             <div className="speaker-voiceprint-wizard__steps">
@@ -148,7 +181,7 @@ export function VoiceprintEnrollmentWizard(props: {
               </div>
               <div>
                 <span className="speaker-voiceprint-wizard__label">{t('voiceprint.wizard.lastUpdated')}</span>
-                <strong>{formatVoiceprintTime(props.enrollment?.updated_at ?? null)}</strong>
+                <strong>{formatVoiceprintTime(props.enrollment?.updated_at ?? null, locale, t)}</strong>
               </div>
             </div>
             <p className="speaker-voiceprint-wizard__hint">{t('voiceprint.wizard.waitingHint', { deviceName: props.deviceName })}</p>
@@ -174,40 +207,6 @@ export function VoiceprintEnrollmentWizard(props: {
             <p>{props.wizard.error || t('voiceprint.wizard.failedHint')}</p>
           </div>
         ) : null}
-
-        <div className="member-modal__actions">
-          {props.wizard.step === 'select_member' ? (
-            <>
-              <button className="btn btn--outline btn--sm" type="button" onClick={props.onClose} disabled={props.busy}>{t('voiceprint.wizard.cancel')}</button>
-              <button className="btn btn--outline btn--sm" type="button" onClick={props.onContinue} disabled={!props.wizard.memberId || props.busy}>{t('voiceprint.wizard.next')}</button>
-            </>
-          ) : null}
-          {props.wizard.step === 'confirm' ? (
-            <>
-              <button className="btn btn--outline btn--sm" type="button" onClick={props.onBack} disabled={props.busy || Boolean(props.wizard.lockedMemberId)}>{t('voiceprint.wizard.back')}</button>
-              <button className="btn btn--outline btn--sm" type="button" onClick={() => void props.onStart()} disabled={props.busy || !props.wizard.memberId}>
-                {props.busy ? t('voiceprint.wizard.creating') : (props.wizard.mode === 'update' ? t('voiceprint.wizard.startUpdate') : t('voiceprint.wizard.createTask'))}
-              </button>
-            </>
-          ) : null}
-          {props.wizard.step === 'creating' || props.wizard.step === 'waiting' ? (
-            <button className="btn btn--outline btn--sm" type="button" disabled>
-              {t('voiceprint.wizard.pleaseWait')}
-            </button>
-          ) : null}
-          {props.wizard.step === 'success' ? (
-            <button className="btn btn--outline btn--sm" type="button" onClick={props.onClose}>{t('voiceprint.wizard.done')}</button>
-          ) : null}
-          {props.wizard.step === 'failed' ? (
-            <>
-              <button className="btn btn--outline btn--sm" type="button" onClick={props.onClose}>{t('voiceprint.wizard.close')}</button>
-              <button className="btn btn--outline btn--sm" type="button" onClick={props.onStart} disabled={props.busy || !props.wizard.memberId}>
-                {props.busy ? t('voiceprint.wizard.retrying') : t('voiceprint.wizard.restart')}
-              </button>
-            </>
-          ) : null}
-        </div>
-      </div>
-    </div>
+    </SettingsDialog>
   );
 }
