@@ -1,30 +1,32 @@
-# 家庭版 OpenClaw 首批接口文档 v0.1
+﻿> 说明：本文件里出现的 SQLite 描述属于历史方案或阶段性验收记录。项目已于 2026-03-16 统一切换到 PostgreSQL，当前实现与测试基线都以 PostgreSQL 为准。
 
-## 1. 文档范围
+# 瀹跺涵鐗?OpenClaw 棣栨壒鎺ュ彛鏂囨。 v0.1
 
-本文档覆盖 `家庭底座与成员中心` 当前已交付的首批接口，范围包括：
+## 1. 鏂囨。鑼冨洿
 
-- 健康检查
-- 家庭管理
-- 成员管理
-- 成员关系管理
-- 成员偏好与权限
-- 房间与设备管理
-- Home Assistant 设备同步
-- 审计日志查询
+鏈枃妗ｈ鐩?`瀹跺涵搴曞骇涓庢垚鍛樹腑蹇僠 褰撳墠宸蹭氦浠樼殑棣栨壒鎺ュ彛锛岃寖鍥村寘鎷細
 
-当前服务基础前缀为：
+- 鍋ュ悍妫€鏌?
+- 瀹跺涵绠＄悊
+- 鎴愬憳绠＄悊
+- 鎴愬憳鍏崇郴绠＄悊
+- 鎴愬憳鍋忓ソ涓庢潈闄?
+- 鎴块棿涓庤澶囩鐞?
+- Home Assistant 璁惧鍚屾
+- 瀹¤鏃ュ織鏌ヨ
 
-- 根地址：`http://127.0.0.1:8000`
-- API 前缀：`/api/v1`
+褰撳墠鏈嶅姟鍩虹鍓嶇紑涓猴細
+
+- 鏍瑰湴鍧€锛歚http://127.0.0.1:8000`
+- API 鍓嶇紑锛歚/api/v1`
 
 ---
 
-## 2. 通用约定
+## 2. 閫氱敤绾﹀畾
 
 ### 2.1 Header
 
-当前实现建议所有请求都携带以下 Header：
+褰撳墠瀹炵幇寤鸿鎵€鏈夎姹傞兘鎼哄甫浠ヤ笅 Header锛?
 
 ```http
 Content-Type: application/json
@@ -32,19 +34,19 @@ X-Actor-Role: admin
 X-Actor-Id: local-dev
 ```
 
-说明：
+璇存槑锛?
 
-- `X-Actor-Role=admin`：写接口必须携带，否则会返回 `403 admin role required`
-- `X-Actor-Id`：当前可选，便于审计记录追踪
+- `X-Actor-Role=admin`锛氬啓鎺ュ彛蹇呴』鎼哄甫锛屽惁鍒欎細杩斿洖 `403 admin role required`
+- `X-Actor-Id`锛氬綋鍓嶅彲閫夛紝渚夸簬瀹¤璁板綍杩借釜
 
-### 2.2 分页参数
+### 2.2 鍒嗛〉鍙傛暟
 
-支持列表查询的接口统一使用：
+鏀寔鍒楄〃鏌ヨ鐨勬帴鍙ｇ粺涓€浣跨敤锛?
 
-- `page`：页码，从 `1` 开始，默认 `1`
-- `page_size`：每页数量，默认 `20`，最大 `100`
+- `page`锛氶〉鐮侊紝浠?`1` 寮€濮嬶紝榛樿 `1`
+- `page_size`锛氭瘡椤垫暟閲忥紝榛樿 `20`锛屾渶澶?`100`
 
-统一返回结构：
+缁熶竴杩斿洖缁撴瀯锛?
 
 ```json
 {
@@ -55,27 +57,27 @@ X-Actor-Id: local-dev
 }
 ```
 
-### 2.3 错误码
+### 2.3 閿欒鐮?
 
-当前阶段常见错误：
+褰撳墠闃舵甯歌閿欒锛?
 
-- `400`：参数校验失败或业务约束不满足
-- `403`：未使用管理员身份调用写接口
-- `404`：目标资源不存在
-- `409`：数据库唯一约束等完整性冲突
-- `502`：调用 Home Assistant 失败
+- `400`锛氬弬鏁版牎楠屽け璐ユ垨涓氬姟绾︽潫涓嶆弧瓒?
+- `403`锛氭湭浣跨敤绠＄悊鍛樿韩浠借皟鐢ㄥ啓鎺ュ彛
+- `404`锛氱洰鏍囪祫婧愪笉瀛樺湪
+- `409`锛氭暟鎹簱鍞竴绾︽潫绛夊畬鏁存€у啿绐?
+- `502`锛氳皟鐢?Home Assistant 澶辫触
 
 ---
 
-## 3. 健康检查
+## 3. 鍋ュ悍妫€鏌?
 
 ### `GET /api/v1/healthz`
 
-用途：
+鐢ㄩ€旓細
 
-- 检查 API 服务与 SQLite 连接状态
+- 妫€鏌?API 鏈嶅姟涓?SQLite 杩炴帴鐘舵€?
 
-响应示例：
+鍝嶅簲绀轰緥锛?
 
 ```json
 {
@@ -87,11 +89,11 @@ X-Actor-Id: local-dev
 
 ### `GET /`
 
-用途：
+鐢ㄩ€旓細
 
-- 返回服务名称、版本与状态
+- 杩斿洖鏈嶅姟鍚嶇О銆佺増鏈笌鐘舵€?
 
-响应示例：
+鍝嶅簲绀轰緥锛?
 
 ```json
 {
@@ -103,25 +105,25 @@ X-Actor-Id: local-dev
 
 ---
 
-## 4. 家庭管理
+## 4. 瀹跺涵绠＄悊
 
 ### `POST /api/v1/households`
 
-用途：
+鐢ㄩ€旓細
 
-- 创建家庭
+- 鍒涘缓瀹跺涵
 
-请求体：
+璇锋眰浣擄細
 
 ```json
 {
-  "name": "Jackson 家庭",
+  "name": "Jackson 瀹跺涵",
   "timezone": "Asia/Shanghai",
   "locale": "zh-CN"
 }
 ```
 
-响应字段：
+鍝嶅簲瀛楁锛?
 
 - `id`
 - `name`
@@ -133,39 +135,39 @@ X-Actor-Id: local-dev
 
 ### `GET /api/v1/households`
 
-用途：
+鐢ㄩ€旓細
 
-- 查询家庭列表
+- 鏌ヨ瀹跺涵鍒楄〃
 
-查询参数：
+鏌ヨ鍙傛暟锛?
 
-- `status`：可选，按状态筛选
+- `status`锛氬彲閫夛紝鎸夌姸鎬佺瓫閫?
 - `page`
 - `page_size`
 
 ### `GET /api/v1/households/{household_id}`
 
-用途：
+鐢ㄩ€旓細
 
-- 查询单个家庭详情
+- 鏌ヨ鍗曚釜瀹跺涵璇︽儏
 
 ---
 
-## 5. 成员管理
+## 5. 鎴愬憳绠＄悊
 
 ### `POST /api/v1/members`
 
-用途：
+鐢ㄩ€旓細
 
-- 创建成员
+- 鍒涘缓鎴愬憳
 
-请求体：
+璇锋眰浣擄細
 
 ```json
 {
   "household_id": "household-id",
   "name": "Coco",
-  "nickname": "可可",
+  "nickname": "鍙彲",
   "role": "child",
   "age_group": "child",
   "birthday": "2018-05-01",
@@ -174,33 +176,33 @@ X-Actor-Id: local-dev
 }
 ```
 
-字段约束：
+瀛楁绾︽潫锛?
 
-- `role`：`admin | adult | child | elder | guest`
-- `age_group`：`toddler | child | teen | adult | elder`
-- `status` 由系统初始化为 `active`
+- `role`锛歚admin | adult | child | elder | guest`
+- `age_group`锛歚toddler | child | teen | adult | elder`
+- `status` 鐢辩郴缁熷垵濮嬪寲涓?`active`
 
 ### `GET /api/v1/members`
 
-用途：
+鐢ㄩ€旓細
 
-- 查询家庭成员列表
+- 鏌ヨ瀹跺涵鎴愬憳鍒楄〃
 
-查询参数：
+鏌ヨ鍙傛暟锛?
 
-- `household_id`：必填
-- `status`：可选，`active | inactive`
+- `household_id`锛氬繀濉?
+- `status`锛氬彲閫夛紝`active | inactive`
 - `page`
 - `page_size`
 
 ### `PATCH /api/v1/members/{member_id}`
 
-用途：
+鐢ㄩ€旓細
 
-- 编辑成员资料
-- 支持停用成员
+- 缂栬緫鎴愬憳璧勬枡
+- 鏀寔鍋滅敤鎴愬憳
 
-可更新字段：
+鍙洿鏂板瓧娈碉細
 
 - `name`
 - `nickname`
@@ -211,7 +213,7 @@ X-Actor-Id: local-dev
 - `status`
 - `guardian_member_id`
 
-停用示例：
+鍋滅敤绀轰緥锛?
 
 ```json
 {
@@ -221,15 +223,15 @@ X-Actor-Id: local-dev
 
 ---
 
-## 6. 成员关系管理
+## 6. 鎴愬憳鍏崇郴绠＄悊
 
 ### `POST /api/v1/member-relationships`
 
-用途：
+鐢ㄩ€旓細
 
-- 创建家庭内部成员关系
+- 鍒涘缓瀹跺涵鍐呴儴鎴愬憳鍏崇郴
 
-请求体：
+璇锋眰浣擄細
 
 ```json
 {
@@ -242,48 +244,48 @@ X-Actor-Id: local-dev
 }
 ```
 
-枚举值：
+鏋氫妇鍊硷細
 
-- `relation_type`：`spouse | parent | child | guardian | caregiver`
-- `visibility_scope`：`public | family | private`
-- `delegation_scope`：`none | reminder | health | device`
+- `relation_type`锛歚spouse | parent | child | guardian | caregiver`
+- `visibility_scope`锛歚public | family | private`
+- `delegation_scope`锛歚none | reminder | health | device`
 
-约束说明：
+绾︽潫璇存槑锛?
 
-- `source_member_id` 与 `target_member_id` 不能相同
-- 双方必须属于同一个家庭
-- `source_member_id + target_member_id + relation_type` 组合唯一
+- `source_member_id` 涓?`target_member_id` 涓嶈兘鐩稿悓
+- 鍙屾柟蹇呴』灞炰簬鍚屼竴涓搴?
+- `source_member_id + target_member_id + relation_type` 缁勫悎鍞竴
 
 ### `GET /api/v1/member-relationships`
 
-用途：
+鐢ㄩ€旓細
 
-- 查询家庭关系列表
+- 鏌ヨ瀹跺涵鍏崇郴鍒楄〃
 
-查询参数：
+鏌ヨ鍙傛暟锛?
 
-- `household_id`：必填
-- `source_member_id`：可选
-- `target_member_id`：可选
-- `relation_type`：可选
+- `household_id`锛氬繀濉?
+- `source_member_id`锛氬彲閫?
+- `target_member_id`锛氬彲閫?
+- `relation_type`锛氬彲閫?
 - `page`
 - `page_size`
 
 ---
 
-## 7. 成员偏好与权限
+## 7. 鎴愬憳鍋忓ソ涓庢潈闄?
 
 ### `PUT /api/v1/member-preferences/{member_id}`
 
-用途：
+鐢ㄩ€旓細
 
-- 新增或更新成员偏好
+- 鏂板鎴栨洿鏂版垚鍛樺亸濂?
 
-请求体示例：
+璇锋眰浣撶ず渚嬶細
 
 ```json
 {
-  "preferred_name": "爸爸",
+  "preferred_name": "鐖哥埜",
   "light_preference": {
     "brightness": 70,
     "tone": "warm"
@@ -293,7 +295,7 @@ X-Actor-Id: local-dev
     "mode": "cool"
   },
   "content_preference": {
-    "topics": ["科技", "亲子"]
+    "topics": ["绉戞妧", "浜插瓙"]
   },
   "reminder_channel_preference": {
     "channels": ["app", "speaker"]
@@ -307,21 +309,21 @@ X-Actor-Id: local-dev
 
 ### `GET /api/v1/member-preferences/{member_id}`
 
-用途：
+鐢ㄩ€旓細
 
-- 查询成员偏好
+- 鏌ヨ鎴愬憳鍋忓ソ
 
-说明：
+璇存槑锛?
 
-- 当成员存在但偏好尚未创建时，返回字段为空的默认偏好对象，不再返回 `404`
+- 褰撴垚鍛樺瓨鍦ㄤ絾鍋忓ソ灏氭湭鍒涘缓鏃讹紝杩斿洖瀛楁涓虹┖鐨勯粯璁ゅ亸濂藉璞★紝涓嶅啀杩斿洖 `404`
 
 ### `PUT /api/v1/member-permissions/{member_id}`
 
-用途：
+鐢ㄩ€旓細
 
-- 整批覆盖成员权限规则
+- 鏁存壒瑕嗙洊鎴愬憳鏉冮檺瑙勫垯
 
-请求体示例：
+璇锋眰浣撶ず渚嬶細
 
 ```json
 {
@@ -342,20 +344,20 @@ X-Actor-Id: local-dev
 }
 ```
 
-枚举值：
+鏋氫妇鍊硷細
 
-- `resource_type`：`memory | health | device | photo | scenario`
-- `resource_scope`：`self | children | family | public`
-- `action`：`read | write | execute | manage`
-- `effect`：`allow | deny`
+- `resource_type`锛歚memory | health | device | photo | scenario`
+- `resource_scope`锛歚self | children | family | public`
+- `action`锛歚read | write | execute | manage`
+- `effect`锛歚allow | deny`
 
 ### `GET /api/v1/member-permissions/{member_id}`
 
-用途：
+鐢ㄩ€旓細
 
-- 查询成员权限规则列表
+- 鏌ヨ鎴愬憳鏉冮檺瑙勫垯鍒楄〃
 
-响应示例：
+鍝嶅簲绀轰緥锛?
 
 ```json
 {
@@ -378,64 +380,64 @@ X-Actor-Id: local-dev
 
 ---
 
-## 8. 房间与设备
+## 8. 鎴块棿涓庤澶?
 
 ### `POST /api/v1/rooms`
 
-用途：
+鐢ㄩ€旓細
 
-- 创建房间
+- 鍒涘缓鎴块棿
 
-请求体：
+璇锋眰浣擄細
 
 ```json
 {
   "household_id": "household-id",
-  "name": "主卧",
+  "name": "涓诲崸",
   "room_type": "bedroom",
   "privacy_level": "private"
 }
 ```
 
-枚举值：
+鏋氫妇鍊硷細
 
-- `room_type`：`living_room | bedroom | study | entrance`
-- `privacy_level`：`public | private | sensitive`
+- `room_type`锛歚living_room | bedroom | study | entrance`
+- `privacy_level`锛歚public | private | sensitive`
 
 ### `GET /api/v1/rooms`
 
-用途：
+鐢ㄩ€旓細
 
-- 查询房间列表
+- 鏌ヨ鎴块棿鍒楄〃
 
-查询参数：
+鏌ヨ鍙傛暟锛?
 
-- `household_id`：必填
+- `household_id`锛氬繀濉?
 - `page`
 - `page_size`
 
 ### `GET /api/v1/devices`
 
-用途：
+鐢ㄩ€旓細
 
-- 查询设备列表
+- 鏌ヨ璁惧鍒楄〃
 
-查询参数：
+鏌ヨ鍙傛暟锛?
 
-- `household_id`：必填
-- `room_id`：可选
-- `device_type`：可选
-- `status`：可选
+- `household_id`锛氬繀濉?
+- `room_id`锛氬彲閫?
+- `device_type`锛氬彲閫?
+- `status`锛氬彲閫?
 - `page`
 - `page_size`
 
 ### `PATCH /api/v1/devices/{device_id}`
 
-用途：
+鐢ㄩ€旓細
 
-- 更新设备名称、状态、可控性、所属房间
+- 鏇存柊璁惧鍚嶇О銆佺姸鎬併€佸彲鎺ф€с€佹墍灞炴埧闂?
 
-请求体示例：
+璇锋眰浣撶ず渚嬶細
 
 ```json
 {
@@ -445,15 +447,15 @@ X-Actor-Id: local-dev
 
 ---
 
-## 9. Home Assistant 同步
+## 9. Home Assistant 鍚屾
 
 ### `POST /api/v1/devices/sync/ha`
 
-用途：
+鐢ㄩ€旓細
 
-- 手动触发 Home Assistant 设备同步
+- 鎵嬪姩瑙﹀彂 Home Assistant 璁惧鍚屾
 
-请求体：
+璇锋眰浣擄細
 
 ```json
 {
@@ -461,7 +463,7 @@ X-Actor-Id: local-dev
 }
 ```
 
-响应字段：
+鍝嶅簲瀛楁锛?
 
 - `household_id`
 - `created_devices`
@@ -472,28 +474,28 @@ X-Actor-Id: local-dev
 - `devices`
 - `failures`
 
-失败示例：
+澶辫触绀轰緥锛?
 
-- 当 HA 地址不可达或 token 无效时，返回 `502`
+- 褰?HA 鍦板潃涓嶅彲杈炬垨 token 鏃犳晥鏃讹紝杩斿洖 `502`
 
 ---
 
-## 10. 审计日志
+## 10. 瀹¤鏃ュ織
 
 ### `GET /api/v1/audit-logs`
 
-用途：
+鐢ㄩ€旓細
 
-- 查询家庭维度的审计日志
+- 鏌ヨ瀹跺涵缁村害鐨勫璁℃棩蹇?
 
-查询参数：
+鏌ヨ鍙傛暟锛?
 
-- `household_id`：必填
-- `action`：可选
+- `household_id`锛氬繀濉?
+- `action`锛氬彲閫?
 - `page`
 - `page_size`
 
-当前已接入审计的关键动作包括：
+褰撳墠宸叉帴鍏ュ璁＄殑鍏抽敭鍔ㄤ綔鍖呮嫭锛?
 
 - `household.create`
 - `member.create`
@@ -508,29 +510,29 @@ X-Actor-Id: local-dev
 
 ---
 
-## 11. curl 示例
+## 11. curl 绀轰緥
 
-### 11.1 创建家庭
+### 11.1 鍒涘缓瀹跺涵
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/v1/households" \
   -H "Content-Type: application/json" \
   -H "X-Actor-Role: admin" \
   -d '{
-    "name": "Jackson 家庭",
+    "name": "Jackson 瀹跺涵",
     "timezone": "Asia/Shanghai",
     "locale": "zh-CN"
   }'
 ```
 
-### 11.2 查询成员
+### 11.2 鏌ヨ鎴愬憳
 
 ```bash
 curl "http://127.0.0.1:8000/api/v1/members?household_id=YOUR_HOUSEHOLD_ID" \
   -H "X-Actor-Role: admin"
 ```
 
-### 11.3 同步 HA 设备
+### 11.3 鍚屾 HA 璁惧
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/v1/devices/sync/ha" \
@@ -541,9 +543,10 @@ curl -X POST "http://127.0.0.1:8000/api/v1/devices/sync/ha" \
   }'
 ```
 
-### 11.4 查询审计日志
+### 11.4 鏌ヨ瀹¤鏃ュ織
 
 ```bash
 curl "http://127.0.0.1:8000/api/v1/audit-logs?household_id=YOUR_HOUSEHOLD_ID" \
   -H "X-Actor-Role: admin"
 ```
+

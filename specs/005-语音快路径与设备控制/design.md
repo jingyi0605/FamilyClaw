@@ -1,99 +1,101 @@
-# 设计文档 - 语音快路径与设备控制
+﻿> 说明：本文件里出现的 SQLite 描述属于历史方案或阶段性验收记录。项目已于 2026-03-16 统一切换到 PostgreSQL，当前实现与测试基线都以 PostgreSQL 为准。
 
-状态：Draft
+# 璁捐鏂囨。 - 璇煶蹇矾寰勪笌璁惧鎺у埗
 
-## 1. 概述
+鐘舵€侊細Draft
 
-### 1.1 目标
+## 1. 姒傝堪
 
-- 给项目补一条正式的语音主链，而不是继续靠 demo server 和临时脚本硬凑
-- 把 `open-xiaoai` 收编成正式终端接入层，而不是把业务逻辑搬到音箱上
-- 把私有设备协议和业务编排隔开，避免 `api-server` 直接吃厂商协议
-- 让简单语音控制复用现有 `device_action / scene`
-- 让复杂语音问题回到现有 `conversation`
-- 让声纹成为身份增强，而不是新的单点授权漏洞
+### 1.1 鐩爣
 
-### 1.2 覆盖需求
+- 缁欓」鐩ˉ涓€鏉℃寮忕殑璇煶涓婚摼锛岃€屼笉鏄户缁潬 demo server 鍜屼复鏃惰剼鏈‖鍑?
+- 鎶?`open-xiaoai` 鏀剁紪鎴愭寮忕粓绔帴鍏ュ眰锛岃€屼笉鏄妸涓氬姟閫昏緫鎼埌闊崇涓?
+- 鎶婄鏈夎澶囧崗璁拰涓氬姟缂栨帓闅斿紑锛岄伩鍏?`api-server` 鐩存帴鍚冨巶鍟嗗崗璁?
+- 璁╃畝鍗曡闊虫帶鍒跺鐢ㄧ幇鏈?`device_action / scene`
+- 璁╁鏉傝闊抽棶棰樺洖鍒扮幇鏈?`conversation`
+- 璁╁０绾规垚涓鸿韩浠藉寮猴紝鑰屼笉鏄柊鐨勫崟鐐规巿鏉冩紡娲?
 
-- `requirements.md` 需求 1
-- `requirements.md` 需求 2
-- `requirements.md` 需求 3
-- `requirements.md` 需求 4
-- `requirements.md` 需求 5
-- `requirements.md` 需求 6
-- `requirements.md` 需求 7
+### 1.2 瑕嗙洊闇€姹?
 
-### 1.3 技术约束
+- `requirements.md` 闇€姹?1
+- `requirements.md` 闇€姹?2
+- `requirements.md` 闇€姹?3
+- `requirements.md` 闇€姹?4
+- `requirements.md` 闇€姹?5
+- `requirements.md` 闇€姹?6
+- `requirements.md` 闇€姹?7
 
-- 后端：FastAPI + SQLAlchemy + Alembic
-- 实时通道：沿用现有 WebSocket 事件模型
-- 数据存储：当前基线仍是 SQLite / Alembic，不假装 Redis、MQ 已经存在
-- 设备控制：继续以现有 `ha_integration`、`device_action`、`scene` 为唯一正式执行入口
-- 对话主链：继续以现有 `conversation` 为唯一正式复杂问答入口
-- 初版终端适配器：只支持 `open-xiaoai`
-- 初版终端协议隔离：必须通过独立 `open-xiaoai-gateway`
-- 部署原则：当前阶段仍然以模块化单体为主，但 `gateway` 和 `voice-runtime` 必须独立出来
+### 1.3 鎶€鏈害鏉?
 
-### 1.4 技术选型结论
+- 鍚庣锛欶astAPI + SQLAlchemy + Alembic
+- 瀹炴椂閫氶亾锛氭部鐢ㄧ幇鏈?WebSocket 浜嬩欢妯″瀷
+- 鏁版嵁瀛樺偍锛氬綋鍓嶅熀绾夸粛鏄?SQLite / Alembic锛屼笉鍋囪 Redis銆丮Q 宸茬粡瀛樺湪
+- 璁惧鎺у埗锛氱户缁互鐜版湁 `ha_integration`銆乣device_action`銆乣scene` 涓哄敮涓€姝ｅ紡鎵ц鍏ュ彛
+- 瀵硅瘽涓婚摼锛氱户缁互鐜版湁 `conversation` 涓哄敮涓€姝ｅ紡澶嶆潅闂瓟鍏ュ彛
+- 鍒濈増缁堢閫傞厤鍣細鍙敮鎸?`open-xiaoai`
+- 鍒濈増缁堢鍗忚闅旂锛氬繀椤婚€氳繃鐙珛 `open-xiaoai-gateway`
+- 閮ㄧ讲鍘熷垯锛氬綋鍓嶉樁娈典粛鐒朵互妯″潡鍖栧崟浣撲负涓伙紝浣?`gateway` 鍜?`voice-runtime` 蹇呴』鐙珛鍑烘潵
 
-这里先把结论写死，别后面又摇摆。
+### 1.4 鎶€鏈€夊瀷缁撹
 
-#### 1.4.1 初版终端侧
+杩欓噷鍏堟妸缁撹鍐欐锛屽埆鍚庨潰鍙堟憞鎽嗐€?
 
-- **结论**：初版唯一正式终端适配器是 `open-xiaoai`
-- **落法**：小爱音箱跑 `open-xiaoai` Client，外接独立 `open-xiaoai-gateway`
-- **原因**：
-  - 用户已经完成刷机、连接、录音、播放和打断验证
-  - `open-xiaoai` 已经解决了小爱终端侧音频输入和播放输出问题
-  - 现在最省事的方案不是重做终端，而是把它纳入正式系统边界
+#### 1.4.1 鍒濈増缁堢渚?
 
-#### 1.4.2 为什么不用官方 demo server 当正式服务
+- **缁撹**锛氬垵鐗堝敮涓€姝ｅ紡缁堢閫傞厤鍣ㄦ槸 `open-xiaoai`
+- **钀芥硶**锛氬皬鐖遍煶绠辫窇 `open-xiaoai` Client锛屽鎺ョ嫭绔?`open-xiaoai-gateway`
+- **鍘熷洜**锛?
+  - 鐢ㄦ埛宸茬粡瀹屾垚鍒锋満銆佽繛鎺ャ€佸綍闊炽€佹挱鏀惧拰鎵撴柇楠岃瘉
+  - `open-xiaoai` 宸茬粡瑙ｅ喅浜嗗皬鐖辩粓绔晶闊抽杈撳叆鍜屾挱鏀捐緭鍑洪棶棰?
+  - 鐜板湪鏈€鐪佷簨鐨勬柟妗堜笉鏄噸鍋氱粓绔紝鑰屾槸鎶婂畠绾冲叆姝ｅ紡绯荤粺杈圭晫
 
-- **结论**：官方 demo server 只用于 P0 验证，不进入生产架构
-- **原因**：
-  - 它的职责是演示，不是项目正式业务网关
-  - 把它直接变成生产入口，后面协议、安全和业务边界都会烂掉
-  - 生产系统需要的是“协议翻译器”，不是“演示程序加补丁”
+#### 1.4.2 涓轰粈涔堜笉鐢ㄥ畼鏂?demo server 褰撴寮忔湇鍔?
 
-#### 1.4.3 `open-xiaoai-gateway` 为什么必须独立进程
+- **缁撹**锛氬畼鏂?demo server 鍙敤浜?P0 楠岃瘉锛屼笉杩涘叆鐢熶骇鏋舵瀯
+- **鍘熷洜**锛?
+  - 瀹冪殑鑱岃矗鏄紨绀猴紝涓嶆槸椤圭洰姝ｅ紡涓氬姟缃戝叧
+  - 鎶婂畠鐩存帴鍙樻垚鐢熶骇鍏ュ彛锛屽悗闈㈠崗璁€佸畨鍏ㄥ拰涓氬姟杈圭晫閮戒細鐑傛帀
+  - 鐢熶骇绯荤粺闇€瑕佺殑鏄€滃崗璁炕璇戝櫒鈥濓紝涓嶆槸鈥滄紨绀虹▼搴忓姞琛ヤ竵鈥?
 
-- **结论**：初版基线是独立进程，不直接塞进 `api-server`
-- **原因**：
-  - `open-xiaoai` 私有协议变化不该污染业务代码
-  - 危险能力裁剪应该在靠近设备的一层完成
-  - 后续如果接更多终端，独立网关更容易扩成统一适配器层
+#### 1.4.3 `open-xiaoai-gateway` 涓轰粈涔堝繀椤荤嫭绔嬭繘绋?
 
-#### 1.4.4 流式 ASR
+- **缁撹**锛氬垵鐗堝熀绾挎槸鐙珛杩涚▼锛屼笉鐩存帴濉炶繘 `api-server`
+- **鍘熷洜**锛?
+  - `open-xiaoai` 绉佹湁鍗忚鍙樺寲涓嶈姹℃煋涓氬姟浠ｇ爜
+  - 鍗遍櫓鑳藉姏瑁佸壀搴旇鍦ㄩ潬杩戣澶囩殑涓€灞傚畬鎴?
+  - 鍚庣画濡傛灉鎺ユ洿澶氱粓绔紝鐙珛缃戝叧鏇村鏄撴墿鎴愮粺涓€閫傞厤鍣ㄥ眰
 
-- **结论**：第一版优先用 **FunASR**
-- **原因**：
-  - 适合中文家庭场景
-  - 可本地部署
-  - 更适合快路径和家庭短句控制
+#### 1.4.4 娴佸紡 ASR
 
-#### 1.4.5 声纹识别
+- **缁撹**锛氱涓€鐗堜紭鍏堢敤 **FunASR**
+- **鍘熷洜**锛?
+  - 閫傚悎涓枃瀹跺涵鍦烘櫙
+  - 鍙湰鍦伴儴缃?
+  - 鏇撮€傚悎蹇矾寰勫拰瀹跺涵鐭彞鎺у埗
 
-- **结论**：第一版优先用 **3D-Speaker**
-- **原因**：
-  - 可本地部署
-  - 适合做成员候选增强
-  - 能和快慢路径身份融合解耦
+#### 1.4.5 澹扮汗璇嗗埆
 
-#### 1.4.6 `mi-gpt` 的位置
+- **缁撹**锛氱涓€鐗堜紭鍏堢敤 **3D-Speaker**
+- **鍘熷洜**锛?
+  - 鍙湰鍦伴儴缃?
+  - 閫傚悎鍋氭垚鍛樺€欓€夊寮?
+  - 鑳藉拰蹇參璺緞韬唤铻嶅悎瑙ｈ€?
 
-- **结论**：`mi-gpt` 不进初版
-- **原因**：
-  - 当前仓库已声明停止维护
-  - 官方 README 也明确更推荐 `open-xiaoai`
-  - 它可以保留为后续“普通用户路径”插件候选，但不该影响当前主链设计
+#### 1.4.6 `mi-gpt` 鐨勪綅缃?
 
-## 2. 架构
+- **缁撹**锛歚mi-gpt` 涓嶈繘鍒濈増
+- **鍘熷洜**锛?
+  - 褰撳墠浠撳簱宸插０鏄庡仠姝㈢淮鎶?
+  - 瀹樻柟 README 涔熸槑纭洿鎺ㄨ崘 `open-xiaoai`
+  - 瀹冨彲浠ヤ繚鐣欎负鍚庣画鈥滄櫘閫氱敤鎴疯矾寰勨€濇彃浠跺€欓€夛紝浣嗕笉璇ュ奖鍝嶅綋鍓嶄富閾捐璁?
 
-### 2.1 系统结构
+## 2. 鏋舵瀯
+
+### 2.1 绯荤粺缁撴瀯
 
 ```mermaid
 flowchart LR
-    Speaker["小爱音箱 + open-xiaoai Client"] --> Gateway["open-xiaoai-gateway :4399"]
+    Speaker["灏忕埍闊崇 + open-xiaoai Client"] --> Gateway["open-xiaoai-gateway :4399"]
     Gateway --> VoiceWs["api-server / realtime.voice"]
     VoiceWs --> VoicePipeline["voice_pipeline"]
     VoicePipeline --> VoiceRuntime["voice-runtime (FunASR + 3D-Speaker)"]
@@ -107,147 +109,147 @@ flowchart LR
     Conversation --> AIGateway["ai_gateway / llm_task"]
 ```
 
-核心原则只有一句：
+鏍稿績鍘熷垯鍙湁涓€鍙ワ細
 
-> 终端协议隔离在网关层，业务编排继续收口到现有模块。
+> 缁堢鍗忚闅旂鍦ㄧ綉鍏冲眰锛屼笟鍔＄紪鎺掔户缁敹鍙ｅ埌鐜版湁妯″潡銆?
 
-### 2.2 为什么不把 `open-xiaoai` 协议直接塞进 `api-server`
+### 2.2 涓轰粈涔堜笉鎶?`open-xiaoai` 鍗忚鐩存帴濉炶繘 `api-server`
 
-因为那会把三类东西搅成一锅：
+鍥犱负閭ｄ細鎶婁笁绫讳笢瑗挎悈鎴愪竴閿咃細
 
-1. 终端私有协议适配
-2. 音频推理和播放控制
-3. 家庭业务编排和权限判断
+1. 缁堢绉佹湁鍗忚閫傞厤
+2. 闊抽鎺ㄧ悊鍜屾挱鏀炬帶鍒?
+3. 瀹跺涵涓氬姟缂栨帓鍜屾潈闄愬垽鏂?
 
-这三类不是一个边界。直接混写，只会让后面每接一个终端就改一遍核心业务。
+杩欎笁绫讳笉鏄竴涓竟鐣屻€傜洿鎺ユ贩鍐欙紝鍙細璁╁悗闈㈡瘡鎺ヤ竴涓粓绔氨鏀逛竴閬嶆牳蹇冧笟鍔°€?
 
-所以这次必须把终端接入拆成两层：
+鎵€浠ヨ繖娆″繀椤绘妸缁堢鎺ュ叆鎷嗘垚涓ゅ眰锛?
 
-- **设备层**：`open-xiaoai` Client
-- **适配层**：`open-xiaoai-gateway`
+- **璁惧灞?*锛歚open-xiaoai` Client
+- **閫傞厤灞?*锛歚open-xiaoai-gateway`
 
-`api-server` 只看统一内部语音事件，不直接看 `open-xiaoai` 私有字段。
+`api-server` 鍙湅缁熶竴鍐呴儴璇煶浜嬩欢锛屼笉鐩存帴鐪?`open-xiaoai` 绉佹湁瀛楁銆?
 
-### 2.3 模块职责
+### 2.3 妯″潡鑱岃矗
 
-| 模块 | 职责 | 输入 | 输出 |
+| 妯″潡 | 鑱岃矗 | 杈撳叆 | 杈撳嚭 |
 | --- | --- | --- | --- |
-| `open-xiaoai client` | 音频采集、播放输出、终端状态、中断事件 | 麦克风音频、播放命令 | 私有 WS 音频流和终端事件 |
-| `open-xiaoai-gateway` | 协议翻译、终端注册、播放控制中转、危险能力裁剪 | `open-xiaoai` 私有 WS | 统一内部语音事件、终端回执 |
-| `voice-runtime` | 流式 ASR、声纹注册、声纹验证 | 音频流、注册样本 | 部分转写、最终转写、声纹结果 |
-| `voice/realtime_service` | 管语音会话、收发内部事件、流控 | 统一语音事件 | 会话事件、回执 |
-| `voice/session_service` | 建会话、写结果、查历史 | 终端、文本、声纹结果 | `voice_session` 记录 |
-| `voice/identity_service` | 声纹 + 房间 + 在家状态融合 | 声纹候选、上下文快照 | 成员候选、置信度、回退策略 |
-| `voice/router` | 判断快路径还是慢路径 | 最终转写、身份结果、上下文 | 路由结果 |
-| `voice/fast_action_service` | 快路径控制和场景触发 | 路由结果 | 动作回执、错误 |
-| `voice/conversation_bridge` | 把慢路径接回现有对话主链 | 最终转写、身份结果 | 文本回答、提案、副作用 |
-| `voice/playback_service` | 生成播放请求、停止请求和中断处理 | 文本回复、固定确认语、控制事件 | `play / stop / abort` |
+| `open-xiaoai client` | 闊抽閲囬泦銆佹挱鏀捐緭鍑恒€佺粓绔姸鎬併€佷腑鏂簨浠?| 楹﹀厠椋庨煶棰戙€佹挱鏀惧懡浠?| 绉佹湁 WS 闊抽娴佸拰缁堢浜嬩欢 |
+| `open-xiaoai-gateway` | 鍗忚缈昏瘧銆佺粓绔敞鍐屻€佹挱鏀炬帶鍒朵腑杞€佸嵄闄╄兘鍔涜鍓?| `open-xiaoai` 绉佹湁 WS | 缁熶竴鍐呴儴璇煶浜嬩欢銆佺粓绔洖鎵?|
+| `voice-runtime` | 娴佸紡 ASR銆佸０绾规敞鍐屻€佸０绾归獙璇?| 闊抽娴併€佹敞鍐屾牱鏈?| 閮ㄥ垎杞啓銆佹渶缁堣浆鍐欍€佸０绾圭粨鏋?|
+| `voice/realtime_service` | 绠¤闊充細璇濄€佹敹鍙戝唴閮ㄤ簨浠躲€佹祦鎺?| 缁熶竴璇煶浜嬩欢 | 浼氳瘽浜嬩欢銆佸洖鎵?|
+| `voice/session_service` | 寤轰細璇濄€佸啓缁撴灉銆佹煡鍘嗗彶 | 缁堢銆佹枃鏈€佸０绾圭粨鏋?| `voice_session` 璁板綍 |
+| `voice/identity_service` | 澹扮汗 + 鎴块棿 + 鍦ㄥ鐘舵€佽瀺鍚?| 澹扮汗鍊欓€夈€佷笂涓嬫枃蹇収 | 鎴愬憳鍊欓€夈€佺疆淇″害銆佸洖閫€绛栫暐 |
+| `voice/router` | 鍒ゆ柇蹇矾寰勮繕鏄參璺緞 | 鏈€缁堣浆鍐欍€佽韩浠界粨鏋溿€佷笂涓嬫枃 | 璺敱缁撴灉 |
+| `voice/fast_action_service` | 蹇矾寰勬帶鍒跺拰鍦烘櫙瑙﹀彂 | 璺敱缁撴灉 | 鍔ㄤ綔鍥炴墽銆侀敊璇?|
+| `voice/conversation_bridge` | 鎶婃參璺緞鎺ュ洖鐜版湁瀵硅瘽涓婚摼 | 鏈€缁堣浆鍐欍€佽韩浠界粨鏋?| 鏂囨湰鍥炵瓟銆佹彁妗堛€佸壇浣滅敤 |
+| `voice/playback_service` | 鐢熸垚鎾斁璇锋眰銆佸仠姝㈣姹傚拰涓柇澶勭悊 | 鏂囨湰鍥炲銆佸浐瀹氱‘璁よ銆佹帶鍒朵簨浠?| `play / stop / abort` |
 
-### 2.4 关键流程
+### 2.4 鍏抽敭娴佺▼
 
-#### 2.4.1 快路径设备控制
+#### 2.4.1 蹇矾寰勮澶囨帶鍒?
 
-1. 小爱终端本地触发录音并把音频流发给 `open-xiaoai-gateway`
-2. `open-xiaoai-gateway` 建立内部会话，并通过 `/api/v1/realtime/voice` 推送统一语音事件
-3. `voice_pipeline` 把音频转给 `voice-runtime`，拿到部分转写和最终转写
-4. `identity_service` 结合声纹候选、终端房间、成员在家状态做身份融合
-5. `router` 判断命中快路径
-6. `fast_action_service` 解析目标设备或场景
-7. 复用 `device_action` 或 `scene`
-8. `playback_service` 生成确认语或提示音，通过网关回推到终端播放
-9. 会话结束并写入审计、事件和执行记录
+1. 灏忕埍缁堢鏈湴瑙﹀彂褰曢煶骞舵妸闊抽娴佸彂缁?`open-xiaoai-gateway`
+2. `open-xiaoai-gateway` 寤虹珛鍐呴儴浼氳瘽锛屽苟閫氳繃 `/api/v1/realtime/voice` 鎺ㄩ€佺粺涓€璇煶浜嬩欢
+3. `voice_pipeline` 鎶婇煶棰戣浆缁?`voice-runtime`锛屾嬁鍒伴儴鍒嗚浆鍐欏拰鏈€缁堣浆鍐?
+4. `identity_service` 缁撳悎澹扮汗鍊欓€夈€佺粓绔埧闂淬€佹垚鍛樺湪瀹剁姸鎬佸仛韬唤铻嶅悎
+5. `router` 鍒ゆ柇鍛戒腑蹇矾寰?
+6. `fast_action_service` 瑙ｆ瀽鐩爣璁惧鎴栧満鏅?
+7. 澶嶇敤 `device_action` 鎴?`scene`
+8. `playback_service` 鐢熸垚纭璇垨鎻愮ず闊筹紝閫氳繃缃戝叧鍥炴帹鍒扮粓绔挱鏀?
+9. 浼氳瘽缁撴潫骞跺啓鍏ュ璁°€佷簨浠跺拰鎵ц璁板綍
 
-#### 2.4.2 复杂语音问答
+#### 2.4.2 澶嶆潅璇煶闂瓟
 
-1. 前三步同上，先拿到最终转写和身份候选
-2. `router` 判断这不是快路径
-3. `voice/conversation_bridge` 把文本请求喂回现有 `conversation`
-4. `conversation` 继续走三车道、提案、记忆、任务草稿等现有机制
-5. `playback_service` 生成文本回复播放请求
-6. 网关把播放命令翻译成 `open-xiaoai` 命令并下发给终端
-7. 会话结束并写入语音会话记录
+1. 鍓嶄笁姝ュ悓涓婏紝鍏堟嬁鍒版渶缁堣浆鍐欏拰韬唤鍊欓€?
+2. `router` 鍒ゆ柇杩欎笉鏄揩璺緞
+3. `voice/conversation_bridge` 鎶婃枃鏈姹傚杺鍥炵幇鏈?`conversation`
+4. `conversation` 缁х画璧颁笁杞﹂亾銆佹彁妗堛€佽蹇嗐€佷换鍔¤崏绋跨瓑鐜版湁鏈哄埗
+5. `playback_service` 鐢熸垚鏂囨湰鍥炲鎾斁璇锋眰
+6. 缃戝叧鎶婃挱鏀惧懡浠ょ炕璇戞垚 `open-xiaoai` 鍛戒护骞朵笅鍙戠粰缁堢
+7. 浼氳瘽缁撴潫骞跺啓鍏ヨ闊充細璇濊褰?
 
-#### 2.4.3 播放停止与打断
+#### 2.4.3 鎾斁鍋滄涓庢墦鏂?
 
-1. `voice_pipeline` 下发 `play`
-2. `open-xiaoai-gateway` 翻译为终端播放命令
-3. 终端回报 `playing / done / failed / interrupted`
-4. 如果用户再次说话或主动打断，网关先上报 `playback.interrupted`
-5. `voice_pipeline` 再决定是切新会话，还是只停止当前播放
+1. `voice_pipeline` 涓嬪彂 `play`
+2. `open-xiaoai-gateway` 缈昏瘧涓虹粓绔挱鏀惧懡浠?
+3. 缁堢鍥炴姤 `playing / done / failed / interrupted`
+4. 濡傛灉鐢ㄦ埛鍐嶆璇磋瘽鎴栦富鍔ㄦ墦鏂紝缃戝叧鍏堜笂鎶?`playback.interrupted`
+5. `voice_pipeline` 鍐嶅喅瀹氭槸鍒囨柊浼氳瘽锛岃繕鏄彧鍋滄褰撳墠鎾斁
 
-#### 2.4.4 声纹注册
+#### 2.4.4 澹扮汗娉ㄥ唽
 
-1. 管理员从管理端发起声纹注册
-2. 终端或其他采集入口录入多段样本
-3. `voice-runtime` 生成模板或模板引用
-4. 系统只保存受控引用、样本计数和最后更新时间
-5. 后续验证链路只读取模板引用，不直接读原始音频
+1. 绠＄悊鍛樹粠绠＄悊绔彂璧峰０绾规敞鍐?
+2. 缁堢鎴栧叾浠栭噰闆嗗叆鍙ｅ綍鍏ュ娈垫牱鏈?
+3. `voice-runtime` 鐢熸垚妯℃澘鎴栨ā鏉垮紩鐢?
+4. 绯荤粺鍙繚瀛樺彈鎺у紩鐢ㄣ€佹牱鏈鏁板拰鏈€鍚庢洿鏂版椂闂?
+5. 鍚庣画楠岃瘉閾捐矾鍙鍙栨ā鏉垮紩鐢紝涓嶇洿鎺ヨ鍘熷闊抽
 
-## 3. 组件和接口
+## 3. 缁勪欢鍜屾帴鍙?
 
-### 3.1 核心组件
+### 3.1 鏍稿績缁勪欢
 
-覆盖需求：1、2、3、4、5、6、7
+瑕嗙洊闇€姹傦細1銆?銆?銆?銆?銆?銆?
 
 - `OpenXiaoAIGateway`
-  - 监听 `4399`
-  - 维护终端连接
-  - 翻译外部协议和内部事件
-  - 裁剪危险能力
+  - 鐩戝惉 `4399`
+  - 缁存姢缁堢杩炴帴
+  - 缈昏瘧澶栭儴鍗忚鍜屽唴閮ㄤ簨浠?
+  - 瑁佸壀鍗遍櫓鑳藉姏
 
 - `VoiceTerminalService`
-  - 管理终端注册、房间绑定、终端状态
+  - 绠＄悊缁堢娉ㄥ唽銆佹埧闂寸粦瀹氥€佺粓绔姸鎬?
 
 - `VoiceRealtimeService`
-  - 接收网关转发的内部语音事件
-  - 管理语音会话生命周期
+  - 鎺ユ敹缃戝叧杞彂鐨勫唴閮ㄨ闊充簨浠?
+  - 绠＄悊璇煶浼氳瘽鐢熷懡鍛ㄦ湡
 
 - `VoiceRuntimeClient`
-  - 与 `voice-runtime` 通信
+  - 涓?`voice-runtime` 閫氫俊
 
 - `VoiceIdentityService`
-  - 做声纹验证、上下文融合和低置信回退
+  - 鍋氬０绾归獙璇併€佷笂涓嬫枃铻嶅悎鍜屼綆缃俊鍥為€€
 
 - `VoiceFastActionService`
-  - 做快路径动作解析与执行
+  - 鍋氬揩璺緞鍔ㄤ綔瑙ｆ瀽涓庢墽琛?
 
 - `VoiceConversationBridge`
-  - 慢路径复用现有 `conversation`
+  - 鎱㈣矾寰勫鐢ㄧ幇鏈?`conversation`
 
 - `VoicePlaybackService`
-  - 统一生成和跟踪 `play / stop / abort`
+  - 缁熶竴鐢熸垚鍜岃窡韪?`play / stop / abort`
 
-### 3.2 数据结构
+### 3.2 鏁版嵁缁撴瀯
 
-覆盖需求：1、2、5、7
+瑕嗙洊闇€姹傦細1銆?銆?銆?
 
 #### 3.2.1 `voice_terminals`
 
-| 字段 | 类型 | 必填 | 说明 | 约束 |
+| 瀛楁 | 绫诲瀷 | 蹇呭～ | 璇存槑 | 绾︽潫 |
 | --- | --- | --- | --- | --- |
-| `id` | text | 是 | 终端 ID | 主键 |
-| `household_id` | text | 是 | 所属家庭 | 外键 |
-| `room_id` | text | 否 | 所属房间 | 外键，可空 |
-| `terminal_code` | varchar(64) | 是 | 终端唯一编码 | 家庭内唯一 |
-| `name` | varchar(100) | 是 | 终端名称 | 非空 |
-| `adapter_type` | varchar(30) | 是 | 初版固定 `open_xiaoai` | 有限集合 |
-| `transport_type` | varchar(30) | 是 | 初版固定 `gateway_ws` | 有限集合 |
-| `capabilities_json` | text | 是 | 终端能力声明 | UTF-8 JSON |
-| `adapter_meta_json` | text | 是 | 网关侧附加信息 | UTF-8 JSON |
-| `status` | varchar(20) | 是 | `active/offline/disabled` | 有限集合 |
-| `last_seen_at` | text | 否 | 最近心跳时间 | ISO-8601 |
-| `created_at` | text | 是 | 创建时间 | ISO-8601 |
-| `updated_at` | text | 是 | 更新时间 | ISO-8601 |
+| `id` | text | 鏄?| 缁堢 ID | 涓婚敭 |
+| `household_id` | text | 鏄?| 鎵€灞炲搴?| 澶栭敭 |
+| `room_id` | text | 鍚?| 鎵€灞炴埧闂?| 澶栭敭锛屽彲绌?|
+| `terminal_code` | varchar(64) | 鏄?| 缁堢鍞竴缂栫爜 | 瀹跺涵鍐呭敮涓€ |
+| `name` | varchar(100) | 鏄?| 缁堢鍚嶇О | 闈炵┖ |
+| `adapter_type` | varchar(30) | 鏄?| 鍒濈増鍥哄畾 `open_xiaoai` | 鏈夐檺闆嗗悎 |
+| `transport_type` | varchar(30) | 鏄?| 鍒濈増鍥哄畾 `gateway_ws` | 鏈夐檺闆嗗悎 |
+| `capabilities_json` | text | 鏄?| 缁堢鑳藉姏澹版槑 | UTF-8 JSON |
+| `adapter_meta_json` | text | 鏄?| 缃戝叧渚ч檮鍔犱俊鎭?| UTF-8 JSON |
+| `status` | varchar(20) | 鏄?| `active/offline/disabled` | 鏈夐檺闆嗗悎 |
+| `last_seen_at` | text | 鍚?| 鏈€杩戝績璺虫椂闂?| ISO-8601 |
+| `created_at` | text | 鏄?| 鍒涘缓鏃堕棿 | ISO-8601 |
+| `updated_at` | text | 鏄?| 鏇存柊鏃堕棿 | ISO-8601 |
 
-说明：
+璇存槑锛?
 
-- `capabilities_json` 初版只允许声明：
+- `capabilities_json` 鍒濈増鍙厑璁稿０鏄庯細
   - `audio_input`
   - `audio_output`
   - `playback_stop`
   - `playback_abort`
   - `heartbeat`
-- 明确不允许声明：
+- 鏄庣‘涓嶅厑璁稿０鏄庯細
   - `shell_exec`
   - `script_exec`
   - `system_upgrade`
@@ -256,63 +258,63 @@ flowchart LR
 
 #### 3.2.2 `biometric_profiles`
 
-说明：沿用系统愿景里已规划的 `biometric_profiles`，不再新造 `voice_profiles`。
+璇存槑锛氭部鐢ㄧ郴缁熸効鏅噷宸茶鍒掔殑 `biometric_profiles`锛屼笉鍐嶆柊閫?`voice_profiles`銆?
 
-| 字段 | 类型 | 必填 | 说明 | 约束 |
+| 瀛楁 | 绫诲瀷 | 蹇呭～ | 璇存槑 | 绾︽潫 |
 | --- | --- | --- | --- | --- |
-| `id` | text | 是 | 资料 ID | 主键 |
-| `household_id` | text | 是 | 所属家庭 | 外键 |
-| `member_id` | text | 是 | 所属成员 | 外键 |
-| `voice_provider` | varchar(50) | 否 | 声纹服务来源 | 可空 |
-| `voice_ref` | varchar(255) | 否 | 受控模板引用 | 可空 |
-| `voice_sample_count` | int | 是 | 已注册样本数 | 默认 0 |
-| `last_verified_at` | text | 否 | 最近验证时间 | ISO-8601 |
-| `status` | varchar(20) | 是 | `active/inactive` | 有限集合 |
-| `created_at` | text | 是 | 创建时间 | ISO-8601 |
+| `id` | text | 鏄?| 璧勬枡 ID | 涓婚敭 |
+| `household_id` | text | 鏄?| 鎵€灞炲搴?| 澶栭敭 |
+| `member_id` | text | 鏄?| 鎵€灞炴垚鍛?| 澶栭敭 |
+| `voice_provider` | varchar(50) | 鍚?| 澹扮汗鏈嶅姟鏉ユ簮 | 鍙┖ |
+| `voice_ref` | varchar(255) | 鍚?| 鍙楁帶妯℃澘寮曠敤 | 鍙┖ |
+| `voice_sample_count` | int | 鏄?| 宸叉敞鍐屾牱鏈暟 | 榛樿 0 |
+| `last_verified_at` | text | 鍚?| 鏈€杩戦獙璇佹椂闂?| ISO-8601 |
+| `status` | varchar(20) | 鏄?| `active/inactive` | 鏈夐檺闆嗗悎 |
+| `created_at` | text | 鏄?| 鍒涘缓鏃堕棿 | ISO-8601 |
 
 #### 3.2.3 `voice_sessions`
 
-| 字段 | 类型 | 必填 | 说明 | 约束 |
+| 瀛楁 | 绫诲瀷 | 蹇呭～ | 璇存槑 | 绾︽潫 |
 | --- | --- | --- | --- | --- |
-| `id` | text | 是 | 语音会话 ID | 主键 |
-| `household_id` | text | 是 | 所属家庭 | 外键 |
-| `terminal_id` | text | 是 | 来源终端 | 外键 |
-| `requester_member_id` | text | 否 | 最终服务成员 | 外键，可空 |
-| `speaker_candidate_member_id` | text | 否 | 声纹候选成员 | 外键，可空 |
-| `speaker_confidence` | real | 否 | 声纹置信度 | 0~1 |
-| `lane` | varchar(30) | 是 | `fast_action/realtime_query/free_chat` | 有限集合 |
-| `session_status` | varchar(30) | 是 | 见状态机 | 有限集合 |
-| `transcript_text` | text | 否 | 最终转写 | UTF-8 文本 |
-| `route_payload_json` | text | 是 | 路由摘要 | UTF-8 JSON |
-| `playback_payload_json` | text | 是 | 播放摘要 | UTF-8 JSON |
-| `execution_payload_json` | text | 是 | 执行摘要 | UTF-8 JSON |
-| `error_code` | varchar(50) | 否 | 失败码 | 可空 |
-| `wake_started_at` | text | 否 | 唤醒开始 | ISO-8601 |
-| `speech_started_at` | text | 否 | 录音开始 | ISO-8601 |
-| `speech_ended_at` | text | 否 | 录音结束 | ISO-8601 |
-| `completed_at` | text | 否 | 完成时间 | ISO-8601 |
-| `created_at` | text | 是 | 创建时间 | ISO-8601 |
-| `updated_at` | text | 是 | 更新时间 | ISO-8601 |
+| `id` | text | 鏄?| 璇煶浼氳瘽 ID | 涓婚敭 |
+| `household_id` | text | 鏄?| 鎵€灞炲搴?| 澶栭敭 |
+| `terminal_id` | text | 鏄?| 鏉ユ簮缁堢 | 澶栭敭 |
+| `requester_member_id` | text | 鍚?| 鏈€缁堟湇鍔℃垚鍛?| 澶栭敭锛屽彲绌?|
+| `speaker_candidate_member_id` | text | 鍚?| 澹扮汗鍊欓€夋垚鍛?| 澶栭敭锛屽彲绌?|
+| `speaker_confidence` | real | 鍚?| 澹扮汗缃俊搴?| 0~1 |
+| `lane` | varchar(30) | 鏄?| `fast_action/realtime_query/free_chat` | 鏈夐檺闆嗗悎 |
+| `session_status` | varchar(30) | 鏄?| 瑙佺姸鎬佹満 | 鏈夐檺闆嗗悎 |
+| `transcript_text` | text | 鍚?| 鏈€缁堣浆鍐?| UTF-8 鏂囨湰 |
+| `route_payload_json` | text | 鏄?| 璺敱鎽樿 | UTF-8 JSON |
+| `playback_payload_json` | text | 鏄?| 鎾斁鎽樿 | UTF-8 JSON |
+| `execution_payload_json` | text | 鏄?| 鎵ц鎽樿 | UTF-8 JSON |
+| `error_code` | varchar(50) | 鍚?| 澶辫触鐮?| 鍙┖ |
+| `wake_started_at` | text | 鍚?| 鍞ら啋寮€濮?| ISO-8601 |
+| `speech_started_at` | text | 鍚?| 褰曢煶寮€濮?| ISO-8601 |
+| `speech_ended_at` | text | 鍚?| 褰曢煶缁撴潫 | ISO-8601 |
+| `completed_at` | text | 鍚?| 瀹屾垚鏃堕棿 | ISO-8601 |
+| `created_at` | text | 鏄?| 鍒涘缓鏃堕棿 | ISO-8601 |
+| `updated_at` | text | 鏄?| 鏇存柊鏃堕棿 | ISO-8601 |
 
-### 3.3 接口契约
+### 3.3 鎺ュ彛濂戠害
 
-覆盖需求：1、2、3、4、7
+瑕嗙洊闇€姹傦細1銆?銆?銆?銆?
 
-#### 3.3.1 外部协议：`open-xiaoai` 到网关
+#### 3.3.1 澶栭儴鍗忚锛歚open-xiaoai` 鍒扮綉鍏?
 
-- 类型：WebSocket
-- 监听：`0.0.0.0:4399`
-- 说明：
-  - 网关对外保持 `open-xiaoai` 所需私有协议兼容
-  - `api-server` 不感知这里的私有事件名和字段
-  - 所有私有协议变化都只允许在网关内消化
+- 绫诲瀷锛歐ebSocket
+- 鐩戝惉锛歚0.0.0.0:4399`
+- 璇存槑锛?
+  - 缃戝叧瀵瑰淇濇寔 `open-xiaoai` 鎵€闇€绉佹湁鍗忚鍏煎
+  - `api-server` 涓嶆劅鐭ヨ繖閲岀殑绉佹湁浜嬩欢鍚嶅拰瀛楁
+  - 鎵€鏈夌鏈夊崗璁彉鍖栭兘鍙厑璁稿湪缃戝叧鍐呮秷鍖?
 
-#### 3.3.2 内部协议：网关到 `api-server`
+#### 3.3.2 鍐呴儴鍗忚锛氱綉鍏冲埌 `api-server`
 
-- 类型：WebSocket
-- 路径：`/api/v1/realtime/voice`
-- 鉴权：终端签名或网关签发的受控凭证
-- 事件包格式：
+- 绫诲瀷锛歐ebSocket
+- 璺緞锛歚/api/v1/realtime/voice`
+- 閴存潈锛氱粓绔鍚嶆垨缃戝叧绛惧彂鐨勫彈鎺у嚟璇?
+- 浜嬩欢鍖呮牸寮忥細
 
 ```json
 {
@@ -325,7 +327,7 @@ flowchart LR
 }
 ```
 
-网关发往 `api-server` 的统一事件：
+缃戝叧鍙戝線 `api-server` 鐨勭粺涓€浜嬩欢锛?
 
 - `terminal.online`
 - `terminal.offline`
@@ -338,7 +340,7 @@ flowchart LR
 - `playback.receipt`
 - `ping`
 
-`api-server` 发往网关的统一事件：
+`api-server` 鍙戝線缃戝叧鐨勭粺涓€浜嬩欢锛?
 
 - `session.ready`
 - `asr.partial`
@@ -351,87 +353,87 @@ flowchart LR
 - `agent.error`
 - `pong`
 
-要求：
+瑕佹眰锛?
 
-1. 内部事件要稳定，不能跟着 `open-xiaoai` 私有字段一起漂
-2. 网关负责双向映射，`api-server` 不直接理解 `open-xiaoai` 协议
-3. 播放回执必须带 `session_id` 和 `terminal_id`
+1. 鍐呴儴浜嬩欢瑕佺ǔ瀹氾紝涓嶈兘璺熺潃 `open-xiaoai` 绉佹湁瀛楁涓€璧锋紓
+2. 缃戝叧璐熻矗鍙屽悜鏄犲皠锛宍api-server` 涓嶇洿鎺ョ悊瑙?`open-xiaoai` 鍗忚
+3. 鎾斁鍥炴墽蹇呴』甯?`session_id` 鍜?`terminal_id`
 
-#### 3.3.3 HTTP：终端管理
+#### 3.3.3 HTTP锛氱粓绔鐞?
 
 - `GET /api/v1/voice/terminals`
 - `POST /api/v1/voice/terminals`
 - `PATCH /api/v1/voice/terminals/{terminal_id}`
 - `POST /api/v1/voice/terminals/{terminal_id}/heartbeat`
 
-#### 3.3.4 HTTP：声纹注册与资料管理
+#### 3.3.4 HTTP锛氬０绾规敞鍐屼笌璧勬枡绠＄悊
 
 - `POST /api/v1/voice/biometrics/enrollments`
 - `GET /api/v1/voice/biometrics`
 - `PATCH /api/v1/voice/biometrics/{profile_id}`
 
-#### 3.3.5 HTTP：语音会话查询
+#### 3.3.5 HTTP锛氳闊充細璇濇煡璇?
 
 - `GET /api/v1/voice/sessions`
 - `GET /api/v1/voice/sessions/{session_id}`
 
-#### 3.3.6 `voice-runtime` 内部契约
+#### 3.3.6 `voice-runtime` 鍐呴儴濂戠害
 
-- 流式 ASR：`WS /runtime/asr-stream`
-- 声纹注册：`POST /runtime/speaker/enroll`
-- 声纹验证：`POST /runtime/speaker/verify`
+- 娴佸紡 ASR锛歚WS /runtime/asr-stream`
+- 澹扮汗娉ㄥ唽锛歚POST /runtime/speaker/enroll`
+- 澹扮汗楠岃瘉锛歚POST /runtime/speaker/verify`
 
-要求：
+瑕佹眰锛?
 
-1. `api-server` 不直接加载模型文件
-2. `voice-runtime` 必须能单独替换模型实现
-3. 运行时异常必须返回明确错误码，不能只回空结果
+1. `api-server` 涓嶇洿鎺ュ姞杞芥ā鍨嬫枃浠?
+2. `voice-runtime` 蹇呴』鑳藉崟鐙浛鎹㈡ā鍨嬪疄鐜?
+3. 杩愯鏃跺紓甯稿繀椤昏繑鍥炴槑纭敊璇爜锛屼笉鑳藉彧鍥炵┖缁撴灉
 
-## 4. 数据与状态模型
+## 4. 鏁版嵁涓庣姸鎬佹ā鍨?
 
-### 4.1 数据关系
+### 4.1 鏁版嵁鍏崇郴
 
-- 一个 `voice_terminal` 属于一个 `household`，可绑定一个 `room`
-- 一个 `voice_terminal` 初版只能通过一个 `open-xiaoai-gateway` 在线
-- 一个 `voice_session` 只属于一个 `voice_terminal`
-- 一个 `voice_session` 最终可关联到一个服务成员，也可只保留匿名候选
-- 一个成员可对应一条 `biometric_profile`
-- `voice_session` 成功进入慢路径后，应能关联已有 `conversation session / request_id`
-- `voice_session` 成功执行快路径或播放回复后，应能关联设备动作、场景执行和播放回执
+- 涓€涓?`voice_terminal` 灞炰簬涓€涓?`household`锛屽彲缁戝畾涓€涓?`room`
+- 涓€涓?`voice_terminal` 鍒濈増鍙兘閫氳繃涓€涓?`open-xiaoai-gateway` 鍦ㄧ嚎
+- 涓€涓?`voice_session` 鍙睘浜庝竴涓?`voice_terminal`
+- 涓€涓?`voice_session` 鏈€缁堝彲鍏宠仈鍒颁竴涓湇鍔℃垚鍛橈紝涔熷彲鍙繚鐣欏尶鍚嶅€欓€?
+- 涓€涓垚鍛樺彲瀵瑰簲涓€鏉?`biometric_profile`
+- `voice_session` 鎴愬姛杩涘叆鎱㈣矾寰勫悗锛屽簲鑳藉叧鑱斿凡鏈?`conversation session / request_id`
+- `voice_session` 鎴愬姛鎵ц蹇矾寰勬垨鎾斁鍥炲鍚庯紝搴旇兘鍏宠仈璁惧鍔ㄤ綔銆佸満鏅墽琛屽拰鎾斁鍥炴墽
 
-### 4.2 状态流转
+### 4.2 鐘舵€佹祦杞?
 
-| 状态 | 含义 | 进入条件 | 退出条件 |
+| 鐘舵€?| 鍚箟 | 杩涘叆鏉′欢 | 閫€鍑烘潯浠?|
 | --- | --- | --- | --- |
-| `streaming` | 正在接收音频与部分转写 | `session.start` 成功 | 音频提交或取消 |
-| `resolving_identity` | 正在做声纹和上下文融合 | 收到最终转写 | 路由完成或失败 |
-| `routing` | 正在判定快慢路径 | 身份融合完成 | 进入快路径或慢路径 |
-| `fast_action_running` | 正在执行设备动作或场景 | 命中快路径 | 成功、失败或阻断 |
-| `conversation_running` | 正在复用 `conversation` | 命中慢路径 | 成功或失败 |
-| `playback_running` | 正在向终端播报 | 下发 `play.start` | 完成、失败或打断 |
-| `completed` | 本次交互完成 | 执行或回答结束 | 无 |
-| `failed` | 本次交互失败 | 任一关键环节失败 | 无 |
-| `cancelled` | 终端主动取消 | `session.cancel` | 无 |
+| `streaming` | 姝ｅ湪鎺ユ敹闊抽涓庨儴鍒嗚浆鍐?| `session.start` 鎴愬姛 | 闊抽鎻愪氦鎴栧彇娑?|
+| `resolving_identity` | 姝ｅ湪鍋氬０绾瑰拰涓婁笅鏂囪瀺鍚?| 鏀跺埌鏈€缁堣浆鍐?| 璺敱瀹屾垚鎴栧け璐?|
+| `routing` | 姝ｅ湪鍒ゅ畾蹇參璺緞 | 韬唤铻嶅悎瀹屾垚 | 杩涘叆蹇矾寰勬垨鎱㈣矾寰?|
+| `fast_action_running` | 姝ｅ湪鎵ц璁惧鍔ㄤ綔鎴栧満鏅?| 鍛戒腑蹇矾寰?| 鎴愬姛銆佸け璐ユ垨闃绘柇 |
+| `conversation_running` | 姝ｅ湪澶嶇敤 `conversation` | 鍛戒腑鎱㈣矾寰?| 鎴愬姛鎴栧け璐?|
+| `playback_running` | 姝ｅ湪鍚戠粓绔挱鎶?| 涓嬪彂 `play.start` | 瀹屾垚銆佸け璐ユ垨鎵撴柇 |
+| `completed` | 鏈浜や簰瀹屾垚 | 鎵ц鎴栧洖绛旂粨鏉?| 鏃?|
+| `failed` | 鏈浜や簰澶辫触 | 浠讳竴鍏抽敭鐜妭澶辫触 | 鏃?|
+| `cancelled` | 缁堢涓诲姩鍙栨秷 | `session.cancel` | 鏃?|
 
-## 5. 错误处理
+## 5. 閿欒澶勭悊
 
-### 5.1 错误类型
+### 5.1 閿欒绫诲瀷
 
-- `terminal_not_found`：终端不存在或未绑定
-- `terminal_disabled`：终端被停用
-- `gateway_unavailable`：`open-xiaoai-gateway` 不可用
-- `terminal_protocol_unsupported`：终端协议版本不兼容
-- `voice_runtime_unavailable`：语音运行时不可用
-- `asr_timeout`：流式转写超时
-- `speaker_low_confidence`：声纹结果不可靠
-- `fast_action_ambiguous`：快路径目标不明确
-- `fast_action_blocked`：高风险或守卫阻断
-- `playback_failed`：终端播放失败
-- `playback_abort_timeout`：终端停止或打断超时
-- `conversation_failed`：慢路径对话失败
-- `invalid_audio_payload`：音频事件格式不合法
+- `terminal_not_found`锛氱粓绔笉瀛樺湪鎴栨湭缁戝畾
+- `terminal_disabled`锛氱粓绔鍋滅敤
+- `gateway_unavailable`锛歚open-xiaoai-gateway` 涓嶅彲鐢?
+- `terminal_protocol_unsupported`锛氱粓绔崗璁増鏈笉鍏煎
+- `voice_runtime_unavailable`锛氳闊宠繍琛屾椂涓嶅彲鐢?
+- `asr_timeout`锛氭祦寮忚浆鍐欒秴鏃?
+- `speaker_low_confidence`锛氬０绾圭粨鏋滀笉鍙潬
+- `fast_action_ambiguous`锛氬揩璺緞鐩爣涓嶆槑纭?
+- `fast_action_blocked`锛氶珮椋庨櫓鎴栧畧鍗樆鏂?
+- `playback_failed`锛氱粓绔挱鏀惧け璐?
+- `playback_abort_timeout`锛氱粓绔仠姝㈡垨鎵撴柇瓒呮椂
+- `conversation_failed`锛氭參璺緞瀵硅瘽澶辫触
+- `invalid_audio_payload`锛氶煶棰戜簨浠舵牸寮忎笉鍚堟硶
 
-### 5.2 错误响应格式
+### 5.2 閿欒鍝嶅簲鏍煎紡
 
 ```json
 {
@@ -439,98 +441,99 @@ flowchart LR
   "session_id": "voice-session-id",
   "seq": 12,
   "payload": {
-    "detail": "当前语音请求处理失败，请重试",
+    "detail": "褰撳墠璇煶璇锋眰澶勭悊澶辫触锛岃閲嶈瘯",
     "error_code": "gateway_unavailable"
   },
   "ts": "2026-03-14T00:00:00Z"
 }
 ```
 
-### 5.3 处理策略
+### 5.3 澶勭悊绛栫暐
 
-1. 网关或鉴权错误：直接拒绝会话，不进入正式执行链
-2. `voice-runtime` 异常：结束本次语音会话，但不影响文本主链
-3. 声纹低置信：回退匿名或追问，不自动执行敏感动作
-4. 快路径目标不明确：追问，不猜
-5. 播放失败：记录回执并降级成静默文本结果，不假装播过
-6. 慢路径失败：回一个降级文本，并保留完整会话记录
+1. 缃戝叧鎴栭壌鏉冮敊璇細鐩存帴鎷掔粷浼氳瘽锛屼笉杩涘叆姝ｅ紡鎵ц閾?
+2. `voice-runtime` 寮傚父锛氱粨鏉熸湰娆¤闊充細璇濓紝浣嗕笉褰卞搷鏂囨湰涓婚摼
+3. 澹扮汗浣庣疆淇★細鍥為€€鍖垮悕鎴栬拷闂紝涓嶈嚜鍔ㄦ墽琛屾晱鎰熷姩浣?
+4. 蹇矾寰勭洰鏍囦笉鏄庣‘锛氳拷闂紝涓嶇寽
+5. 鎾斁澶辫触锛氳褰曞洖鎵у苟闄嶇骇鎴愰潤榛樻枃鏈粨鏋滐紝涓嶅亣瑁呮挱杩?
+6. 鎱㈣矾寰勫け璐ワ細鍥炰竴涓檷绾ф枃鏈紝骞朵繚鐣欏畬鏁翠細璇濊褰?
 
-## 6. 正确性属性
+## 6. 姝ｇ‘鎬у睘鎬?
 
-### 6.1 属性 1：高风险动作不能只靠一次声纹放行
+### 6.1 灞炴€?1锛氶珮椋庨櫓鍔ㄤ綔涓嶈兘鍙潬涓€娆″０绾规斁琛?
 
-*对于任何* 语音触发的高风险动作，系统都应该满足：声纹只能作为身份增强，最终仍要经过现有确认和守卫链路。
+*瀵逛簬浠讳綍* 璇煶瑙﹀彂鐨勯珮椋庨櫓鍔ㄤ綔锛岀郴缁熼兘搴旇婊¤冻锛氬０绾瑰彧鑳戒綔涓鸿韩浠藉寮猴紝鏈€缁堜粛瑕佺粡杩囩幇鏈夌‘璁ゅ拰瀹堝崼閾捐矾銆?
 
-### 6.2 属性 2：复杂语音问题不能绕开现有对话主链
+### 6.2 灞炴€?2锛氬鏉傝闊抽棶棰樹笉鑳界粫寮€鐜版湁瀵硅瘽涓婚摼
 
-*对于任何* 非快路径语音请求，系统都应该满足：必须复用现有 `conversation`，而不是落成第二套语音专用问答链路。
+*瀵逛簬浠讳綍* 闈炲揩璺緞璇煶璇锋眰锛岀郴缁熼兘搴旇婊¤冻锛氬繀椤诲鐢ㄧ幇鏈?`conversation`锛岃€屼笉鏄惤鎴愮浜屽璇煶涓撶敤闂瓟閾捐矾銆?
 
-### 6.3 属性 3：系统默认不长期留原始音频
+### 6.3 灞炴€?3锛氱郴缁熼粯璁や笉闀挎湡鐣欏師濮嬮煶棰?
 
-*对于任何* 语音会话，系统都应该满足：默认只保存必要的会话元数据、最终转写和受控模板引用，不把原始音频无限期落库。
+*瀵逛簬浠讳綍* 璇煶浼氳瘽锛岀郴缁熼兘搴旇婊¤冻锛氶粯璁ゅ彧淇濆瓨蹇呰鐨勪細璇濆厓鏁版嵁銆佹渶缁堣浆鍐欏拰鍙楁帶妯℃澘寮曠敤锛屼笉鎶婂師濮嬮煶棰戞棤闄愭湡钀藉簱銆?
 
-### 6.4 属性 4：语音运行时或网关故障不能拖死业务 API
+### 6.4 灞炴€?4锛氳闊宠繍琛屾椂鎴栫綉鍏虫晠闅滀笉鑳芥嫋姝讳笟鍔?API
 
-*对于任何* `open-xiaoai-gateway` 或 `voice-runtime` 故障场景，系统都应该满足：语音链路受限降级，但文本聊天、设备管理和其他后端能力继续可用。
+*瀵逛簬浠讳綍* `open-xiaoai-gateway` 鎴?`voice-runtime` 鏁呴殰鍦烘櫙锛岀郴缁熼兘搴旇婊¤冻锛氳闊抽摼璺彈闄愰檷绾э紝浣嗘枃鏈亰澶┿€佽澶囩鐞嗗拰鍏朵粬鍚庣鑳藉姏缁х画鍙敤銆?
 
-### 6.5 属性 5：终端适配层不能承载业务逻辑
+### 6.5 灞炴€?5锛氱粓绔€傞厤灞備笉鑳芥壙杞戒笟鍔￠€昏緫
 
-*对于任何* 终端适配器实现，系统都应该满足：适配层只做协议翻译、状态同步和播放中转，不做设备控制决策、权限判断和对话编排。
+*瀵逛簬浠讳綍* 缁堢閫傞厤鍣ㄥ疄鐜帮紝绯荤粺閮藉簲璇ユ弧瓒筹細閫傞厤灞傚彧鍋氬崗璁炕璇戙€佺姸鎬佸悓姝ュ拰鎾斁涓浆锛屼笉鍋氳澶囨帶鍒跺喅绛栥€佹潈闄愬垽鏂拰瀵硅瘽缂栨帓銆?
 
-### 6.6 属性 6：危险终端能力默认禁用
+### 6.6 灞炴€?6锛氬嵄闄╃粓绔兘鍔涢粯璁ょ鐢?
 
-*对于任何* `open-xiaoai` 终端接入，系统都应该满足：不开放任意脚本执行、系统升级、重启控制和业务逻辑扩展点。
+*瀵逛簬浠讳綍* `open-xiaoai` 缁堢鎺ュ叆锛岀郴缁熼兘搴旇婊¤冻锛氫笉寮€鏀句换鎰忚剼鏈墽琛屻€佺郴缁熷崌绾с€侀噸鍚帶鍒跺拰涓氬姟閫昏緫鎵╁睍鐐广€?
 
-## 7. 测试策略
+## 7. 娴嬭瘯绛栫暐
 
-### 7.1 单元测试
+### 7.1 鍗曞厓娴嬭瘯
 
-- 网关事件映射
-- 终端注册、房间绑定和状态更新
-- 语音会话状态流转
-- 快路径动作解析与歧义回退
-- 声纹低置信回退逻辑
-- 播放控制和打断回执处理
+- 缃戝叧浜嬩欢鏄犲皠
+- 缁堢娉ㄥ唽銆佹埧闂寸粦瀹氬拰鐘舵€佹洿鏂?
+- 璇煶浼氳瘽鐘舵€佹祦杞?
+- 蹇矾寰勫姩浣滆В鏋愪笌姝т箟鍥為€€
+- 澹扮汗浣庣疆淇″洖閫€閫昏緫
+- 鎾斁鎺у埗鍜屾墦鏂洖鎵у鐞?
 
-### 7.2 集成测试
+### 7.2 闆嗘垚娴嬭瘯
 
-- `open-xiaoai-gateway -> /api/v1/realtime/voice` 双向事件联调
-- WebSocket 语音会话 `start -> partial -> final -> play -> done`
-- 快路径设备动作与场景执行
-- 慢路径回接 `conversation`
-- 高风险动作阻断
-- 终端断线重连与重复事件幂等
+- `open-xiaoai-gateway -> /api/v1/realtime/voice` 鍙屽悜浜嬩欢鑱旇皟
+- WebSocket 璇煶浼氳瘽 `start -> partial -> final -> play -> done`
+- 蹇矾寰勮澶囧姩浣滀笌鍦烘櫙鎵ц
+- 鎱㈣矾寰勫洖鎺?`conversation`
+- 楂橀闄╁姩浣滈樆鏂?
+- 缁堢鏂嚎閲嶈繛涓庨噸澶嶄簨浠跺箓绛?
 
-### 7.3 端到端测试
+### 7.3 绔埌绔祴璇?
 
-- “打开客厅灯” 直达快路径并播出确认语
-- “朵朵明天几点上课” 进入慢路径并从终端播放回答
-- 播放过程中再次说话，当前播报被成功打断
-- 声纹低置信时尝试解锁门锁，系统必须阻断
-- `gateway` 或 `voice-runtime` 不可用时，语音失败但文本聊天仍然正常
+- 鈥滄墦寮€瀹㈠巺鐏€?鐩磋揪蹇矾寰勫苟鎾嚭纭璇?
+- 鈥滄湹鏈垫槑澶╁嚑鐐逛笂璇锯€?杩涘叆鎱㈣矾寰勫苟浠庣粓绔挱鏀惧洖绛?
+- 鎾斁杩囩▼涓啀娆¤璇濓紝褰撳墠鎾姤琚垚鍔熸墦鏂?
+- 澹扮汗浣庣疆淇℃椂灏濊瘯瑙ｉ攣闂ㄩ攣锛岀郴缁熷繀椤婚樆鏂?
+- `gateway` 鎴?`voice-runtime` 涓嶅彲鐢ㄦ椂锛岃闊冲け璐ヤ絾鏂囨湰鑱婂ぉ浠嶇劧姝ｅ父
 
-### 7.4 验证映射
+### 7.4 楠岃瘉鏄犲皠
 
-| 需求 | 设计章节 | 验证方式 |
+| 闇€姹?| 璁捐绔犺妭 | 楠岃瘉鏂瑰紡 |
 | --- | --- | --- |
-| `requirements.md` 需求 1 | `design.md` §2.3、§3.2、§3.3 | 网关接入与终端管理测试 |
-| `requirements.md` 需求 2 | `design.md` §2.4.3、§3.3.2、§5.3 | 播放控制与打断测试 |
-| `requirements.md` 需求 3 | `design.md` §2.4.1、§6.1 | 快路径集成测试 |
-| `requirements.md` 需求 4 | `design.md` §2.4.2、§6.2 | 慢路径复用对话测试 |
-| `requirements.md` 需求 5 | `design.md` §2.4.4、§6.1、§6.3 | 声纹注册与低置信回退测试 |
-| `requirements.md` 需求 6 | `design.md` §2.3、§5.3、§6.1 | 上下文与守卫联动测试 |
-| `requirements.md` 需求 7 | `design.md` §1.3、§1.4、§6.4、§6.5、§6.6 | 故障降级和演进边界测试 |
+| `requirements.md` 闇€姹?1 | `design.md` 搂2.3銆伮?.2銆伮?.3 | 缃戝叧鎺ュ叆涓庣粓绔鐞嗘祴璇?|
+| `requirements.md` 闇€姹?2 | `design.md` 搂2.4.3銆伮?.3.2銆伮?.3 | 鎾斁鎺у埗涓庢墦鏂祴璇?|
+| `requirements.md` 闇€姹?3 | `design.md` 搂2.4.1銆伮?.1 | 蹇矾寰勯泦鎴愭祴璇?|
+| `requirements.md` 闇€姹?4 | `design.md` 搂2.4.2銆伮?.2 | 鎱㈣矾寰勫鐢ㄥ璇濇祴璇?|
+| `requirements.md` 闇€姹?5 | `design.md` 搂2.4.4銆伮?.1銆伮?.3 | 澹扮汗娉ㄥ唽涓庝綆缃俊鍥為€€娴嬭瘯 |
+| `requirements.md` 闇€姹?6 | `design.md` 搂2.3銆伮?.3銆伮?.1 | 涓婁笅鏂囦笌瀹堝崼鑱斿姩娴嬭瘯 |
+| `requirements.md` 闇€姹?7 | `design.md` 搂1.3銆伮?.4銆伮?.4銆伮?.5銆伮?.6 | 鏁呴殰闄嶇骇鍜屾紨杩涜竟鐣屾祴璇?|
 
-## 8. 风险与待确认项
+## 8. 椋庨櫓涓庡緟纭椤?
 
-### 8.1 风险
+### 8.1 椋庨櫓
 
-- `open-xiaoai` 私有协议如果后续变动，网关映射层需要跟着维护
-- 家庭环境噪声、儿童音色变化、老人发声波动都会直接影响声纹稳定性
-- 第一版没有 Redis 和 MQ，意味着时延和幂等只能靠本地状态和数据库控制
-- 如果后续有人图省事，把播放控制、快路径执行或权限判断塞回网关，这份设计就会被破坏
+- `open-xiaoai` 绉佹湁鍗忚濡傛灉鍚庣画鍙樺姩锛岀綉鍏虫槧灏勫眰闇€瑕佽窡鐫€缁存姢
+- 瀹跺涵鐜鍣０銆佸効绔ラ煶鑹插彉鍖栥€佽€佷汉鍙戝０娉㈠姩閮戒細鐩存帴褰卞搷澹扮汗绋冲畾鎬?
+- 绗竴鐗堟病鏈?Redis 鍜?MQ锛屾剰鍛崇潃鏃跺欢鍜屽箓绛夊彧鑳介潬鏈湴鐘舵€佸拰鏁版嵁搴撴帶鍒?
+- 濡傛灉鍚庣画鏈変汉鍥剧渷浜嬶紝鎶婃挱鏀炬帶鍒躲€佸揩璺緞鎵ц鎴栨潈闄愬垽鏂鍥炵綉鍏筹紝杩欎唤璁捐灏变細琚牬鍧?
 
-### 8.2 待确认项
+### 8.2 寰呯‘璁ら」
 
-- 初版播放内容以固定确认语和文本回复为主，是否在第二阶段补轻量 TTS 模板管理
-- 后续如果要兼容“普通用户路径”，是直接评估 `mi-gpt`，还是优先评估其后继方案
+- 鍒濈増鎾斁鍐呭浠ュ浐瀹氱‘璁よ鍜屾枃鏈洖澶嶄负涓伙紝鏄惁鍦ㄧ浜岄樁娈佃ˉ杞婚噺 TTS 妯℃澘绠＄悊
+- 鍚庣画濡傛灉瑕佸吋瀹光€滄櫘閫氱敤鎴疯矾寰勨€濓紝鏄洿鎺ヨ瘎浼?`mi-gpt`锛岃繕鏄紭鍏堣瘎浼板叾鍚庣户鏂规
+

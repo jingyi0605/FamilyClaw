@@ -71,7 +71,7 @@
   - 怎么验证：
     - 接口清单走查
     - 前后端字段映射检查
-  - 当前执行说明：已新增 `/integrations/catalog`、`/integrations/instances`、`/integrations/resources`、`/integrations/page-view` 和统一动作接口；设置页里的 Home Assistant 区块已切到插件配置表单 `/ai-config/{household_id}/plugins/{plugin_id}/config` 和 `/integrations/instances/{id}/actions`，前端不再调用旧 `ha-config`、`ha-candidates`、`sync/ha`。
+  - 当前执行说明：已新增 `/integrations/catalog`、`/integrations/instances`、`/integrations/resources`、`/integrations/page-view` 和统一动作接口；设置页里的 Home Assistant 配置表单走 `/ai-config/{household_id}/plugins/{plugin_id}/config`，同步动作走 `/integrations/instances/{id}/actions`，前端设置页里已经不再调用旧 `ha-config`、`ha-candidates`、`sync/ha`。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 3、需求 5、需求 6
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L146)
 
@@ -239,7 +239,7 @@
   - 怎么验证：
     - 页面 E2E
     - 用户流程回放
-  - 当前执行说明：虽然还没重做“添加集成”总入口，但 Home Assistant 连接弹窗已经改成按插件 `config_spec` 渲染，配置保存也走插件配置接口，不再写死 HA 专用表单提交。
+  - 当前执行说明：虽然还没重做“添加集成”总入口，但 Home Assistant 顶层卡片已经开始按统一集成实例/插件配置呈现；配置弹窗按插件 `config_spec` 渲染，敏感字段和布尔字段也不再写死 HA 专用文案，配置保存走插件配置接口。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 5
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L146)
 
@@ -262,7 +262,7 @@
   - 怎么验证：
     - 页面 grep 检查
     - 冒烟回归
-  - 当前执行说明：Home Assistant 的设备候选、房间候选和同步确认已经切到统一实例动作链路；音箱发现和音箱详情仍是旧页面区块，这一项还没做完，不能标 DONE。
+  - 当前执行说明：Home Assistant 的设备候选、房间候选和同步确认已经切到统一实例动作链路，页面顶部的 HA 连接块也已经收口成统一集成卡片；但音箱发现、音箱详情和设备列表仍是旧页面区块，这一项还没做完，不能标 DONE。
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 6
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L69)
 
