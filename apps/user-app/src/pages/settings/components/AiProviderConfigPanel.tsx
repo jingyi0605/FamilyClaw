@@ -7,68 +7,20 @@ import {
   buildProviderFormState,
   buildUpdateProviderPayload,
   getProviderAdapterCode,
-  getProviderModelName,
   toProviderFormState,
 } from '../../setup/setupAiConfig';
 import { settingsApi } from '../settingsApi';
 import type {
   AiCapabilityRoute,
   AiProviderAdapter,
-  AiProviderField,
   AiProviderProfile,
 } from '../settingsTypes';
+import { AiProviderDetailDialog } from './AiProviderDetailDialog';
 import { AiProviderEditorDialog } from './AiProviderEditorDialog';
-import {
-  getLocalizedAdapterMeta,
-  getLocalizedCapabilityLabel,
-  getLocalizedField,
-  getLocalizedModelTypeLabel,
-  getLocalizedWorkflowLabel,
-} from './aiProviderCatalog';
+import { SettingsEmptyState, SettingsPanelCard } from './SettingsSharedBlocks';
+import { getLocalizedAdapterMeta } from './aiProviderCatalog';
 
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
-
-function maskSecret(value: string | null | undefined) {
-  if (!value) {
-    return '';
-  }
-  if (value.length <= 6) {
-    return '******';
-  }
-  return `${value.slice(0, 3)}******${value.slice(-3)}`;
-}
-
-function readSummaryValue(provider: AiProviderProfile, field: AiProviderField) {
-  switch (field.key) {
-    case 'display_name':
-      return provider.display_name;
-    case 'provider_code':
-      return provider.provider_code;
-    case 'base_url':
-      return provider.base_url ?? '';
-    case 'secret_ref':
-      return maskSecret(provider.secret_ref);
-    case 'model_name':
-      return getProviderModelName(provider) ?? '';
-    case 'privacy_level':
-      return String(provider.privacy_level || '');
-    case 'latency_budget_ms':
-      return provider.latency_budget_ms ? String(provider.latency_budget_ms) : '';
-    default: {
-      const raw = provider.extra_config?.[field.key];
-      if (typeof raw === 'boolean') {
-        return raw ? 'true' : 'false';
-      }
-      if (typeof raw === 'number') {
-        return String(raw);
-      }
-      if (typeof raw === 'string') {
-        return raw;
-      }
-      return '';
-    }
-  }
-}
 
 export function AiProviderConfigPanel(props: {
   householdId: string;
@@ -81,9 +33,10 @@ export function AiProviderConfigPanel(props: {
   const [adapters, setAdapters] = useState<AiProviderAdapter[]>([]);
   const [providers, setProviders] = useState<AiProviderProfile[]>([]);
   const [routes, setRoutes] = useState<AiCapabilityRoute[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState('');
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [detailProviderId, setDetailProviderId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [form, setForm] = useState<ProviderFormState>(buildProviderFormState());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -100,14 +53,14 @@ export function AiProviderConfigPanel(props: {
     [capabilityFilter, providers],
   );
 
-  const selectedProvider = useMemo(
-    () => visibleProviders.find(item => item.id === selectedProviderId) ?? visibleProviders[0] ?? null,
-    [selectedProviderId, visibleProviders],
+  const detailProvider = useMemo(
+    () => providers.find(item => item.id === detailProviderId) ?? null,
+    [detailProviderId, providers],
   );
 
-  const selectedAdapter = useMemo(
-    () => (selectedProvider ? adapterMap.get(getProviderAdapterCode(selectedProvider)) ?? null : null),
-    [adapterMap, selectedProvider],
+  const detailAdapter = useMemo(
+    () => (detailProvider ? adapterMap.get(getProviderAdapterCode(detailProvider)) ?? null : null),
+    [adapterMap, detailProvider],
   );
 
   const configuredRoutes = useMemo(
@@ -167,6 +120,7 @@ export function AiProviderConfigPanel(props: {
     cancel: t('common.cancel'),
     saving: t('common.saving'),
     deleteConfirm: getPageMessage(locale, 'settings.ai.provider.deleteConfirm'),
+    close: t('common.close'),
   };
 
   useEffect(() => {
@@ -193,7 +147,6 @@ export function AiProviderConfigPanel(props: {
         })));
         setProviders(providerRows);
         setRoutes(routeRows);
-        setSelectedProviderId(current => (providerRows.some(item => item.id === current) ? current : (providerRows[0]?.id ?? '')));
       } catch (loadError) {
         if (!cancelled) {
           setError(loadError instanceof Error ? loadError.message : copy.loadFailed);
@@ -211,20 +164,13 @@ export function AiProviderConfigPanel(props: {
     };
   }, [copy.loadFailed, householdId]);
 
-  useEffect(() => {
-    if (!selectedProvider && selectedProviderId) {
-      setSelectedProviderId(visibleProviders[0]?.id ?? '');
-    }
-  }, [selectedProvider, selectedProviderId, visibleProviders]);
-
-  async function reload(selectProviderId?: string) {
+  async function reload() {
     const [providerRows, routeRows] = await Promise.all([
       settingsApi.listHouseholdAiProviders(householdId),
       settingsApi.listHouseholdAiRoutes(householdId),
     ]);
     setProviders(providerRows);
     setRoutes(routeRows);
-    setSelectedProviderId(selectProviderId ?? (providerRows.some(item => item.id === selectedProviderId) ? selectedProviderId : (providerRows[0]?.id ?? '')));
     await onChanged?.();
   }
 
@@ -238,9 +184,9 @@ export function AiProviderConfigPanel(props: {
   function startEdit(provider: AiProviderProfile) {
     const adapter = adapterMap.get(getProviderAdapterCode(provider)) ?? null;
     setEditingProviderId(provider.id);
-    setSelectedProviderId(provider.id);
     setForm(toProviderFormState(provider, adapter));
     setError('');
+    setDetailOpen(false);
     setEditorOpen(true);
   }
 
@@ -251,6 +197,15 @@ export function AiProviderConfigPanel(props: {
     setEditorOpen(false);
     setEditingProviderId(null);
     setForm(buildProviderFormState());
+  }
+
+  function openDetail(provider: AiProviderProfile) {
+    setDetailProviderId(provider.id);
+    setDetailOpen(true);
+  }
+
+  function closeDetail() {
+    setDetailOpen(false);
   }
 
   function handleAdapterChange(adapterCode: string) {
@@ -277,14 +232,14 @@ export function AiProviderConfigPanel(props: {
           buildUpdateProviderPayload(form, currentAdapter),
         );
         setStatus(copy.updatedStatus);
-        await reload(editingProviderId);
+        await reload();
       } else {
-        const created = await settingsApi.createHouseholdAiProvider(
+        await settingsApi.createHouseholdAiProvider(
           householdId,
           buildCreateProviderPayload(form, currentAdapter),
         );
         setStatus(copy.addedStatus);
-        await reload(created.id);
+        await reload();
       }
       closeEditor();
     } catch (saveError) {
@@ -294,10 +249,7 @@ export function AiProviderConfigPanel(props: {
     }
   }
 
-  async function handleDelete() {
-    if (!selectedProvider) {
-      return;
-    }
+  async function handleDelete(provider: AiProviderProfile) {
     if (globalThis.confirm && !globalThis.confirm(copy.deleteConfirm)) {
       return;
     }
@@ -306,8 +258,9 @@ export function AiProviderConfigPanel(props: {
     setError('');
     setStatus('');
     try {
-      await settingsApi.deleteHouseholdAiProvider(householdId, selectedProvider.id);
+      await settingsApi.deleteHouseholdAiProvider(householdId, provider.id);
       setStatus(copy.deletedStatus);
+      setDetailOpen(false);
       await reload();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : copy.deleteFailed);
@@ -316,130 +269,17 @@ export function AiProviderConfigPanel(props: {
     }
   }
 
-  function renderSummary(provider: AiProviderProfile, adapter: AiProviderAdapter | null) {
-    const adapterMeta = adapter ? getLocalizedAdapterMeta(adapter, locale) : null;
-    const routeCapabilities = routes
-      .filter(item => item.enabled && item.primary_provider_profile_id === provider.id)
-      .map(item => item.capability);
-    const summaryFields = adapter?.field_schema
-      .map(field => {
-        const localizedField = getLocalizedField(field, locale);
-        const rawValue = readSummaryValue(provider, field);
-        const value = localizedField.field_type === 'select'
-          ? localizedField.options.find(option => option.value === rawValue)?.label ?? rawValue
-          : (field.key === 'latency_budget_ms' && rawValue ? `${rawValue} ms` : rawValue);
-
-        return {
-          key: field.key,
-          label: localizedField.label,
-          value,
-        };
-      })
-      .filter(item => item.value)
-      ?? [];
-
-    return (
-      <Card className="ai-config-detail-card ai-provider-summary-card">
-        <div className="ai-config-detail__hero">
-          <div className="ai-config-card__avatar">AI</div>
-          <div className="ai-config-detail__text">
-            <div className="ai-config-detail__title-row">
-              <h3>{provider.display_name}</h3>
-              <span className={`ai-pill ${provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>
-                {provider.enabled ? copy.enabled : copy.disabled}
-              </span>
-            </div>
-            <p>{adapterMeta?.label ?? provider.provider_code}</p>
-            <p>{getProviderModelName(provider) ?? copy.modelNameEmpty}</p>
-          </div>
-        </div>
-
-        <div className="ai-provider-summary-grid">
-          <div className="ai-provider-summary-stat">
-            <span>{copy.pluginLabel}</span>
-            <strong>{adapter?.plugin_name ?? '--'}</strong>
-          </div>
-          <div className="ai-provider-summary-stat">
-            <span>{copy.llmWorkflow}</span>
-            <strong>{adapter ? getLocalizedWorkflowLabel(adapter.llm_workflow, locale) : '--'}</strong>
-          </div>
-          <div className="ai-provider-summary-stat">
-            <span>{copy.updatedAtLabel}</span>
-            <strong>{provider.updated_at}</strong>
-          </div>
-        </div>
-
-        <div className="ai-provider-summary-section">
-          <h4>{copy.summarySupportTitle}</h4>
-          <div className="ai-config-chip-list">
-            {(adapter?.supported_model_types ?? []).map(type => (
-              <span key={type} className="ai-pill ai-pill--primary">
-                {getLocalizedModelTypeLabel(type, locale)}
-              </span>
-            ))}
-            {provider.supported_capabilities.map(capability => (
-              <span key={capability} className="ai-pill">
-                {getLocalizedCapabilityLabel(capability, locale)}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="ai-provider-summary-section">
-          <h4>{copy.summaryRouteTitle}</h4>
-          {routeCapabilities.length > 0 ? (
-            <div className="ai-config-chip-list">
-              {routeCapabilities.map(capability => (
-                <span key={capability} className="ai-pill">
-                  {getLocalizedCapabilityLabel(capability, locale)}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="ai-config-muted">{copy.summaryRouteEmpty}</p>
-          )}
-        </div>
-
-        <div className="ai-provider-summary-section">
-          <h4>{copy.summaryConfigTitle}</h4>
-          <div className="ai-provider-summary-list">
-            {summaryFields.map(item => (
-              <div key={item.key} className="ai-provider-summary-list__item">
-                <span>{item.label}</span>
-                <strong>{item.value}</strong>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Card>
-    );
-  }
-
   return (
     <div className="ai-provider-center">
-      <Card className="ai-config-detail-card">
-        <div className="agent-config-center__toolbar">
-          <div className="agent-config-center__intro">
-            <h3>{copy.summaryTitle}</h3>
-            <p>{copy.summaryDesc}</p>
-          </div>
-          <div className="ai-provider-center__toolbar">
-            <button className="btn btn--primary" type="button" onClick={startCreate}>
-              {copy.addProvider}
-            </button>
-            {selectedProvider ? (
-              <button className="btn btn--outline" type="button" onClick={() => startEdit(selectedProvider)}>
-                {copy.editProvider}
-              </button>
-            ) : null}
-            {selectedProvider ? (
-              <button className="btn btn--outline" type="button" onClick={() => void handleDelete()} disabled={saving}>
-                {copy.deleteProvider}
-              </button>
-            ) : null}
-          </div>
-        </div>
-
+      <SettingsPanelCard
+        title={copy.summaryTitle}
+        description={copy.summaryDesc}
+        actions={(
+          <button className="btn btn--primary btn--sm" type="button" onClick={startCreate}>
+            {copy.addProvider}
+          </button>
+        )}
+      >
         <div className="ai-provider-summary-grid ai-provider-summary-grid--top">
           {summaryStats.map(item => (
             <div key={item.label} className="ai-provider-summary-stat">
@@ -448,80 +288,81 @@ export function AiProviderConfigPanel(props: {
             </div>
           ))}
         </div>
-
         {status ? <div className="setup-form-status">{status}</div> : null}
-      </Card>
+      </SettingsPanelCard>
 
       {error ? <Card><p className="form-error">{error}</p></Card> : null}
       {loading ? <div className="settings-loading-copy settings-loading-copy--center">{copy.loading}</div> : null}
 
       {!loading ? (
         visibleProviders.length > 0 ? (
-          <>
-            <div className="ai-config-list ai-provider-config-list">
+          <Card className="ai-provider-list-card">
+            <div className="ai-provider-simple-list">
               {visibleProviders.map(provider => {
                 const adapter = adapterMap.get(getProviderAdapterCode(provider)) ?? null;
                 const adapterMeta = adapter ? getLocalizedAdapterMeta(adapter, locale) : null;
-                const routeCapabilities = routes
-                  .filter(item => item.enabled && item.primary_provider_profile_id === provider.id)
-                  .map(item => item.capability);
 
                 return (
                   <button
                     key={provider.id}
                     type="button"
-                    className={`ai-config-card ai-provider-card ${selectedProvider?.id === provider.id ? 'ai-config-card--selected' : ''}`}
-                    onClick={() => setSelectedProviderId(provider.id)}
+                    className="ai-provider-simple-item"
+                    onClick={() => openDetail(provider)}
                   >
-                    <div className="ai-config-card__top">
-                      <div className="ai-config-card__avatar">AI</div>
-                      <div className="ai-config-card__text">
-                        <div className="ai-config-card__title-row">
-                          <h3>{provider.display_name}</h3>
-                          <span className={`ai-pill ${provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>
-                            {provider.enabled ? copy.enabled : copy.disabled}
-                          </span>
-                        </div>
-                        <p className="ai-config-card__meta">{adapterMeta?.label ?? provider.provider_code}</p>
-                        <p className="ai-config-card__summary">{getProviderModelName(provider) ?? copy.modelNameEmpty}</p>
-                      </div>
+                    <div className="ai-provider-simple-item__icon">AI</div>
+                    <div className="ai-provider-simple-item__content">
+                      <div className="ai-provider-simple-item__name">{provider.display_name}</div>
+                      <div className="ai-provider-simple-item__meta">{adapterMeta?.label ?? provider.provider_code}</div>
                     </div>
-
-                    <div className="ai-config-chip-list">
-                      {(adapter?.supported_model_types ?? []).map(type => (
-                        <span key={type} className="ai-pill ai-pill--primary">
-                          {getLocalizedModelTypeLabel(type, locale)}
-                        </span>
-                      ))}
-                    </div>
-
-                    <div className="ai-config-chip-list">
-                      {routeCapabilities.length > 0
-                        ? routeCapabilities.map(capability => (
-                          <span key={capability} className="ai-pill">
-                            {getLocalizedCapabilityLabel(capability, locale)}
-                          </span>
-                        ))
-                        : provider.supported_capabilities.map(capability => (
-                          <span key={capability} className="ai-pill">
-                            {getLocalizedCapabilityLabel(capability, locale)}
-                          </span>
-                        ))}
-                    </div>
+                    <span className={`ai-pill ai-pill--sm ${provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>
+                      {provider.enabled ? copy.enabled : copy.disabled}
+                    </span>
                   </button>
                 );
               })}
             </div>
-
-            {selectedProvider ? renderSummary(selectedProvider, selectedAdapter) : null}
-          </>
-        ) : (
-          <Card className="ai-config-detail-card agent-config-empty">
-            <h4>{copy.emptySummaryTitle}</h4>
-            <p className="ai-config-muted">{copy.emptySummaryDesc}</p>
           </Card>
+        ) : (
+          <SettingsEmptyState
+            icon="AI"
+            title={copy.emptySummaryTitle}
+            description={copy.emptySummaryDesc}
+            action={(
+              <button className="btn btn--primary" type="button" onClick={startCreate}>
+                {copy.addProvider}
+              </button>
+            )}
+          />
         )
       ) : null}
+
+      <AiProviderDetailDialog
+        open={detailOpen}
+        provider={detailProvider}
+        adapter={detailAdapter}
+        routes={routes}
+        locale={locale}
+        copy={{
+          enabled: copy.enabled,
+          disabled: copy.disabled,
+          modelNameEmpty: copy.modelNameEmpty,
+          pluginLabel: copy.pluginLabel,
+          llmWorkflow: copy.llmWorkflow,
+          updatedAtLabel: copy.updatedAtLabel,
+          summarySupportTitle: copy.summarySupportTitle,
+          summaryRouteTitle: copy.summaryRouteTitle,
+          summaryRouteEmpty: copy.summaryRouteEmpty,
+          summaryConfigTitle: copy.summaryConfigTitle,
+          close: copy.close,
+          edit: copy.editProvider,
+        }}
+        onClose={closeDetail}
+        onEdit={() => {
+          if (detailProvider) {
+            startEdit(detailProvider);
+          }
+        }}
+      />
 
       <AiProviderEditorDialog
         householdId={householdId}

@@ -24,6 +24,7 @@ import {
   ConversationSessionListResponse,
   ConversationTurnResponse,
   Device,
+  HomeDashboardRead,
   HomeAssistantConfig,
   HomeAssistantDeviceCandidatesResponse,
   HomeAssistantRoomCandidatesResponse,
@@ -36,6 +37,8 @@ import {
   MemoryCard,
   MemoryCardRevision,
   Member,
+  MemberDashboardLayoutRead,
+  MemberDashboardLayoutItem,
   MemberChannelBindingCreate,
   MemberChannelBindingRead,
   MemberChannelBindingUpdate,
@@ -639,6 +642,18 @@ export function createCoreApiClient(request: RequestClient) {
     },
     getContextOverview(householdId: string) {
       return request<ContextOverviewRead>(`/context/overview?household_id=${encodeURIComponent(householdId)}`);
+    },
+    getHomeDashboard(householdId: string) {
+      return request<HomeDashboardRead>(`/dashboard/home?household_id=${encodeURIComponent(householdId)}`);
+    },
+    getHomeDashboardLayout(householdId: string) {
+      return request<MemberDashboardLayoutRead>(`/dashboard/home/layout?household_id=${encodeURIComponent(householdId)}`);
+    },
+    updateHomeDashboardLayout(householdId: string, items: MemberDashboardLayoutItem[]) {
+      return request<MemberDashboardLayoutRead>(`/dashboard/home/layout?household_id=${encodeURIComponent(householdId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ items }),
+      });
     },
     getContextConfig(householdId: string) {
       return request<ContextConfigRead>(`/context/configs/${encodeURIComponent(householdId)}`);

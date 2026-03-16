@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useI18n } from '../../runtime';
 import { Card } from './base';
 import { buildCreateProviderPayload, buildProviderFormState, buildRoutePayload, buildUpdateProviderPayload, getProviderAdapterCode, readProviderFormValue, SETUP_ROUTE_CAPABILITIES, toProviderFormState, assignProviderFormValue } from './setupAiConfig';
 import { setupApi } from './setupApi';
@@ -7,6 +8,7 @@ import type { AiCapabilityRoute, AiProviderAdapter, AiProviderProfile } from './
 const HIDDEN_SETUP_FIELDS = new Set(['provider_code', 'latency_budget_ms']);
 
 export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?: () => void }) {
+  const { t } = useI18n();
   const [adapters, setAdapters] = useState<AiProviderAdapter[]>([]);
   const [form, setForm] = useState(buildProviderFormState());
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
@@ -35,21 +37,21 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
         setEditingProviderId(existingProvider?.id ?? null);
         setForm(existingProvider ? toProviderFormState(existingProvider, existingAdapter) : buildProviderFormState(adapterRows[0] ?? null));
       } catch (loadError) {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : '加载供应商配置失败');
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : t('setup.providerSetup.loadFailed'));
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
     void load();
     return () => { cancelled = true; };
-  }, [props.householdId]);
+  }, [props.householdId, t]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!currentAdapter) { setError('请先选择供应商类型'); return; }
+    if (!currentAdapter) { setError(t('setup.providerSetup.selectTypeFirst')); return; }
     setSaving(true);
     setError('');
-    setStatus(editingProviderId ? '正在保存供应商...' : '正在创建供应商...');
+    setStatus(editingProviderId ? t('setup.providerSetup.saving') : t('setup.providerSetup.creating'));
     try {
       const providerId = editingProviderId ? editingProviderId : (await setupApi.createHouseholdAiProvider(props.householdId, buildCreateProviderPayload(form, currentAdapter))).id;
       if (editingProviderId) {
@@ -57,32 +59,32 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
       } else {
         setEditingProviderId(providerId);
       }
-      setStatus('正在配置默认能力路由...');
+      setStatus(t('setup.providerSetup.configuringRoutes'));
       const supportedCapabilities = form.supportedCapabilities;
-      if (supportedCapabilities.length === 0) throw new Error('当前供应商没有可绑定的能力');
+      if (supportedCapabilities.length === 0) throw new Error(t('setup.providerSetup.noSupportedCapability'));
       const routes = await setupApi.listHouseholdAiRoutes(props.householdId);
       await Promise.all(supportedCapabilities.map(capability => {
         const currentRoute = routes.find(item => item.capability === capability);
         return setupApi.upsertHouseholdAiRoute(props.householdId, capability, buildRoutePayload(props.householdId, capability, currentRoute, providerId, true));
       }));
-      setStatus('AI 供应商配置完成！');
+      setStatus(t('setup.providerSetup.completed'));
       props.onCompleted?.();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : '保存供应商配置失败');
+      setError(saveError instanceof Error ? saveError.message : t('setup.providerSetup.saveFailed'));
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) return <Card><p>正在加载...</p></Card>;
+  if (loading) return <Card><p>{t('setup.providerSetup.loading')}</p></Card>;
 
   return (
     <Card className="ai-config-detail-card">
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor={`provider-adapter-${props.householdId}`}>选择供应商平台</label>
+          <label htmlFor={`provider-adapter-${props.householdId}`}>{t('setup.providerSetup.platformLabel')}</label>
           <select id={`provider-adapter-${props.householdId}`} className="form-select" value={form.adapterCode} onChange={event => setForm(buildProviderFormState(adapters.find(item => item.adapter_code === event.target.value) ?? null))} disabled={Boolean(editingProviderId)}>
-            <option value="">请选择</option>
+            <option value="">{t('setup.providerSetup.selectPlaceholder')}</option>
             {adapters.map(adapter => <option key={adapter.adapter_code} value={adapter.adapter_code}>{adapter.display_name}</option>)}
           </select>
         </div>
@@ -95,7 +97,7 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
                   <label htmlFor={`${props.householdId}-${field.key}`}>{field.label}</label>
                   {field.field_type === 'select' ? (
                     <select id={`${props.householdId}-${field.key}`} className="form-select" value={readProviderFormValue(form, field.key)} onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))}>
-                      <option value="">请选择</option>
+                      <option value="">{t('setup.providerSetup.selectPlaceholder')}</option>
                       {field.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   ) : (
@@ -105,12 +107,12 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
                 </div>
               ))}
             </div>
-            <div className="setup-inline-tip"><strong>提示：</strong><span>创建后，系统只会把这个供应商绑定到它明确支持的能力。别拿纯文本模型去硬绑语音、视觉、重排，那本来就该失败。</span></div>
+            <div className="setup-inline-tip"><strong>{t('setup.providerSetup.tipTitle')}</strong><span>{t('setup.providerSetup.tipBody')}</span></div>
           </>
         ) : null}
         {error ? <div className="form-error">{error}</div> : null}
         {status ? <div className="setup-form-status">{status}</div> : null}
-        <div className="setup-form-actions"><button className="btn btn--primary" type="submit" disabled={saving || !currentAdapter || !form.displayName.trim() || !form.modelName.trim()}>{saving ? '正在绑定…' : editingProviderId ? '保存并更新全场景' : '创建并应用到全场景'}</button></div>
+        <div className="setup-form-actions"><button className="btn btn--primary" type="submit" disabled={saving || !currentAdapter || !form.displayName.trim() || !form.modelName.trim()}>{saving ? t('setup.providerSetup.binding') : editingProviderId ? t('setup.providerSetup.saveAndUpdateAll') : t('setup.providerSetup.createAndApplyAll')}</button></div>
       </form>
     </Card>
   );

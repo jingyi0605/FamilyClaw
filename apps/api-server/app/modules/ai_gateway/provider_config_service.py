@@ -12,6 +12,8 @@ def list_provider_adapters() -> list[AiProviderAdapterRead]:
     rows = list_registered_provider_adapters()
     return [
         AiProviderAdapterRead(
+            plugin_id=row["plugin_id"],
+            plugin_name=row["plugin_name"],
             adapter_code=row["adapter_code"],
             display_name=row["display_name"],
             description=row["description"],
@@ -19,6 +21,8 @@ def list_provider_adapters() -> list[AiProviderAdapterRead]:
             api_family=row["api_family"],
             default_privacy_level=row["default_privacy_level"],
             default_supported_capabilities=row["default_supported_capabilities"],
+            supported_model_types=row.get("supported_model_types", []),
+            llm_workflow=row.get("llm_workflow", row["api_family"]),
             field_schema=[
                 AiProviderFieldRead(
                     key=field["key"],

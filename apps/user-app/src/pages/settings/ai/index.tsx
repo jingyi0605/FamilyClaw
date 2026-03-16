@@ -6,6 +6,16 @@ import { AgentConfigPanel } from '../components/AgentConfigPanel';
 import { AiProviderConfigPanel } from '../components/AiProviderConfigPanel';
 
 type AiSettingsTab = 'agent' | 'provider';
+
+function getRequestedTab(): AiSettingsTab | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const tab = new URLSearchParams(window.location.search).get('tab');
+  return tab === 'agent' || tab === 'provider' ? tab : null;
+}
+
 function mapSetupHint(step: string, t: (key: string) => string) {
   if (step === 'family_profile') return t('settings.ai.hint.familyProfile');
   if (step === 'first_member') return t('settings.ai.hint.firstMember');
@@ -14,11 +24,8 @@ function mapSetupHint(step: string, t: (key: string) => string) {
   return step;
 }
 
-function pickInitialTab(missingRequirements: string[]): AiSettingsTab {
-  if (missingRequirements.includes('provider_setup')) {
-    return 'provider';
-  }
-  return 'agent';
+function pickInitialTab(_: string[]): AiSettingsTab {
+  return getRequestedTab() ?? 'provider';
 }
 
 function SettingsAiContent() {
@@ -42,7 +49,7 @@ function SettingsAiContent() {
   if (!currentHouseholdId) {
     return (
       <SettingsPageShell activeKey="ai">
-        <div className="settings-page">
+        <div className="settings-page settings-page--ai">
           <PageSection title={t('settings.ai.title')} contentStyle={{ marginTop: 0 }}>
             <EmptyStateCard
               icon="AI"
@@ -68,7 +75,7 @@ function SettingsAiContent() {
 
   return (
     <SettingsPageShell activeKey="ai">
-      <div className="settings-page">
+      <div className="settings-page settings-page--ai">
         <PageSection title={t('settings.ai.title')} contentStyle={{ marginTop: 0 }}>
           {setupHints.length > 0 ? (
             <UiCard className="setup-resume-card">
@@ -89,15 +96,6 @@ function SettingsAiContent() {
 
           <div className="memory-main-tabs settings-ai-tabs" role="tablist" aria-label={t('settings.ai.tabs')}>
             <button
-              className={`memory-main-tab ${activeTab === 'agent' ? 'memory-main-tab--active' : ''}`}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'agent'}
-              onClick={() => handleTabChange('agent')}
-            >
-              {t('settings.ai.tab.agent')}
-            </button>
-            <button
               className={`memory-main-tab ${activeTab === 'provider' ? 'memory-main-tab--active' : ''}`}
               type="button"
               role="tab"
@@ -106,13 +104,22 @@ function SettingsAiContent() {
             >
               {t('settings.ai.tab.provider')}
             </button>
+            <button
+              className={`memory-main-tab ${activeTab === 'agent' ? 'memory-main-tab--active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'agent'}
+              onClick={() => handleTabChange('agent')}
+            >
+              {t('settings.ai.tab.agent')}
+            </button>
           </div>
 
           <div className="settings-ai-tab-panel">
-            {activeTab === 'agent' ? (
-              <AgentConfigPanel householdId={currentHouseholdId} onChanged={refreshSetup} />
-            ) : (
+            {activeTab === 'provider' ? (
               <AiProviderConfigPanel householdId={currentHouseholdId} onChanged={refreshSetup} />
+            ) : (
+              <AgentConfigPanel householdId={currentHouseholdId} onChanged={refreshSetup} />
             )}
           </div>
         </PageSection>

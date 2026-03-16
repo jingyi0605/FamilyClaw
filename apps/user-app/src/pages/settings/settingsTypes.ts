@@ -52,7 +52,11 @@ export type AiProviderField = {
   options: AiProviderFieldOption[];
 };
 
+export type AiProviderModelType = 'llm' | 'embedding' | 'vision' | 'speech' | 'image';
+
 export type AiProviderAdapter = {
+  plugin_id: string;
+  plugin_name: string;
   adapter_code: string;
   display_name: string;
   description: string;
@@ -60,6 +64,8 @@ export type AiProviderAdapter = {
   api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   default_privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
   default_supported_capabilities: string[];
+  supported_model_types: AiProviderModelType[];
+  llm_workflow: string;
   field_schema: AiProviderField[];
 };
 

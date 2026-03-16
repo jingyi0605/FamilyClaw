@@ -264,3 +264,8 @@
     - 对照 `docs/README.md` 逐项核验
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文
+## 补充更新（2026-03-16）
+
+- 3.1 本地验证已恢复：`npm.cmd run build:h5` 与 `npm.cmd run typecheck` 已通过。
+- 页面入口已修正：`/pages/settings/ai/index` 现在默认打开“模型服务”，不再先落到 AI 助手大表单。
+- 3.2 / 3.3 仍待真实页面验收：需要继续确认列表、摘要、弹窗编辑和视觉层级是否符合预期。

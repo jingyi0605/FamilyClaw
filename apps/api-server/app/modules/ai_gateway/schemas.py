@@ -13,6 +13,7 @@ AiCapability = Literal[
     "tts",
     "vision",
 ]
+AiProviderModelType = Literal["llm", "embedding", "vision", "speech", "image"]
 AiTransportType = Literal["openai_compatible", "native_sdk", "local_gateway"]
 AiApiFamily = Literal["openai_chat_completions", "anthropic_messages", "gemini_generate_content"]
 AiPrivacyLevel = Literal["local_only", "private_cloud", "public_cloud"]
@@ -51,6 +52,8 @@ class AiProviderFieldRead(BaseModel):
 
 
 class AiProviderAdapterRead(BaseModel):
+    plugin_id: str
+    plugin_name: str
     adapter_code: str
     display_name: str
     description: str
@@ -58,6 +61,8 @@ class AiProviderAdapterRead(BaseModel):
     api_family: AiApiFamily
     default_privacy_level: AiPrivacyLevel
     default_supported_capabilities: list[AiCapability] = Field(default_factory=list)
+    supported_model_types: list[AiProviderModelType] = Field(default_factory=list)
+    llm_workflow: str = "openai_chat_completions"
     field_schema: list[AiProviderFieldRead] = Field(default_factory=list)
 
 
