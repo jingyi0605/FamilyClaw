@@ -2279,6 +2279,129 @@ input, select, textarea {
   border-bottom: 1px solid var(--border-light);
   background: var(--bg-surface);
   box-sizing: border-box;
+  position: relative;
+}
+
+/* 深色模式下使用毛玻璃效果 */
+[data-theme="dark"] .assistant-toolbar,
+[data-theme="ocean-drive"] .assistant-toolbar,
+[data-theme="cyberpunk"] .assistant-toolbar,
+[data-theme="starlight"] .assistant-toolbar,
+[data-theme="jin-xiu-qian-cheng"] .assistant-toolbar {
+  background: color-mix(in srgb, var(--bg-surface) 75%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom-color: color-mix(in srgb, var(--border-light) 50%, transparent);
+}
+
+/* Agent 信息区域（左侧） */
+.assistant-toolbar__agent {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.assistant-toolbar__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-primary) 12%, var(--bg-surface));
+  color: var(--brand-primary);
+  font-size: 1.125rem;
+  border: none;
+  padding: 0;
+  cursor: default;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+
+.assistant-toolbar__avatar--sm {
+  width: 28px;
+  height: 28px;
+  font-size: 1rem;
+}
+
+.assistant-toolbar__avatar--switchable {
+  cursor: pointer;
+}
+
+.assistant-toolbar__avatar--switchable:hover:not(:disabled),
+.assistant-toolbar__avatar--switchable:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-primary) 20%, transparent);
+}
+
+.assistant-toolbar__avatar:disabled {
+  cursor: default;
+}
+
+.assistant-toolbar__agent-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.assistant-toolbar__agent-name {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* 会话标题区域（中间，绝对定位实现完全居中） */
+.assistant-toolbar__session-title {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition);
+  max-width: 320px;
+  z-index: 1;
+}
+
+.assistant-toolbar__session-title:hover {
+  background: var(--bg-card-hover);
+}
+
+/* 深色模式下悬停效果 */
+[data-theme="dark"] .assistant-toolbar__session-title:hover,
+[data-theme="ocean-drive"] .assistant-toolbar__session-title:hover,
+[data-theme="cyberpunk"] .assistant-toolbar__session-title:hover,
+[data-theme="starlight"] .assistant-toolbar__session-title:hover,
+[data-theme="jin-xiu-qian-cheng"] .assistant-toolbar__session-title:hover {
+  background: color-mix(in srgb, var(--bg-card-hover) 60%, transparent);
+}
+
+.assistant-toolbar__title-text {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-toolbar__chevron {
+  color: var(--text-secondary);
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+
+.assistant-toolbar__chevron--open {
+  transform: rotate(180deg);
 }
 
 .assistant-toolbar__btn {
@@ -2307,21 +2430,22 @@ input, select, textarea {
   color: var(--text-primary);
 }
 
+/* 深色模式下按钮悬停效果 */
+[data-theme="dark"] .assistant-toolbar__btn:hover,
+[data-theme="ocean-drive"] .assistant-toolbar__btn:hover,
+[data-theme="cyberpunk"] .assistant-toolbar__btn:hover,
+[data-theme="starlight"] .assistant-toolbar__btn:hover,
+[data-theme="jin-xiu-qian-cheng"] .assistant-toolbar__btn:hover {
+  background: color-mix(in srgb, var(--bg-card-hover) 60%, transparent);
+}
+
 .assistant-toolbar__actions {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
+  flex-shrink: 0;
   margin-left: auto;
-}
-
-.assistant-toolbar__title {
-  font-size: var(--font-size-md);
-  font-weight: 600;
-  color: var(--text-primary);
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  z-index: 1;
 }
 
 /* 历史按钮包装器（用于定位气泡框） */
@@ -2345,7 +2469,8 @@ input, select, textarea {
 .assistant-popover {
   position: absolute;
   top: calc(var(--assistant-header-bar-height) - 4px);
-  left: var(--spacing-md);
+  left: 50%;
+  transform: translateX(-50%);
   width: 320px;
   min-height: 200px;
   max-height: 50vh;
@@ -2362,11 +2487,11 @@ input, select, textarea {
 @keyframes popoverFadeIn {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateX(-50%) translateY(-4px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(-50%) translateY(0);
   }
 }
 
@@ -5245,12 +5370,75 @@ body::before {
     background: var(--bg-surface);
     height: 60px; /* Fixed height for top header */
     z-index: 10;
+    gap: var(--spacing-sm);
+    position: relative;
+  }
+
+  /* 移动端深色模式下毛玻璃效果 */
+  [data-theme="dark"] .assistant-mobile-header,
+  [data-theme="ocean-drive"] .assistant-mobile-header,
+  [data-theme="cyberpunk"] .assistant-mobile-header,
+  [data-theme="starlight"] .assistant-mobile-header,
+  [data-theme="jin-xiu-qian-cheng"] .assistant-mobile-header {
+    background: color-mix(in srgb, var(--bg-surface) 75%, transparent);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom-color: color-mix(in srgb, var(--border-light) 50%, transparent);
+  }
+
+  .assistant-mobile-header__agent {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-shrink: 0;
+    min-width: 0;
+  }
+
+  .assistant-mobile-header__agent-name {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 60px;
+  }
+
+  .assistant-mobile-header__session {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background var(--transition);
+    flex: 1 1 auto;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .assistant-mobile-header__session:hover {
+    background: var(--bg-card-hover);
   }
 
   .assistant-mobile-title {
     font-weight: 600;
     font-size: var(--font-size-md);
     color: var(--text-primary);
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .assistant-mobile-header__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
+    flex-shrink: 0;
+    margin-left: auto;
   }
 
   .assistant-panel {

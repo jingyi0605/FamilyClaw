@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Taro from '@tarojs/taro';
 import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealtimeEvent } from '@familyclaw/user-platform/web';
 import { EmptyStateCard, PageHeader, userAppFoundationTokens } from '@familyclaw/user-ui';
-import { Bot, Construction, History, Info, Menu, MessageSquarePlus } from 'lucide-react';
+import { Bot, ChevronDown, Construction, Info, Menu, MessageSquarePlus } from 'lucide-react';
 import { assistantApi } from './assistant.api';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel, isConversationAgent, pickDefaultConversationAgent } from './assistant.agents';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
@@ -1088,14 +1088,36 @@ function AssistantPageContent() {
       </div>
 
       <div className="assistant-main">
+        {/* PC端合并后的标题栏：左边Agent信息、中间会话标题（点击弹出会话列表）、右侧操作按钮 */}
         <div className="assistant-toolbar">
-          <div className="assistant-toolbar__history-wrapper">
-            <button className="assistant-toolbar__btn" onClick={() => setIsSidebarOpen(prev => !prev)} title={t('nav.assistant')}>
-              <History size={18} />
-              <span>{t('nav.assistant')}</span>
+          <div className="assistant-toolbar__agent">
+            <button
+              type="button"
+              className={`assistant-toolbar__avatar ${canSwitchAgent ? 'assistant-toolbar__avatar--switchable' : ''}`.trim()}
+              onClick={handleAgentAvatarClick}
+              disabled={!canSwitchAgent}
+              title={canSwitchAgent
+                ? t('assistant.agent.switchTitle')
+                : (selectedAgent?.display_name ?? t('assistant.agent.currentTitle'))}
+            >
+              {selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : <Bot size={18} />}
             </button>
+            <div className="assistant-toolbar__agent-info">
+              <span className="assistant-toolbar__agent-name">{selectedAgent?.display_name ?? t('assistant.agent.defaultName')}</span>
+              {selectedAgent ? <span className="ai-pill ai-pill--outline">{getAgentTypeLabel(selectedAgent.agent_type, locale)}</span> : null}
+            </div>
           </div>
-          <div className="assistant-toolbar__title">{activeSessionDetail?.title || t('nav.assistant')}</div>
+
+          <button
+            type="button"
+            className="assistant-toolbar__session-title"
+            onClick={() => setIsSidebarOpen(prev => !prev)}
+            title={t('assistant.sessionList')}
+          >
+            <span className="assistant-toolbar__title-text">{activeSessionDetail?.title || t('nav.assistant')}</span>
+            <ChevronDown size={16} className={`assistant-toolbar__chevron ${isSidebarOpen ? 'assistant-toolbar__chevron--open' : ''}`} />
+          </button>
+
           <div className="assistant-toolbar__actions">
             <button className="assistant-toolbar__btn" onClick={() => void handleNewChat()} title={t('assistant.newChat')}>
               <MessageSquarePlus size={18} />
@@ -1108,17 +1130,37 @@ function AssistantPageContent() {
           </div>
         </div>
 
+        {/* 移动端合并后的标题栏 */}
         <div className="assistant-mobile-header">
-          <button className="btn btn--icon btn--ghost p-sm assistant-menu-btn" onClick={() => setIsSidebarOpen(prev => !prev)}>
-            <Menu size={24} />
+          <div className="assistant-mobile-header__agent">
+            <button
+              type="button"
+              className={`assistant-toolbar__avatar assistant-toolbar__avatar--sm ${canSwitchAgent ? 'assistant-toolbar__avatar--switchable' : ''}`.trim()}
+              onClick={handleAgentAvatarClick}
+              disabled={!canSwitchAgent}
+            >
+              {selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : <Bot size={16} />}
+            </button>
+            <span className="assistant-mobile-header__agent-name">{selectedAgent?.display_name ?? t('assistant.agent.defaultName')}</span>
+          </div>
+
+          <button
+            type="button"
+            className="assistant-mobile-header__session"
+            onClick={() => setIsSidebarOpen(prev => !prev)}
+          >
+            <span className="assistant-mobile-title">{activeSessionDetail?.title || t('nav.assistant')}</span>
+            <ChevronDown size={14} className={`assistant-toolbar__chevron ${isSidebarOpen ? 'assistant-toolbar__chevron--open' : ''}`} />
           </button>
-          <div className="assistant-mobile-title">{activeSessionDetail?.title || t('nav.assistant')}</div>
-          <button className="btn btn--icon btn--ghost p-sm" onClick={() => void handleNewChat()} title={t('assistant.newChat')}>
-            <MessageSquarePlus size={20} />
-          </button>
-          <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(true)} title={t('assistant.panel.details')}>
-            <Info size={20} />
-          </button>
+
+          <div className="assistant-mobile-header__actions">
+            <button className="btn btn--icon btn--ghost p-sm" onClick={() => void handleNewChat()} title={t('assistant.newChat')}>
+              <MessageSquarePlus size={20} />
+            </button>
+            <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(true)} title={t('assistant.panel.details')}>
+              <Info size={20} />
+            </button>
+          </div>
         </div>
 
         {isSidebarOpen ? (
@@ -1162,29 +1204,6 @@ function AssistantPageContent() {
             </div>
           </>
         ) : null}
-
-        <div className="conversation-agent-banner">
-          <div className="conversation-agent-banner__main">
-            <button
-              type="button"
-              className={`conversation-agent-banner__avatar ${canSwitchAgent ? 'conversation-agent-banner__avatar--switchable' : ''}`.trim()}
-              onClick={handleAgentAvatarClick}
-              disabled={!canSwitchAgent}
-              title={canSwitchAgent
-                ? t('assistant.agent.switchTitle')
-                : (selectedAgent?.display_name ?? t('assistant.agent.currentTitle'))}
-            >
-              {selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : <Bot size={18} />}
-            </button>
-            <div className="conversation-agent-banner__text">
-              <div className="conversation-agent-banner__title-row">
-                <h2>{selectedAgent?.display_name ?? t('assistant.agent.defaultName')}</h2>
-                {selectedAgent ? <span className="ai-pill ai-pill--outline">{getAgentTypeLabel(selectedAgent.agent_type, locale)}</span> : null}
-              </div>
-              <p>{selectedAgent?.summary ?? t('assistant.agent.defaultSummary')}</p>
-            </div>
-          </div>
-        </div>
 
         {activeSessionId ? (
           <>
