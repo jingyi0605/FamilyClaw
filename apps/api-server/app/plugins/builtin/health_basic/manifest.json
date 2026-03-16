@@ -12,5 +12,20 @@
   "entrypoints": {
     "connector": "app.plugins.builtin.health_basic.connector.sync",
     "memory_ingestor": "app.plugins.builtin.health_basic.ingestor.transform"
-  }
+  },
+  "dashboard_cards": [
+    {
+      "card_key": "daily-steps-summary",
+      "placement": "home",
+      "template_type": "metric",
+      "size": "half",
+      "title_key": "plugin.health_basic.dashboard.daily_steps.title",
+      "subtitle_key": "plugin.health_basic.dashboard.daily_steps.subtitle",
+      "empty_state_key": "plugin.health_basic.dashboard.daily_steps.empty",
+      "refresh_strategy": "scheduled",
+      "allowed_actions": [
+        "open_plugin_detail"
+      ]
+    }
+  ]
 }
