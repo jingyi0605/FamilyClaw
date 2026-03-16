@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import ActorContext, ensure_actor_can_access_household, require_admin_actor, require_bound_member_actor
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
+from app.modules.device_integration.service import DeviceIntegrationServiceError
 from app.modules.integration import (
     IntegrationActionResultRead,
     IntegrationCatalogListRead,
@@ -26,6 +27,7 @@ from app.modules.integration.service import (
     list_integration_resources,
 )
 from app.modules.plugin.service import PluginServiceError
+from app.plugins.builtin.homeassistant_device_action.runtime import mark_home_assistant_instance_sync_failed
 
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -136,6 +138,16 @@ async def execute_integration_instance_action_endpoint(
         )
         db.commit()
         return result
+    except DeviceIntegrationServiceError as exc:
+        db.rollback()
+        mark_home_assistant_instance_sync_failed(
+            db,
+            integration_instance_id=instance_id,
+            error_code=exc.error_code,
+            error_message=exc.message,
+        )
+        db.commit()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except PluginServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc

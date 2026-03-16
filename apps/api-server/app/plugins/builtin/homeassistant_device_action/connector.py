@@ -4,12 +4,12 @@ import asyncio
 from typing import Any
 
 from app.modules.device_integration.schemas import DeviceIntegrationPluginPayload
-from app.modules.ha_integration.client import HomeAssistantClientError
 from app.plugins.builtin.homeassistant_device_action.adapter import (
     build_home_assistant_client,
     build_session_factory,
     extract_database_url,
 )
+from app.plugins.builtin.homeassistant_device_action.client import HomeAssistantClientError
 
 SUPPORTED_DEVICE_TYPES: dict[str, tuple[str, bool]] = {
     "light": ("light", True),
@@ -55,7 +55,11 @@ def sync(payload: dict | None = None) -> dict:
     try:
         with session_factory() as db:
             try:
-                client = build_home_assistant_client(db, household_id=request.household_id, timeout_seconds=15)
+                client = build_home_assistant_client(
+                    db,
+                    integration_instance_id=request.integration_instance_id,
+                    timeout_seconds=15,
+                )
                 device_registry, entity_registry, area_registry, states = _fetch_home_assistant_payloads(client)
                 return _build_sync_result(
                     request=request,

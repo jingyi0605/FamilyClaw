@@ -15,16 +15,16 @@ from app.api.dependencies import ActorContext, require_admin_actor
 from app.api.v1.endpoints.device_actions import router as device_actions_router
 from app.core.config import settings
 from app.db.session import get_db
-from app.db.utils import new_uuid, utc_now_iso
+from app.db.utils import new_uuid
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.device_action.schemas import DeviceActionExecuteRequest
 from app.modules.device_control.protocol import device_control_protocol_registry
 from app.modules.device_control.router import route_device_plugin
 from app.modules.device_control.service import DeviceControlServiceError, execute_device_control
 from app.modules.device_control.schemas import DeviceControlRequest
-from app.modules.ha_integration.models import HouseholdHaConfig
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from tests.homeassistant_test_support import seed_homeassistant_integration_instance
 
 
 def _build_alembic_config(database_url: str) -> Config:
@@ -78,15 +78,12 @@ class DeviceControlPhase1Tests(unittest.TestCase):
                 db,
                 HouseholdCreate(name="Control Home", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
             )
-            db.add(
-                HouseholdHaConfig(
-                    household_id=household.id,
-                    base_url="http://ha.local:8123",
-                    access_token="demo-token",
-                    sync_rooms_enabled=False,
-                    updated_at=utc_now_iso(),
-                )
+            instance = seed_homeassistant_integration_instance(
+                db,
+                household_id=household.id,
+                sync_rooms_enabled=False,
             )
+            self.integration_instance_id = instance.id
             self.light_device = Device(
                 id=new_uuid(),
                 household_id=household.id,
@@ -116,6 +113,7 @@ class DeviceControlPhase1Tests(unittest.TestCase):
                     DeviceBinding(
                         id=new_uuid(),
                         device_id=self.light_device_id,
+                        integration_instance_id=self.integration_instance_id,
                         platform="home_assistant",
                         plugin_id="homeassistant",
                         binding_version=1,
@@ -125,6 +123,7 @@ class DeviceControlPhase1Tests(unittest.TestCase):
                     DeviceBinding(
                         id=new_uuid(),
                         device_id=self.lock_device_id,
+                        integration_instance_id=self.integration_instance_id,
                         platform="home_assistant",
                         plugin_id="homeassistant",
                         binding_version=1,
@@ -192,7 +191,7 @@ class DeviceControlPhase1Tests(unittest.TestCase):
         self.assertEqual("high_risk_confirmation_required", context.exception.error_code)
 
     def test_execute_api_uses_unified_control_chain_and_plugin_runtime(self) -> None:
-        with patch("app.modules.ha_integration.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
+        with patch("app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
             response = self.client.post(
                 f"{settings.api_v1_prefix}/device-actions/execute",
                 json=DeviceActionExecuteRequest(

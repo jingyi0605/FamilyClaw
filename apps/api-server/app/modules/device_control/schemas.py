@@ -20,6 +20,7 @@ class DeviceControlRequest(BaseModel):
 
 class DeviceControlBindingSnapshot(BaseModel):
     binding_id: str
+    integration_instance_id: str | None = None
     platform: str
     plugin_id: str
     external_device_id: str | None = None

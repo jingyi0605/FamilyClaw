@@ -17,7 +17,7 @@ class VoiceTerminalConversationBinding(Base):
         Index("idx_voice_terminal_conversation_bindings_household_id", "household_id"),
         Index("idx_voice_terminal_conversation_bindings_terminal_type", "terminal_type"),
         Index(
-            "idx_voice_terminal_conversation_bindings_conversation_session_id",
+            "idx_voice_terminal_conv_bindings_session_id",
             "conversation_session_id",
         ),
         Index("idx_voice_terminal_conversation_bindings_binding_status", "binding_status"),

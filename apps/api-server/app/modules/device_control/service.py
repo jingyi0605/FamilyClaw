@@ -109,11 +109,17 @@ def _translate_plugin_error(exc: PluginServiceError) -> DeviceControlServiceErro
 def _build_database_url(db: Session) -> str | None:
     bind = db.get_bind()
     if hasattr(bind, "url"):
-        return str(bind.url)
+        return _render_database_url(bind.url)
     engine = getattr(bind, "engine", None)
     if engine is not None and hasattr(engine, "url"):
-        return str(engine.url)
+        return _render_database_url(engine.url)
     return None
+
+
+def _render_database_url(url: Any) -> str:
+    if hasattr(url, "render_as_string"):
+        return url.render_as_string(hide_password=False)
+    return str(url)
 
 
 def _build_payload(
@@ -138,6 +144,7 @@ def _build_payload(
         plugin_id=plugin_id,
         binding=DeviceControlBindingSnapshot(
             binding_id=route_binding.id,
+            integration_instance_id=route_binding.integration_instance_id,
             platform=route_binding.platform,
             plugin_id=plugin_id,
             external_device_id=route_binding.external_device_id,

@@ -1,69 +1,33 @@
 import { useEffect, useMemo, useState } from 'react';
 import Taro from '@tarojs/taro';
-import { GuardedPage, useAuthContext, useHouseholdContext, useI18n } from '../../../runtime';
+import { GuardedPage, useHouseholdContext, useI18n } from '../../../runtime';
 import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, Section } from '../../family/base';
 import { SettingsPageShell } from '../SettingsPageShell';
-import { SpeakerDeviceDetailDialog } from '../components/SpeakerDeviceDetailDialog';
-import { SpeakerVoiceprintTab } from '../components/SpeakerVoiceprintTab';
-import { VoiceprintEnrollmentWizard } from '../components/VoiceprintEnrollmentWizard';
-import {
-  createVoiceprintWaitingWizardState,
-  createVoiceprintWizardState,
-  getNextWizardStateFromEnrollment,
-  type VoiceprintWizardState,
-} from '../components/speakerVoiceprintHelpers';
-import { settingsApi } from '../settingsApi';
+import { ApiError, settingsApi } from '../settingsApi';
 import type {
-  ContextOverviewRead,
-  Device,
-  HomeAssistantDeviceCandidate,
-  HomeAssistantRoomCandidate,
-  HomeAssistantRoomSyncResponse,
-  HomeAssistantSyncResponse,
-  HouseholdVoiceprintSummaryRead,
   IntegrationActionResult,
+  IntegrationCatalogItem,
   IntegrationInstance,
-  PluginConfigFormRead,
+  IntegrationResource,
   PluginManifestConfigField,
   PluginManifestFieldUiSchema,
-  Room,
-  VoiceDiscoveryTerminal,
-  VoiceprintEnrollmentRead,
 } from '../settingsTypes';
 
-function resolveDateLocale(locale: string | undefined) {
-  if (locale?.toLowerCase().startsWith('en')) {
-    return 'en-US';
-  }
-  if (locale?.toLowerCase().startsWith('zh-tw')) {
-    return 'zh-TW';
-  }
-  return 'zh-CN';
-}
-
-type HaFormDraft = {
-  values: Record<string, unknown>;
-  secretValues: Record<string, string>;
-  clearSecretFields: string[];
+type IntegrationDeviceCandidate = {
+  external_device_id: string;
+  name: string;
+  room_name: string | null;
+  entity_count: number;
+  already_synced: boolean;
 };
 
-function buildPluginFormDraft(form: PluginConfigFormRead | null): HaFormDraft {
-  return {
-    values: { ...(form?.view.values ?? {}) },
-    secretValues: {},
-    clearSecretFields: [],
-  };
-}
-
-function getStringFieldValue(values: Record<string, unknown>, key: string): string {
-  const value = values[key];
-  return typeof value === 'string' ? value : '';
-}
-
-function getBooleanFieldValue(values: Record<string, unknown>, key: string): boolean {
-  return values[key] === true;
-}
+type CreateDraft = {
+  displayName: string;
+  values: Record<string, unknown>;
+  secrets: Record<string, string>;
+  fieldErrors: Record<string, string>;
+};
 
 function getActionOutputItems<T>(result: IntegrationActionResult): T[] {
   const items = result.output.items;
@@ -75,11 +39,46 @@ function getActionOutputSummary<T>(result: IntegrationActionResult): T | null {
   return summary && typeof summary === 'object' ? (summary as T) : null;
 }
 
-function normalizeFieldSubmitValue(field: PluginManifestConfigField, value: unknown): unknown {
+function buildDraft(item: IntegrationCatalogItem | null): CreateDraft {
+  const values: Record<string, unknown> = {};
+  for (const field of item?.config_spec?.config_schema.fields ?? []) {
+    if (field.default !== undefined && field.type !== 'secret') {
+      values[field.key] = field.default;
+    }
+  }
+  return {
+    displayName: item?.name ?? '',
+    values,
+    secrets: {},
+    fieldErrors: {},
+  };
+}
+
+function getScalarValue(values: Record<string, unknown>, key: string): string {
+  const value = values[key];
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  return '';
+}
+
+function normalizeSubmitValue(field: PluginManifestConfigField, value: unknown): unknown {
   if (field.type === 'boolean') {
     return value === true;
   }
-  if (field.type === 'string' || field.type === 'text' || field.type === 'secret') {
+  if (field.type === 'integer' || field.type === 'number') {
+    if (typeof value === 'number') {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value.trim());
+      return Number.isFinite(parsed) ? parsed : value;
+    }
+  }
+  if (field.type === 'string' || field.type === 'text' || field.type === 'secret' || field.type === 'enum') {
     return typeof value === 'string' ? value.trim() : value;
   }
   return value;
@@ -87,46 +86,25 @@ function normalizeFieldSubmitValue(field: PluginManifestConfigField, value: unkn
 
 function SettingsIntegrationsContent() {
   const { locale } = useI18n();
-  const { actor } = useAuthContext();
   const { currentHouseholdId } = useHouseholdContext();
   const page = (
     key: Parameters<typeof getPageMessage>[1],
     params?: Record<string, string | number>,
   ) => getPageMessage(locale, key, params);
-  const listSeparator = locale.toLowerCase().startsWith('en') ? ', ' : '、';
-  const errorJoiner = locale.toLowerCase().startsWith('en') ? '; ' : '；';
-  const [overview, setOverview] = useState<ContextOverviewRead | null>(null);
-  const [haInstance, setHaInstance] = useState<IntegrationInstance | null>(null);
-  const [haConfigForm, setHaConfigForm] = useState<PluginConfigFormRead | null>(null);
-  const [haFormDraft, setHaFormDraft] = useState<HaFormDraft>(() => buildPluginFormDraft(null));
-  const [devices, setDevices] = useState<Device[]>([]);
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [deviceDrafts, setDeviceDrafts] = useState<Record<string, Pick<Device, 'name' | 'room_id' | 'status' | 'controllable'>>>({});
-  const [deviceCandidates, setDeviceCandidates] = useState<HomeAssistantDeviceCandidate[]>([]);
-  const [selectedExternalDeviceIds, setSelectedExternalDeviceIds] = useState<string[]>([]);
+
+  const [catalog, setCatalog] = useState<IntegrationCatalogItem[]>([]);
+  const [instances, setInstances] = useState<IntegrationInstance[]>([]);
+  const [deviceResources, setDeviceResources] = useState<IntegrationResource[]>([]);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [selectedCatalogItem, setSelectedCatalogItem] = useState<IntegrationCatalogItem | null>(null);
+  const [createDraft, setCreateDraft] = useState<CreateDraft>(() => buildDraft(null));
+  const [deviceCandidates, setDeviceCandidates] = useState<IntegrationDeviceCandidate[]>([]);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
+  const [catalogModalOpen, setCatalogModalOpen] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [deviceModalOpen, setDeviceModalOpen] = useState(false);
-  const [deviceModalLoading, setDeviceModalLoading] = useState(false);
-  const [syncSummary, setSyncSummary] = useState<HomeAssistantSyncResponse | null>(null);
-  const [roomSyncSummary, setRoomSyncSummary] = useState<HomeAssistantRoomSyncResponse | null>(null);
-  const [roomCandidates, setRoomCandidates] = useState<HomeAssistantRoomCandidate[]>([]);
-  const [selectedRoomNames, setSelectedRoomNames] = useState<string[]>([]);
-  const [roomModalOpen, setRoomModalOpen] = useState(false);
-  const [configModalOpen, setConfigModalOpen] = useState(false);
-  const [roomModalLoading, setRoomModalLoading] = useState(false);
-  const [voiceDiscoveries, setVoiceDiscoveries] = useState<VoiceDiscoveryTerminal[]>([]);
-  const [voiceDiscoveryDrafts, setVoiceDiscoveryDrafts] = useState<Record<string, { terminal_name: string; room_id: string }>>({});
-  const [voiceDiscoveryError, setVoiceDiscoveryError] = useState('');
-  const [voiceClaimingFingerprint, setVoiceClaimingFingerprint] = useState<string | null>(null);
-  const [speakerDetailDeviceId, setSpeakerDetailDeviceId] = useState<string | null>(null);
-  const [speakerSettingsError, setSpeakerSettingsError] = useState('');
-  const [voiceprintSummary, setVoiceprintSummary] = useState<HouseholdVoiceprintSummaryRead | null>(null);
-  const [voiceprintLoading, setVoiceprintLoading] = useState(false);
-  const [voiceprintError, setVoiceprintError] = useState('');
-  const [voiceprintSwitchSaving, setVoiceprintSwitchSaving] = useState(false);
-  const [voiceprintWizard, setVoiceprintWizard] = useState<VoiceprintWizardState | null>(null);
-  const [voiceprintWizardEnrollment, setVoiceprintWizardEnrollment] = useState<VoiceprintEnrollmentRead | null>(null);
-  const [voiceprintWizardBusy, setVoiceprintWizardBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
 
@@ -134,843 +112,555 @@ function SettingsIntegrationsContent() {
     void Taro.setNavigationBarTitle({ title: page('settings.integrations.title') }).catch(() => undefined);
   }, [locale]);
 
-  const copy = {
-    defaultSpeakerName: page('settings.integrations.defaultSpeakerName'),
-    roomUnassigned: page('settings.integrations.roomUnassigned'),
-    discoveryNotFound: page('settings.integrations.error.discoveryNotFound'),
-    roomNotFound: page('settings.integrations.error.roomNotFound'),
-    roomMismatch: page('settings.integrations.error.roomMismatch'),
-    discoveryClaimed: page('settings.integrations.error.discoveryClaimed'),
-    loadDiscoveryFailed: page('settings.integrations.error.loadDiscoveryFailed'),
-    loadVoiceprintFailed: page('settings.integrations.error.loadVoiceprintFailed'),
-    loadIntegrationFailed: page('settings.integrations.error.loadIntegrationFailed'),
-    loadEnrollmentFailed: page('settings.integrations.error.loadEnrollmentFailed'),
-    actionFailed: page('settings.integrations.error.actionFailed'),
-    saveHaSuccess: page('settings.integrations.status.saveHaSuccess'),
-    selectHousehold: page('settings.integrations.error.selectHousehold'),
-    loadHaDevicesFailed: page('settings.integrations.error.loadHaDevicesFailed'),
-    importHaDevicesSuccess: (count: number) => page('settings.integrations.status.importHaDevicesSuccess', { count }),
-    loadHaRoomsFailed: page('settings.integrations.error.loadHaRoomsFailed'),
-    importHaRoomsSuccess: (count: number) => page('settings.integrations.status.importHaRoomsSuccess', { count }),
-    saveDeviceSuccess: page('settings.integrations.status.saveDeviceSuccess'),
-    saveSpeakerSuccess: page('settings.integrations.status.saveSpeakerSuccess'),
-    saveSpeakerFailed: page('settings.integrations.error.saveSpeakerFailed'),
-    saveVoiceprintSwitchFailed: page('settings.integrations.error.saveVoiceprintSwitchFailed'),
-    createEnrollmentFailed: page('settings.integrations.error.createEnrollmentFailed'),
-    deviceNameRequired: page('settings.integrations.error.deviceNameRequired'),
-    roomRequired: page('settings.integrations.error.roomRequired'),
-    claimSpeakerSuccess: page('settings.integrations.status.claimSpeakerSuccess'),
-    claimSpeakerFailed: page('settings.integrations.error.claimSpeakerFailed'),
-    deviceTypeLight: page('settings.integrations.deviceType.light'),
-    deviceTypeAc: page('settings.integrations.deviceType.ac'),
-    deviceTypeCurtain: page('settings.integrations.deviceType.curtain'),
-    deviceTypeSpeaker: page('settings.integrations.deviceType.speaker'),
-    deviceTypeCamera: page('settings.integrations.deviceType.camera'),
-    deviceTypeSensor: page('settings.integrations.deviceType.sensor'),
-    deviceTypeLock: page('settings.integrations.deviceType.lock'),
-    online: page('settings.integrations.deviceStatus.online'),
-    recentlyOnline: page('settings.integrations.deviceStatus.recentlyOnline'),
-    offline: page('settings.integrations.deviceStatus.offline'),
-    inactive: page('settings.integrations.deviceStatus.inactive'),
-    controllable: page('settings.integrations.deviceControllable.true'),
-    readOnly: page('settings.integrations.deviceControllable.false'),
-    haUnconfigured: page('settings.integrations.ha.unconfigured'),
-    haHealthy: page('settings.integrations.ha.healthy'),
-    haDegraded: page('settings.integrations.ha.degraded'),
-    haOffline: page('settings.integrations.ha.offline'),
-    haChecking: page('settings.integrations.ha.checking'),
-    justNow: page('settings.integrations.ha.justNow'),
-    currentStatusLoaded: page('settings.integrations.ha.currentStatusLoaded'),
-    noRecord: page('settings.integrations.ha.noRecord'),
-    connectHaFirst: page('settings.integrations.action.connectHaFirst'),
-    importing: page('settings.integrations.action.importing'),
-    importDevices: page('settings.integrations.action.importDevices'),
-    importRooms: page('settings.integrations.action.importRooms'),
-    finishHaConnectionFirst: page('settings.integrations.action.finishHaConnectionFirst'),
-  };
-
-  async function loadHaIntegrationState(householdId: string) {
-    const [instancesResult, configFormResult] = await Promise.all([
-      settingsApi.listIntegrationInstances(householdId),
-      settingsApi.getHouseholdPluginConfigForm(householdId, 'homeassistant', {
-        scope_type: 'plugin',
-        scope_key: 'default',
-      }),
-    ]);
-    const instance = instancesResult.items.find((item) => item.plugin_id === 'homeassistant') ?? null;
-    return {
-      instance,
-      form: configFormResult,
-    };
-  }
-
-  function applyHaIntegrationState(nextState: { instance: IntegrationInstance | null; form: PluginConfigFormRead | null }) {
-    setHaInstance(nextState.instance);
-    setHaConfigForm(nextState.form);
-    setHaFormDraft(buildPluginFormDraft(nextState.form));
-  }
-
-  async function ensureHaInstance(householdId: string) {
-    if (haInstance) {
-      return haInstance;
-    }
-    if (haConfigForm?.view.state !== 'configured') {
-      return null;
-    }
-    await settingsApi.saveHouseholdPluginConfigForm(householdId, 'homeassistant', {
-      scope_type: 'plugin',
-      scope_key: 'default',
-      values: {},
-      clear_secret_fields: [],
-    });
-    const nextState = await loadHaIntegrationState(householdId);
-    applyHaIntegrationState(nextState);
-    return nextState.instance;
-  }
-
-  const getDefaultVoiceDiscoveryDraft = () => ({ terminal_name: copy.defaultSpeakerName, room_id: rooms[0]?.id ?? '' });
-  const mergeVoiceDiscoveryDrafts = (items: VoiceDiscoveryTerminal[], previous: Record<string, { terminal_name: string; room_id: string }>) => Object.fromEntries(items.map((item) => [item.fingerprint, { ...getDefaultVoiceDiscoveryDraft(), ...previous[item.fingerprint] }]));
-  const normalizeVoiceDiscoveryErrorMessage = (message: string) => {
-    if (message === 'voice discovery not found') return copy.discoveryNotFound;
-    if (message === 'room not found') return copy.roomNotFound;
-    if (message === 'room must belong to the same household') return copy.roomMismatch;
-    if (message === 'voice terminal already claimed by another household') return copy.discoveryClaimed;
-    return message;
-  };
-
-  async function loadVoiceDiscoveries(householdId: string, options?: { silent?: boolean }) {
+  async function reload(householdId: string, preferredInstanceId?: string | null) {
+    setLoading(true);
     try {
-      const result = await settingsApi.listVoiceTerminalDiscoveries(householdId);
-      setVoiceDiscoveries(result.items);
-      setVoiceDiscoveryDrafts((current) => mergeVoiceDiscoveryDrafts(result.items, current));
-      if (!options?.silent) setVoiceDiscoveryError('');
+      const view = await settingsApi.getIntegrationPageView(householdId);
+      setCatalog(view.catalog);
+      setInstances(view.instances);
+      setDeviceResources(view.resources.device ?? []);
+      setSelectedInstanceId((current) => {
+        const nextId = preferredInstanceId ?? current;
+        if (nextId && view.instances.some((item) => item.id === nextId)) {
+          return nextId;
+        }
+        return view.instances[0]?.id ?? null;
+      });
+      setError('');
     } catch (loadError) {
-      if (!options?.silent) setVoiceDiscoveryError(loadError instanceof Error ? normalizeVoiceDiscoveryErrorMessage(loadError.message) : copy.loadDiscoveryFailed);
-    }
-  }
-
-  async function loadVoiceprintSummary(terminalId: string, options?: { silent?: boolean }) {
-    if (!currentHouseholdId) return;
-    try {
-      setVoiceprintLoading(true);
-      const result = await settingsApi.getHouseholdVoiceprintSummary(currentHouseholdId, terminalId);
-      setVoiceprintSummary(result);
-      if (!options?.silent) setVoiceprintError('');
-    } catch (loadError) {
-      if (!options?.silent) {
-        setVoiceprintError(loadError instanceof Error ? loadError.message : copy.loadVoiceprintFailed);
-      }
+      setError(loadError instanceof Error ? loadError.message : page('settings.integrations.error.loadIntegrationFailed'));
     } finally {
-      setVoiceprintLoading(false);
+      setLoading(false);
     }
-  }
-
-  function closeSpeakerDetail() {
-    setSpeakerDetailDeviceId(null);
-    setSpeakerSettingsError('');
-    setVoiceprintSummary(null);
-    setVoiceprintError('');
-    setVoiceprintWizard(null);
-    setVoiceprintWizardEnrollment(null);
-    setVoiceprintWizardBusy(false);
   }
 
   useEffect(() => {
     if (!currentHouseholdId) {
-      setOverview(null); setDevices([]); setRooms([]); setVoiceDiscoveries([]); setVoiceDiscoveryDrafts({}); setVoiceDiscoveryError('');
-      setHaInstance(null); setHaConfigForm(null); setHaFormDraft(buildPluginFormDraft(null));
-      setVoiceprintSummary(null); setVoiceprintError(''); setVoiceprintWizard(null); setVoiceprintWizardEnrollment(null);
+      setCatalog([]);
+      setInstances([]);
+      setDeviceResources([]);
+      setSelectedInstanceId(null);
       return;
     }
-    let cancelled = false;
-    async function loadData() {
-      setLoading(true); setError('');
-      const [haStateResult, devicesResult, roomsResult] = await Promise.allSettled([
-        loadHaIntegrationState(currentHouseholdId),
-        settingsApi.listDevices(currentHouseholdId),
-        settingsApi.listRooms(currentHouseholdId),
-      ]);
-      if (cancelled) return;
-      const nextHaState = haStateResult.status === 'fulfilled' ? haStateResult.value : null;
-      const nextDevices = devicesResult.status === 'fulfilled' ? devicesResult.value.items : [];
-      const nextRooms = roomsResult.status === 'fulfilled' ? roomsResult.value.items : [];
-      setDevices(nextDevices); setRooms(nextRooms);
-      applyHaIntegrationState(nextHaState ?? { instance: null, form: null });
-      setDeviceDrafts(Object.fromEntries(nextDevices.map((device) => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
-      await loadVoiceDiscoveries(currentHouseholdId);
-      const hasHaConfig = nextHaState?.form?.view.state === 'configured';
-      if (hasHaConfig) {
-        const overviewResult = await settingsApi.getContextOverview(currentHouseholdId).then((value) => ({ status: 'fulfilled' as const, value }), (reason) => ({ status: 'rejected' as const, reason }));
-        if (cancelled) return;
-        setOverview(overviewResult.status === 'fulfilled' ? overviewResult.value : null);
-        setError([haStateResult, devicesResult, roomsResult, overviewResult].filter((result) => result.status === 'rejected').map((result) => result.reason instanceof Error ? result.reason.message : copy.loadIntegrationFailed).join(errorJoiner));
-      } else {
-        setOverview(null);
-        setError([haStateResult, devicesResult, roomsResult].filter((result) => result.status === 'rejected').map((result) => result.reason instanceof Error ? result.reason.message : copy.loadIntegrationFailed).join(errorJoiner));
-      }
-      setLoading(false);
-    }
-    void loadData();
-    return () => { cancelled = true; };
+    void reload(currentHouseholdId);
   }, [currentHouseholdId]);
 
-  useEffect(() => {
-    if (!currentHouseholdId) return;
-    const timer = window.setInterval(() => { void loadVoiceDiscoveries(currentHouseholdId, { silent: true }); }, 5000);
-    return () => window.clearInterval(timer);
-  }, [currentHouseholdId]);
+  const selectedInstance = useMemo(
+    () => instances.find((item) => item.id === selectedInstanceId) ?? null,
+    [instances, selectedInstanceId],
+  );
+  const selectedDevices = useMemo(
+    () => deviceResources.filter((item) => item.integration_instance_id === selectedInstanceId),
+    [deviceResources, selectedInstanceId],
+  );
 
-  useEffect(() => {
-    if (rooms.length === 0) return;
-    setVoiceDiscoveryDrafts((current) => Object.fromEntries(Object.entries(current).map(([fingerprint, draft]) => [fingerprint, { ...draft, room_id: draft.room_id || rooms[0].id }])));
-  }, [rooms]);
-
-  useEffect(() => {
-    if (!currentHouseholdId || !speakerDetailDeviceId) {
-      setVoiceprintSummary(null);
-      setVoiceprintError('');
-      return;
+  function formatStatus(instance: IntegrationInstance) {
+    if (instance.status === 'degraded') {
+      return page('settings.integrations.instance.status.degraded');
     }
-    void loadVoiceprintSummary(speakerDetailDeviceId);
-  }, [currentHouseholdId, speakerDetailDeviceId]);
-
-  useEffect(() => {
-    if (!voiceprintWizard || voiceprintWizard.step !== 'waiting' || !voiceprintWizard.enrollmentId || !speakerDetailDeviceId) {
-      return;
+    if (instance.status === 'disabled') {
+      return page('settings.integrations.instance.status.disabled');
     }
-    const activeEnrollmentId = voiceprintWizard.enrollmentId;
-    const activeDeviceId = speakerDetailDeviceId;
-    let cancelled = false;
-    let timerId: number | undefined;
-
-    async function pollEnrollment() {
-      try {
-        const enrollment = await settingsApi.getVoiceprintEnrollment(activeEnrollmentId);
-        if (cancelled) return;
-        setVoiceprintWizardEnrollment(enrollment);
-        setVoiceprintWizard((current) => current ? getNextWizardStateFromEnrollment(current, enrollment) : current);
-        if (enrollment.status === 'completed' || enrollment.status === 'failed' || enrollment.status === 'cancelled') {
-          await reloadWorkspace();
-          await loadVoiceprintSummary(activeDeviceId, { silent: true });
-          return;
-        }
-      } catch (pollError) {
-        if (cancelled) return;
-        setVoiceprintWizard((current) => current ? { ...current, step: 'failed', error: pollError instanceof Error ? pollError.message : copy.loadEnrollmentFailed } : current);
-        return;
-      }
-      if (!cancelled) {
-        timerId = window.setTimeout(() => { void pollEnrollment(); }, 3000);
-      }
+    if (instance.status === 'draft' || instance.config_state !== 'configured') {
+      return page('settings.integrations.instance.status.draft');
     }
-
-    void pollEnrollment();
-    return () => {
-      cancelled = true;
-      if (typeof timerId === 'number') {
-        window.clearTimeout(timerId);
-      }
-    };
-  }, [speakerDetailDeviceId, voiceprintWizard?.enrollmentId, voiceprintWizard?.step]);
-
-  async function reloadWorkspace() {
-    if (!currentHouseholdId) return;
-    const [haState, nextDevices, nextRooms] = await Promise.all([loadHaIntegrationState(currentHouseholdId), settingsApi.listDevices(currentHouseholdId), settingsApi.listRooms(currentHouseholdId)]);
-    applyHaIntegrationState(haState);
-    setOverview(haState.form?.view.state === 'configured' ? await settingsApi.getContextOverview(currentHouseholdId).catch(() => null) : null);
-    setDevices(nextDevices.items); setRooms(nextRooms.items);
-    setDeviceDrafts(Object.fromEntries(nextDevices.items.map((device) => [device.id, { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable }])));
-    await loadVoiceDiscoveries(currentHouseholdId, { silent: true });
+    return page('settings.integrations.instance.status.active');
   }
 
-  async function runAction(action: () => Promise<void>) {
-    setLoading(true); setStatus(''); setError('');
-    try { await action(); } catch (actionError) { setError(actionError instanceof Error ? actionError.message : copy.actionFailed); } finally { setLoading(false); }
+  function openCreateModal(item: IntegrationCatalogItem) {
+    setSelectedCatalogItem(item);
+    setCreateDraft(buildDraft(item));
+    setCatalogModalOpen(false);
+    setCreateModalOpen(true);
   }
 
-  async function handleSaveHaConfig(event: React.FormEvent<HTMLFormElement>) {
+  function closeCreateModal() {
+    setCreateModalOpen(false);
+    setSelectedCatalogItem(null);
+    setCreateDraft(buildDraft(null));
+  }
+
+  function updateValue(fieldKey: string, value: unknown) {
+    setCreateDraft((current) => ({
+      ...current,
+      values: { ...current.values, [fieldKey]: value },
+      fieldErrors: { ...current.fieldErrors, [fieldKey]: '' },
+    }));
+  }
+
+  function updateSecret(fieldKey: string, value: string) {
+    setCreateDraft((current) => ({
+      ...current,
+      secrets: { ...current.secrets, [fieldKey]: value },
+      fieldErrors: { ...current.fieldErrors, [fieldKey]: '' },
+    }));
+  }
+
+  function renderField(field: PluginManifestConfigField, widget?: PluginManifestFieldUiSchema) {
+    const fieldError = createDraft.fieldErrors[field.key];
+    if (field.type === 'secret') {
+      return (
+        <div key={field.key} className="form-group">
+          <label>{field.label}</label>
+          <input
+            className="form-input"
+            type="password"
+            value={createDraft.secrets[field.key] ?? ''}
+            onChange={(event) => updateSecret(field.key, event.target.value)}
+            placeholder={widget?.placeholder ?? undefined}
+          />
+          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+    if (field.type === 'boolean') {
+      return (
+        <div key={field.key} className="form-group">
+          <label>{field.label}</label>
+          <select
+            className="form-select"
+            value={createDraft.values[field.key] === true ? 'true' : 'false'}
+            onChange={(event) => updateValue(field.key, event.target.value === 'true')}
+          >
+            <option value="false">{page('settings.integrations.modal.config.booleanFalse')}</option>
+            <option value="true">{page('settings.integrations.modal.config.booleanTrue')}</option>
+          </select>
+          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+    if (field.type === 'enum') {
+      return (
+        <div key={field.key} className="form-group">
+          <label>{field.label}</label>
+          <select
+            className="form-select"
+            value={getScalarValue(createDraft.values, field.key)}
+            onChange={(event) => updateValue(field.key, event.target.value)}
+          >
+            <option value="">{page('settings.integrations.modal.config.selectPlaceholder')}</option>
+            {(field.enum_options ?? []).map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+    if (field.type === 'text') {
+      return (
+        <div key={field.key} className="form-group">
+          <label>{field.label}</label>
+          <textarea
+            className="form-input"
+            value={getScalarValue(createDraft.values, field.key)}
+            onChange={(event) => updateValue(field.key, event.target.value)}
+            placeholder={widget?.placeholder ?? undefined}
+          />
+          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+    return (
+      <div key={field.key} className="form-group">
+        <label>{field.label}</label>
+        <input
+          className="form-input"
+          type={field.type === 'integer' || field.type === 'number' ? 'number' : 'text'}
+          value={getScalarValue(createDraft.values, field.key)}
+          onChange={(event) => updateValue(field.key, event.target.value)}
+          placeholder={widget?.placeholder ?? undefined}
+        />
+        <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+        {fieldError ? <div className="form-help">{fieldError}</div> : null}
+      </div>
+    );
+  }
+
+  async function handleCreateInstance(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!currentHouseholdId || !haConfigForm) return;
-    await runAction(async () => {
-      const fieldMap = new Map(haConfigForm.config_spec.config_schema.fields.map((field) => [field.key, field]));
-      const values = Object.fromEntries(Object.entries(haFormDraft.values).map(([key, value]) => {
-        const field = fieldMap.get(key);
-        return [key, field ? normalizeFieldSubmitValue(field, value) : value];
+    if (!currentHouseholdId || !selectedCatalogItem?.config_spec) {
+      return;
+    }
+    if (!createDraft.displayName.trim()) {
+      setCreateDraft((current) => ({
+        ...current,
+        fieldErrors: {
+          ...current.fieldErrors,
+          display_name: page('settings.integrations.modal.create.displayNameRequired'),
+        },
       }));
-      for (const [key, value] of Object.entries(haFormDraft.secretValues)) {
-        if (!value.trim()) {
-          continue;
-        }
-        const field = fieldMap.get(key);
-        values[key] = field ? normalizeFieldSubmitValue(field, value) : value.trim();
-      }
-      const result = await settingsApi.saveHouseholdPluginConfigForm(currentHouseholdId, 'homeassistant', {
-        scope_type: haConfigForm.view.scope_type,
-        scope_key: haConfigForm.view.scope_key,
-        values,
-        clear_secret_fields: haFormDraft.clearSecretFields,
-      });
-      setHaConfigForm(result);
-      setHaFormDraft(buildPluginFormDraft(result));
-      const nextHaState = await loadHaIntegrationState(currentHouseholdId);
-      applyHaIntegrationState(nextHaState);
-      setConfigModalOpen(false); setStatus(copy.saveHaSuccess);
-    });
-  }
+      return;
+    }
 
-  async function openDeviceSyncModal() {
-    if (!currentHouseholdId) { setError(copy.selectHousehold); return; }
-    setDeviceModalLoading(true); setError('');
+    const payloadValues: Record<string, unknown> = {};
+    for (const field of selectedCatalogItem.config_spec.config_schema.fields) {
+      const rawValue = field.type === 'secret'
+        ? (createDraft.secrets[field.key] ?? '')
+        : createDraft.values[field.key];
+      if (field.type === 'secret' && typeof rawValue === 'string' && !rawValue.trim()) {
+        continue;
+      }
+      if (rawValue === undefined) {
+        continue;
+      }
+      payloadValues[field.key] = normalizeSubmitValue(field, rawValue);
+    }
+
+    setSubmitting(true);
     try {
-      const instance = await ensureHaInstance(currentHouseholdId);
-      if (!instance) {
-        throw new Error(copy.finishHaConnectionFirst);
-      }
-      const result = await settingsApi.executeIntegrationInstanceAction(instance.id, {
-        action: 'sync',
-        payload: { sync_scope: 'device_candidates' },
+      const instance = await settingsApi.createIntegrationInstance({
+        household_id: currentHouseholdId,
+        plugin_id: selectedCatalogItem.plugin_id,
+        display_name: createDraft.displayName.trim(),
+        config: payloadValues,
+        clear_secret_fields: [],
       });
-      const items = getActionOutputItems<HomeAssistantDeviceCandidate>(result);
-      setHaInstance(result.instance ?? instance);
-      setDeviceCandidates(items); setSelectedExternalDeviceIds(items.map((item) => item.external_device_id)); setDeviceModalOpen(true);
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : copy.loadHaDevicesFailed);
-    } finally { setDeviceModalLoading(false); }
+      setStatus(page('settings.integrations.status.instanceCreated', { name: instance.display_name }));
+      closeCreateModal();
+      await reload(currentHouseholdId, instance.id);
+    } catch (submitError) {
+      if (submitError instanceof ApiError) {
+        const payload = submitError.payload as { detail?: { field_errors?: Record<string, string> } } | undefined;
+        if (payload?.detail?.field_errors) {
+          setCreateDraft((current) => ({
+            ...current,
+            fieldErrors: {
+              ...current.fieldErrors,
+              ...payload.detail!.field_errors!,
+            },
+          }));
+        }
+      }
+      setError(submitError instanceof Error ? submitError.message : page('settings.integrations.error.actionFailed'));
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  async function handleConfirmDeviceSync() {
-    if (!currentHouseholdId) return;
-    await runAction(async () => {
-      const instance = await ensureHaInstance(currentHouseholdId);
-      if (!instance) {
-        throw new Error(copy.finishHaConnectionFirst);
-      }
-      const result = await settingsApi.executeIntegrationInstanceAction(instance.id, {
+  async function handleSyncAll() {
+    if (!selectedInstance) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await settingsApi.executeIntegrationInstanceAction(selectedInstance.id, {
         action: 'sync',
         payload: {
           sync_scope: 'device_sync',
-          selected_external_ids: selectedExternalDeviceIds,
+          selected_external_ids: [],
         },
       });
-      const summary = getActionOutputSummary<HomeAssistantSyncResponse>(result);
-      if (summary) {
-        setSyncSummary(summary);
-        setStatus(copy.importHaDevicesSuccess(summary.created_devices + summary.updated_devices));
-      }
-      setHaInstance(result.instance ?? instance);
-      setDeviceModalOpen(false);
-      await reloadWorkspace();
-    });
+      const summary = getActionOutputSummary<{ created_devices: number; updated_devices: number }>(result);
+      setStatus(page('settings.integrations.status.deviceSyncFinished', {
+        count: (summary?.created_devices ?? 0) + (summary?.updated_devices ?? 0),
+      }));
+      await reload(currentHouseholdId ?? '', selectedInstance.id);
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.actionFailed'));
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  async function openRoomSyncModal() {
-    if (!currentHouseholdId) { setError(copy.selectHousehold); return; }
-    setRoomModalLoading(true); setError('');
+  async function handleOpenPicker() {
+    if (!selectedInstance) {
+      return;
+    }
+    setSubmitting(true);
     try {
-      const instance = await ensureHaInstance(currentHouseholdId);
-      if (!instance) {
-        throw new Error(copy.finishHaConnectionFirst);
-      }
-      const result = await settingsApi.executeIntegrationInstanceAction(instance.id, {
-        action: 'sync',
-        payload: { sync_scope: 'room_candidates' },
-      });
-      const items = getActionOutputItems<HomeAssistantRoomCandidate>(result);
-      setHaInstance(result.instance ?? instance);
-      setRoomCandidates(items); setSelectedRoomNames(items.filter((item) => item.can_sync).map((item) => item.name)); setRoomModalOpen(true);
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : copy.loadHaRoomsFailed);
-    } finally { setRoomModalLoading(false); }
-  }
-
-  async function handleConfirmRoomSync() {
-    if (!currentHouseholdId) return;
-    await runAction(async () => {
-      const instance = await ensureHaInstance(currentHouseholdId);
-      if (!instance) {
-        throw new Error(copy.finishHaConnectionFirst);
-      }
-      const result = await settingsApi.executeIntegrationInstanceAction(instance.id, {
+      const result = await settingsApi.executeIntegrationInstanceAction(selectedInstance.id, {
         action: 'sync',
         payload: {
-          sync_scope: 'room_sync',
-          selected_external_ids: selectedRoomNames,
+          sync_scope: 'device_candidates',
         },
       });
-      const summary = getActionOutputSummary<HomeAssistantRoomSyncResponse>(result);
-      if (summary) {
-        setRoomSyncSummary(summary);
-        setStatus(copy.importHaRoomsSuccess(summary.created_rooms));
-      }
-      setHaInstance(result.instance ?? instance);
-      setRoomModalOpen(false);
-      await reloadWorkspace();
-    });
-  }
-
-  function toggleRoomSelection(roomName: string) { setSelectedRoomNames((current) => current.includes(roomName) ? current.filter((item) => item !== roomName) : [...current, roomName]); }
-  function toggleDeviceSelection(externalDeviceId: string) { setSelectedExternalDeviceIds((current) => current.includes(externalDeviceId) ? current.filter((item) => item !== externalDeviceId) : [...current, externalDeviceId]); }
-  function toggleDeviceRoomSelection(deviceIds: string[]) { setSelectedExternalDeviceIds((current) => deviceIds.every((id) => current.includes(id)) ? current.filter((id) => !deviceIds.includes(id)) : Array.from(new Set([...current, ...deviceIds]))); }
-  async function handleSaveDevice(deviceId: string) { const draft = deviceDrafts[deviceId]; if (!draft) return; await runAction(async () => { await settingsApi.updateDevice(deviceId, draft); await reloadWorkspace(); setStatus(copy.saveDeviceSuccess); }); }
-  function openSpeakerSettings(device: Device) { setSpeakerSettingsError(''); setSpeakerDetailDeviceId(device.id); }
-  async function handleSaveSpeakerSettings(payload: { voice_auto_takeover_enabled: boolean; voice_takeover_prefixes: string[] }) {
-    if (!speakerDetailDeviceId) return;
-    setLoading(true); setStatus(''); setError(''); setSpeakerSettingsError('');
-    try {
-      await settingsApi.updateDevice(speakerDetailDeviceId, payload);
-      await reloadWorkspace();
-      setStatus(copy.saveSpeakerSuccess);
-    } catch (actionError) {
-      setSpeakerSettingsError(actionError instanceof Error ? actionError.message : copy.saveSpeakerFailed);
+      setDeviceCandidates(getActionOutputItems<IntegrationDeviceCandidate>(result));
+      setSelectedDeviceIds([]);
+      setDeviceModalOpen(true);
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.loadHaDevicesFailed'));
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
-  async function handleToggleVoiceprintEnabled(nextValue: boolean) {
-    if (!speakerDetailDeviceId) return;
-    const previousSummary = voiceprintSummary;
-    setVoiceprintSwitchSaving(true);
-    setVoiceprintError('');
-    setVoiceprintSummary((current) => current ? {
-      ...current,
-      voiceprint_identity_enabled: nextValue,
-      conversation_mode: nextValue ? 'voiceprint_member' : 'public',
-    } : current);
-    try {
-      await settingsApi.updateDevice(speakerDetailDeviceId, { voiceprint_identity_enabled: nextValue });
-      await reloadWorkspace();
-      await loadVoiceprintSummary(speakerDetailDeviceId, { silent: true });
-    } catch (actionError) {
-      setVoiceprintSummary(previousSummary);
-      setVoiceprintError(actionError instanceof Error ? actionError.message : copy.saveVoiceprintSwitchFailed);
-    } finally {
-      setVoiceprintSwitchSaving(false);
+  async function handleSyncSelected() {
+    if (!selectedInstance) {
+      return;
     }
-  }
-
-  function handleOpenVoiceprintWizard(memberId?: string) {
-    if (actor?.member_role !== 'admin' || !voiceprintSummary || voiceprintSummary.members.length === 0) return;
-    setVoiceprintWizardEnrollment(null);
-    setVoiceprintWizard(createVoiceprintWizardState('create', memberId ?? null));
-  }
-
-  function handleOpenVoiceprintUpdateWizard(memberId: string) {
-    if (actor?.member_role !== 'admin' || !voiceprintSummary) return;
-    setVoiceprintWizardEnrollment(null);
-    setVoiceprintWizard(createVoiceprintWizardState('update', memberId));
-  }
-
-  async function handleResumeVoiceprintEnrollment(enrollmentId: string, memberId: string) {
-    if (actor?.member_role !== 'admin') return;
-    setVoiceprintWizardBusy(true);
-    setVoiceprintWizard(createVoiceprintWaitingWizardState(memberId, enrollmentId));
+    setSubmitting(true);
     try {
-      const enrollment = await settingsApi.getVoiceprintEnrollment(enrollmentId);
-      setVoiceprintWizardEnrollment(enrollment);
-      setVoiceprintWizard((current) => current ? getNextWizardStateFromEnrollment(current, enrollment) : current);
-    } catch (actionError) {
-      setVoiceprintWizard((current) => current ? {
-        ...current,
-        step: 'failed',
-        error: actionError instanceof Error ? actionError.message : copy.loadEnrollmentFailed,
-      } : current);
-    } finally {
-      setVoiceprintWizardBusy(false);
-    }
-  }
-
-  function handleVoiceprintWizardContinue() {
-    setVoiceprintWizard((current) => current && current.memberId ? { ...current, step: 'confirm', error: '' } : current);
-  }
-
-  function handleVoiceprintWizardBack() {
-    setVoiceprintWizard((current) => {
-      if (!current || current.lockedMemberId) return current;
-      return { ...current, step: 'select_member', error: '' };
-    });
-  }
-
-  async function handleSubmitVoiceprintWizard() {
-    if (!voiceprintWizard?.memberId || !speakerDetailDeviceId || !currentHouseholdId) return;
-    setVoiceprintWizardBusy(true);
-    setVoiceprintWizard((current) => current ? { ...current, step: 'creating', error: '' } : current);
-    try {
-      const enrollment = await settingsApi.createVoiceprintEnrollment({
-        household_id: currentHouseholdId,
-        member_id: voiceprintWizard.memberId,
-        terminal_id: speakerDetailDeviceId,
-        sample_goal: 3,
+      const result = await settingsApi.executeIntegrationInstanceAction(selectedInstance.id, {
+        action: 'sync',
+        payload: {
+          sync_scope: 'device_sync',
+          selected_external_ids: selectedDeviceIds,
+        },
       });
-      setVoiceprintWizardEnrollment(enrollment);
-      setVoiceprintWizard((current) => current ? getNextWizardStateFromEnrollment({ ...current, enrollmentId: enrollment.id }, enrollment) : current);
-      await loadVoiceprintSummary(speakerDetailDeviceId, { silent: true });
-    } catch (actionError) {
-      setVoiceprintWizard((current) => current ? {
-        ...current,
-        step: 'failed',
-        error: actionError instanceof Error ? actionError.message : copy.createEnrollmentFailed,
-      } : current);
+      const summary = getActionOutputSummary<{ created_devices: number; updated_devices: number }>(result);
+      setStatus(page('settings.integrations.status.deviceSyncFinished', {
+        count: (summary?.created_devices ?? 0) + (summary?.updated_devices ?? 0),
+      }));
+      setDeviceModalOpen(false);
+      setSelectedDeviceIds([]);
+      await reload(currentHouseholdId ?? '', selectedInstance.id);
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.actionFailed'));
     } finally {
-      setVoiceprintWizardBusy(false);
+      setSubmitting(false);
     }
-  }
-
-  function updateVoiceDiscoveryDraft(fingerprint: string, patch: Partial<{ terminal_name: string; room_id: string }>) { setVoiceDiscoveryDrafts((current) => ({ ...current, [fingerprint]: { terminal_name: current[fingerprint]?.terminal_name ?? copy.defaultSpeakerName, room_id: current[fingerprint]?.room_id ?? (rooms[0]?.id ?? ''), ...patch } })); }
-  function getVoiceDiscoveryDraft(fingerprint: string) { const draft = voiceDiscoveryDrafts[fingerprint]; return draft ? { terminal_name: draft.terminal_name || copy.defaultSpeakerName, room_id: draft.room_id || rooms[0]?.id || '' } : getDefaultVoiceDiscoveryDraft(); }
-  async function handleClaimVoiceDiscovery(fingerprint: string) {
-    const draft = getVoiceDiscoveryDraft(fingerprint);
-    if (!currentHouseholdId) { setVoiceDiscoveryError(copy.selectHousehold); return; }
-    if (!draft.terminal_name.trim()) { setVoiceDiscoveryError(copy.deviceNameRequired); return; }
-    if (!draft.room_id) { setVoiceDiscoveryError(copy.roomRequired); return; }
-    setVoiceClaimingFingerprint(fingerprint); setVoiceDiscoveryError('');
-    try {
-      await settingsApi.claimVoiceTerminalDiscovery(fingerprint, { household_id: currentHouseholdId, room_id: draft.room_id, terminal_name: draft.terminal_name.trim() });
-      await reloadWorkspace(); setStatus(copy.claimSpeakerSuccess);
-    } catch (claimError) {
-      setVoiceDiscoveryError(claimError instanceof Error ? normalizeVoiceDiscoveryErrorMessage(claimError.message) : copy.claimSpeakerFailed);
-    } finally { setVoiceClaimingFingerprint(null); }
-  }
-
-  const roomNameMap = useMemo(() => Object.fromEntries(rooms.map((room) => [room.id, room.name])), [rooms]);
-  const roomOptions = useMemo(() => [{ id: '', name: copy.roomUnassigned }, ...rooms.map((room) => ({ id: room.id, name: room.name }))], [copy.roomUnassigned, rooms]);
-  const deviceCandidateGroups = useMemo(() => Array.from(deviceCandidates.reduce((map, candidate) => map.set(candidate.room_name || copy.roomUnassigned, [...(map.get(candidate.room_name || copy.roomUnassigned) ?? []), candidate]), new Map<string, HomeAssistantDeviceCandidate[]>()).entries()).map(([roomName, items]) => ({ roomName, items })).sort((left, right) => left.roomName.localeCompare(right.roomName, resolveDateLocale(locale))), [copy.roomUnassigned, deviceCandidates, locale]);
-  const haFieldWidgets = useMemo(() => haConfigForm?.config_spec.ui_schema.widgets ?? {}, [haConfigForm]);
-  const haFieldsByKey = useMemo(() => new Map((haConfigForm?.config_spec.config_schema.fields ?? []).map((field) => [field.key, field])), [haConfigForm]);
-  const haConfigSections = useMemo(() => {
-    if (!haConfigForm) {
-      return [];
-    }
-    const sectionMap = new Map(haConfigForm.config_spec.ui_schema.sections.map((section) => [section.id, section]));
-    const orderedSectionIds = haConfigForm.config_spec.ui_schema.sections.map((section) => section.id);
-    const fallbackSectionId = '__default__';
-    const buckets = new Map<string, string[]>();
-    for (const fieldKey of haConfigForm.config_spec.ui_schema.field_order ?? haConfigForm.config_spec.config_schema.fields.map((field) => field.key)) {
-      const owner = haConfigForm.config_spec.ui_schema.sections.find((section) => section.fields.includes(fieldKey));
-      const sectionId = owner?.id ?? fallbackSectionId;
-      buckets.set(sectionId, [...(buckets.get(sectionId) ?? []), fieldKey]);
-    }
-    return [...orderedSectionIds, ...buckets.keys()].filter((sectionId, index, list) => list.indexOf(sectionId) === index).map((sectionId) => ({
-      id: sectionId,
-      title: sectionMap.get(sectionId)?.title ?? haConfigForm.config_spec.title,
-      description: sectionMap.get(sectionId)?.description ?? haConfigForm.config_spec.description,
-      fields: buckets.get(sectionId) ?? [],
-    })).filter((section) => section.fields.length > 0);
-  }, [haConfigForm]);
-  const haBaseUrl = getStringFieldValue(haConfigForm?.view.values ?? {}, 'base_url');
-  const haTokenConfigured = Boolean(haConfigForm?.view.secret_fields.access_token?.has_value);
-  const haConfigured = haConfigForm?.view.state === 'configured' && Boolean(haBaseUrl) && haTokenConfigured;
-  const formatDeviceType = (type: Device['device_type']) => ({ light: copy.deviceTypeLight, ac: copy.deviceTypeAc, curtain: copy.deviceTypeCurtain, speaker: copy.deviceTypeSpeaker, camera: copy.deviceTypeCamera, sensor: copy.deviceTypeSensor, lock: copy.deviceTypeLock }[type] ?? type);
-  const formatVoiceDiscoveryStatus = (value: VoiceDiscoveryTerminal['connection_status']) => value === 'online' ? copy.online : copy.recentlyOnline;
-  const formatVoiceDiscoveryTime = (value: string) => Number.isNaN(new Date(value).getTime()) ? value : new Date(value).toLocaleString(resolveDateLocale(locale), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const formatVoiceDiscoverySerial = (sn: string) => sn.trim().length <= 4 ? sn.trim() : sn.trim().slice(-4);
-  const formatVoiceTakeoverPrefixes = (prefixes: string[]) => prefixes.join(listSeparator);
-  const formatHaStatus = (configured: boolean, statusValue: ContextOverviewRead['home_assistant_status'] | undefined, state: PluginConfigFormRead['view']['state'] | undefined) => !configured ? { label: copy.haUnconfigured, tone: 'idle' as const } : state === 'invalid' ? { label: copy.haDegraded, tone: 'warning' as const } : statusValue === 'healthy' ? { label: copy.haHealthy, tone: 'online' as const } : statusValue === 'degraded' ? { label: copy.haDegraded, tone: 'warning' as const } : statusValue === 'offline' ? { label: copy.haOffline, tone: 'offline' as const } : { label: copy.haChecking, tone: 'warning' as const };
-  const haStatus = formatHaStatus(haConfigured, overview?.home_assistant_status, haConfigForm?.view.state);
-  const lastSyncText = syncSummary ? copy.justNow : haInstance?.sync_state.last_synced_at ?? (overview ? copy.currentStatusLoaded : copy.noRecord);
-  const haAddressText = haBaseUrl || copy.haUnconfigured;
-  const canOperateHa = haConfigured;
-  const syncButtonLabel = canOperateHa ? (loading ? copy.importing : copy.importDevices) : copy.connectHaFirst;
-  const syncRoomsButtonLabel = canOperateHa ? copy.importRooms : copy.connectHaFirst;
-  const disabledHaActionTooltip = canOperateHa ? undefined : copy.finishHaConnectionFirst;
-  const canManageVoiceprint = actor?.member_role === 'admin';
-  const speakerDetailDevice = useMemo(
-    () => devices.find((device) => device.id === speakerDetailDeviceId) ?? null,
-    [devices, speakerDetailDeviceId],
-  );
-
-  function updateHaDraftValue(key: string, value: unknown) {
-    setHaFormDraft((current) => ({
-      ...current,
-      values: { ...current.values, [key]: value },
-    }));
-  }
-
-  function updateHaSecretValue(key: string, value: string) {
-    setHaFormDraft((current) => ({
-      ...current,
-      secretValues: { ...current.secretValues, [key]: value },
-      clearSecretFields: current.clearSecretFields.filter((item) => item !== key),
-    }));
-  }
-
-  function updateHaSecretHandling(key: string, mode: 'keep' | 'clear') {
-    setHaFormDraft((current) => ({
-      ...current,
-      secretValues: mode === 'clear'
-        ? { ...current.secretValues, [key]: '' }
-        : current.secretValues,
-      clearSecretFields: mode === 'clear'
-        ? Array.from(new Set([...current.clearSecretFields, key]))
-        : current.clearSecretFields.filter((item) => item !== key),
-    }));
   }
 
   return (
     <SettingsPageShell activeKey="integrations">
-      <div className="settings-page">
-        <Section title={page('settings.integrations.section.haConnection')}>
-          <Card className="integration-status-card">
-            <div className="integration-status">
-              <span className={`integration-status__indicator integration-status__indicator--${haStatus.tone}`} />
-              <div className="integration-status__text">
-                <span className="integration-status__label">Home Assistant</span>
-                <span className="integration-status__detail">{page('settings.integrations.ha.statusDetail', { status: haStatus.label, time: lastSyncText })}</span>
-                <span className="integration-status__detail">{page('settings.integrations.ha.addressDetail', { address: haAddressText })}</span>
-              </div>
-              <div className="integration-actions">
-                <button className="btn btn--outline btn--sm" type="button" onClick={() => setConfigModalOpen(true)} disabled={loading}>{page('settings.integrations.action.connectionSettings')}</button>
-                <span className="integration-action-tooltip" title={disabledHaActionTooltip}><button className="btn btn--outline btn--sm" onClick={openDeviceSyncModal} disabled={loading || deviceModalLoading || !canOperateHa}>{syncButtonLabel}</button></span>
-                <span className="integration-action-tooltip" title={disabledHaActionTooltip}><button className="btn btn--outline btn--sm" onClick={openRoomSyncModal} disabled={loading || roomModalLoading || !canOperateHa}>{syncRoomsButtonLabel}</button></span>
-              </div>
-            </div>
-            {syncSummary ? <div className="integration-status__detail" style={{ marginTop: '0.75rem' }}>{page('settings.integrations.summary.deviceSync', { created: syncSummary.created_devices, updated: syncSummary.updated_devices, assigned: syncSummary.assigned_rooms, failed: syncSummary.failed_entities })}</div> : null}
-            {roomSyncSummary ? <div className="integration-status__detail" style={{ marginTop: '0.5rem' }}>{page('settings.integrations.summary.roomSync', { created: roomSyncSummary.created_rooms, matched: roomSyncSummary.matched_entities, skipped: roomSyncSummary.skipped_entities })}</div> : null}
-            {status ? <div className="integration-status__detail" style={{ marginTop: '0.5rem' }}>{status}</div> : null}
-            {error ? <div className="integration-status__detail" style={{ marginTop: '0.5rem' }}>{error}</div> : null}
-          </Card>
-        </Section>
+      <div className="settings-page settings-page--integrations">
+        {status ? <div className="settings-status">{status}</div> : null}
+        {error ? <div className="settings-error">{error}</div> : null}
 
-        <Section title={page('settings.integrations.section.pendingSpeakers')}>
-          <Card className="integration-status-card">
-            <div className="integration-status" style={{ alignItems: 'flex-start' }}>
-              <div className="integration-status__text">
-                <span className="integration-status__label">{page('settings.integrations.discovery.title')}</span>
-                <span className="integration-status__detail">{page('settings.integrations.discovery.desc')}</span>
-                <span className="integration-status__detail">{page('settings.integrations.discovery.hint')}</span>
+        <Section title={page('settings.integrations.section.integrations')}>
+          {loading ? (
+            <Card>
+              <div className="integration-status__detail">{page('settings.integrations.loading')}</div>
+            </Card>
+          ) : instances.length === 0 && deviceResources.length === 0 ? (
+            <Card>
+              <div className="settings-empty-state">
+                <h3>{page('settings.integrations.empty.title')}</h3>
+                <p>{page('settings.integrations.empty.desc')}</p>
+                <button className="btn btn--outline btn--sm" type="button" onClick={() => setCatalogModalOpen(true)}>
+                  {page('settings.integrations.action.addByInstance')}
+                </button>
               </div>
-            </div>
-            {voiceDiscoveryError ? <div className="integration-status__detail" style={{ marginTop: '0.75rem' }}>{voiceDiscoveryError}</div> : null}
-            <div className="device-list" style={{ marginTop: '1rem' }}>
-              {voiceDiscoveries.length === 0 ? (
-                <div className="integration-status__detail">{page('settings.integrations.discovery.empty')}</div>
-              ) : voiceDiscoveries.map((item) => {
-                const draft = getVoiceDiscoveryDraft(item.fingerprint);
-                const isClaiming = voiceClaimingFingerprint === item.fingerprint;
-                return (
-                  <Card key={item.fingerprint} className="device-card device-card--editor">
-                    <div className="device-card__editor-grid">
-                      <div className="device-card__info">
-                        <span className="device-card__name">{item.model}</span>
-                        <span className="device-card__room">{page('settings.integrations.discovery.deviceMeta', { serial: formatVoiceDiscoverySerial(item.sn), status: formatVoiceDiscoveryStatus(item.connection_status), time: formatVoiceDiscoveryTime(item.last_seen_at) })}</span>
+            </Card>
+          ) : (
+            <>
+              <div className="settings-card-grid">
+                {instances.map((instance) => (
+                  <Card key={instance.id} className={selectedInstanceId === instance.id ? 'integration-card integration-card--active' : 'integration-card'}>
+                    <button className="integration-card__main" type="button" onClick={() => setSelectedInstanceId(instance.id)}>
+                      <div className="integration-card__header">
+                        <strong>{instance.display_name}</strong>
+                        <span className={`badge badge--${instance.status === 'degraded' ? 'warning' : 'success'}`}>
+                          {formatStatus(instance)}
+                        </span>
                       </div>
-                      <input className="form-input" value={draft.terminal_name} placeholder={page('settings.integrations.discovery.namePlaceholder')} onChange={(event) => updateVoiceDiscoveryDraft(item.fingerprint, { terminal_name: event.target.value })} />
-                      <select className="form-select" value={draft.room_id} onChange={(event) => updateVoiceDiscoveryDraft(item.fingerprint, { room_id: event.target.value })} disabled={rooms.length === 0}>
-                        {rooms.length === 0 ? <option value="">{page('settings.integrations.discovery.createRoomFirst')}</option> : rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}
-                      </select>
+                      <div className="integration-status__detail">{instance.plugin_id}</div>
+                      <div className="integration-status__detail">
+                        {page('settings.integrations.instance.resourceCount', { count: instance.resource_counts.device })}
+                      </div>
+                    </button>
+                  </Card>
+                ))}
+                <Card className="integration-card integration-card--adder">
+                  <button className="integration-card__main" type="button" onClick={() => setCatalogModalOpen(true)}>
+                    <strong>{page('settings.integrations.action.addByInstance')}</strong>
+                    <div className="integration-status__detail">{page('settings.integrations.addHint')}</div>
+                  </button>
+                </Card>
+              </div>
+
+              {selectedInstance ? (
+                <Card className="integration-card">
+                  <div className="integration-card__header">
+                    <div>
+                      <strong>{selectedInstance.display_name}</strong>
+                      <div className="integration-status__detail">
+                        {page('settings.integrations.instance.meta', {
+                          plugin: selectedInstance.plugin_id,
+                          status: formatStatus(selectedInstance),
+                        })}
+                      </div>
                     </div>
                     <div className="device-card__actions">
-                      <span className={`badge badge--${item.connection_status === 'online' ? 'success' : 'secondary'}`}>{formatVoiceDiscoveryStatus(item.connection_status)}</span>
-                      <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleClaimVoiceDiscovery(item.fingerprint)} disabled={isClaiming || rooms.length === 0}>{isClaiming ? page('settings.integrations.discovery.adding') : page('settings.integrations.discovery.addToHousehold')}</button>
+                      <button
+                        className="btn btn--outline btn--sm"
+                        type="button"
+                        onClick={() => void handleSyncAll()}
+                        disabled={submitting || selectedInstance.config_state !== 'configured'}
+                      >
+                        {page('settings.integrations.action.syncAllEntities')}
+                      </button>
+                      <button
+                        className="btn btn--outline btn--sm"
+                        type="button"
+                        onClick={() => void handleOpenPicker()}
+                        disabled={submitting || selectedInstance.config_state !== 'configured'}
+                      >
+                        {page('settings.integrations.action.syncSelectedEntities')}
+                      </button>
                     </div>
-                  </Card>
-                );
-              })}
-            </div>
-          </Card>
-        </Section>
-
-        <Section title={page('settings.integrations.section.devices')}>
-          <div className="device-list">
-            {loading && devices.length === 0 ? <div className="text-text-secondary">{page('settings.integrations.devices.loading')}</div> : devices.map((device) => {
-              const draft = deviceDrafts[device.id] ?? { name: device.name, room_id: device.room_id, status: device.status, controllable: device.controllable };
-              const supportsVoiceSettings = device.device_type === 'speaker' && device.vendor === 'xiaomi';
-              return (
-                <Card key={device.id} className="device-card device-card--editor">
-                  <div className="device-card__editor-grid">
-                    <div className="device-card__info">
-                      <span className="device-card__name">{device.name}</span>
-                      <span className="device-card__room">{roomNameMap[device.room_id ?? ''] ?? copy.roomUnassigned} · {formatDeviceType(device.device_type)}</span>
-                      {supportsVoiceSettings ? <span className="integration-status__detail">{device.voice_auto_takeover_enabled ? page('settings.integrations.devices.takeoverAll') : page('settings.integrations.devices.takeoverWithPrefixes', { prefixes: formatVoiceTakeoverPrefixes(device.voice_takeover_prefixes) })}</span> : null}
-                    </div>
-                    <input className="form-input" value={draft.name} onChange={(event) => setDeviceDrafts((current) => ({ ...current, [device.id]: { ...draft, name: event.target.value } }))} />
-                    <select className="form-select" value={draft.room_id ?? ''} onChange={(event) => setDeviceDrafts((current) => ({ ...current, [device.id]: { ...draft, room_id: event.target.value || null } }))}>{roomOptions.map((option) => <option key={option.id || 'unassigned'} value={option.id}>{option.name}</option>)}</select>
-                    <select className="form-select" value={draft.status} onChange={(event) => setDeviceDrafts((current) => ({ ...current, [device.id]: { ...draft, status: event.target.value as Device['status'] } }))}><option value="active">{copy.online}</option><option value="offline">{copy.offline}</option><option value="inactive">{copy.inactive}</option></select>
-                    <select className="form-select" value={draft.controllable ? 'true' : 'false'} onChange={(event) => setDeviceDrafts((current) => ({ ...current, [device.id]: { ...draft, controllable: event.target.value === 'true' } }))}><option value="true">{copy.controllable}</option><option value="false">{copy.readOnly}</option></select>
                   </div>
-                  <div className="device-card__actions">
-                    <span className={`badge badge--${device.status === 'active' ? 'success' : 'secondary'}`}>{device.status === 'active' ? copy.online : device.status === 'offline' ? copy.offline : copy.inactive}</span>
-                    {supportsVoiceSettings ? <button className="btn btn--outline btn--sm" type="button" onClick={() => openSpeakerSettings(device)} disabled={loading}>{page('settings.integrations.action.moreSettings')}</button> : null}
-                    <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleSaveDevice(device.id)} disabled={loading}>{page('settings.integrations.action.saveChanges')}</button>
+                  <div className="integration-status__detail">
+                    {selectedInstance.sync_state.last_synced_at
+                      ? page('settings.integrations.instance.lastSync', { time: selectedInstance.sync_state.last_synced_at })
+                      : page('settings.integrations.instance.noSyncYet')}
+                  </div>
+                  {selectedInstance.last_error?.message ? (
+                    <div className="integration-status__detail">{selectedInstance.last_error.message}</div>
+                  ) : null}
+
+                  <div className="settings-card-grid">
+                    {selectedDevices.length === 0 ? (
+                      <Card>
+                        <div className="integration-status__detail">{page('settings.integrations.instance.devicesEmpty')}</div>
+                      </Card>
+                    ) : selectedDevices.map((device) => (
+                      <Card key={device.id} className="device-card">
+                        <div className="device-card__info">
+                          <span className="device-card__name">{device.name}</span>
+                          <span className="device-card__room">{device.room_name || page('settings.integrations.instance.noRoom')}</span>
+                          <span className="integration-status__detail">{device.category || selectedInstance.plugin_id}</span>
+                        </div>
+                      </Card>
+                    ))}
                   </div>
                 </Card>
-              );
-            })}
-          </div>
+              ) : null}
+            </>
+          )}
         </Section>
-        {speakerDetailDevice ? (
-          <SpeakerDeviceDetailDialog
-            device={speakerDetailDevice}
-            roomName={roomNameMap[speakerDetailDevice.room_id ?? ''] ?? copy.roomUnassigned}
-            saving={loading}
-            error={speakerSettingsError}
-            voiceprintTab={(
-              <SpeakerVoiceprintTab
-                device={speakerDetailDevice}
-                canManage={canManageVoiceprint}
-                summary={voiceprintSummary}
-                loading={voiceprintLoading}
-                error={voiceprintError}
-                switchSaving={voiceprintSwitchSaving}
-                onRetry={() => void loadVoiceprintSummary(speakerDetailDevice.id)}
-                onToggleVoiceprintEnabled={handleToggleVoiceprintEnabled}
-                onStartEnrollment={handleOpenVoiceprintWizard}
-                onUpdateVoiceprint={handleOpenVoiceprintUpdateWizard}
-                onResumeEnrollment={(enrollmentId, memberId) => void handleResumeVoiceprintEnrollment(enrollmentId, memberId)}
-              />
-            )}
-            onClose={closeSpeakerDetail}
-            onSaveTakeover={handleSaveSpeakerSettings}
-          />
-        ) : null}
-        {speakerDetailDevice && voiceprintWizard ? (
-          <VoiceprintEnrollmentWizard
-            wizard={voiceprintWizard}
-            members={voiceprintSummary?.members ?? []}
-            deviceName={speakerDetailDevice.name}
-            enrollment={voiceprintWizardEnrollment}
-            busy={voiceprintWizardBusy}
-            onClose={() => { setVoiceprintWizard(null); setVoiceprintWizardEnrollment(null); }}
-            onBack={handleVoiceprintWizardBack}
-            onSelectMember={(memberId) => setVoiceprintWizard((current) => current ? { ...current, memberId, error: '' } : current)}
-            onContinue={handleVoiceprintWizardContinue}
-            onStart={handleSubmitVoiceprintWizard}
-          />
-        ) : null}
-        {roomModalOpen ? (
-          <div className="member-modal-overlay" onClick={() => setRoomModalOpen(false)}>
-            <div className="member-modal ha-room-modal" onClick={(event) => event.stopPropagation()}>
-              <div className="member-modal__header"><div><h3>{page('settings.integrations.modal.rooms.title')}</h3><p>{page('settings.integrations.modal.rooms.desc')}</p></div></div>
-              <div className="ha-room-modal__list">{roomCandidates.length === 0 ? <div className="integration-status__detail">{page('settings.integrations.modal.rooms.empty')}</div> : roomCandidates.map((candidate) => (
-                <label key={candidate.name} className={`ha-room-option ${candidate.can_sync ? '' : 'ha-room-option--disabled'}`}>
-                  <input type="checkbox" checked={selectedRoomNames.includes(candidate.name)} disabled={!candidate.can_sync || loading} onChange={() => toggleRoomSelection(candidate.name)} />
-                  <div className="ha-room-option__body"><div className="ha-room-option__title-row"><strong>{candidate.name}</strong><span className={`badge badge--${candidate.can_sync ? 'success' : 'warning'}`}>{candidate.can_sync ? page('settings.integrations.modal.rooms.importable') : page('settings.integrations.modal.rooms.alreadyExists')}</span></div><div className="integration-status__detail">{candidate.exists_locally ? page('settings.integrations.modal.rooms.existsHint') : page('settings.integrations.modal.rooms.importHint')}</div></div>
-                </label>
-              ))}</div>
-              <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setRoomModalOpen(false)} disabled={loading}>{page('settings.integrations.action.cancel')}</button><button className="btn btn--outline btn--sm" type="button" onClick={() => void handleConfirmRoomSync()} disabled={loading || selectedRoomNames.length === 0}>{page('settings.integrations.action.importSelectedRooms')}</button></div>
+
+        {catalogModalOpen ? (
+          <div className="member-modal-overlay" onClick={() => setCatalogModalOpen(false)}>
+            <div className="member-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="member-modal__header">
+                <div>
+                  <h3>{page('settings.integrations.modal.catalog.title')}</h3>
+                  <p>{page('settings.integrations.modal.catalog.desc')}</p>
+                </div>
+              </div>
+              <div className="settings-card-grid">
+                {catalog.map((item) => (
+                  <Card key={item.plugin_id} className="integration-card">
+                    <div className="integration-card__header">
+                      <strong>{item.name}</strong>
+                      <span className={`badge badge--${item.config_schema_available ? 'success' : 'secondary'}`}>
+                        {item.config_schema_available
+                          ? page('settings.integrations.modal.catalog.supported')
+                          : page('settings.integrations.modal.catalog.pending')}
+                      </span>
+                    </div>
+                    <div className="integration-status__detail">{item.description || item.plugin_id}</div>
+                    <div className="device-card__actions">
+                      <button
+                        className="btn btn--outline btn--sm"
+                        type="button"
+                        disabled={!item.config_schema_available}
+                        onClick={() => openCreateModal(item)}
+                      >
+                        {page('settings.integrations.modal.catalog.choose')}
+                      </button>
+                    </div>
+                  </Card>
+                ))}
+              </div>
             </div>
           </div>
         ) : null}
+
+        {createModalOpen && selectedCatalogItem?.config_spec ? (
+          <div className="member-modal-overlay" onClick={closeCreateModal}>
+            <div className="member-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="member-modal__header">
+                <div>
+                  <h3>{page('settings.integrations.modal.create.title', { plugin: selectedCatalogItem.name })}</h3>
+                  <p>{selectedCatalogItem.config_spec.description || page('settings.integrations.modal.create.desc')}</p>
+                </div>
+              </div>
+              <form className="settings-form integration-config-form" onSubmit={handleCreateInstance}>
+                <div className="form-group">
+                  <label>{page('settings.integrations.modal.create.displayName')}</label>
+                  <input
+                    className="form-input"
+                    value={createDraft.displayName}
+                    onChange={(event) => setCreateDraft((current) => ({
+                      ...current,
+                      displayName: event.target.value,
+                      fieldErrors: { ...current.fieldErrors, display_name: '' },
+                    }))}
+                    placeholder={page('settings.integrations.modal.create.displayNamePlaceholder')}
+                  />
+                  {createDraft.fieldErrors.display_name ? <div className="form-help">{createDraft.fieldErrors.display_name}</div> : null}
+                </div>
+                {selectedCatalogItem.config_spec.ui_schema.sections.map((section) => (
+                  <div key={section.id}>
+                    <div className="form-group">
+                      <label>{section.title}</label>
+                      {section.description ? <div className="form-help">{section.description}</div> : null}
+                    </div>
+                    {section.fields.map((fieldKey) => {
+                      const field = selectedCatalogItem.config_spec?.config_schema.fields.find((item) => item.key === fieldKey);
+                      if (!field) {
+                        return null;
+                      }
+                      return renderField(field, selectedCatalogItem.config_spec?.ui_schema.widgets?.[field.key]);
+                    })}
+                  </div>
+                ))}
+                <div className="member-modal__actions">
+                  <button className="btn btn--outline btn--sm" type="button" onClick={closeCreateModal} disabled={submitting}>
+                    {page('settings.integrations.action.cancel')}
+                  </button>
+                  <button className="btn btn--outline btn--sm" type="submit" disabled={submitting}>
+                    {submitting ? page('settings.integrations.action.saving') : page('settings.integrations.modal.create.submit')}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
+
         {deviceModalOpen ? (
           <div className="member-modal-overlay" onClick={() => setDeviceModalOpen(false)}>
             <div className="member-modal ha-device-modal" onClick={(event) => event.stopPropagation()}>
-              <div className="member-modal__header"><div><h3>{page('settings.integrations.modal.devices.title')}</h3><p>{page('settings.integrations.modal.devices.desc')}</p></div></div>
-              <div className="ha-device-modal__list">{deviceCandidateGroups.length === 0 ? <div className="integration-status__detail">{page('settings.integrations.modal.devices.empty')}</div> : deviceCandidateGroups.map((group) => {
-                const deviceIds = group.items.map((item) => item.external_device_id);
-                const selectedCount = deviceIds.filter((id) => selectedExternalDeviceIds.includes(id)).length;
-                const allSelected = selectedCount === deviceIds.length;
-                return (
-                  <div key={group.roomName} className="ha-device-group">
-                    <label className="ha-device-group__header"><input type="checkbox" checked={allSelected} onChange={() => toggleDeviceRoomSelection(deviceIds)} disabled={loading} /><div className="ha-device-group__meta"><strong>{group.roomName}</strong><span className="integration-status__detail">{page('settings.integrations.modal.devices.selectedCount', { selected: selectedCount, total: group.items.length })}</span></div></label>
-                    <div className="ha-device-group__items">{group.items.map((candidate) => (
-                      <label key={candidate.external_device_id} className="ha-device-option">
-                        <input type="checkbox" checked={selectedExternalDeviceIds.includes(candidate.external_device_id)} onChange={() => toggleDeviceSelection(candidate.external_device_id)} disabled={loading} />
-                        <div className="ha-device-option__body"><div className="ha-device-option__title-row"><strong>{candidate.name}</strong><span className={`badge badge--${candidate.already_synced ? 'secondary' : 'success'}`}>{candidate.already_synced ? page('settings.integrations.modal.devices.importedBefore') : page('settings.integrations.modal.devices.newDevice')}</span></div><div className="integration-status__detail">{formatDeviceType(candidate.device_type as Device['device_type'])} · {candidate.already_synced ? page('settings.integrations.modal.devices.reimportHint') : page('settings.integrations.modal.devices.importHint')}</div></div>
-                      </label>
-                    ))}</div>
-                  </div>
-                );
-              })}</div>
-              <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setDeviceModalOpen(false)} disabled={loading}>{page('settings.integrations.action.cancel')}</button><button className="btn btn--outline btn--sm" type="button" onClick={() => void handleConfirmDeviceSync()} disabled={loading || selectedExternalDeviceIds.length === 0}>{page('settings.integrations.action.importSelectedDevices')}</button></div>
-            </div>
-          </div>
-        ) : null}
-        {configModalOpen ? (
-          <div className="member-modal-overlay" onClick={() => setConfigModalOpen(false)}>
-            <div className="member-modal ha-config-modal" onClick={(event) => event.stopPropagation()}>
-              <div className="member-modal__header"><div><h3>{page('settings.integrations.modal.config.title')}</h3><p>{page('settings.integrations.modal.config.desc')}</p></div></div>
-              <form className="settings-form integration-config-form" onSubmit={handleSaveHaConfig}>
-                {!haConfigForm ? (
-                  <div className="integration-status__detail">{copy.loadIntegrationFailed}</div>
-                ) : (
-                  <>
-                    {haConfigSections.map((section) => (
-                      <div key={section.id}>
-                        <div className="form-group">
-                          <label>{section.title}</label>
-                          {section.description ? <div className="form-help">{section.description}</div> : null}
-                        </div>
-                        {section.fields.map((fieldKey) => {
-                          const field = haFieldsByKey.get(fieldKey);
-                          if (!field) {
-                            return null;
-                          }
-                          const widget: PluginManifestFieldUiSchema | undefined = haFieldWidgets[field.key];
-                          const fieldError = haConfigForm.view.field_errors[field.key];
-                          if (field.type === 'secret') {
-                            const secretState = haConfigForm.view.secret_fields[field.key];
-                            const clearMode = haFormDraft.clearSecretFields.includes(field.key);
-                            const secretPlaceholder = secretState?.has_value
-                              ? page('settings.integrations.modal.config.accessTokenPlaceholderConfigured')
-                              : (widget?.placeholder ?? page('settings.integrations.modal.config.accessTokenPlaceholderEmpty'));
-                            const secretHelp = widget?.help_text
-                              ? `${widget.help_text} ${page('settings.integrations.modal.config.accessTokenHelp', { state: secretState?.has_value && !clearMode ? page('settings.integrations.modal.config.tokenStateSaved') : page('settings.integrations.modal.config.tokenStateEmpty') })}`
-                              : page('settings.integrations.modal.config.accessTokenHelp', { state: secretState?.has_value && !clearMode ? page('settings.integrations.modal.config.tokenStateSaved') : page('settings.integrations.modal.config.tokenStateEmpty') });
-                            return (
-                              <div key={field.key} className="integration-config-grid">
-                                <div className="form-group">
-                                  <label>{field.label}</label>
-                                  <input
-                                    className="form-input"
-                                    type="password"
-                                    value={haFormDraft.secretValues[field.key] ?? ''}
-                                    onChange={(event) => updateHaSecretValue(field.key, event.target.value)}
-                                    placeholder={secretPlaceholder}
-                                  />
-                                  <div className="form-help">{secretHelp}</div>
-                                  {fieldError ? <div className="form-help">{fieldError}</div> : null}
-                                </div>
-                                <div className="form-group">
-                                  <label>{page('settings.integrations.modal.config.accessTokenHandlingLabel')}</label>
-                                  <select
-                                    className="form-select"
-                                    value={clearMode ? 'clear' : 'keep'}
-                                    onChange={(event) => updateHaSecretHandling(field.key, event.target.value === 'clear' ? 'clear' : 'keep')}
-                                  >
-                                    <option value="keep">{page('settings.integrations.modal.config.accessTokenKeep')}</option>
-                                    <option value="clear">{page('settings.integrations.modal.config.accessTokenClear')}</option>
-                                  </select>
-                                </div>
-                              </div>
-                            );
-                          }
-                          if (field.type === 'boolean') {
-                            return (
-                              <div key={field.key} className="form-group">
-                                <label>{field.label}</label>
-                                <select
-                                  className="form-select"
-                                  value={getBooleanFieldValue(haFormDraft.values, field.key) ? 'true' : 'false'}
-                                  onChange={(event) => updateHaDraftValue(field.key, event.target.value === 'true')}
-                                >
-                                  <option value="false">{field.key === 'sync_rooms_enabled' ? page('settings.integrations.modal.config.syncRoomsDevicesOnly') : 'false'}</option>
-                                  <option value="true">{field.key === 'sync_rooms_enabled' ? page('settings.integrations.modal.config.syncRoomsMatchExisting') : 'true'}</option>
-                                </select>
-                                <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
-                                {fieldError ? <div className="form-help">{fieldError}</div> : null}
-                              </div>
-                            );
-                          }
-                          return (
-                            <div key={field.key} className="form-group">
-                              <label>{field.label}</label>
-                              <input
-                                className="form-input"
-                                value={getStringFieldValue(haFormDraft.values, field.key)}
-                                onChange={(event) => updateHaDraftValue(field.key, event.target.value)}
-                                placeholder={widget?.placeholder ?? undefined}
-                              />
-                              <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
-                              {fieldError ? <div className="form-help">{fieldError}</div> : null}
-                            </div>
-                          );
-                        })}
+              <div className="member-modal__header">
+                <div>
+                  <h3>{page('settings.integrations.modal.devices.title')}</h3>
+                  <p>{page('settings.integrations.modal.devices.desc')}</p>
+                </div>
+              </div>
+              <div className="ha-device-modal__list">
+                {deviceCandidates.length === 0 ? (
+                  <div className="integration-status__detail">{page('settings.integrations.modal.devices.empty')}</div>
+                ) : deviceCandidates.map((candidate) => (
+                  <label key={candidate.external_device_id} className="ha-device-option">
+                    <input
+                      type="checkbox"
+                      checked={selectedDeviceIds.includes(candidate.external_device_id)}
+                      onChange={() => setSelectedDeviceIds((current) => current.includes(candidate.external_device_id)
+                        ? current.filter((item) => item !== candidate.external_device_id)
+                        : [...current, candidate.external_device_id])}
+                      disabled={submitting}
+                    />
+                    <div className="ha-device-option__body">
+                      <div className="ha-device-option__title-row">
+                        <strong>{candidate.name}</strong>
+                        <span className={`badge badge--${candidate.already_synced ? 'secondary' : 'success'}`}>
+                          {candidate.already_synced
+                            ? page('settings.integrations.modal.devices.importedBefore')
+                            : page('settings.integrations.modal.devices.newDevice')}
+                        </span>
                       </div>
-                    ))}
-                    <div className="member-modal__actions"><button className="btn btn--outline btn--sm" type="button" onClick={() => setConfigModalOpen(false)} disabled={loading}>{page('settings.integrations.action.cancel')}</button><button className="btn btn--outline btn--sm" type="submit" disabled={loading}>{loading ? page('settings.integrations.action.saving') : (haConfigForm.config_spec.ui_schema.submit_text ?? page('settings.integrations.action.saveConnectionSettings'))}</button></div>
-                  </>
-                )}
-              </form>
+                      <div className="integration-status__detail">
+                        {candidate.room_name || page('settings.integrations.instance.noRoom')} · {page('settings.integrations.modal.devices.entityCount', { count: candidate.entity_count })}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              <div className="member-modal__actions">
+                <button className="btn btn--outline btn--sm" type="button" onClick={() => setDeviceModalOpen(false)} disabled={submitting}>
+                  {page('settings.integrations.action.cancel')}
+                </button>
+                <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleSyncSelected()} disabled={submitting || selectedDeviceIds.length === 0}>
+                  {page('settings.integrations.action.importSelectedDevices')}
+                </button>
+              </div>
             </div>
           </div>
         ) : null}

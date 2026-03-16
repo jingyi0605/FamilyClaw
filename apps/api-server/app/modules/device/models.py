@@ -64,7 +64,12 @@ class Device(Base):
 class DeviceBinding(Base):
     __tablename__ = "device_bindings"
     __table_args__ = (
-        UniqueConstraint("platform", "external_entity_id", name="uq_device_bindings_platform_entity"),
+        UniqueConstraint(
+            "integration_instance_id",
+            "platform",
+            "external_entity_id",
+            name="uq_device_bindings_instance_platform_entity",
+        ),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -72,6 +77,12 @@ class DeviceBinding(Base):
         Text,
         ForeignKey("devices.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    integration_instance_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("integration_instances.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     platform: Mapped[str] = mapped_column(String(30), nullable=False)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from app.modules.ha_integration.client import HomeAssistantClientError
 from app.plugins.builtin.homeassistant_device_action.adapter import (
     append_last_action_at,
     build_home_assistant_client,
@@ -10,6 +9,7 @@ from app.plugins.builtin.homeassistant_device_action.adapter import (
     parse_payload,
     success_result,
 )
+from app.plugins.builtin.homeassistant_device_action.client import HomeAssistantClientError
 from app.plugins.builtin.homeassistant_device_action.mapper import (
     HomeAssistantActionMappingError,
     build_service_call,
@@ -50,7 +50,7 @@ def run(payload: dict | None = None) -> dict:
                 service_call = build_service_call(request, allowed_device_types=ALLOWED_DEVICE_TYPES)
                 client = build_home_assistant_client(
                     db,
-                    household_id=request.household_id,
+                    integration_instance_id=(request.binding.integration_instance_id or ""),
                     timeout_seconds=request.timeout_seconds,
                 )
                 response_payload = client.call_service(

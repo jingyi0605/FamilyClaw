@@ -15,7 +15,7 @@ import app.db.models  # noqa: F401
 from app.api.dependencies import ActorContext, require_admin_actor
 from app.api.v1.endpoints.device_actions import router as device_actions_router
 from app.db.session import get_db
-from app.db.utils import new_uuid, utc_now_iso
+from app.db.utils import new_uuid
 from app.core.config import settings
 from app.modules.conversation import orchestrator as conversation_orchestrator
 from app.modules.device.models import Device, DeviceBinding
@@ -23,14 +23,13 @@ from app.modules.device_action.schemas import DeviceActionExecuteRequest
 from app.modules.device_action import service as device_action_service_module
 from app.modules.device_control.schemas import DeviceControlRequest
 from app.modules.device_control.service import DeviceControlServiceError, execute_device_control
-from app.modules.ha_integration import service as ha_integration_service_module
-from app.modules.ha_integration.models import HouseholdHaConfig
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.scene import service as scene_service
 from app.modules.voice import fast_action_service as voice_fast_action_service_module
 from app.plugins.builtin.homeassistant_device_action.executor import run as run_homeassistant_device_action
 from app.plugins.builtin.homeassistant_device_action.executor import run as run_homeassistant_door_lock_action
+from tests.homeassistant_test_support import seed_homeassistant_integration_instance
 
 
 def _build_alembic_config(database_url: str) -> Config:
@@ -56,20 +55,17 @@ class DeviceControlPhase2Tests(unittest.TestCase):
                 db,
                 HouseholdCreate(name="Phase2 Home", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
             )
-            db.add(
-                HouseholdHaConfig(
-                    household_id=household.id,
-                    base_url="http://ha.local:8123",
-                    access_token="demo-token",
-                    sync_rooms_enabled=False,
-                    updated_at=utc_now_iso(),
-                )
+            instance = seed_homeassistant_integration_instance(
+                db,
+                household_id=household.id,
+                sync_rooms_enabled=False,
             )
             self.household_id = household.id
+            self.integration_instance_id = instance.id
 
             self.light_device_id = self._add_device_with_binding(
                 db,
-                name="瀹㈠巺鐏?,
+                name="客厅灯",
                 device_type="light",
                 plugin_id="homeassistant",
                 external_entity_id="light.living_room_main",
@@ -77,7 +73,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             )
             self.lock_device_id = self._add_device_with_binding(
                 db,
-                name="鍏ユ埛闂ㄩ攣",
+                name="入户门锁",
                 device_type="lock",
                 plugin_id="homeassistant",
                 external_entity_id="lock.front_door",
@@ -128,7 +124,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             risk_level="low",
         )
 
-        with patch("app.modules.ha_integration.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
+        with patch("app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
             result = run_homeassistant_device_action(payload)
 
         self.assertTrue(result["success"])
@@ -156,7 +152,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             risk_level="high",
         )
 
-        with patch("app.modules.ha_integration.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
+        with patch("app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
             result = run_homeassistant_door_lock_action(payload)
 
         self.assertTrue(result["success"])
@@ -171,7 +167,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
 
     def test_high_risk_confirmation_stays_in_core_before_plugin_execution(self) -> None:
         with self.SessionLocal() as db:
-            with patch("app.modules.ha_integration.client.HomeAssistantClient.call_service") as mocked_call:
+            with patch("app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service") as mocked_call:
                 with self.assertRaises(DeviceControlServiceError) as context:
                     execute_device_control(
                         db,
@@ -189,7 +185,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
         mocked_call.assert_not_called()
 
     def test_execute_api_uses_real_plugin_executor_not_legacy_ha_service(self) -> None:
-        with patch("app.modules.ha_integration.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
+        with patch("app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
             response = self.client.post(
                 f"{settings.api_v1_prefix}/device-actions/execute",
                 json=DeviceActionExecuteRequest(
@@ -209,8 +205,9 @@ class DeviceControlPhase2Tests(unittest.TestCase):
         self.assertEqual("light.living_room_main", payload["entity_id"])
         self.assertEqual({"brightness_pct": 80}, payload["params"])
         mocked_call.assert_called_once()
-        self.assertNotIn("execute_home_assistant_device_action", inspect.getsource(ha_integration_service_module))
-        self.assertNotIn("async_execute_home_assistant_device_action", inspect.getsource(ha_integration_service_module))
+        source = inspect.getsource(device_action_service_module)
+        self.assertNotIn("execute_home_assistant_device_action", source)
+        self.assertNotIn("async_execute_home_assistant_device_action", source)
 
     def test_upstream_modules_do_not_directly_reference_legacy_ha_execute_functions(self) -> None:
         target_modules = (
@@ -250,6 +247,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             DeviceBinding(
                 id=new_uuid(),
                 device_id=device.id,
+                integration_instance_id=self.integration_instance_id,
                 platform="home_assistant",
                 plugin_id=plugin_id,
                 binding_version=1,

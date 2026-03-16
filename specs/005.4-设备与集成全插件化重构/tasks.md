@@ -119,7 +119,7 @@
   - 怎么验证：
     - 插件配置测试
     - grep 检查 `HouseholdHaConfig` 依赖面
-  - 当前执行说明：`homeassistant` 插件 manifest 已声明 `plugin` 级 `config_specs`；插件配置服务已支持用插件配置实例和旧 HA 表做双向桥接；插件适配器、HA runtime 配置和设备同步服务已经优先读取插件配置实例。
+  - 当前执行说明：`homeassistant` 插件已经改为读取真实集成实例上的插件配置；`plugin_config_instances.integration_instance_id` 和 `device_bindings.integration_instance_id` 已经落地，插件目录下的 runtime / connector / executor 都按实例读取配置和更新状态，旧 `HouseholdHaConfig` 桥接已移除。
   - 对应需求：`requirements.md` 需求 5、需求 6、需求 7
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L59)
 
@@ -143,7 +143,7 @@
   - 怎么验证：
     - 后端集成测试
     - API 契约测试
-  - 当前执行说明：统一集成实例和资源查询接口已经落地；`/integrations/instances/{id}/actions` 已从占位切到真实执行，当前已接通 `homeassistant` 的 `configure`、`device_candidates`、`device_sync`、`room_candidates`、`room_sync`。
+  - 当前执行说明：真实 `integration_instances` 模型、仓储、接口和页面视图已经落地；`/integrations/instances/{id}/actions` 已按实例执行，`homeassistant` 已接通 `configure`、`device_candidates`、`device_sync`、`room_candidates`、`room_sync`，设备资源查询和绑定归属也已经按 `integration_instance_id` 收口。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 3、需求 4、需求 5
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L48)
 
@@ -239,7 +239,7 @@
   - 怎么验证：
     - 页面 E2E
     - 用户流程回放
-  - 当前执行说明：虽然还没重做“添加集成”总入口，但 Home Assistant 顶层卡片已经开始按统一集成实例/插件配置呈现；配置弹窗按插件 `config_spec` 渲染，敏感字段和布尔字段也不再写死 HA 专用文案，配置保存走插件配置接口。
+  - 当前执行说明：设置页顶层已经改成实例驱动草稿：空状态只显示“通过实例添加设备”，可以先选插件，再按插件 `config_spec` 创建实例；前端类型、API 和 i18n 已经对齐，`npm.cmd --prefix ./apps/user-app run typecheck` 已通过。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 5
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L146)
 
@@ -262,7 +262,7 @@
   - 怎么验证：
     - 页面 grep 检查
     - 冒烟回归
-  - 当前执行说明：Home Assistant 的设备候选、房间候选和同步确认已经切到统一实例动作链路，页面顶部的 HA 连接块也已经收口成统一集成卡片；但音箱发现、音箱详情和设备列表仍是旧页面区块，这一项还没做完，不能标 DONE。
+  - 当前执行说明：Home Assistant 的设备候选、设备同步和“同步全部 / 仅同步选中”都已经切到统一实例动作链路，旧顶层 HA 区块已经不再作为主结构；但音箱相关入口还没并入实例资源流，这一项仍在进行中，不能标 DONE。
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 6
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L69)
 
@@ -292,7 +292,7 @@
 ## 阶段 4：迁移数据、删旧代码、删旧表
 
 - [ ] 4.1 迁移旧 HA 配置和相关数据到统一插件结构
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：把 `household_ha_configs` 和依赖它的配置迁移到统一插件配置实例，并补必要的数据回填。
   - 做完你能看到什么：旧 HA 配置数据不丢，新页面仍然能读到旧家庭的集成配置。
   - 先依赖什么：3.4
@@ -310,6 +310,7 @@
   - 怎么验证：
     - Alembic 迁移测试
     - 迁移后回归测试
+  - 当前执行说明：已新增 `20260316_0044_create_real_integration_instances.py`，会创建真实实例表、回填实例级插件配置和设备绑定归属，并删除 `household_ha_configs`；已在 PostgreSQL 上完成空库升级和从 `20260316_0043` 到 `head` 的增量升级校验。
   - 对应需求：`requirements.md` 需求 7
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L121)
 
@@ -334,12 +335,12 @@
   - 怎么验证：
     - grep 检查关键字
     - 后端和前端回归测试
-  - 当前执行说明：前端 `HomeAssistantConfig` 类型和旧 HA API 调用已经从设置页删除；后端旧 `devices/ha-*` 兼容接口还保留着，等迁移和回归补齐后再删。
+  - 当前执行说明：前端旧 `HomeAssistant*` 类型和旧 HA API 调用已经从设置页删除；后端旧 `devices/ha-*` / `sync/ha` / `rooms/ha-*` 路由已经删除，`app/modules/ha_integration/` 旧模块也已经从应用代码里删除，相关测试已改到插件目录新实现。
   - 对应需求：`requirements.md` 需求 6、需求 8
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L184)
 
 - [ ] 4.3 删除旧 HA 专表和废弃结构
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：在迁移和回归都通过后，用 Alembic 正式 drop `household_ha_configs` 和其它已废弃结构。
   - 做完你能看到什么：数据库层也不再处于半旧半新的过渡态。
   - 先依赖什么：4.2
@@ -356,13 +357,14 @@
   - 怎么验证：
     - 迁移脚本测试
     - schema 检查
+  - 当前执行说明：旧 `household_ha_configs` 已经并入 `20260316_0044` 迁移的 drop 流程，`app/db/models.py` 也不再注册旧表；当前还差更大范围的回归，暂时不标 DONE。
   - 对应需求：`requirements.md` 需求 6、需求 7、需求 8
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L121)
 
 ### 阶段检查
 
 - [ ] 4.4 阶段检查：确认旧世界已经真的被删干净
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：检查代码、接口、页面、数据库是不是已经没有旧 HA 特例残留。
   - 做完你能看到什么：这次改造终于不是“新旧并存”的过渡态。
   - 先依赖什么：4.1、4.2、4.3
@@ -378,6 +380,7 @@
   - 怎么验证：
     - grep `ha-config|sync/ha|HomeAssistantConfig|household_ha_configs`
     - 全量回归测试
+  - 当前执行说明：应用代码、测试代码和前端设置页里对 `ha_integration`、`HouseholdHaConfig`、旧 `sync/ha` 路由和旧 `HomeAssistantConfig` 类型的直接引用已经清零；但全量回归测试还没跑完，这一项先保持 IN_PROGRESS。
   - 对应需求：`requirements.md` 需求 6、需求 7、需求 8
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L255)
 
@@ -386,7 +389,7 @@
 ## 阶段 5：补验证、补文档、形成可交付验收
 
 - [ ] 5.1 补全后端、前端、迁移三层测试
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：补齐统一目录、实例、资源、动作、页面和迁移相关测试，防止以后重新长回平台特例。
   - 做完你能看到什么：不是靠口头保证，而是有自动化护栏。
   - 先依赖什么：4.4
@@ -398,6 +401,7 @@
     - `apps/api-server/tests/`
     - `apps/user-app/src/pages/settings/**/__tests__/`
   - 这一步先不做什么：不新增业务能力。
+  - 当前执行说明：已新增 `tests/homeassistant_test_support.py`，并回写多组后端测试到实例级链路；前端 `typecheck` 已通过，后端关键文件和相关测试已 `py_compile`，`tests.test_plugin_observation_ingest` 与 `tests.test_agent_memory_insight` 已通过，其他更重的回归还要继续补。
   - 怎么算完成：
     1. 后端统一主链有测试
     2. 页面核心流程有测试

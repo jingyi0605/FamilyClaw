@@ -12,6 +12,7 @@ class DeviceIntegrationPluginPayload(BaseModel):
     schema_version: str = "device-sync.v1"
     household_id: str = Field(min_length=1)
     plugin_id: str = Field(min_length=1)
+    integration_instance_id: str = Field(min_length=1)
     sync_scope: DeviceSyncScope
     selected_external_ids: list[str] = Field(default_factory=list)
     options: dict[str, Any] = Field(default_factory=dict)

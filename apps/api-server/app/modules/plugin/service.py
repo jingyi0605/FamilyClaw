@@ -72,6 +72,13 @@ class PluginExecutionContext:
     runner_config: PluginRunnerConfig | None
 
 
+@dataclass(slots=True)
+class PreparedHouseholdPluginExecution:
+    plugin: PluginRegistryItem
+    request: PluginExecutionRequest
+    runtime_context: dict[str, object] | None
+
+
 class PluginManifestValidationError(ValueError):
     pass
 
@@ -817,17 +824,12 @@ def execute_household_plugin(
     runner_config: PluginRunnerConfig | None = None,
 ) -> PluginExecutionResult:
     try:
-        plugin = require_available_household_plugin(
+        prepared = prepare_household_plugin_execution(
             db,
             household_id=household_id,
-            plugin_id=request.plugin_id,
-            plugin_type=request.plugin_type,
-            trigger=request.trigger,
+            request=request,
             root_dir=root_dir,
             state_file=state_file,
-        )
-        plugin = _apply_execution_overrides(
-            plugin,
             source_type=source_type,
             execution_backend=execution_backend,
             runner_config=runner_config,
@@ -847,9 +849,38 @@ def execute_household_plugin(
             error_message=str(exc),
         )
 
-    return _execute_registered_plugin(
+    return execute_prepared_household_plugin(prepared)
+
+
+def prepare_household_plugin_execution(
+    db: Session,
+    *,
+    household_id: str,
+    request: PluginExecutionRequest,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
+) -> PreparedHouseholdPluginExecution:
+    plugin = require_available_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=request.plugin_id,
+        plugin_type=request.plugin_type,
+        trigger=request.trigger,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
+    plugin = _apply_execution_overrides(
         plugin,
-        request,
+        source_type=source_type,
+        execution_backend=execution_backend,
+        runner_config=runner_config,
+    )
+    return PreparedHouseholdPluginExecution(
+        plugin=plugin,
+        request=request,
         runtime_context=_build_plugin_runtime_context(
             db,
             household_id=household_id,
@@ -857,6 +888,14 @@ def execute_household_plugin(
             root_dir=root_dir,
             state_file=state_file,
         ),
+    )
+
+
+def execute_prepared_household_plugin(prepared: PreparedHouseholdPluginExecution) -> PluginExecutionResult:
+    return _execute_registered_plugin(
+        prepared.plugin,
+        prepared.request,
+        runtime_context=prepared.runtime_context,
     )
 
 

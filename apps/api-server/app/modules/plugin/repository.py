@@ -186,6 +186,21 @@ def get_plugin_config_instance_by_id(db: Session, instance_id: str) -> PluginCon
     return db.get(PluginConfigInstance, instance_id)
 
 
+def get_plugin_config_instance_for_integration_instance(
+    db: Session,
+    *,
+    integration_instance_id: str,
+    plugin_id: str,
+    scope_type: str = "plugin",
+) -> PluginConfigInstance | None:
+    stmt: Select[tuple[PluginConfigInstance]] = select(PluginConfigInstance).where(
+        PluginConfigInstance.integration_instance_id == integration_instance_id,
+        PluginConfigInstance.plugin_id == plugin_id,
+        PluginConfigInstance.scope_type == scope_type,
+    )
+    return db.scalar(stmt)
+
+
 def list_plugin_config_instances(
     db: Session,
     *,

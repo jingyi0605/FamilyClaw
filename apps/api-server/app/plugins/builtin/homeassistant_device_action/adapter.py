@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.engine import build_database_engine
 from app.db.utils import utc_now_iso
 from app.modules.device_control.schemas import DeviceControlPluginPayload
-from app.modules.ha_integration.client import HomeAssistantClient
-from app.modules.ha_integration.service import get_home_assistant_runtime_config
+from app.plugins.builtin.homeassistant_device_action.client import HomeAssistantClient
+from app.plugins.builtin.homeassistant_device_action.runtime import build_home_assistant_client_for_instance
 
 RESULT_SCHEMA_VERSION = "device-control-result.v1"
 
@@ -39,13 +39,12 @@ def extract_database_url(payload: dict[str, Any]) -> str | None:
 def build_home_assistant_client(
     db: Session,
     *,
-    household_id: str,
+    integration_instance_id: str,
     timeout_seconds: int,
 ) -> HomeAssistantClient:
-    config = get_home_assistant_runtime_config(db, household_id)
-    return HomeAssistantClient(
-        base_url=(config.base_url if config else None),
-        token=(config.access_token if config else None),
+    return build_home_assistant_client_for_instance(
+        db,
+        integration_instance_id=integration_instance_id,
         timeout_seconds=float(timeout_seconds),
     )
 

@@ -86,6 +86,7 @@ class IntegrationCatalogItemRead(BaseModel):
     risk_level: RiskLevel
     resource_support: IntegrationResourceSupportRead = Field(default_factory=IntegrationResourceSupportRead)
     config_schema_available: bool = False
+    config_spec: PluginManifestConfigSpec | None = None
     already_added: bool = False
     supported_actions: list[IntegrationActionType] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
@@ -201,9 +202,7 @@ class IntegrationInstanceCreateRequest(BaseModel):
 
     household_id: str = Field(min_length=1)
     plugin_id: str = Field(min_length=1)
-    display_name: str | None = Field(default=None, min_length=1, max_length=100)
-    scope_type: PluginConfigScopeType = "plugin"
-    scope_key: str = Field(default="default", min_length=1, max_length=100)
+    display_name: str = Field(min_length=1, max_length=100)
     config: dict[str, Any] = Field(default_factory=dict)
     clear_secret_fields: list[str] = Field(default_factory=list)
 

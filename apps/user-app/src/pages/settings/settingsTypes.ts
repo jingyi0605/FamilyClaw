@@ -218,54 +218,6 @@ export type AgentListResponse = {
   items: AgentSummary[];
 };
 
-export type HomeAssistantSyncResponse = {
-  household_id: string;
-  created_devices: number;
-  updated_devices: number;
-  created_bindings: number;
-  created_rooms: number;
-  assigned_rooms: number;
-  skipped_entities: number;
-  failed_entities: number;
-  devices: Device[];
-  failures: Array<{ entity_id: string | null; reason: string }>;
-};
-
-export type HomeAssistantDeviceCandidate = {
-  external_device_id: string;
-  primary_entity_id: string;
-  name: string;
-  room_name: string | null;
-  device_type: string;
-  entity_count: number;
-  already_synced: boolean;
-};
-
-export type HomeAssistantDeviceCandidatesResponse = {
-  household_id: string;
-  items: HomeAssistantDeviceCandidate[];
-};
-
-export type HomeAssistantRoomSyncResponse = {
-  household_id: string;
-  created_rooms: number;
-  matched_entities: number;
-  skipped_entities: number;
-  rooms: Array<{ id: string; name: string }>;
-};
-
-export type HomeAssistantRoomCandidate = {
-  name: string;
-  entity_count: number;
-  exists_locally: boolean;
-  can_sync: boolean;
-};
-
-export type HomeAssistantRoomCandidatesResponse = {
-  household_id: string;
-  items: HomeAssistantRoomCandidate[];
-};
-
 export type VoiceprintEnrollmentStatus = 'pending' | 'recording' | 'processing' | 'completed' | 'failed' | 'cancelled';
 export type VoiceprintConversationMode = 'public' | 'voiceprint_member';
 export type VoiceprintMemberSummaryStatus = 'not_enrolled' | 'pending' | 'active' | 'failed' | 'disabled';
@@ -720,6 +672,7 @@ export type IntegrationCatalogItem = {
   risk_level: PluginRiskLevel;
   resource_support: IntegrationResourceSupport;
   config_schema_available: boolean;
+  config_spec?: PluginManifestConfigSpec | null;
   already_added: boolean;
   supported_actions: IntegrationActionType[];
   tags: string[];
@@ -815,9 +768,7 @@ export type IntegrationPageViewModel = {
 export type IntegrationInstanceCreateRequest = {
   household_id: string;
   plugin_id: string;
-  display_name?: string | null;
-  scope_type: PluginConfigScopeType;
-  scope_key: string;
+  display_name: string;
   config: Record<string, unknown>;
   clear_secret_fields: string[];
 };
