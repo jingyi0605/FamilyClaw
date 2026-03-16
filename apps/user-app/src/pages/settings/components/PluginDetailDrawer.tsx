@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../../runtime';
+import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { ApiError, settingsApi } from '../settingsApi';
 import type {
   PluginJobListItemRead,
@@ -10,19 +11,6 @@ import type {
   PluginSourceType,
 } from '../settingsTypes';
 
-function pickLocaleText(
-  locale: string | undefined,
-  values: { zhCN: string; zhTW: string; enUS: string },
-) {
-  if (locale?.toLowerCase().startsWith('en')) {
-    return values.enUS;
-  }
-  if (locale?.toLowerCase().startsWith('zh-tw')) {
-    return values.zhTW;
-  }
-  return values.zhCN;
-}
-
 function resolveDateLocale(locale: string | undefined) {
   if (locale?.toLowerCase().startsWith('en')) return 'en-US';
   if (locale?.toLowerCase().startsWith('zh-tw')) return 'zh-TW';
@@ -32,11 +20,11 @@ function resolveDateLocale(locale: string | undefined) {
 function formatSourceType(sourceType: PluginSourceType, locale: string | undefined) {
   switch (sourceType) {
     case 'builtin':
-      return { label: pickLocaleText(locale, { zhCN: '内置', zhTW: '內建', enUS: 'Built-in' }), tone: 'info' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.source.builtin'), tone: 'info' as const };
     case 'official':
-      return { label: pickLocaleText(locale, { zhCN: '官方', zhTW: '官方', enUS: 'Official' }), tone: 'success' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.source.official'), tone: 'success' as const };
     case 'third_party':
-      return { label: pickLocaleText(locale, { zhCN: '第三方', zhTW: '第三方', enUS: 'Third-party' }), tone: 'warning' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.source.thirdParty'), tone: 'warning' as const };
     default:
       return { label: sourceType, tone: 'info' as const };
   }
@@ -46,33 +34,21 @@ function formatRiskLevel(riskLevel: PluginRiskLevel, locale: string | undefined)
   switch (riskLevel) {
     case 'low':
       return {
-        label: pickLocaleText(locale, { zhCN: '低风险', zhTW: '低風險', enUS: 'Low risk' }),
+        label: getPageMessage(locale, 'settings.plugin.risk.low'),
         tone: 'success' as const,
-        desc: pickLocaleText(locale, {
-          zhCN: '权限和行为都比较克制，风险相对低。',
-          zhTW: '權限和行為都比較克制，風險相對低。',
-          enUS: 'Permissions and behavior are relatively constrained.',
-        }),
+        desc: getPageMessage(locale, 'settings.plugin.risk.lowDesc'),
       };
     case 'medium':
       return {
-        label: pickLocaleText(locale, { zhCN: '中风险', zhTW: '中風險', enUS: 'Medium risk' }),
+        label: getPageMessage(locale, 'settings.plugin.risk.medium'),
         tone: 'warning' as const,
-        desc: pickLocaleText(locale, {
-          zhCN: '能做的事情更多，启用前最好确认权限范围。',
-          zhTW: '能做的事情更多，啟用前最好確認權限範圍。',
-          enUS: 'It can do more, so review the permission scope before enabling it.',
-        }),
+        desc: getPageMessage(locale, 'settings.plugin.risk.mediumDesc'),
       };
     case 'high':
       return {
-        label: pickLocaleText(locale, { zhCN: '高风险', zhTW: '高風險', enUS: 'High risk' }),
+        label: getPageMessage(locale, 'settings.plugin.risk.high'),
         tone: 'danger' as const,
-        desc: pickLocaleText(locale, {
-          zhCN: '这类插件能力很强，先确认来源、权限和维护状态，再决定要不要开。',
-          zhTW: '這類外掛能力很強，先確認來源、權限和維護狀態，再決定要不要開。',
-          enUS: 'This plugin is powerful. Verify source, permissions, and maintenance status before enabling it.',
-        }),
+        desc: getPageMessage(locale, 'settings.plugin.risk.highDesc'),
       };
     default:
       return { label: riskLevel, tone: 'warning' as const, desc: '' };
@@ -82,35 +58,35 @@ function formatRiskLevel(riskLevel: PluginRiskLevel, locale: string | undefined)
 function formatJobStatus(status: string, locale: string | undefined) {
   switch (status) {
     case 'succeeded':
-      return { label: pickLocaleText(locale, { zhCN: '成功', zhTW: '成功', enUS: 'Succeeded' }), tone: 'success' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.job.succeeded'), tone: 'success' as const };
     case 'queued':
-      return { label: pickLocaleText(locale, { zhCN: '排队中', zhTW: '排隊中', enUS: 'Queued' }), tone: 'warning' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.job.queued'), tone: 'warning' as const };
     case 'running':
-      return { label: pickLocaleText(locale, { zhCN: '执行中', zhTW: '執行中', enUS: 'Running' }), tone: 'warning' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.job.running'), tone: 'warning' as const };
     case 'retry_waiting':
-      return { label: pickLocaleText(locale, { zhCN: '等待重试', zhTW: '等待重試', enUS: 'Waiting to retry' }), tone: 'warning' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.job.retryWaiting'), tone: 'warning' as const };
     case 'waiting_response':
-      return { label: pickLocaleText(locale, { zhCN: '等待响应', zhTW: '等待回應', enUS: 'Waiting for response' }), tone: 'warning' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.job.waitingResponse'), tone: 'warning' as const };
     case 'failed':
-      return { label: pickLocaleText(locale, { zhCN: '失败', zhTW: '失敗', enUS: 'Failed' }), tone: 'danger' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.job.failed'), tone: 'danger' as const };
     case 'cancelled':
-      return { label: pickLocaleText(locale, { zhCN: '已取消', zhTW: '已取消', enUS: 'Cancelled' }), tone: 'secondary' as const };
+      return { label: getPageMessage(locale, 'settings.plugin.job.cancelled'), tone: 'secondary' as const };
     default:
       return { label: status, tone: 'secondary' as const };
   }
 }
 
 function formatPluginType(type: PluginManifestType, locale: string | undefined) {
-  const labels: Record<PluginManifestType, { zhCN: string; zhTW: string; enUS: string }> = {
-    connector: { zhCN: '连接器', zhTW: '連接器', enUS: 'Connector' },
-    'memory-ingestor': { zhCN: '记忆摄取', zhTW: '記憶攝取', enUS: 'Memory Ingestor' },
-    action: { zhCN: '动作', zhTW: '動作', enUS: 'Action' },
-    'agent-skill': { zhCN: 'Agent 技能', zhTW: 'Agent 技能', enUS: 'Agent Skill' },
-    channel: { zhCN: '通讯通道', zhTW: '通訊通道', enUS: 'Channel' },
-    'locale-pack': { zhCN: '语言包', zhTW: '語言包', enUS: 'Locale Pack' },
-    'region-provider': { zhCN: '地区提供器', zhTW: '地區提供器', enUS: 'Region Provider' },
+  const keyMap: Record<PluginManifestType, keyof typeof import('../../../runtime/h5-shell/i18n/pageMessages.en-US').PAGE_MESSAGES_EN_US> = {
+    connector: 'settings.plugin.type.connector',
+    'memory-ingestor': 'settings.plugin.type.memoryIngestor',
+    action: 'settings.plugin.type.action',
+    'agent-skill': 'settings.plugin.type.agentSkill',
+    channel: 'settings.plugin.type.channel',
+    'locale-pack': 'settings.plugin.type.localePack',
+    'region-provider': 'settings.plugin.type.regionProvider',
   };
-  return pickLocaleText(locale, labels[type]);
+  return getPageMessage(locale, keyMap[type]);
 }
 
 function formatTimestamp(value: string | null, locale: string | undefined) {
@@ -136,6 +112,36 @@ export function PluginDetailDrawer(props: {
   const [jobs, setJobs] = useState<PluginJobListItemRead[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState('');
+  const copy = useMemo(() => ({
+    jobsLoadFailed: getPageMessage(locale, 'settings.plugin.jobs.loadFailed'),
+    enabled: getPageMessage(locale, 'settings.plugin.enabled'),
+    disabled: getPageMessage(locale, 'settings.plugin.disabled'),
+    thirdPartyTitle: getPageMessage(locale, 'settings.plugin.thirdPartyTitle'),
+    thirdPartyDesc: getPageMessage(locale, 'settings.plugin.thirdPartyDesc'),
+    highRiskTitle: getPageMessage(locale, 'settings.plugin.highRiskTitle'),
+    waitingTitle: getPageMessage(locale, 'settings.plugin.waitingTitle'),
+    waitingDesc: getPageMessage(locale, 'settings.plugin.waitingDesc'),
+    latestFailedTitle: getPageMessage(locale, 'settings.plugin.latestFailedTitle'),
+    disabledTitle: getPageMessage(locale, 'settings.plugin.disabledTitle'),
+    disabledDesc: getPageMessage(locale, 'settings.plugin.disabledDesc'),
+    basics: getPageMessage(locale, 'settings.plugin.section.basics'),
+    version: getPageMessage(locale, 'settings.plugin.section.version'),
+    type: getPageMessage(locale, 'settings.plugin.section.type'),
+    source: getPageMessage(locale, 'settings.plugin.section.source'),
+    permissions: getPageMessage(locale, 'settings.plugin.section.permissions'),
+    noPermissions: getPageMessage(locale, 'settings.plugin.section.noPermissions'),
+    triggers: getPageMessage(locale, 'settings.plugin.section.triggers'),
+    entrypoints: getPageMessage(locale, 'settings.plugin.section.entrypoints'),
+    locales: getPageMessage(locale, 'settings.plugin.section.locales'),
+    jobs: getPageMessage(locale, 'settings.plugin.section.jobs'),
+    loadingJobs: getPageMessage(locale, 'settings.plugin.section.loadingJobs'),
+    attempts: getPageMessage(locale, 'settings.plugin.section.attempts'),
+    noJobs: getPageMessage(locale, 'settings.plugin.section.noJobs'),
+    close: getPageMessage(locale, 'settings.plugin.close'),
+    processing: getPageMessage(locale, 'settings.plugin.processing'),
+    disable: getPageMessage(locale, 'settings.plugin.disable'),
+    enable: getPageMessage(locale, 'settings.plugin.enable'),
+  }), [locale]);
 
   useEffect(() => {
     if (!householdId || !plugin || !isOpen) {
@@ -160,11 +166,7 @@ export function PluginDetailDrawer(props: {
         }
       } catch (error) {
         if (!cancelled) {
-          setJobsError(error instanceof ApiError ? error.message : pickLocaleText(locale, {
-            zhCN: '加载任务失败',
-            zhTW: '載入任務失敗',
-            enUS: 'Failed to load jobs',
-          }));
+          setJobsError(error instanceof ApiError ? error.message : copy.jobsLoadFailed);
           setJobs([]);
         }
       } finally {
@@ -178,7 +180,7 @@ export function PluginDetailDrawer(props: {
     return () => {
       cancelled = true;
     };
-  }, [householdId, isOpen, locale, plugin]);
+  }, [copy.jobsLoadFailed, householdId, isOpen, plugin]);
 
   if (!isOpen || !plugin) {
     return null;
@@ -199,29 +201,29 @@ export function PluginDetailDrawer(props: {
               <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
               <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>
               <span className={`badge badge--${isEnabled ? 'success' : 'secondary'}`}>
-                {pickLocaleText(locale, { zhCN: isEnabled ? '已启用' : '已停用', zhTW: isEnabled ? '已啟用' : '已停用', enUS: isEnabled ? 'Enabled' : 'Disabled' })}
+                {isEnabled ? copy.enabled : copy.disabled}
               </span>
             </div>
           </div>
-          <button className="btn btn--ghost btn--sm" onClick={onClose}>×</button>
+          <button className="btn btn--ghost btn--sm" type="button" onClick={onClose} aria-label={copy.close}>X</button>
         </div>
 
         <div className="task-form-drawer__body">
           {plugin.source_type === 'third_party' ? (
             <div className="plugin-detail-drawer__alert plugin-detail-drawer__alert--warning">
-              <span className="plugin-detail-drawer__alert-icon">⚠️</span>
+              <span className="plugin-detail-drawer__alert-icon">!</span>
               <div>
-                <strong>{pickLocaleText(locale, { zhCN: '第三方插件', zhTW: '第三方外掛', enUS: 'Third-party plugin' })}</strong>
-                <p>{pickLocaleText(locale, { zhCN: '来源不在系统可控范围内，先看权限、稳定性和维护状态。', zhTW: '來源不在系統可控範圍內，先看權限、穩定性和維護狀態。', enUS: 'This plugin is not controlled by the system. Review permissions, stability, and maintenance before trusting it.' })}</p>
+                <strong>{copy.thirdPartyTitle}</strong>
+                <p>{copy.thirdPartyDesc}</p>
               </div>
             </div>
           ) : null}
 
           {plugin.risk_level === 'high' ? (
             <div className="plugin-detail-drawer__alert plugin-detail-drawer__alert--danger">
-              <span className="plugin-detail-drawer__alert-icon">⛔</span>
+              <span className="plugin-detail-drawer__alert-icon">!</span>
               <div>
-                <strong>{pickLocaleText(locale, { zhCN: '高风险插件', zhTW: '高風險外掛', enUS: 'High-risk plugin' })}</strong>
+                <strong>{copy.highRiskTitle}</strong>
                 <p>{riskInfo.desc}</p>
               </div>
             </div>
@@ -229,19 +231,19 @@ export function PluginDetailDrawer(props: {
 
           {latestWaitingJob ? (
             <div className="plugin-detail-drawer__alert plugin-detail-drawer__alert--info">
-              <span className="plugin-detail-drawer__alert-icon">ℹ️</span>
+              <span className="plugin-detail-drawer__alert-icon">i</span>
               <div>
-                <strong>{pickLocaleText(locale, { zhCN: '最近有任务在等响应', zhTW: '最近有任務在等回應', enUS: 'A recent job is waiting for a response' })}</strong>
-                <p>{pickLocaleText(locale, { zhCN: '先处理这条任务，再判断插件是不是真的卡住了。', zhTW: '先處理這條任務，再判斷外掛是不是真的卡住了。', enUS: 'Handle that job first before deciding whether the plugin is actually stuck.' })}</p>
+                <strong>{copy.waitingTitle}</strong>
+                <p>{copy.waitingDesc}</p>
               </div>
             </div>
           ) : null}
 
           {latestFailedJob && !latestWaitingJob ? (
             <div className="plugin-detail-drawer__alert plugin-detail-drawer__alert--danger">
-              <span className="plugin-detail-drawer__alert-icon">⚠️</span>
+              <span className="plugin-detail-drawer__alert-icon">!</span>
               <div>
-                <strong>{pickLocaleText(locale, { zhCN: '最近一次任务失败', zhTW: '最近一次任務失敗', enUS: 'Latest job failed' })}</strong>
+                <strong>{copy.latestFailedTitle}</strong>
                 {latestFailedJob.job.last_error_message ? <p>{latestFailedJob.job.last_error_message}</p> : null}
               </div>
             </div>
@@ -249,38 +251,38 @@ export function PluginDetailDrawer(props: {
 
           {!isEnabled ? (
             <div className="plugin-detail-drawer__alert plugin-detail-drawer__alert--info">
-              <span className="plugin-detail-drawer__alert-icon">⏸️</span>
+              <span className="plugin-detail-drawer__alert-icon">i</span>
               <div>
-                <strong>{plugin.disabled_reason || pickLocaleText(locale, { zhCN: '当前插件处于停用状态', zhTW: '目前外掛處於停用狀態', enUS: 'This plugin is currently disabled' })}</strong>
-                <p>{pickLocaleText(locale, { zhCN: '配置还在，重新启用时会继续复用。', zhTW: '設定還在，重新啟用時會繼續復用。', enUS: 'The configuration is still there and will be reused when the plugin is enabled again.' })}</p>
+                <strong>{plugin.disabled_reason || copy.disabledTitle}</strong>
+                <p>{copy.disabledDesc}</p>
               </div>
             </div>
           ) : null}
 
           <div className="plugin-detail-section">
-            <h3>{pickLocaleText(locale, { zhCN: '基本信息', zhTW: '基本資訊', enUS: 'Basics' })}</h3>
+            <h3>{copy.basics}</h3>
             <div className="plugin-detail-grid">
               <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">ID</span><span className="plugin-detail-grid__value">{plugin.id}</span></div>
-              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{pickLocaleText(locale, { zhCN: '版本', zhTW: '版本', enUS: 'Version' })}</span><span className="plugin-detail-grid__value">v{plugin.version}</span></div>
-              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{pickLocaleText(locale, { zhCN: '类型', zhTW: '類型', enUS: 'Type' })}</span><span className="plugin-detail-grid__value">{plugin.types.map((type) => formatPluginType(type, locale)).join('、')}</span></div>
-              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{pickLocaleText(locale, { zhCN: '来源', zhTW: '來源', enUS: 'Source' })}</span><span className={`plugin-detail-grid__value plugin-detail-grid__value--${sourceInfo.tone}`}>{sourceInfo.label}</span></div>
+              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.version}</span><span className="plugin-detail-grid__value">v{plugin.version}</span></div>
+              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.type}</span><span className="plugin-detail-grid__value">{plugin.types.map((type) => formatPluginType(type, locale)).join(' / ')}</span></div>
+              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.source}</span><span className={`plugin-detail-grid__value plugin-detail-grid__value--${sourceInfo.tone}`}>{sourceInfo.label}</span></div>
             </div>
           </div>
 
           <div className="plugin-detail-section">
-            <h3>{pickLocaleText(locale, { zhCN: '权限', zhTW: '權限', enUS: 'Permissions' })}</h3>
+            <h3>{copy.permissions}</h3>
             {plugin.permissions.length > 0 ? (
               <div className="plugin-detail-permissions">
                 {plugin.permissions.map((permission) => <span key={permission} className="plugin-detail-permission-tag">{permission}</span>)}
               </div>
             ) : (
-              <p className="plugin-detail-empty">{pickLocaleText(locale, { zhCN: '没有声明额外权限。', zhTW: '沒有宣告額外權限。', enUS: 'No extra permissions declared.' })}</p>
+              <p className="plugin-detail-empty">{copy.noPermissions}</p>
             )}
           </div>
 
           {plugin.triggers.length > 0 ? (
             <div className="plugin-detail-section">
-              <h3>{pickLocaleText(locale, { zhCN: '触发器', zhTW: '觸發器', enUS: 'Triggers' })}</h3>
+              <h3>{copy.triggers}</h3>
               <div className="plugin-detail-triggers">
                 {plugin.triggers.map((trigger) => <span key={trigger} className="plugin-detail-trigger-tag">{trigger}</span>)}
               </div>
@@ -288,7 +290,7 @@ export function PluginDetailDrawer(props: {
           ) : null}
 
           <div className="plugin-detail-section">
-            <h3>{pickLocaleText(locale, { zhCN: '入口点', zhTW: '入口點', enUS: 'Entrypoints' })}</h3>
+            <h3>{copy.entrypoints}</h3>
             <div className="plugin-detail-entrypoints">
               {Object.entries(plugin.entrypoints).filter(([, value]) => Boolean(value)).map(([key, value]) => (
                 <div key={key} className="plugin-detail-entrypoint-item">
@@ -301,7 +303,7 @@ export function PluginDetailDrawer(props: {
 
           {plugin.locales.length > 0 ? (
             <div className="plugin-detail-section">
-              <h3>{pickLocaleText(locale, { zhCN: '语言支持', zhTW: '語言支援', enUS: 'Locales' })}</h3>
+              <h3>{copy.locales}</h3>
               <div className="plugin-detail-permissions">
                 {plugin.locales.map((item) => <span key={item.id} className="plugin-detail-permission-tag">{item.native_label}</span>)}
               </div>
@@ -309,10 +311,10 @@ export function PluginDetailDrawer(props: {
           ) : null}
 
           <div className="plugin-detail-section">
-            <h3>{pickLocaleText(locale, { zhCN: '最近任务', zhTW: '最近任務', enUS: 'Recent Jobs' })}</h3>
-            {jobsError ? <div className="settings-note settings-note--error"><span>⚠️</span> {jobsError}</div> : null}
+            <h3>{copy.jobs}</h3>
+            {jobsError ? <div className="settings-note settings-note--error">{jobsError}</div> : null}
             {jobsLoading ? (
-              <div className="plugin-detail-loading settings-loading-copy settings-loading-copy--center">{pickLocaleText(locale, { zhCN: '正在加载最近任务...', zhTW: '正在載入最近任務...', enUS: 'Loading recent jobs...' })}</div>
+              <div className="plugin-detail-loading settings-loading-copy settings-loading-copy--center">{copy.loadingJobs}</div>
             ) : jobs.length > 0 ? (
               <div className="plugin-job-list">
                 {jobs.map((item) => {
@@ -325,8 +327,8 @@ export function PluginDetailDrawer(props: {
                       </div>
                       <div className="plugin-job-item__meta">
                         <span>{formatTimestamp(item.job.created_at, locale)}</span>
-                        <span>·</span>
-                        <span>{pickLocaleText(locale, { zhCN: '尝试次数', zhTW: '嘗試次數', enUS: 'Attempts' })}：{item.job.current_attempt}/{item.job.max_attempts}</span>
+                        <span>/</span>
+                        <span>{copy.attempts}: {item.job.current_attempt}/{item.job.max_attempts}</span>
                       </div>
                       {item.job.last_error_message ? <div className="plugin-job-item__error">{item.job.last_error_message}</div> : null}
                     </div>
@@ -334,21 +336,15 @@ export function PluginDetailDrawer(props: {
                 })}
               </div>
             ) : (
-              <div className="plugin-detail-empty">{pickLocaleText(locale, { zhCN: '最近没有任务记录。', zhTW: '最近沒有任務紀錄。', enUS: 'No recent jobs.' })}</div>
+              <div className="plugin-detail-empty">{copy.noJobs}</div>
             )}
           </div>
         </div>
 
         <div className="task-form-drawer__footer">
-          <button className="btn btn--ghost" onClick={onClose}>{pickLocaleText(locale, { zhCN: '关闭', zhTW: '關閉', enUS: 'Close' })}</button>
-          <button className="btn btn--primary" onClick={() => onToggle(plugin)} disabled={isToggling}>
-            {isToggling
-              ? pickLocaleText(locale, { zhCN: '处理中...', zhTW: '處理中...', enUS: 'Processing...' })
-              : pickLocaleText(locale, {
-                zhCN: isEnabled ? '停用插件' : '启用插件',
-                zhTW: isEnabled ? '停用外掛' : '啟用外掛',
-                enUS: isEnabled ? 'Disable Plugin' : 'Enable Plugin',
-              })}
+          <button className="btn btn--ghost" type="button" onClick={onClose}>{copy.close}</button>
+          <button className="btn btn--primary" type="button" onClick={() => onToggle(plugin)} disabled={isToggling}>
+            {isToggling ? copy.processing : isEnabled ? copy.disable : copy.enable}
           </button>
         </div>
       </div>

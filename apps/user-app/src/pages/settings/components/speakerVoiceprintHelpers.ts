@@ -1,8 +1,12 @@
+import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import type {
   HouseholdVoiceprintMemberSummaryRead,
   VoiceprintConversationMode,
   VoiceprintEnrollmentRead,
 } from '../settingsTypes';
+
+type TranslateFn = (key: string, params?: Record<string, string | number>) => string;
+const defaultTranslate: TranslateFn = (key, params) => getPageMessage('zh-CN', key as keyof typeof import('../../../runtime/h5-shell/i18n/pageMessages').PAGE_MESSAGES['en-US'], params);
 
 export type VoiceprintWizardMode = 'create' | 'update';
 export type VoiceprintWizardStep = 'select_member' | 'confirm' | 'creating' | 'waiting' | 'success' | 'failed';
@@ -43,7 +47,10 @@ export function createVoiceprintWaitingWizardState(
   };
 }
 
-export function getVoiceprintConversationCopy(voiceprintIdentityEnabled: boolean): {
+export function getVoiceprintConversationCopy(
+  voiceprintIdentityEnabled: boolean,
+  t: TranslateFn = defaultTranslate,
+): {
   mode: VoiceprintConversationMode;
   title: string;
   lines: string[];
@@ -51,27 +58,30 @@ export function getVoiceprintConversationCopy(voiceprintIdentityEnabled: boolean
   if (voiceprintIdentityEnabled) {
     return {
       mode: 'voiceprint_member',
-      title: '当前按成员路由处理',
+      title: t('voiceprint.tab.conversation.memberTitle'),
       lines: [
-        '系统会优先按声纹识别成员。',
-        '识别成功后进入对应成员对话。',
-        '识别失败时会按后端既有降级规则继续处理，不会把语音主链打断。',
+        t('voiceprint.tab.conversation.memberLine1'),
+        t('voiceprint.tab.conversation.memberLine2'),
+        t('voiceprint.tab.conversation.memberLine3'),
       ],
     };
   }
 
   return {
     mode: 'public',
-    title: '当前按公开对话处理',
+    title: t('voiceprint.tab.conversation.publicTitle'),
     lines: [
-      '这台设备当前不会按声纹识别成员。',
-      '所有家庭成员都可以看到这台设备的对话内容。',
-      '关闭声纹识别不会删除已有声纹档案，只是把这台设备切回公开对话。',
+      t('voiceprint.tab.conversation.publicLine1'),
+      t('voiceprint.tab.conversation.publicLine2'),
+      t('voiceprint.tab.conversation.publicLine3'),
     ],
   };
 }
 
-export function getVoiceprintMemberStatusMeta(summary: HouseholdVoiceprintMemberSummaryRead): {
+export function getVoiceprintMemberStatusMeta(
+  summary: HouseholdVoiceprintMemberSummaryRead,
+  t: TranslateFn = defaultTranslate,
+): {
   label: string;
   tone: 'secondary' | 'success' | 'danger' | 'info' | 'warning';
   actionLabel: string;
@@ -81,43 +91,45 @@ export function getVoiceprintMemberStatusMeta(summary: HouseholdVoiceprintMember
   switch (summary.status) {
     case 'pending':
       return {
-        label: '建档中',
+        label: t('voiceprint.tab.status.pending.label'),
         tone: 'info',
-        actionLabel: '查看进度',
+        actionLabel: t('voiceprint.tab.status.pending.action'),
         disabled: false,
-        description: `当前正在处理样本，已采集 ${summary.sample_count} 轮。`,
+        description: t('voiceprint.tab.status.pending.desc', { count: summary.sample_count }),
       };
     case 'active':
       return {
-        label: '可用',
+        label: t('voiceprint.tab.status.active.label'),
         tone: 'success',
-        actionLabel: '更新声纹',
+        actionLabel: t('voiceprint.tab.status.active.action'),
         disabled: false,
-        description: summary.sample_count > 0 ? `当前档案已可用，累计样本 ${summary.sample_count} 轮。` : '当前档案已可用。',
+        description: summary.sample_count > 0
+          ? t('voiceprint.tab.status.active.desc', { count: summary.sample_count })
+          : t('voiceprint.tab.status.active.descNoCount'),
       };
     case 'failed':
       return {
-        label: '失败',
+        label: t('voiceprint.tab.status.failed.label'),
         tone: 'danger',
-        actionLabel: '重新录入',
+        actionLabel: t('voiceprint.tab.status.failed.action'),
         disabled: false,
-        description: summary.error_message || '最近一次建档没有成功，可以重新开始。',
+        description: summary.error_message || t('voiceprint.tab.status.failed.desc'),
       };
     case 'disabled':
       return {
-        label: '已停用',
+        label: t('voiceprint.tab.status.disabled.label'),
         tone: 'warning',
-        actionLabel: '重新录入',
+        actionLabel: t('voiceprint.tab.status.disabled.action'),
         disabled: false,
-        description: '已有历史档案，但当前不可用，需要重新录入。',
+        description: t('voiceprint.tab.status.disabled.desc'),
       };
     default:
       return {
-        label: '未建档',
+        label: t('voiceprint.tab.status.empty.label'),
         tone: 'secondary',
-        actionLabel: '开始录入',
+        actionLabel: t('voiceprint.tab.status.empty.action'),
         disabled: false,
-        description: '还没有可用声纹档案，需要先完成首次录入。',
+        description: t('voiceprint.tab.status.empty.desc'),
       };
   }
 }
@@ -134,17 +146,21 @@ export function getNextWizardStateFromEnrollment(
       ...state,
       step: 'failed',
       enrollmentId: enrollment.id,
-      error: enrollment.error_message || '这次录入没有成功，可以重新开始。',
+      error: enrollment.error_message || '',
     };
   }
   return { ...state, step: 'waiting', enrollmentId: enrollment.id, error: '' };
 }
 
-export function formatVoiceprintTime(value: string | null) {
-  if (!value) return '暂无记录';
+export function formatVoiceprintTime(
+  value: string | null,
+  locale = 'zh-CN',
+  t: TranslateFn = defaultTranslate,
+) {
+  if (!value) return t('voiceprint.tab.time.empty');
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString(locale.toLowerCase().startsWith('en') ? 'en-US' : 'zh-CN', {
     month: 'numeric',
     day: 'numeric',
     hour: '2-digit',

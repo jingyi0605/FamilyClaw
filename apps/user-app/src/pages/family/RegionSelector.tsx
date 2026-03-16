@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useI18n } from '../../runtime';
+import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { api } from './api';
 import type { RegionNode } from './types';
 
@@ -19,6 +21,7 @@ type RegionSelectorProps = {
 };
 
 export function RegionSelector({ value, onChange, disabled = false }: RegionSelectorProps) {
+  const { locale } = useI18n();
   const [provinces, setProvinces] = useState<RegionNode[]>([]);
   const [cities, setCities] = useState<RegionNode[]>([]);
   const [districts, setDistricts] = useState<RegionNode[]>([]);
@@ -38,7 +41,7 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
       setProvinces(result);
     }).catch(regionError => {
       if (cancelled) return;
-      setError(regionError instanceof Error ? regionError.message : '加载省份失败');
+      setError(regionError instanceof Error ? regionError.message : getPageMessage(locale, 'family.regionSelector.loadProvincesFailure'));
     }).finally(() => {
       if (cancelled) return;
       setLoading(current => ({ ...current, provinces: false }));
@@ -67,7 +70,7 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
       setCities(result);
     }).catch(regionError => {
       if (cancelled) return;
-      setError(regionError instanceof Error ? regionError.message : '加载城市失败');
+      setError(regionError instanceof Error ? regionError.message : getPageMessage(locale, 'family.regionSelector.loadCitiesFailure'));
     }).finally(() => {
       if (cancelled) return;
       setLoading(current => ({ ...current, cities: false }));
@@ -96,7 +99,7 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
       setDistricts(result);
     }).catch(regionError => {
       if (cancelled) return;
-      setError(regionError instanceof Error ? regionError.message : '加载区县失败');
+      setError(regionError instanceof Error ? regionError.message : getPageMessage(locale, 'family.regionSelector.loadDistrictsFailure'));
     }).finally(() => {
       if (cancelled) return;
       setLoading(current => ({ ...current, districts: false }));
@@ -116,10 +119,10 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
 
   return (
     <div className="form-group">
-      <label>所在地区</label>
+      <label>{getPageMessage(locale, 'family.regionSelector.regionLabel')}</label>
       <div className="setup-form-grid">
         <div className="form-group">
-          <label htmlFor="region-country">国家 / 地区</label>
+          <label htmlFor="region-country">{getPageMessage(locale, 'family.regionSelector.countryLabel')}</label>
           <select
             id="region-country"
             className="form-select"
@@ -127,14 +130,14 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
             disabled={disabled}
             onChange={event => onChange({ countryCode: event.target.value, provinceCode: '', cityCode: '', districtCode: '' })}
           >
-            <option value="CN">中国</option>
+            <option value="CN">{getPageMessage(locale, 'family.regionSelector.countryChina')}</option>
           </select>
-          <div className="form-hint">当前可选中国，已包含大陆、香港、澳门和台湾地区。</div>
+          <div className="form-hint">{getPageMessage(locale, 'family.regionSelector.countryHint')}</div>
         </div>
       </div>
       <div className="setup-form-grid">
         <div className="form-group">
-          <label htmlFor="region-province">省级</label>
+          <label htmlFor="region-province">{getPageMessage(locale, 'family.regionSelector.provinceLabel')}</label>
           <select
             id="region-province"
             className="form-select"
@@ -142,14 +145,14 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
             disabled={disabled || loading.provinces}
             onChange={event => onChange({ countryCode: value.countryCode || DEFAULT_REGION_COUNTRY, provinceCode: event.target.value, cityCode: '', districtCode: '' })}
           >
-            <option value="">请选择省级地区</option>
+            <option value="">{getPageMessage(locale, 'family.regionSelector.provincePlaceholder')}</option>
             {provinces.map(item => (
               <option key={item.region_code} value={item.region_code}>{item.name}</option>
             ))}
           </select>
         </div>
         <div className="form-group">
-          <label htmlFor="region-city">市级</label>
+          <label htmlFor="region-city">{getPageMessage(locale, 'family.regionSelector.cityLabel')}</label>
           <select
             id="region-city"
             className="form-select"
@@ -157,7 +160,7 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
             disabled={disabled || !value.provinceCode || loading.cities}
             onChange={event => onChange({ countryCode: value.countryCode || DEFAULT_REGION_COUNTRY, provinceCode: value.provinceCode, cityCode: event.target.value, districtCode: '' })}
           >
-            <option value="">请选择市级地区</option>
+            <option value="">{getPageMessage(locale, 'family.regionSelector.cityPlaceholder')}</option>
             {cities.map(item => (
               <option key={item.region_code} value={item.region_code}>{item.name}</option>
             ))}
@@ -165,7 +168,7 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
         </div>
       </div>
       <div className="form-group">
-        <label htmlFor="region-district">区县</label>
+        <label htmlFor="region-district">{getPageMessage(locale, 'family.regionSelector.districtLabel')}</label>
         <select
           id="region-district"
           className="form-select"
@@ -173,13 +176,13 @@ export function RegionSelector({ value, onChange, disabled = false }: RegionSele
           disabled={disabled || !value.cityCode || loading.districts}
           onChange={event => onChange({ countryCode: value.countryCode || DEFAULT_REGION_COUNTRY, provinceCode: value.provinceCode, cityCode: value.cityCode, districtCode: event.target.value })}
         >
-          <option value="">请选择区县</option>
+          <option value="">{getPageMessage(locale, 'family.regionSelector.districtPlaceholder')}</option>
           {districts.map(item => (
             <option key={item.region_code} value={item.region_code}>{item.name}</option>
           ))}
         </select>
       </div>
-      <div className="form-hint">{selectedSummary || '请选择国家、省、市、区县后再继续。'}</div>
+      <div className="form-hint">{selectedSummary || getPageMessage(locale, 'family.regionSelector.summaryPlaceholder')}</div>
       {error && <div className="form-error">{error}</div>}
     </div>
   );

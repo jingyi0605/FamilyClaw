@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import Taro from '@tarojs/taro';
 import { useI18n } from '../../../runtime';
+import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { ApiError, settingsApi } from '../settingsApi';
 import type {
   ChannelBindingCandidateRead,
@@ -30,19 +31,6 @@ type BindingLabels = {
   candidateHelpText: string;
 };
 
-function pickLocaleText(
-  locale: string | undefined,
-  values: { zhCN: string; zhTW: string; enUS: string },
-) {
-  if (locale?.toLowerCase().startsWith('en')) {
-    return values.enUS;
-  }
-  if (locale?.toLowerCase().startsWith('zh-tw')) {
-    return values.zhTW;
-  }
-  return values.zhCN;
-}
-
 function resolveDateLocale(locale: string | undefined) {
   if (locale?.toLowerCase().startsWith('en')) {
     return 'en-US';
@@ -61,10 +49,7 @@ function formatTimestamp(value: string, locale: string | undefined): string {
   }
 }
 
-function formatApiErrorMessage(
-  error: ApiError,
-  locale: string | undefined,
-): string {
+function formatApiErrorMessage(error: ApiError, locale: string | undefined): string {
   const payload = error.payload as { detail?: unknown } | undefined;
   const detail = payload?.detail;
   if (typeof detail === 'string' && detail.trim()) {
@@ -89,14 +74,10 @@ function formatApiErrorMessage(
       })
       .filter((item): item is string => Boolean(item));
     if (messages.length > 0) {
-      return messages.join('；');
+      return messages.join('; ');
     }
   }
-  return error.message || pickLocaleText(locale, {
-    zhCN: '保存绑定失败',
-    zhTW: '儲存綁定失敗',
-    enUS: 'Failed to save binding',
-  });
+  return error.message || getPageMessage(locale, 'settings.channel.binding.saveFailed');
 }
 
 function buildDisplayHint(candidate: ChannelBindingCandidateRead): string {
@@ -110,46 +91,14 @@ function buildDisplayHint(candidate: ChannelBindingCandidateRead): string {
 function resolveBindingLabels(plugin: PluginRegistryItem | null, locale: string | undefined): BindingLabels {
   const bindingUi = plugin?.capabilities.channel?.ui?.binding;
   return {
-    identityLabel: bindingUi?.identity_label ?? pickLocaleText(locale, {
-      zhCN: '外部用户 ID',
-      zhTW: '外部使用者 ID',
-      enUS: 'External User ID',
-    }),
-    identityPlaceholder: bindingUi?.identity_placeholder ?? pickLocaleText(locale, {
-      zhCN: '请输入外部平台用户 ID',
-      zhTW: '請輸入外部平台使用者 ID',
-      enUS: 'Enter the external platform user ID',
-    }),
-    identityHelpText: bindingUi?.identity_help_text ?? pickLocaleText(locale, {
-      zhCN: '平台里的唯一用户标识。',
-      zhTW: '平台中的唯一使用者識別。',
-      enUS: 'The unique user identifier on that platform.',
-    }),
-    chatLabel: bindingUi?.chat_label ?? pickLocaleText(locale, {
-      zhCN: '外部会话 ID',
-      zhTW: '外部會話 ID',
-      enUS: 'External Chat ID',
-    }),
-    chatPlaceholder: bindingUi?.chat_placeholder ?? pickLocaleText(locale, {
-      zhCN: '可选，用来排查会话映射',
-      zhTW: '可選，用來排查會話映射',
-      enUS: 'Optional, useful for checking chat mapping',
-    }),
-    chatHelpText: bindingUi?.chat_help_text ?? pickLocaleText(locale, {
-      zhCN: '可选，群聊或排障时再填。',
-      zhTW: '可選，群聊或排障時再填。',
-      enUS: 'Optional. Useful for group chats or troubleshooting.',
-    }),
-    candidateTitle: bindingUi?.candidate_title ?? pickLocaleText(locale, {
-      zhCN: '待绑定候选',
-      zhTW: '待綁定候選',
-      enUS: 'Binding candidates',
-    }),
-    candidateHelpText: bindingUi?.candidate_help_text ?? pickLocaleText(locale, {
-      zhCN: '这里只显示最近发过消息、但还没绑定成员的平台用户。',
-      zhTW: '這裡只顯示最近發過訊息、但還沒綁定成員的平台使用者。',
-      enUS: 'Only recent platform users who sent messages and are still unbound are shown here.',
-    }),
+    identityLabel: bindingUi?.identity_label ?? getPageMessage(locale, 'settings.channel.binding.identityLabel'),
+    identityPlaceholder: bindingUi?.identity_placeholder ?? getPageMessage(locale, 'settings.channel.binding.identityPlaceholder'),
+    identityHelpText: bindingUi?.identity_help_text ?? getPageMessage(locale, 'settings.channel.binding.identityHelpText'),
+    chatLabel: bindingUi?.chat_label ?? getPageMessage(locale, 'settings.channel.binding.chatLabel'),
+    chatPlaceholder: bindingUi?.chat_placeholder ?? getPageMessage(locale, 'settings.channel.binding.chatPlaceholder'),
+    chatHelpText: bindingUi?.chat_help_text ?? getPageMessage(locale, 'settings.channel.binding.chatHelpText'),
+    candidateTitle: bindingUi?.candidate_title ?? getPageMessage(locale, 'settings.channel.binding.candidateTitle'),
+    candidateHelpText: bindingUi?.candidate_help_text ?? getPageMessage(locale, 'settings.channel.binding.candidateHelpText'),
   };
 }
 
@@ -187,6 +136,50 @@ export function ChannelAccountBindingsPanel({
 
   const labels = useMemo(() => resolveBindingLabels(plugin, locale), [locale, plugin]);
   const memberMap = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
+  const copy = useMemo(() => ({
+    saveFailed: getPageMessage(locale, 'settings.channel.binding.saveFailed'),
+    loadFailed: getPageMessage(locale, 'settings.channel.binding.loadFailed'),
+    selectMember: getPageMessage(locale, 'settings.channel.binding.selectMember'),
+    fillIdentity: (label: string) => getPageMessage(locale, 'settings.channel.binding.fillIdentity', { label }),
+    updated: getPageMessage(locale, 'settings.channel.binding.updated'),
+    created: getPageMessage(locale, 'settings.channel.binding.created'),
+    restored: getPageMessage(locale, 'settings.channel.binding.restored'),
+    disabled: getPageMessage(locale, 'settings.channel.binding.disabled'),
+    toggleFailed: getPageMessage(locale, 'settings.channel.binding.toggleFailed'),
+    deleteTitle: getPageMessage(locale, 'settings.channel.binding.deleteTitle'),
+    deleteContent: getPageMessage(locale, 'settings.channel.binding.deleteContent'),
+    deleted: getPageMessage(locale, 'settings.channel.binding.deleted'),
+    deleteFailed: getPageMessage(locale, 'settings.channel.binding.deleteFailed'),
+    unsupported: getPageMessage(locale, 'settings.channel.binding.unsupported'),
+    loadingCandidates: getPageMessage(locale, 'settings.channel.binding.loadingCandidates'),
+    emptyCandidates: getPageMessage(locale, 'settings.channel.binding.emptyCandidates'),
+    latestMessage: getPageMessage(locale, 'settings.channel.binding.latestMessage'),
+    chatTypeGroup: getPageMessage(locale, 'settings.channel.binding.chatType.group'),
+    chatTypeDirect: getPageMessage(locale, 'settings.channel.binding.chatType.direct'),
+    bindNow: getPageMessage(locale, 'settings.channel.binding.bindNow'),
+    loading: getPageMessage(locale, 'settings.channel.binding.loading'),
+    empty: getPageMessage(locale, 'settings.channel.binding.empty'),
+    add: getPageMessage(locale, 'settings.channel.binding.add'),
+    count: (count: number) => getPageMessage(locale, 'settings.channel.binding.count', { count }),
+    unknownMember: getPageMessage(locale, 'settings.channel.binding.unknownMember'),
+    active: getPageMessage(locale, 'settings.channel.binding.active'),
+    inactive: getPageMessage(locale, 'settings.channel.binding.inactive'),
+    edit: getPageMessage(locale, 'settings.channel.binding.edit'),
+    disable: getPageMessage(locale, 'settings.channel.binding.disable'),
+    restore: getPageMessage(locale, 'settings.channel.binding.restore'),
+    delete: getPageMessage(locale, 'settings.channel.binding.delete'),
+    modalEditTitle: getPageMessage(locale, 'settings.channel.binding.modalEditTitle'),
+    modalCreateTitle: getPageMessage(locale, 'settings.channel.binding.modalCreateTitle'),
+    modalDesc: getPageMessage(locale, 'settings.channel.binding.modalDesc'),
+    memberLabel: getPageMessage(locale, 'settings.channel.binding.memberLabel'),
+    memberPlaceholder: getPageMessage(locale, 'settings.channel.binding.memberPlaceholder'),
+    noteLabel: getPageMessage(locale, 'settings.channel.binding.noteLabel'),
+    notePlaceholder: getPageMessage(locale, 'settings.channel.binding.notePlaceholder'),
+    statusLabel: getPageMessage(locale, 'settings.channel.binding.statusLabel'),
+    cancel: getPageMessage(locale, 'settings.channel.binding.cancel'),
+    saving: getPageMessage(locale, 'settings.channel.binding.saving'),
+    save: getPageMessage(locale, 'settings.channel.binding.save'),
+  }), [locale]);
 
   async function reloadData() {
     if (!householdId || !accountId || !supportsMemberBinding) {
@@ -206,15 +199,7 @@ export function ChannelAccountBindingsPanel({
       setBindings(bindingResult);
       setCandidates(candidateResult);
     } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : pickLocaleText(locale, {
-            zhCN: '加载成员绑定失败',
-            zhTW: '載入成員綁定失敗',
-            enUS: 'Failed to load member bindings',
-          }),
-      );
+      setError(loadError instanceof Error ? loadError.message : copy.loadFailed);
     } finally {
       setLoading(false);
       setCandidateLoading(false);
@@ -251,25 +236,17 @@ export function ChannelAccountBindingsPanel({
     setModalOpen(true);
   }
 
-  async function handleSaveBinding(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSaveBinding(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!householdId || !accountId) {
       return;
     }
     if (!editingBinding && !form.member_id) {
-      setFormError(pickLocaleText(locale, {
-        zhCN: '请选择要绑定的家庭成员。',
-        zhTW: '請選擇要綁定的家庭成員。',
-        enUS: 'Select the family member to bind.',
-      }));
+      setFormError(copy.selectMember);
       return;
     }
     if (!form.external_user_id.trim()) {
-      setFormError(pickLocaleText(locale, {
-        zhCN: `请填写${labels.identityLabel}。`,
-        zhTW: `請填寫${labels.identityLabel}。`,
-        enUS: `Fill in ${labels.identityLabel}.`,
-      }));
+      setFormError(copy.fillIdentity(labels.identityLabel));
       return;
     }
 
@@ -285,11 +262,7 @@ export function ChannelAccountBindingsPanel({
           binding_status: form.binding_status,
         };
         await settingsApi.updateChannelAccountBinding(householdId, accountId, editingBinding.id, payload);
-        setStatus(pickLocaleText(locale, {
-          zhCN: '成员绑定已更新。',
-          zhTW: '成員綁定已更新。',
-          enUS: 'Member binding updated.',
-        }));
+        setStatus(copy.updated);
       } else {
         const payload: MemberChannelBindingCreate = {
           channel_account_id: accountId,
@@ -300,25 +273,16 @@ export function ChannelAccountBindingsPanel({
           binding_status: form.binding_status,
         };
         await settingsApi.createChannelAccountBinding(householdId, accountId, payload);
-        setStatus(pickLocaleText(locale, {
-          zhCN: '成员绑定已创建。',
-          zhTW: '成員綁定已建立。',
-          enUS: 'Member binding created.',
-        }));
+        setStatus(copy.created);
       }
       setModalOpen(false);
       await reloadData();
     } catch (saveError) {
-      const message =
-        saveError instanceof ApiError
-          ? formatApiErrorMessage(saveError, locale)
-          : saveError instanceof Error
-            ? saveError.message
-            : pickLocaleText(locale, {
-              zhCN: '保存绑定失败',
-              zhTW: '儲存綁定失敗',
-              enUS: 'Failed to save binding',
-            });
+      const message = saveError instanceof ApiError
+        ? formatApiErrorMessage(saveError, locale)
+        : saveError instanceof Error
+          ? saveError.message
+          : copy.saveFailed;
       setFormError(message);
     } finally {
       setModalLoading(false);
@@ -337,22 +301,10 @@ export function ChannelAccountBindingsPanel({
       await settingsApi.updateChannelAccountBinding(householdId, accountId, binding.id, {
         binding_status: nextStatus,
       });
-      setStatus(pickLocaleText(locale, {
-        zhCN: nextStatus === 'active' ? '成员绑定已恢复。' : '成员绑定已停用。',
-        zhTW: nextStatus === 'active' ? '成員綁定已恢復。' : '成員綁定已停用。',
-        enUS: nextStatus === 'active' ? 'Member binding restored.' : 'Member binding disabled.',
-      }));
+      setStatus(nextStatus === 'active' ? copy.restored : copy.disabled);
       await reloadData();
     } catch (toggleError) {
-      setError(
-        toggleError instanceof Error
-          ? toggleError.message
-          : pickLocaleText(locale, {
-            zhCN: '切换绑定状态失败',
-            zhTW: '切換綁定狀態失敗',
-            enUS: 'Failed to change binding status',
-          }),
-      );
+      setError(toggleError instanceof Error ? toggleError.message : copy.toggleFailed);
     } finally {
       setLoading(false);
     }
@@ -364,26 +316,10 @@ export function ChannelAccountBindingsPanel({
     }
 
     const modalResult = await Taro.showModal({
-      title: pickLocaleText(locale, {
-        zhCN: '删除绑定',
-        zhTW: '刪除綁定',
-        enUS: 'Delete Binding',
-      }),
-      content: pickLocaleText(locale, {
-        zhCN: '删除后，这个外部账号会立即解除成员绑定，后续消息将重新进入待绑定流程。确认删除吗？',
-        zhTW: '刪除後，這個外部帳號會立刻解除成員綁定，後續訊息將重新進入待綁定流程。確認刪除嗎？',
-        enUS: 'Deleting this will immediately remove the member binding. Future messages will go back to the unbound flow. Continue?',
-      }),
-      confirmText: pickLocaleText(locale, {
-        zhCN: '删除',
-        zhTW: '刪除',
-        enUS: 'Delete',
-      }),
-      cancelText: pickLocaleText(locale, {
-        zhCN: '取消',
-        zhTW: '取消',
-        enUS: 'Cancel',
-      }),
+      title: copy.deleteTitle,
+      content: copy.deleteContent,
+      confirmText: copy.delete,
+      cancelText: copy.cancel,
     });
     if (!modalResult.confirm) {
       return;
@@ -393,22 +329,10 @@ export function ChannelAccountBindingsPanel({
     setError('');
     try {
       await settingsApi.deleteChannelAccountBinding(householdId, accountId, binding.id);
-      setStatus(pickLocaleText(locale, {
-        zhCN: '成员绑定已删除。',
-        zhTW: '成員綁定已刪除。',
-        enUS: 'Member binding deleted.',
-      }));
+      setStatus(copy.deleted);
       await reloadData();
     } catch (deleteError) {
-      setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : pickLocaleText(locale, {
-            zhCN: '删除成员绑定失败',
-            zhTW: '刪除成員綁定失敗',
-            enUS: 'Failed to delete member binding',
-          }),
-      );
+      setError(deleteError instanceof Error ? deleteError.message : copy.deleteFailed);
     } finally {
       setLoading(false);
     }
@@ -417,41 +341,23 @@ export function ChannelAccountBindingsPanel({
   if (!supportsMemberBinding) {
     return (
       <div className="channel-bindings-panel">
-        <div className="form-help">
-          {pickLocaleText(locale, {
-            zhCN: '当前通道只支持收发消息，不支持成员绑定。',
-            zhTW: '目前通道只支援收發訊息，不支援成員綁定。',
-            enUS: 'This channel supports messaging only and does not support member binding.',
-          })}
-        </div>
+        <div className="form-help">{copy.unsupported}</div>
       </div>
     );
   }
 
   return (
     <div className="channel-bindings-panel">
-      {error ? <div className="settings-note settings-note--error"><span>⚠️</span> {error}</div> : null}
-      {status ? <div className="settings-note settings-note--success"><span>✓</span> {status}</div> : null}
+      {error ? <div className="settings-note settings-note--error">{error}</div> : null}
+      {status ? <div className="settings-note settings-note--success">{status}</div> : null}
 
       <div className="channel-detail-section">
         <h5>{labels.candidateTitle}</h5>
         <div className="form-help">{labels.candidateHelpText}</div>
         {candidateLoading ? (
-          <div className="text-text-secondary">
-            {pickLocaleText(locale, {
-              zhCN: '正在加载候选...',
-              zhTW: '正在載入候選...',
-              enUS: 'Loading candidates...',
-            })}
-          </div>
+          <div className="text-text-secondary">{copy.loadingCandidates}</div>
         ) : candidates.length === 0 ? (
-          <div className="form-help">
-            {pickLocaleText(locale, {
-              zhCN: '当前没有待绑定候选。',
-              zhTW: '目前沒有待綁定候選。',
-              enUS: 'No pending binding candidates right now.',
-            })}
-          </div>
+          <div className="form-help">{copy.emptyCandidates}</div>
         ) : (
           <div className="channel-bindings-list">
             {candidates.map((candidate) => (
@@ -469,36 +375,24 @@ export function ChannelAccountBindingsPanel({
                   ) : null}
                   {candidate.last_message_text ? (
                     <span className="channel-binding-item__external">
-                      {pickLocaleText(locale, {
-                        zhCN: '最近消息',
-                        zhTW: '最近訊息',
-                        enUS: 'Latest message',
-                      })}
-                      : {candidate.last_message_text}
+                      {copy.latestMessage}: {candidate.last_message_text}
                     </span>
                   ) : null}
                 </div>
                 <div className="channel-binding-item__meta">
                   <span className="badge badge--warning">
-                    {pickLocaleText(locale, {
-                      zhCN: candidate.chat_type === 'group' ? '群聊' : '私聊',
-                      zhTW: candidate.chat_type === 'group' ? '群聊' : '私聊',
-                      enUS: candidate.chat_type === 'group' ? 'Group' : 'Direct',
-                    })}
+                    {candidate.chat_type === 'group' ? copy.chatTypeGroup : copy.chatTypeDirect}
                   </span>
                   <span className="channel-binding-item__time">{formatTimestamp(candidate.last_seen_at, locale)}</span>
                 </div>
                 <div className="channel-binding-item__actions">
                   <button
                     className="btn btn--primary btn--sm"
+                    type="button"
                     onClick={() => openCreateModal(candidate)}
                     disabled={loading || modalLoading}
                   >
-                    {pickLocaleText(locale, {
-                      zhCN: '一键绑定',
-                      zhTW: '一鍵綁定',
-                      enUS: 'Bind now',
-                    })}
+                    {copy.bindNow}
                   </button>
                 </div>
               </div>
@@ -508,44 +402,20 @@ export function ChannelAccountBindingsPanel({
       </div>
 
       {loading && bindings.length === 0 ? (
-        <div className="text-text-secondary">
-          {pickLocaleText(locale, {
-            zhCN: '正在加载成员绑定...',
-            zhTW: '正在載入成員綁定...',
-            enUS: 'Loading member bindings...',
-          })}
-        </div>
+        <div className="text-text-secondary">{copy.loading}</div>
       ) : bindings.length === 0 ? (
         <div className="channel-bindings-empty">
-          <p>{pickLocaleText(locale, {
-            zhCN: '还没有成员绑定。',
-            zhTW: '還沒有成員綁定。',
-            enUS: 'No member bindings yet.',
-          })}
-          </p>
-          <button className="btn btn--primary btn--sm" onClick={() => openCreateModal()}>
-            {pickLocaleText(locale, {
-              zhCN: '新增绑定',
-              zhTW: '新增綁定',
-              enUS: 'Add binding',
-            })}
+          <p>{copy.empty}</p>
+          <button className="btn btn--primary btn--sm" type="button" onClick={() => openCreateModal()}>
+            {copy.add}
           </button>
         </div>
       ) : (
         <>
           <div className="channel-bindings-header">
-            <span>{pickLocaleText(locale, {
-              zhCN: `已绑定 ${bindings.length} 位成员`,
-              zhTW: `已綁定 ${bindings.length} 位成員`,
-              enUS: `${bindings.length} member bindings`,
-            })}
-            </span>
-            <button className="btn btn--primary btn--sm" onClick={() => openCreateModal()}>
-              {pickLocaleText(locale, {
-                zhCN: '新增绑定',
-                zhTW: '新增綁定',
-                enUS: 'Add binding',
-              })}
+            <span>{copy.count(bindings.length)}</span>
+            <button className="btn btn--primary btn--sm" type="button" onClick={() => openCreateModal()}>
+              {copy.add}
             </button>
           </div>
 
@@ -561,11 +431,7 @@ export function ChannelAccountBindingsPanel({
                 >
                   <div className="channel-binding-item__info">
                     <span className="channel-binding-item__member">
-                      {member?.name ?? pickLocaleText(locale, {
-                        zhCN: '未知成员',
-                        zhTW: '未知成員',
-                        enUS: 'Unknown member',
-                      })}
+                      {member?.name ?? copy.unknownMember}
                     </span>
                     <span className="channel-binding-item__external">
                       {labels.identityLabel}: {binding.external_user_id}
@@ -575,35 +441,19 @@ export function ChannelAccountBindingsPanel({
                   </div>
                   <div className="channel-binding-item__meta">
                     <span className={`badge badge--${isActive ? 'success' : 'secondary'}`}>
-                      {pickLocaleText(locale, {
-                        zhCN: isActive ? '生效中' : '已停用',
-                        zhTW: isActive ? '生效中' : '已停用',
-                        enUS: isActive ? 'Active' : 'Disabled',
-                      })}
+                      {isActive ? copy.active : copy.inactive}
                     </span>
                     <span className="channel-binding-item__time">{formatTimestamp(binding.updated_at, locale)}</span>
                   </div>
                   <div className="channel-binding-item__actions">
-                    <button className="btn btn--outline btn--sm" onClick={() => openEditModal(binding)} disabled={loading}>
-                      {pickLocaleText(locale, {
-                        zhCN: '编辑',
-                        zhTW: '編輯',
-                        enUS: 'Edit',
-                      })}
+                    <button className="btn btn--outline btn--sm" type="button" onClick={() => openEditModal(binding)} disabled={loading}>
+                      {copy.edit}
                     </button>
-                    <button className="btn btn--outline btn--sm" onClick={() => void handleToggleBinding(binding)} disabled={loading}>
-                      {pickLocaleText(locale, {
-                        zhCN: isActive ? '停用' : '恢复',
-                        zhTW: isActive ? '停用' : '恢復',
-                        enUS: isActive ? 'Disable' : 'Restore',
-                      })}
+                    <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleToggleBinding(binding)} disabled={loading}>
+                      {isActive ? copy.disable : copy.restore}
                     </button>
-                    <button className="btn btn--outline btn--sm" onClick={() => void handleDeleteBinding(binding)} disabled={loading}>
-                      {pickLocaleText(locale, {
-                        zhCN: '删除',
-                        zhTW: '刪除',
-                        enUS: 'Delete',
-                      })}
+                    <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleDeleteBinding(binding)} disabled={loading}>
+                      {copy.delete}
                     </button>
                   </div>
                 </div>
@@ -617,27 +467,12 @@ export function ChannelAccountBindingsPanel({
         <div className="member-modal-overlay" onClick={() => setModalOpen(false)}>
           <div className="member-modal" onClick={(event) => event.stopPropagation()}>
             <div className="member-modal__header">
-              <h3>{pickLocaleText(locale, {
-                zhCN: editingBinding ? '编辑成员绑定' : '新增成员绑定',
-                zhTW: editingBinding ? '編輯成員綁定' : '新增成員綁定',
-                enUS: editingBinding ? 'Edit Member Binding' : 'Add Member Binding',
-              })}
-              </h3>
-              <p>{pickLocaleText(locale, {
-                zhCN: '把外部聊天账号对应到家庭成员，系统才知道是谁在说话。',
-                zhTW: '把外部聊天帳號對應到家庭成員，系統才知道是誰在說話。',
-                enUS: 'Bind external chat accounts to family members so the system knows who is speaking.',
-              })}
-              </p>
+              <h3>{editingBinding ? copy.modalEditTitle : copy.modalCreateTitle}</h3>
+              <p>{copy.modalDesc}</p>
             </div>
             <form className="settings-form" onSubmit={handleSaveBinding}>
               <div className="form-group">
-                <label>{pickLocaleText(locale, {
-                  zhCN: '家庭成员',
-                  zhTW: '家庭成員',
-                  enUS: 'Family member',
-                })}
-                </label>
+                <label>{copy.memberLabel}</label>
                 <select
                   className="form-select"
                   value={form.member_id}
@@ -645,13 +480,7 @@ export function ChannelAccountBindingsPanel({
                   disabled={Boolean(editingBinding)}
                   required
                 >
-                  <option value="">
-                    {pickLocaleText(locale, {
-                      zhCN: '请选择成员',
-                      zhTW: '請選擇成員',
-                      enUS: 'Select a member',
-                    })}
-                  </option>
+                  <option value="">{copy.memberPlaceholder}</option>
                   {members.map((member) => (
                     <option key={member.id} value={member.id}>
                       {member.name} ({member.role})
@@ -684,31 +513,17 @@ export function ChannelAccountBindingsPanel({
               </div>
 
               <div className="form-group">
-                <label>{pickLocaleText(locale, {
-                  zhCN: '备注',
-                  zhTW: '備註',
-                  enUS: 'Note',
-                })}
-                </label>
+                <label>{copy.noteLabel}</label>
                 <input
                   className="form-input"
                   value={form.display_hint}
                   onChange={(event) => setForm((current) => ({ ...current, display_hint: event.target.value }))}
-                  placeholder={pickLocaleText(locale, {
-                    zhCN: '例如：妈妈的私聊账号',
-                    zhTW: '例如：媽媽的私聊帳號',
-                    enUS: 'Example: Mom direct account',
-                  })}
+                  placeholder={copy.notePlaceholder}
                 />
               </div>
 
               <div className="form-group">
-                <label>{pickLocaleText(locale, {
-                  zhCN: '状态',
-                  zhTW: '狀態',
-                  enUS: 'Status',
-                })}
-                </label>
+                <label>{copy.statusLabel}</label>
                 <select
                   className="form-select"
                   value={form.binding_status}
@@ -717,43 +532,19 @@ export function ChannelAccountBindingsPanel({
                     binding_status: event.target.value as 'active' | 'disabled',
                   }))}
                 >
-                  <option value="active">{pickLocaleText(locale, {
-                    zhCN: '启用',
-                    zhTW: '啟用',
-                    enUS: 'Active',
-                  })}
-                  </option>
-                  <option value="disabled">{pickLocaleText(locale, {
-                    zhCN: '停用',
-                    zhTW: '停用',
-                    enUS: 'Disabled',
-                  })}
-                  </option>
+                  <option value="active">{copy.active}</option>
+                  <option value="disabled">{copy.inactive}</option>
                 </select>
               </div>
 
-              {formError ? <div className="settings-note settings-note--error"><span>⚠️</span> {formError}</div> : null}
+              {formError ? <div className="settings-note settings-note--error">{formError}</div> : null}
 
               <div className="member-modal__actions">
                 <button className="btn btn--outline btn--sm" type="button" onClick={() => setModalOpen(false)} disabled={modalLoading}>
-                  {pickLocaleText(locale, {
-                    zhCN: '取消',
-                    zhTW: '取消',
-                    enUS: 'Cancel',
-                  })}
+                  {copy.cancel}
                 </button>
                 <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading}>
-                  {modalLoading
-                    ? pickLocaleText(locale, {
-                      zhCN: '保存中...',
-                      zhTW: '儲存中...',
-                      enUS: 'Saving...',
-                    })
-                    : pickLocaleText(locale, {
-                      zhCN: '保存',
-                      zhTW: '儲存',
-                      enUS: 'Save',
-                    })}
+                  {modalLoading ? copy.saving : copy.save}
                 </button>
               </div>
             </form>

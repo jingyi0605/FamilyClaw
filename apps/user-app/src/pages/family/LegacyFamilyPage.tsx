@@ -1,11 +1,13 @@
-/* ============================================================
- * 家庭页 - 包含概览/房间/成员/关系四个子路由
+﻿/* ============================================================
+ * 瀹跺涵椤?- 鍖呭惈姒傝/鎴块棿/鎴愬憳/鍏崇郴鍥涗釜瀛愯矾鐢?
  * ============================================================ */
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import Taro from '@tarojs/taro';
 import { getLocaleDefinition, type LocaleDefinition } from '@familyclaw/user-core';
 import { DEFAULT_REGION_COUNTRY, DEFAULT_REGION_PROVIDER, RegionSelector, type RegionSelectionFormValue } from './RegionSelector';
 import { PageHeader, Card, Section } from './base';
 import { useHouseholdContext, useI18n } from '../../runtime';
+import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { api } from './api';
 import { formatRoomType, ROOM_TYPE_OPTIONS } from './roomTypes';
 import type {
@@ -18,7 +20,7 @@ import type {
   Room,
 } from './types';
 
-/* ---- 家庭子导航 ---- */
+/* ---- 瀹跺涵瀛愬鑸?---- */
 const familyTabs = [
   { key: 'overview' as const, hash: '#overview', labelKey: 'family.overview' as const },
   { key: 'rooms' as const, hash: '#rooms', labelKey: 'family.rooms' as const },
@@ -54,17 +56,12 @@ type FamilyWorkspaceValue = {
 
 const FamilyWorkspaceContext = createContext<FamilyWorkspaceValue | null>(null);
 
-function pickLocaleText(
+function getFamilyMessage(
   locale: string | undefined,
-  values: { zhCN: string; zhTW: string; enUS: string },
+  key: Parameters<typeof getPageMessage>[1],
+  params?: Parameters<typeof getPageMessage>[2],
 ) {
-  if (locale?.toLowerCase().startsWith('en')) {
-    return values.enUS;
-  }
-  if (locale?.toLowerCase().startsWith('zh-tw')) {
-    return values.zhTW;
-  }
-  return values.zhCN;
+  return getPageMessage(locale, key, params);
 }
 
 function formatLocale(
@@ -86,36 +83,36 @@ function formatFamilyRegion(household: Household | null | undefined) {
 }
 
 function getRegionLevelValue(value: { name: string } | null | undefined, locale: string | undefined) {
-  return value?.name ?? pickLocaleText(locale, { zhCN: '未知', zhTW: '未知', enUS: 'Unknown' });
+  return value?.name ?? getFamilyMessage(locale, 'family.common.unknown');
 }
 
 function formatHomeMode(mode: ContextOverviewRead['home_mode'] | undefined, locale: string | undefined) {
   switch (mode) {
-    case 'home': return pickLocaleText(locale, { zhCN: '居家模式', zhTW: '居家模式', enUS: 'Home mode' });
-    case 'away': return pickLocaleText(locale, { zhCN: '离家模式', zhTW: '離家模式', enUS: 'Away mode' });
-    case 'night': return pickLocaleText(locale, { zhCN: '夜间模式', zhTW: '夜間模式', enUS: 'Night mode' });
-    case 'sleep': return pickLocaleText(locale, { zhCN: '睡眠模式', zhTW: '睡眠模式', enUS: 'Sleep mode' });
-    case 'custom': return pickLocaleText(locale, { zhCN: '自定义模式', zhTW: '自訂模式', enUS: 'Custom mode' });
+    case 'home': return getFamilyMessage(locale, 'family.mode.home');
+    case 'away': return getFamilyMessage(locale, 'family.mode.away');
+    case 'night': return getFamilyMessage(locale, 'family.mode.night');
+    case 'sleep': return getFamilyMessage(locale, 'family.mode.sleep');
+    case 'custom': return getFamilyMessage(locale, 'family.mode.custom');
     default: return '-';
   }
 }
 
 function formatPrivacyMode(mode: ContextOverviewRead['privacy_mode'] | undefined, locale: string | undefined) {
   switch (mode) {
-    case 'balanced': return pickLocaleText(locale, { zhCN: '平衡保护', zhTW: '平衡保護', enUS: 'Balanced' });
-    case 'strict': return pickLocaleText(locale, { zhCN: '严格保护', zhTW: '嚴格保護', enUS: 'Strict' });
-    case 'care': return pickLocaleText(locale, { zhCN: '关怀优先', zhTW: '關懷優先', enUS: 'Care first' });
+    case 'balanced': return getFamilyMessage(locale, 'family.privacy.balanced');
+    case 'strict': return getFamilyMessage(locale, 'family.privacy.strict');
+    case 'care': return getFamilyMessage(locale, 'family.privacy.care');
     default: return '-';
   }
 }
 
 function formatRole(role: Member['role'], locale: string | undefined) {
   switch (role) {
-    case 'admin': return pickLocaleText(locale, { zhCN: '管理员', zhTW: '管理員', enUS: 'Admin' });
-    case 'adult': return pickLocaleText(locale, { zhCN: '成人', zhTW: '成人', enUS: 'Adult' });
-    case 'child': return pickLocaleText(locale, { zhCN: '儿童', zhTW: '兒童', enUS: 'Child' });
-    case 'elder': return pickLocaleText(locale, { zhCN: '长辈', zhTW: '長輩', enUS: 'Elder' });
-    case 'guest': return pickLocaleText(locale, { zhCN: '访客', zhTW: '訪客', enUS: 'Guest' });
+    case 'admin': return getFamilyMessage(locale, 'family.role.admin');
+    case 'adult': return getFamilyMessage(locale, 'family.role.adult');
+    case 'child': return getFamilyMessage(locale, 'family.role.child');
+    case 'elder': return getFamilyMessage(locale, 'family.role.elder');
+    case 'guest': return getFamilyMessage(locale, 'family.role.guest');
   }
 }
 
@@ -132,17 +129,17 @@ function getMemberStatus(memberId: string, overview: ContextOverviewRead | null)
 
 function formatPreferenceSummary(preference: MemberPreference | undefined, locale: string | undefined) {
   if (!preference) {
-    return pickLocaleText(locale, { zhCN: '还没有成员偏好数据', zhTW: '還沒有成員偏好資料', enUS: 'No member preferences yet' });
+    return getFamilyMessage(locale, 'family.preferences.empty');
   }
 
   const parts: string[] = [];
-  if (preference.preferred_name) parts.push(pickLocaleText(locale, { zhCN: `称呼：${preference.preferred_name}`, zhTW: `稱呼：${preference.preferred_name}`, enUS: `Preferred name: ${preference.preferred_name}` }));
-  if (preference.climate_preference) parts.push(pickLocaleText(locale, { zhCN: '已设置温度偏好', zhTW: '已設定溫度偏好', enUS: 'Temperature preference set' }));
-  if (preference.light_preference) parts.push(pickLocaleText(locale, { zhCN: '已设置灯光偏好', zhTW: '已設定燈光偏好', enUS: 'Lighting preference set' }));
-  if (preference.reminder_channel_preference) parts.push(pickLocaleText(locale, { zhCN: '已设置提醒方式', zhTW: '已設定提醒方式', enUS: 'Reminder channel set' }));
-  if (preference.sleep_schedule) parts.push(pickLocaleText(locale, { zhCN: '已设置作息', zhTW: '已設定作息', enUS: 'Sleep schedule set' }));
+  if (preference.preferred_name) parts.push(getFamilyMessage(locale, 'family.preferences.preferredName', { name: preference.preferred_name }));
+  if (preference.climate_preference) parts.push(getFamilyMessage(locale, 'family.preferences.temperatureSet'));
+  if (preference.light_preference) parts.push(getFamilyMessage(locale, 'family.preferences.lightingSet'));
+  if (preference.reminder_channel_preference) parts.push(getFamilyMessage(locale, 'family.preferences.reminderChannelSet'));
+  if (preference.sleep_schedule) parts.push(getFamilyMessage(locale, 'family.preferences.sleepScheduleSet'));
 
-  return parts.length > 0 ? parts.join(' · ') : pickLocaleText(locale, { zhCN: '还没有成员偏好数据', zhTW: '還沒有成員偏好資料', enUS: 'No member preferences yet' });
+  return parts.length > 0 ? parts.join(' · ') : getFamilyMessage(locale, 'family.preferences.empty');
 }
 
 function validatePhoneNumber(value: string, locale: string | undefined) {
@@ -150,11 +147,7 @@ function validatePhoneNumber(value: string, locale: string | undefined) {
     return '';
   }
 
-  return /^[0-9+\-\s]{6,20}$/.test(value.trim()) ? '' : pickLocaleText(locale, {
-    zhCN: '请输入有效手机号，支持数字、空格、+ 和 -',
-    zhTW: '請輸入有效手機號，支援數字、空格、+ 和 -',
-    enUS: 'Enter a valid phone number. Digits, spaces, + and - are supported.',
-  });
+  return /^[0-9+\-\s]{6,20}$/.test(value.trim()) ? '' : getFamilyMessage(locale, 'family.validation.phone');
 }
 
 function roleNeedsGuardian(role: Member['role']) {
@@ -163,13 +156,17 @@ function roleNeedsGuardian(role: Member['role']) {
 
 function getAllowedStatusOptions(role: Member['role'], locale: string | undefined) {
   if (role === 'admin') {
-    return [{ value: 'active' as const, label: pickLocaleText(locale, { zhCN: '启用', zhTW: '啟用', enUS: 'Active' }) }];
+    return [{ value: 'active' as const, label: getFamilyMessage(locale, 'family.memberStatus.active') }];
   }
 
   return [
-    { value: 'active' as const, label: pickLocaleText(locale, { zhCN: '启用', zhTW: '啟用', enUS: 'Active' }) },
-    { value: 'inactive' as const, label: pickLocaleText(locale, { zhCN: '停用', zhTW: '停用', enUS: 'Disabled' }) },
+    { value: 'active' as const, label: getFamilyMessage(locale, 'family.memberStatus.active') },
+    { value: 'inactive' as const, label: getFamilyMessage(locale, 'family.memberStatus.inactive') },
   ];
+}
+
+function formatMemberOptionLabel(name: string, roleLabel: string, locale: string | undefined) {
+  return getFamilyMessage(locale, 'family.member.optionLabel', { name, role: roleLabel });
 }
 
 function inferAgeGroupFromBirthday(birthday: string): NonNullable<Member['age_group']> | null {
@@ -224,12 +221,12 @@ function getAgeFromBirthday(birthday: string | null) {
 
 function getBirthdayCountdownText(birthday: string | null, locale: string | undefined) {
   if (!birthday) {
-    return pickLocaleText(locale, { zhCN: '未设置生日', zhTW: '未設定生日', enUS: 'Birthday not set' });
+    return getFamilyMessage(locale, 'family.birthday.unset');
   }
 
   const birthDate = new Date(`${birthday}T00:00:00`);
   if (Number.isNaN(birthDate.getTime())) {
-    return pickLocaleText(locale, { zhCN: '生日格式无效', zhTW: '生日格式無效', enUS: 'Invalid birthday format' });
+    return getFamilyMessage(locale, 'family.birthday.invalid');
   }
 
   const today = new Date();
@@ -240,9 +237,9 @@ function getBirthdayCountdownText(birthday: string | null, locale: string | unde
   }
 
   const diffDays = Math.round((nextBirthday.getTime() - startOfToday.getTime()) / 86400000);
-  if (diffDays === 0) return pickLocaleText(locale, { zhCN: '今天生日', zhTW: '今天生日', enUS: 'Birthday is today' });
-  if (diffDays === 1) return pickLocaleText(locale, { zhCN: '明天生日', zhTW: '明天生日', enUS: 'Birthday is tomorrow' });
-  return pickLocaleText(locale, { zhCN: `${diffDays} 天后生日`, zhTW: `${diffDays} 天後生日`, enUS: `Birthday in ${diffDays} days` });
+  if (diffDays === 0) return getFamilyMessage(locale, 'family.birthday.today');
+  if (diffDays === 1) return getFamilyMessage(locale, 'family.birthday.tomorrow');
+  return getFamilyMessage(locale, 'family.birthday.inDays', { count: diffDays });
 }
 
 function getBirthdayCountdownDays(birthday: string | null) {
@@ -313,22 +310,22 @@ function getLunarBirthdayCountdownDays(birthday: string | null) {
 function formatBirthdayCountdown(days: number | null, isLunarBirthday: boolean, locale: string | undefined) {
   if (days === null) {
     return isLunarBirthday
-      ? pickLocaleText(locale, { zhCN: '暂未匹配到下一个农历生日', zhTW: '暫未匹配到下一個農曆生日', enUS: 'The next lunar birthday could not be matched yet' })
-      : pickLocaleText(locale, { zhCN: '未设置生日', zhTW: '未設定生日', enUS: 'Birthday not set' });
+      ? getFamilyMessage(locale, 'family.birthday.lunarUnmatched')
+      : getFamilyMessage(locale, 'family.birthday.unset');
   }
 
-  if (days === 0) return pickLocaleText(locale, { zhCN: '今天生日', zhTW: '今天生日', enUS: 'Birthday is today' });
-  if (days === 1) return pickLocaleText(locale, { zhCN: '明天生日', zhTW: '明天生日', enUS: 'Birthday is tomorrow' });
-  return pickLocaleText(locale, { zhCN: `${days} 天后生日`, zhTW: `${days} 天後生日`, enUS: `Birthday in ${days} days` });
+  if (days === 0) return getFamilyMessage(locale, 'family.birthday.today');
+  if (days === 1) return getFamilyMessage(locale, 'family.birthday.tomorrow');
+  return getFamilyMessage(locale, 'family.birthday.inDays', { count: days });
 }
 
 function getMemberRoleOptions(locale: string | undefined) {
   return [
-    { value: 'admin' as const, label: pickLocaleText(locale, { zhCN: '管理员', zhTW: '管理員', enUS: 'Admin' }) },
-    { value: 'adult' as const, label: pickLocaleText(locale, { zhCN: '成人', zhTW: '成人', enUS: 'Adult' }) },
-    { value: 'child' as const, label: pickLocaleText(locale, { zhCN: '儿童', zhTW: '兒童', enUS: 'Child' }) },
-    { value: 'elder' as const, label: pickLocaleText(locale, { zhCN: '长辈', zhTW: '長輩', enUS: 'Elder' }) },
-    { value: 'guest' as const, label: pickLocaleText(locale, { zhCN: '访客', zhTW: '訪客', enUS: 'Guest' }) },
+    { value: 'admin' as const, label: getFamilyMessage(locale, 'family.role.admin') },
+    { value: 'adult' as const, label: getFamilyMessage(locale, 'family.role.adult') },
+    { value: 'child' as const, label: getFamilyMessage(locale, 'family.role.child') },
+    { value: 'elder' as const, label: getFamilyMessage(locale, 'family.role.elder') },
+    { value: 'guest' as const, label: getFamilyMessage(locale, 'family.role.guest') },
   ];
 }
 
@@ -336,41 +333,41 @@ function getAgeGroupOptionsForRole(role: Member['role'], locale: string | undefi
   switch (role) {
     case 'child':
       return [
-        { value: 'toddler' as const, label: pickLocaleText(locale, { zhCN: '幼儿', zhTW: '幼兒', enUS: 'Toddler' }) },
-        { value: 'child' as const, label: pickLocaleText(locale, { zhCN: '儿童', zhTW: '兒童', enUS: 'Child' }) },
-        { value: 'teen' as const, label: pickLocaleText(locale, { zhCN: '青少年', zhTW: '青少年', enUS: 'Teen' }) },
+        { value: 'toddler' as const, label: getFamilyMessage(locale, 'family.ageGroup.toddler') },
+        { value: 'child' as const, label: getFamilyMessage(locale, 'family.ageGroup.child') },
+        { value: 'teen' as const, label: getFamilyMessage(locale, 'family.ageGroup.teen') },
       ];
     case 'elder':
-      return [{ value: 'elder' as const, label: pickLocaleText(locale, { zhCN: '长辈', zhTW: '長輩', enUS: 'Elder' }) }];
+      return [{ value: 'elder' as const, label: getFamilyMessage(locale, 'family.ageGroup.elder') }];
     default:
-      return [{ value: 'adult' as const, label: pickLocaleText(locale, { zhCN: '成人', zhTW: '成人', enUS: 'Adult' }) }];
+      return [{ value: 'adult' as const, label: getFamilyMessage(locale, 'family.ageGroup.adult') }];
   }
 }
 
 function formatRelationType(type: MemberRelationship['relation_type'], locale: string | undefined) {
   switch (type) {
-    case 'caregiver': return pickLocaleText(locale, { zhCN: '照护关系', zhTW: '照護關係', enUS: 'Caregiver' });
-    case 'guardian': return pickLocaleText(locale, { zhCN: '监护关系', zhTW: '監護關係', enUS: 'Guardian' });
-    case 'parent': return pickLocaleText(locale, { zhCN: '父母关系', zhTW: '父母關係', enUS: 'Parent' });
-    case 'child': return pickLocaleText(locale, { zhCN: '子女关系', zhTW: '子女關係', enUS: 'Child' });
-    case 'spouse': return pickLocaleText(locale, { zhCN: '伴侣关系', zhTW: '伴侶關係', enUS: 'Spouse' });
+    case 'caregiver': return getFamilyMessage(locale, 'family.relationship.caregiver');
+    case 'guardian': return getFamilyMessage(locale, 'family.relationship.guardian');
+    case 'parent': return getFamilyMessage(locale, 'family.relationship.parent');
+    case 'child': return getFamilyMessage(locale, 'family.relationship.child');
+    case 'spouse': return getFamilyMessage(locale, 'family.relationship.spouse');
   }
 }
 
 function formatVisibilityScope(scope: MemberRelationship['visibility_scope'], locale: string | undefined) {
   switch (scope) {
-    case 'public': return pickLocaleText(locale, { zhCN: '公开', zhTW: '公開', enUS: 'Public' });
-    case 'family': return pickLocaleText(locale, { zhCN: '家庭内可见', zhTW: '家庭內可見', enUS: 'Family only' });
-    case 'private': return pickLocaleText(locale, { zhCN: '私密', zhTW: '私密', enUS: 'Private' });
+    case 'public': return getFamilyMessage(locale, 'family.visibility.public');
+    case 'family': return getFamilyMessage(locale, 'family.visibility.family');
+    case 'private': return getFamilyMessage(locale, 'family.visibility.private');
   }
 }
 
 function formatDelegationScope(scope: MemberRelationship['delegation_scope'], locale: string | undefined) {
   switch (scope) {
-    case 'none': return pickLocaleText(locale, { zhCN: '不开放代办', zhTW: '不開放代辦', enUS: 'No delegation' });
-    case 'reminder': return pickLocaleText(locale, { zhCN: '可代办提醒', zhTW: '可代辦提醒', enUS: 'Reminder delegation' });
-    case 'health': return pickLocaleText(locale, { zhCN: '可代办健康事项', zhTW: '可代辦健康事項', enUS: 'Health delegation' });
-    case 'device': return pickLocaleText(locale, { zhCN: '可代办设备事项', zhTW: '可代辦設備事項', enUS: 'Device delegation' });
+    case 'none': return getFamilyMessage(locale, 'family.delegation.none');
+    case 'reminder': return getFamilyMessage(locale, 'family.delegation.reminder');
+    case 'health': return getFamilyMessage(locale, 'family.delegation.health');
+    case 'device': return getFamilyMessage(locale, 'family.delegation.device');
   }
 }
 
@@ -398,6 +395,10 @@ export function FamilyLayout() {
     errors: [],
     refreshWorkspace: noopRefreshWorkspace,
   });
+
+  useEffect(() => {
+    void Taro.setNavigationBarTitle({ title: t('nav.family') }).catch(() => undefined);
+  }, [t, locale]);
 
   const refreshWorkspace = useMemo(() => async () => {
     if (!currentHouseholdId) {
@@ -438,19 +439,11 @@ export function FamilyLayout() {
 
     const errors = [householdResult, overviewResult, roomsResult, membersResult, devicesResult, relationshipsResult]
       .filter(result => result.status === 'rejected')
-      .map(result => result.reason instanceof Error ? result.reason.message : pickLocaleText(locale, {
-        zhCN: '家庭数据加载失败',
-        zhTW: '家庭資料載入失敗',
-        enUS: 'Failed to load family data',
-      }));
+      .map(result => result.reason instanceof Error ? result.reason.message : getFamilyMessage(locale, 'family.loadFailed'));
 
     preferenceResults.forEach(result => {
       if (result.status === 'rejected') {
-        errors.push(result.reason instanceof Error ? result.reason.message : pickLocaleText(locale, {
-          zhCN: '成员偏好加载失败',
-          zhTW: '成員偏好載入失敗',
-          enUS: 'Failed to load member preferences',
-        }));
+        errors.push(result.reason instanceof Error ? result.reason.message : getFamilyMessage(locale, 'family.preferences.loadFailed'));
       }
     });
 
@@ -486,11 +479,7 @@ export function FamilyLayout() {
   return (
     <FamilyWorkspaceContext.Provider value={value}>
       <div className="page page--family">
-        <PageHeader title={t('nav.family')} description={workspace.errors.length > 0 ? pickLocaleText(locale, {
-          zhCN: '部分数据加载失败，页面已自动显示已拿到的内容。',
-          zhTW: '部分資料載入失敗，頁面已自動顯示目前拿到的內容。',
-          enUS: 'Some data failed to load. The page is showing everything that is currently available.',
-        }) : undefined} />
+        <PageHeader title={t('nav.family')} description={workspace.errors.length > 0 ? getFamilyMessage(locale, 'family.partialLoadFailed') : undefined} />
         <nav className="family-tabs">
           {familyTabs.map(tab => (
             <a
@@ -518,7 +507,7 @@ export function FamilyLayout() {
   );
 }
 
-/* ---- 家庭概览 ---- */
+/* ---- 瀹跺涵姒傝 ---- */
 export function FamilyOverview() {
   const { t, locale, locales, formatLocaleLabel } = useI18n();
   const { currentHousehold, currentHouseholdId, refreshCurrentHousehold, refreshHouseholds } = useHouseholdContext();
@@ -533,59 +522,43 @@ export function FamilyOverview() {
   const [saveError, setSaveError] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
   const copy = {
-    loading: pickLocaleText(locale, { zhCN: '加载中...', zhTW: '載入中...', enUS: 'Loading...' }),
-    regionLabel: pickLocaleText(locale, { zhCN: '所在地区', zhTW: '所在地區', enUS: 'Region' }),
-    noServiceSummary: pickLocaleText(locale, { zhCN: '暂无服务摘要', zhTW: '暫無服務摘要', enUS: 'No service summary yet' }),
-    regionStructureTitle: pickLocaleText(locale, { zhCN: '地区结构', zhTW: '地區結構', enUS: 'Region structure' }),
-    regionStructureIntro: pickLocaleText(locale, {
-      zhCN: '这里会显示您当前选择的国家、省、市和区县。',
-      zhTW: '這裡會顯示您目前選擇的國家、省、市與區縣。',
-      enUS: 'This shows the country, province, city, and district currently selected for this household.',
-    }),
-    regionCountry: pickLocaleText(locale, { zhCN: '国家 / 地区', zhTW: '國家 / 地區', enUS: 'Country / region' }),
-    province: pickLocaleText(locale, { zhCN: '省级', zhTW: '省級', enUS: 'Province' }),
-    city: pickLocaleText(locale, { zhCN: '市级', zhTW: '市級', enUS: 'City' }),
-    district: pickLocaleText(locale, { zhCN: '区县', zhTW: '區縣', enUS: 'District' }),
-    regionBindingStatus: pickLocaleText(locale, { zhCN: '绑定状态', zhTW: '綁定狀態', enUS: 'Binding status' }),
-    regionFallbackHint: pickLocaleText(locale, {
-      zhCN: `当前显示的“${household?.city ?? ''}”是之前保存的信息，请在下方重新选择完整地区。`,
-      zhTW: `目前顯示的「${household?.city ?? ''}」是之前儲存的資訊，請在下方重新選擇完整地區。`,
-      enUS: `The current value "${household?.city ?? ''}" was saved earlier. Please reselect the full region below.`,
-    }),
-    regionUnconfiguredHint: pickLocaleText(locale, {
-      zhCN: `当前家庭之前保存的是“${household?.city ?? ''}”，请在这里重新选择完整地区。`,
-      zhTW: `目前家庭先前儲存的是「${household?.city ?? ''}」，請在這裡重新選擇完整地區。`,
-      enUS: `This household previously saved "${household?.city ?? ''}". Please reselect the full region here.`,
-    }),
-    profileTitle: pickLocaleText(locale, { zhCN: '家庭资料', zhTW: '家庭資料', enUS: 'Household profile' }),
-    profileDesc: pickLocaleText(locale, {
-      zhCN: '您可以在这里更新家庭名称、时区、语言和所在地区。',
-      zhTW: '您可以在這裡更新家庭名稱、時區、語言與所在地區。',
-      enUS: 'Update the household name, time zone, language, and region here.',
-    }),
-    nameLabel: pickLocaleText(locale, { zhCN: '家庭名称', zhTW: '家庭名稱', enUS: 'Household name' }),
-    timezoneLabel: pickLocaleText(locale, { zhCN: '时区', zhTW: '時區', enUS: 'Time zone' }),
-    defaultLanguageLabel: pickLocaleText(locale, { zhCN: '默认语言', zhTW: '預設語言', enUS: 'Default language' }),
-    saveButton: pickLocaleText(locale, { zhCN: '保存家庭资料', zhTW: '儲存家庭資料', enUS: 'Save household profile' }),
-    savingButton: pickLocaleText(locale, { zhCN: '保存中…', zhTW: '儲存中…', enUS: 'Saving...' }),
-    saveSuccess: pickLocaleText(locale, { zhCN: '家庭资料已更新。', zhTW: '家庭資料已更新。', enUS: 'Household profile updated.' }),
-    saveFailure: pickLocaleText(locale, { zhCN: '保存家庭资料失败', zhTW: '儲存家庭資料失敗', enUS: 'Failed to save household profile' }),
+    loading: getFamilyMessage(locale, 'family.overview.loading'),
+    regionLabel: getFamilyMessage(locale, 'family.overview.regionLabel'),
+    noServiceSummary: getFamilyMessage(locale, 'family.overview.noServiceSummary'),
+    regionStructureTitle: getFamilyMessage(locale, 'family.overview.regionStructureTitle'),
+    regionStructureIntro: getFamilyMessage(locale, 'family.overview.regionStructureIntro'),
+    regionCountry: getFamilyMessage(locale, 'family.overview.regionCountry'),
+    province: getFamilyMessage(locale, 'family.overview.province'),
+    city: getFamilyMessage(locale, 'family.overview.city'),
+    district: getFamilyMessage(locale, 'family.overview.district'),
+    regionBindingStatus: getFamilyMessage(locale, 'family.overview.regionBindingStatus'),
+    regionFallbackHint: getFamilyMessage(locale, 'family.overview.regionFallbackHint', { city: household?.city ?? '' }),
+    regionUnconfiguredHint: getFamilyMessage(locale, 'family.overview.regionUnconfiguredHint', { city: household?.city ?? '' }),
+    profileTitle: getFamilyMessage(locale, 'family.overview.profileTitle'),
+    profileDesc: getFamilyMessage(locale, 'family.overview.profileDesc'),
+    nameLabel: getFamilyMessage(locale, 'family.overview.nameLabel'),
+    timezoneLabel: getFamilyMessage(locale, 'family.overview.timezoneLabel'),
+    defaultLanguageLabel: getFamilyMessage(locale, 'family.overview.defaultLanguageLabel'),
+    saveButton: getFamilyMessage(locale, 'family.overview.saveButton'),
+    savingButton: getFamilyMessage(locale, 'family.overview.savingButton'),
+    saveSuccess: getFamilyMessage(locale, 'family.overview.saveSuccess'),
+    saveFailure: getFamilyMessage(locale, 'family.overview.saveFailure'),
   };
 
   const serviceSummary = [
-    overview?.voice_fast_path_enabled ? pickLocaleText(locale, { zhCN: '语音快通道', zhTW: '語音快通道', enUS: 'Voice fast path' }) : null,
-    overview?.guest_mode_enabled ? pickLocaleText(locale, { zhCN: '访客模式', zhTW: '訪客模式', enUS: 'Guest mode' }) : null,
-    overview?.child_protection_enabled ? pickLocaleText(locale, { zhCN: '儿童保护', zhTW: '兒童保護', enUS: 'Child protection' }) : null,
-    overview?.elder_care_watch_enabled ? pickLocaleText(locale, { zhCN: '长辈关怀', zhTW: '長輩關懷', enUS: 'Elder care' }) : null,
+    overview?.voice_fast_path_enabled ? getFamilyMessage(locale, 'family.overview.service.voiceFastPath') : null,
+    overview?.guest_mode_enabled ? getFamilyMessage(locale, 'family.overview.service.guestMode') : null,
+    overview?.child_protection_enabled ? getFamilyMessage(locale, 'family.overview.service.childProtection') : null,
+    overview?.elder_care_watch_enabled ? getFamilyMessage(locale, 'family.overview.service.elderCare') : null,
   ].filter(Boolean).join(' · ');
   const regionCountryText = household?.region?.country_code === 'CN'
-    ? pickLocaleText(locale, { zhCN: '中国', zhTW: '中國', enUS: 'China' })
-    : pickLocaleText(locale, { zhCN: '未知', zhTW: '未知', enUS: 'Unknown' });
+    ? getFamilyMessage(locale, 'family.overview.countryChina')
+    : getFamilyMessage(locale, 'family.common.unknown');
   const regionStatusText = household?.region?.status === 'configured'
-    ? pickLocaleText(locale, { zhCN: '已设置完成', zhTW: '已設定完成', enUS: 'Configured' })
+    ? getFamilyMessage(locale, 'family.overview.regionStatus.configured')
     : household?.region?.status === 'provider_unavailable'
-      ? pickLocaleText(locale, { zhCN: '暂时无法读取', zhTW: '暫時無法讀取', enUS: 'Temporarily unavailable' })
-      : pickLocaleText(locale, { zhCN: '待完善', zhTW: '待完善', enUS: 'Needs completion' });
+      ? getFamilyMessage(locale, 'family.overview.regionStatus.providerUnavailable')
+      : getFamilyMessage(locale, 'family.overview.regionStatus.needsCompletion');
 
   useEffect(() => {
     setEditForm({
@@ -763,7 +736,7 @@ export function FamilyOverview() {
   );
 }
 
-/* ---- 房间页 ---- */
+/* ---- 鎴块棿椤?---- */
 export function FamilyRooms() {
   const { t, locale } = useI18n();
   const { rooms, overview, devices, loading, refreshWorkspace } = useFamilyWorkspace();
@@ -776,30 +749,22 @@ export function FamilyRooms() {
   const [toastMessage, setToastMessage] = useState('');
   const [pendingScrollRoomId, setPendingScrollRoomId] = useState<string | null>(null);
   const copy = {
-    nameRequired: pickLocaleText(locale, { zhCN: '请输入房间名称', zhTW: '請輸入房間名稱', enUS: 'Enter a room name' }),
-    selectHousehold: pickLocaleText(locale, { zhCN: '请先选择家庭。', zhTW: '請先選擇家庭。', enUS: 'Select a household first.' }),
-    createSuccess: pickLocaleText(locale, { zhCN: '房间已创建。', zhTW: '房間已建立。', enUS: 'Room created.' }),
-    createToast: pickLocaleText(locale, { zhCN: '房间已创建', zhTW: '房間已建立', enUS: 'Room created' }),
-    createFailure: pickLocaleText(locale, { zhCN: '创建房间失败', zhTW: '建立房間失敗', enUS: 'Failed to create room' }),
-    title: pickLocaleText(locale, { zhCN: '房间列表', zhTW: '房間列表', enUS: 'Rooms' }),
-    desc: pickLocaleText(locale, {
-      zhCN: '在这里查看家庭空间，并按需补充新的房间。',
-      zhTW: '在這裡查看家庭空間，並按需要補充新的房間。',
-      enUS: 'Review household spaces here and add new rooms when needed.',
-    }),
-    addButton: pickLocaleText(locale, { zhCN: '新增房间', zhTW: '新增房間', enUS: 'Add room' }),
-    loading: pickLocaleText(locale, { zhCN: '正在加载房间数据...', zhTW: '正在載入房間資料...', enUS: 'Loading room data...' }),
-    modalDesc: pickLocaleText(locale, {
-      zhCN: '填写房间名称和类型后，会直接加入当前家庭空间。',
-      zhTW: '填寫房間名稱和類型後，會直接加入目前家庭空間。',
-      enUS: 'The room will be added to the current household after you fill in its name and type.',
-    }),
-    roomName: pickLocaleText(locale, { zhCN: '房间名称', zhTW: '房間名稱', enUS: 'Room name' }),
-    roomType: pickLocaleText(locale, { zhCN: '房间类型', zhTW: '房間類型', enUS: 'Room type' }),
-    privacyLevel: pickLocaleText(locale, { zhCN: '隐私等级', zhTW: '隱私等級', enUS: 'Privacy level' }),
-    privacyPublic: pickLocaleText(locale, { zhCN: '公共', zhTW: '公共', enUS: 'Public' }),
-    privacyPrivate: pickLocaleText(locale, { zhCN: '私密', zhTW: '私密', enUS: 'Private' }),
-    privacySensitive: pickLocaleText(locale, { zhCN: '敏感', zhTW: '敏感', enUS: 'Sensitive' }),
+    nameRequired: getFamilyMessage(locale, 'family.rooms.nameRequired'),
+    selectHousehold: getFamilyMessage(locale, 'family.rooms.selectHousehold'),
+    createSuccess: getFamilyMessage(locale, 'family.rooms.createSuccess'),
+    createToast: getFamilyMessage(locale, 'family.rooms.createToast'),
+    createFailure: getFamilyMessage(locale, 'family.rooms.createFailure'),
+    title: getFamilyMessage(locale, 'family.rooms.title'),
+    desc: getFamilyMessage(locale, 'family.rooms.desc'),
+    addButton: getFamilyMessage(locale, 'family.rooms.addButton'),
+    loading: getFamilyMessage(locale, 'family.rooms.loading'),
+    modalDesc: getFamilyMessage(locale, 'family.rooms.modalDesc'),
+    roomName: getFamilyMessage(locale, 'family.rooms.roomName'),
+    roomType: getFamilyMessage(locale, 'family.rooms.roomType'),
+    privacyLevel: getFamilyMessage(locale, 'family.rooms.privacyLevel'),
+    privacyPublic: getFamilyMessage(locale, 'family.rooms.privacyPublic'),
+    privacyPrivate: getFamilyMessage(locale, 'family.rooms.privacyPrivate'),
+    privacySensitive: getFamilyMessage(locale, 'family.rooms.privacySensitive'),
   };
 
   const roomCards = rooms.map(room => {
@@ -925,7 +890,7 @@ export function FamilyRooms() {
               {room.sensitive && <span className="badge badge--warning">{t('room.sensitive')}</span>}
             </div>
             <div className="room-detail-card__meta">
-              <span className="meta-item">📦 {room.type}</span>
+              <span className="meta-item">📍 {room.type}</span>
               <span className="meta-item">📱 {room.devices} {t('room.devices')}</span>
               <span className={`meta-item ${room.active ? 'meta-item--active' : ''}`}>
                 {room.active ? `🟢 ${t('room.active')}` : `⚪ ${t('room.idle')}`}
@@ -989,7 +954,7 @@ export function FamilyRooms() {
   );
 }
 
-/* ---- 成员页 ---- */
+/* ---- 鎴愬憳椤?---- */
 export function FamilyMembers() {
   const { t, locale } = useI18n();
   const { members, overview, preferencesByMemberId, loading, refreshWorkspace } = useFamilyWorkspace();
@@ -1006,93 +971,67 @@ export function FamilyMembers() {
   const [toastMessage, setToastMessage] = useState('');
   const [pendingScrollMemberId, setPendingScrollMemberId] = useState<string | null>(null);
   const copy = {
-    nameRequired: pickLocaleText(locale, { zhCN: '请输入成员姓名', zhTW: '請輸入成員姓名', enUS: 'Enter the member name' }),
-    guardianRequired: pickLocaleText(locale, { zhCN: '儿童成员需要指定监护人', zhTW: '兒童成員需要指定監護人', enUS: 'A child member must have a guardian' }),
-    guardianRequiredBeforeSave: pickLocaleText(locale, {
-      zhCN: '儿童成员需要指定监护人后才能保存。',
-      zhTW: '兒童成員需要指定監護人後才能儲存。',
-      enUS: 'A child member needs a guardian before it can be saved.',
-    }),
-    selectHousehold: pickLocaleText(locale, { zhCN: '请先选择家庭。', zhTW: '請先選擇家庭。', enUS: 'Select a household first.' }),
-    createSuccess: pickLocaleText(locale, { zhCN: '成员已创建。', zhTW: '成員已建立。', enUS: 'Member created.' }),
-    createToast: pickLocaleText(locale, { zhCN: '成员已创建', zhTW: '成員已建立', enUS: 'Member created' }),
-    createFailure: pickLocaleText(locale, { zhCN: '创建成员失败', zhTW: '建立成員失敗', enUS: 'Failed to create member' }),
-    saveSuccess: pickLocaleText(locale, { zhCN: '成员信息已保存。', zhTW: '成員資訊已儲存。', enUS: 'Member details saved.' }),
-    saveToast: pickLocaleText(locale, { zhCN: '成员信息已保存', zhTW: '成員資訊已儲存', enUS: 'Member details saved' }),
-    saveFailure: pickLocaleText(locale, { zhCN: '保存成员信息失败', zhTW: '儲存成員資訊失敗', enUS: 'Failed to save member details' }),
-    disableConfirm: (memberName: string) => pickLocaleText(locale, {
-      zhCN: `确认停用成员“${memberName}”吗？停用后该成员会保留在列表里，但状态会变成停用。`,
-      zhTW: `確認停用成員「${memberName}」嗎？停用後該成員會保留在列表中，但狀態會變成停用。`,
-      enUS: `Disable "${memberName}"? The member will stay in the list, but its status will become disabled.`,
-    }),
-    disabledStatus: pickLocaleText(locale, { zhCN: '已停用', zhTW: '已停用', enUS: 'Disabled' }),
-    disabledAction: pickLocaleText(locale, { zhCN: '停用成员', zhTW: '停用成員', enUS: 'Disable member' }),
-    enabledAction: pickLocaleText(locale, { zhCN: '启用成员', zhTW: '啟用成員', enUS: 'Enable member' }),
-    disableSuccess: pickLocaleText(locale, { zhCN: '成员已停用。', zhTW: '成員已停用。', enUS: 'Member disabled.' }),
-    enableSuccess: pickLocaleText(locale, { zhCN: '成员已启用。', zhTW: '成員已啟用。', enUS: 'Member enabled.' }),
-    disableToast: pickLocaleText(locale, { zhCN: '成员已停用', zhTW: '成員已停用', enUS: 'Member disabled' }),
-    enableToast: pickLocaleText(locale, { zhCN: '成员已启用', zhTW: '成員已啟用', enUS: 'Member enabled' }),
-    disableFailure: pickLocaleText(locale, { zhCN: '停用成员失败', zhTW: '停用成員失敗', enUS: 'Failed to disable member' }),
-    enableFailure: pickLocaleText(locale, { zhCN: '启用成员失败', zhTW: '啟用成員失敗', enUS: 'Failed to enable member' }),
-    preferencesSaveSuccess: pickLocaleText(locale, { zhCN: '成员偏好已保存。', zhTW: '成員偏好已儲存。', enUS: 'Member preferences saved.' }),
-    preferencesSaveToast: pickLocaleText(locale, { zhCN: '成员偏好已保存', zhTW: '成員偏好已儲存', enUS: 'Member preferences saved' }),
-    preferencesSaveFailure: pickLocaleText(locale, { zhCN: '保存成员偏好失败', zhTW: '儲存成員偏好失敗', enUS: 'Failed to save member preferences' }),
-    title: pickLocaleText(locale, { zhCN: '成员列表', zhTW: '成員列表', enUS: 'Members' }),
-    desc: pickLocaleText(locale, {
-      zhCN: '在这里查看家庭成员，并按需编辑、停用或维护偏好。',
-      zhTW: '在這裡查看家庭成員，並按需要編輯、停用或維護偏好。',
-      enUS: 'Review household members here, then edit, disable, or manage preferences as needed.',
-    }),
-    addButton: pickLocaleText(locale, { zhCN: '新增成员', zhTW: '新增成員', enUS: 'Add member' }),
-    loading: pickLocaleText(locale, { zhCN: '正在加载成员数据...', zhTW: '正在載入成員資料...', enUS: 'Loading member data...' }),
-    lunarBirthday: pickLocaleText(locale, { zhCN: '农历生日', zhTW: '農曆生日', enUS: 'Lunar birthday' }),
-    solarBirthday: pickLocaleText(locale, { zhCN: '公历生日', zhTW: '公曆生日', enUS: 'Solar birthday' }),
-    birthdayUnset: pickLocaleText(locale, { zhCN: '未设置生日', zhTW: '未設定生日', enUS: 'Birthday not set' }),
-    agePending: pickLocaleText(locale, { zhCN: '年龄待补充', zhTW: '年齡待補充', enUS: 'Age pending' }),
-    birthdaySoon: pickLocaleText(locale, { zhCN: '生日快到了', zhTW: '生日快到了', enUS: 'Birthday is coming soon' }),
-    nickname: pickLocaleText(locale, { zhCN: '昵称', zhTW: '暱稱', enUS: 'Nickname' }),
-    gender: pickLocaleText(locale, { zhCN: '性别', zhTW: '性別', enUS: 'Gender' }),
-    genderUnset: pickLocaleText(locale, { zhCN: '未设置', zhTW: '未設定', enUS: 'Not set' }),
-    genderMale: pickLocaleText(locale, { zhCN: '男', zhTW: '男', enUS: 'Male' }),
-    genderFemale: pickLocaleText(locale, { zhCN: '女', zhTW: '女', enUS: 'Female' }),
-    role: pickLocaleText(locale, { zhCN: '角色', zhTW: '角色', enUS: 'Role' }),
-    ageGroup: pickLocaleText(locale, { zhCN: '年龄分组', zhTW: '年齡分組', enUS: 'Age group' }),
-    ageGroupAuto: pickLocaleText(locale, {
-      zhCN: '已根据生日自动计算年龄分组',
-      zhTW: '已根據生日自動計算年齡分組',
-      enUS: 'Age group is calculated automatically from the birthday.',
-    }),
-    birthday: pickLocaleText(locale, { zhCN: '生日', zhTW: '生日', enUS: 'Birthday' }),
-    lunarReminder: pickLocaleText(locale, { zhCN: '按农历生日提醒', zhTW: '按農曆生日提醒', enUS: 'Use lunar birthday reminders' }),
-    phone: pickLocaleText(locale, { zhCN: '手机号', zhTW: '手機號', enUS: 'Phone number' }),
-    memberStatus: pickLocaleText(locale, { zhCN: '状态', zhTW: '狀態', enUS: 'Status' }),
-    adminStatusHint: pickLocaleText(locale, {
-      zhCN: '管理员默认保持启用，避免影响家庭管理',
-      zhTW: '管理員預設保持啟用，避免影響家庭管理',
-      enUS: 'Admins stay active by default to avoid breaking household management.',
-    }),
-    guardian: pickLocaleText(locale, { zhCN: '监护人', zhTW: '監護人', enUS: 'Guardian' }),
-    guardianSelect: pickLocaleText(locale, { zhCN: '请选择监护人', zhTW: '請選擇監護人', enUS: 'Select a guardian' }),
-    guardianHint: pickLocaleText(locale, {
-      zhCN: '儿童角色需要绑定一位已启用的成人或管理员',
-      zhTW: '兒童角色需要綁定一位已啟用的成人或管理員',
-      enUS: 'A child role needs an active adult or admin as guardian.',
-    }),
-    modalDesc: pickLocaleText(locale, {
-      zhCN: '填写基础信息后，成员会直接加入当前家庭。',
-      zhTW: '填寫基礎資訊後，成員會直接加入目前家庭。',
-      enUS: 'After filling in the basic information, the member will be added to the current household.',
-    }),
-    name: pickLocaleText(locale, { zhCN: '姓名', zhTW: '姓名', enUS: 'Name' }),
-    preferredName: pickLocaleText(locale, { zhCN: '偏好称呼', zhTW: '偏好稱呼', enUS: 'Preferred name' }),
-    reminderNote: pickLocaleText(locale, { zhCN: '提醒方式备注', zhTW: '提醒方式備註', enUS: 'Reminder note' }),
-    reminderPlaceholder: pickLocaleText(locale, { zhCN: '例如：语音+站内消息', zhTW: '例如：語音 + 站內訊息', enUS: 'For example: voice + in-app message' }),
-    sleepStart: pickLocaleText(locale, { zhCN: '作息开始', zhTW: '作息開始', enUS: 'Sleep start' }),
-    sleepEnd: pickLocaleText(locale, { zhCN: '作息结束', zhTW: '作息結束', enUS: 'Sleep end' }),
+    nameRequired: getFamilyMessage(locale, 'family.members.nameRequired'),
+    guardianRequired: getFamilyMessage(locale, 'family.members.guardianRequired'),
+    guardianRequiredBeforeSave: getFamilyMessage(locale, 'family.members.guardianRequiredBeforeSave'),
+    selectHousehold: getFamilyMessage(locale, 'family.members.selectHousehold'),
+    createSuccess: getFamilyMessage(locale, 'family.members.createSuccess'),
+    createToast: getFamilyMessage(locale, 'family.members.createToast'),
+    createFailure: getFamilyMessage(locale, 'family.members.createFailure'),
+    saveSuccess: getFamilyMessage(locale, 'family.members.saveSuccess'),
+    saveToast: getFamilyMessage(locale, 'family.members.saveToast'),
+    saveFailure: getFamilyMessage(locale, 'family.members.saveFailure'),
+    disableConfirm: (memberName: string) => getFamilyMessage(locale, 'family.members.disableConfirm', { name: memberName }),
+    disabledStatus: getFamilyMessage(locale, 'family.members.disabledStatus'),
+    disabledAction: getFamilyMessage(locale, 'family.members.disabledAction'),
+    enabledAction: getFamilyMessage(locale, 'family.members.enabledAction'),
+    disableSuccess: getFamilyMessage(locale, 'family.members.disableSuccess'),
+    enableSuccess: getFamilyMessage(locale, 'family.members.enableSuccess'),
+    disableToast: getFamilyMessage(locale, 'family.members.disableToast'),
+    enableToast: getFamilyMessage(locale, 'family.members.enableToast'),
+    disableFailure: getFamilyMessage(locale, 'family.members.disableFailure'),
+    enableFailure: getFamilyMessage(locale, 'family.members.enableFailure'),
+    preferencesSaveSuccess: getFamilyMessage(locale, 'family.members.preferencesSaveSuccess'),
+    preferencesSaveToast: getFamilyMessage(locale, 'family.members.preferencesSaveToast'),
+    preferencesSaveFailure: getFamilyMessage(locale, 'family.members.preferencesSaveFailure'),
+    title: getFamilyMessage(locale, 'family.members.title'),
+    desc: getFamilyMessage(locale, 'family.members.desc'),
+    addButton: getFamilyMessage(locale, 'family.members.addButton'),
+    loading: getFamilyMessage(locale, 'family.members.loading'),
+    lunarBirthday: getFamilyMessage(locale, 'family.members.lunarBirthday'),
+    solarBirthday: getFamilyMessage(locale, 'family.members.solarBirthday'),
+    birthdayUnset: getFamilyMessage(locale, 'family.birthday.unset'),
+    agePending: getFamilyMessage(locale, 'family.members.agePending'),
+    birthdaySoon: getFamilyMessage(locale, 'family.members.birthdaySoon'),
+    nickname: getFamilyMessage(locale, 'family.members.nickname'),
+    gender: getFamilyMessage(locale, 'family.members.gender'),
+    genderUnset: getFamilyMessage(locale, 'family.members.genderUnset'),
+    genderMale: getFamilyMessage(locale, 'family.members.genderMale'),
+    genderFemale: getFamilyMessage(locale, 'family.members.genderFemale'),
+    role: getFamilyMessage(locale, 'family.members.role'),
+    ageGroup: getFamilyMessage(locale, 'family.members.ageGroup'),
+    ageGroupAuto: getFamilyMessage(locale, 'family.members.ageGroupAuto'),
+    birthday: getFamilyMessage(locale, 'family.members.birthday'),
+    lunarReminder: getFamilyMessage(locale, 'family.members.lunarReminder'),
+    phone: getFamilyMessage(locale, 'family.members.phone'),
+    memberStatus: getFamilyMessage(locale, 'family.members.memberStatus'),
+    adminStatusHint: getFamilyMessage(locale, 'family.members.adminStatusHint'),
+    guardian: getFamilyMessage(locale, 'family.members.guardian'),
+    guardianSelect: getFamilyMessage(locale, 'family.members.guardianSelect'),
+    guardianHint: getFamilyMessage(locale, 'family.members.guardianHint'),
+    modalDesc: getFamilyMessage(locale, 'family.members.modalDesc'),
+    name: getFamilyMessage(locale, 'family.members.name'),
+    preferredName: getFamilyMessage(locale, 'family.members.preferredName'),
+    reminderNote: getFamilyMessage(locale, 'family.members.reminderNote'),
+    reminderPlaceholder: getFamilyMessage(locale, 'family.members.reminderPlaceholder'),
+    sleepStart: getFamilyMessage(locale, 'family.members.sleepStart'),
+    sleepEnd: getFamilyMessage(locale, 'family.members.sleepEnd'),
+    sleepStartPlaceholder: getFamilyMessage(locale, 'family.members.sleepStartPlaceholder'),
+    sleepEndPlaceholder: getFamilyMessage(locale, 'family.members.sleepEndPlaceholder'),
   };
   const formatAgeText = (age: number | null) => age === null
     ? copy.agePending
-    : pickLocaleText(locale, { zhCN: `${age} 岁`, zhTW: `${age} 歲`, enUS: `${age} years old` });
+    : getFamilyMessage(locale, 'family.members.ageYears', { age });
   const guardianCandidates = useMemo(
     () => members.filter(member => member.id !== editingMemberId && member.status === 'active' && (member.role === 'admin' || member.role === 'adult')),
     [editingMemberId, members],
@@ -1445,7 +1384,7 @@ export function FamilyMembers() {
               <div id={`family-member-card-${member.id}`} className="card-scroll-anchor" />
               <div className="member-detail-card__top">
                 <div className="member-detail-card__avatar">
-                  {member.role === 'elder' ? '👵' : member.role === 'child' ? '👦' : member.role === 'guest' ? '🧑' : '👨'}
+                  {member.role === 'elder' ? '👵' : member.role === 'child' ? '🧒' : member.role === 'guest' ? '🙋' : '🧑'}
                 </div>
                 <div className="member-detail-card__info">
                   <div className="member-detail-card__name-row">
@@ -1464,7 +1403,7 @@ export function FamilyMembers() {
                 </span>
                 <span className="meta-item">🎂 {member.birthday ?? copy.birthdayUnset}</span>
                 <span className="meta-item">🧮 {formatAgeText(age)}</span>
-                <span className="meta-item">🎉 {birthdayCountdown}</span>
+                <span className="meta-item">🎈 {birthdayCountdown}</span>
                 {isBirthdaySoon && <span className="meta-item meta-item--highlight">✨ {copy.birthdaySoon}</span>}
               </div>
               <p className="member-detail-card__prefs">{formatPreferenceSummary(preferencesByMemberId[member.id], locale)}</p>
@@ -1532,7 +1471,7 @@ export function FamilyMembers() {
                       <label>{copy.guardian}</label>
                       <select className="form-select" value={editingMemberDraft.guardian_member_id} onChange={event => setEditingMemberDraft(current => ({ ...current, guardian_member_id: event.target.value }))}>
                         <option value="">{copy.guardianSelect}</option>
-                        {guardianCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}（{formatRole(candidate.role, locale)}）</option>)}
+                  {guardianCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{formatMemberOptionLabel(candidate.name, formatRole(candidate.role, locale), locale)}</option>)}
                       </select>
                       <div className="form-help">{copy.guardianHint}</div>
                     </div>
@@ -1643,7 +1582,7 @@ export function FamilyMembers() {
                     }
                   }}>
                     <option value="">{copy.guardianSelect}</option>
-                    {guardianCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}（{formatRole(candidate.role, locale)}）</option>)}
+                  {guardianCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{formatMemberOptionLabel(candidate.name, formatRole(candidate.role, locale), locale)}</option>)}
                   </select>
                   {createErrors.guardian_member_id ? <div className="form-error">{createErrors.guardian_member_id}</div> : <div className="form-help">{copy.guardianHint}</div>}
                 </div>
@@ -1669,11 +1608,11 @@ export function FamilyMembers() {
             </div>
             <div className="form-group">
               <label>{copy.sleepStart}</label>
-              <input className="form-input" value={preferencesDraft.sleep_start} onChange={event => setPreferencesDraft(current => ({ ...current, sleep_start: event.target.value }))} placeholder="22:00" />
+              <input className="form-input" value={preferencesDraft.sleep_start} onChange={event => setPreferencesDraft(current => ({ ...current, sleep_start: event.target.value }))} placeholder={copy.sleepStartPlaceholder} />
             </div>
             <div className="form-group">
               <label>{copy.sleepEnd}</label>
-              <input className="form-input" value={preferencesDraft.sleep_end} onChange={event => setPreferencesDraft(current => ({ ...current, sleep_end: event.target.value }))} placeholder="07:00" />
+              <input className="form-input" value={preferencesDraft.sleep_end} onChange={event => setPreferencesDraft(current => ({ ...current, sleep_end: event.target.value }))} placeholder={copy.sleepEndPlaceholder} />
             </div>
             <div style={{ display: 'flex', gap: '0.75rem' }}>
               <button className="btn btn--primary" type="button" onClick={() => void handleSavePreferences()}>{t('common.save')}</button>
@@ -1686,71 +1625,65 @@ export function FamilyMembers() {
   );
 }
 
-/* ---- 关系页 ---- */
+/* ---- 鍏崇郴椤?---- */
 
-/* 关系中文标签 */
-const RELATION_LABELS: Record<string, { zhCN: string; zhTW: string; enUS: string }> = {
-  husband: { zhCN: '丈夫', zhTW: '丈夫', enUS: 'Husband' },
-  wife: { zhCN: '妻子', zhTW: '妻子', enUS: 'Wife' },
-  spouse: { zhCN: '配偶', zhTW: '配偶', enUS: 'Spouse' },
-  father: { zhCN: '爸爸', zhTW: '爸爸', enUS: 'Father' },
-  mother: { zhCN: '妈妈', zhTW: '媽媽', enUS: 'Mother' },
-  parent: { zhCN: '父/母', zhTW: '父／母', enUS: 'Parent' },
-  son: { zhCN: '儿子', zhTW: '兒子', enUS: 'Son' },
-  daughter: { zhCN: '女儿', zhTW: '女兒', enUS: 'Daughter' },
-  child: { zhCN: '子女', zhTW: '子女', enUS: 'Child' },
-  older_brother: { zhCN: '哥哥', zhTW: '哥哥', enUS: 'Older brother' },
-  older_sister: { zhCN: '姐姐', zhTW: '姐姐', enUS: 'Older sister' },
-  younger_brother: { zhCN: '弟弟', zhTW: '弟弟', enUS: 'Younger brother' },
-  younger_sister: { zhCN: '妹妹', zhTW: '妹妹', enUS: 'Younger sister' },
-  grandfather_paternal: { zhCN: '爷爷', zhTW: '爺爺', enUS: 'Paternal grandfather' },
-  grandmother_paternal: { zhCN: '奶奶', zhTW: '奶奶', enUS: 'Paternal grandmother' },
-  grandfather_maternal: { zhCN: '姥爷', zhTW: '姥爺', enUS: 'Maternal grandfather' },
-  grandmother_maternal: { zhCN: '姥姥', zhTW: '姥姥', enUS: 'Maternal grandmother' },
-  grandson: { zhCN: '孙子', zhTW: '孫子', enUS: 'Grandson' },
-  granddaughter: { zhCN: '孙女', zhTW: '孫女', enUS: 'Granddaughter' },
-  guardian: { zhCN: '监护人', zhTW: '監護人', enUS: 'Guardian' },
-  ward: { zhCN: '被监护人', zhTW: '被監護人', enUS: 'Ward' },
-  caregiver: { zhCN: '照护者', zhTW: '照護者', enUS: 'Caregiver' },
+/* 鍏崇郴涓枃鏍囩 */
+const RELATION_LABELS: Record<string, Parameters<typeof getPageMessage>[1]> = {
+  husband: 'family.relation.label.husband',
+  wife: 'family.relation.label.wife',
+  spouse: 'family.relation.label.spouse',
+  father: 'family.relation.label.father',
+  mother: 'family.relation.label.mother',
+  parent: 'family.relation.label.parent',
+  son: 'family.relation.label.son',
+  daughter: 'family.relation.label.daughter',
+  child: 'family.relation.label.child',
+  older_brother: 'family.relation.label.olderBrother',
+  older_sister: 'family.relation.label.olderSister',
+  younger_brother: 'family.relation.label.youngerBrother',
+  younger_sister: 'family.relation.label.youngerSister',
+  grandfather_paternal: 'family.relation.label.grandfatherPaternal',
+  grandmother_paternal: 'family.relation.label.grandmotherPaternal',
+  grandfather_maternal: 'family.relation.label.grandfatherMaternal',
+  grandmother_maternal: 'family.relation.label.grandmotherMaternal',
+  grandson: 'family.relation.label.grandson',
+  granddaughter: 'family.relation.label.granddaughter',
+  guardian: 'family.relation.label.guardian',
+  ward: 'family.relation.label.ward',
+  caregiver: 'family.relation.label.caregiver',
 };
-
-/* 通用关系分类标签 (用于图谱默认连线) */
-const RELATION_CATEGORY_LABELS: Record<string, { zhCN: string; zhTW: string; enUS: string }> = {
-  husband: { zhCN: '配偶', zhTW: '配偶', enUS: 'Spouse' },
-  wife: { zhCN: '配偶', zhTW: '配偶', enUS: 'Spouse' },
-  spouse: { zhCN: '配偶', zhTW: '配偶', enUS: 'Spouse' },
-  father: { zhCN: '父子/父女', zhTW: '父子／父女', enUS: 'Parent-child' },
-  mother: { zhCN: '母子/母女', zhTW: '母子／母女', enUS: 'Parent-child' },
-  parent: { zhCN: '亲子', zhTW: '親子', enUS: 'Parent-child' },
-  son: { zhCN: '父子/母子', zhTW: '父子／母子', enUS: 'Parent-child' },
-  daughter: { zhCN: '父女/母女', zhTW: '父女／母女', enUS: 'Parent-child' },
-  child: { zhCN: '亲子', zhTW: '親子', enUS: 'Parent-child' },
-  older_brother: { zhCN: '兄弟/兄妹', zhTW: '兄弟／兄妹', enUS: 'Siblings' },
-  older_sister: { zhCN: '姐弟/姐妹', zhTW: '姐弟／姐妹', enUS: 'Siblings' },
-  younger_brother: { zhCN: '兄弟/姐弟', zhTW: '兄弟／姐弟', enUS: 'Siblings' },
-  younger_sister: { zhCN: '兄妹/姐妹', zhTW: '兄妹／姐妹', enUS: 'Siblings' },
-  grandfather_paternal: { zhCN: '祖孙', zhTW: '祖孫', enUS: 'Grandparent-grandchild' },
-  grandmother_paternal: { zhCN: '祖孙', zhTW: '祖孫', enUS: 'Grandparent-grandchild' },
-  grandfather_maternal: { zhCN: '外孙', zhTW: '外孫', enUS: 'Maternal grandchild' },
-  grandmother_maternal: { zhCN: '外孙', zhTW: '外孫', enUS: 'Maternal grandchild' },
-  grandson: { zhCN: '孙子', zhTW: '孫子', enUS: 'Grandson' },
-  granddaughter: { zhCN: '孙女', zhTW: '孫女', enUS: 'Granddaughter' },
-  guardian: { zhCN: '监护', zhTW: '監護', enUS: 'Guardianship' },
-  ward: { zhCN: '监护', zhTW: '監護', enUS: 'Guardianship' },
-  caregiver: { zhCN: '照护', zhTW: '照護', enUS: 'Care' },
+const RELATION_CATEGORY_LABELS: Record<string, Parameters<typeof getPageMessage>[1]> = {
+  husband: 'family.relation.category.fallback.spouse',
+  wife: 'family.relation.category.fallback.spouse',
+  spouse: 'family.relation.category.fallback.spouse',
+  father: 'family.relation.category.fallback.parentChild',
+  mother: 'family.relation.category.fallback.parentChild',
+  parent: 'family.relation.category.fallback.parentChild',
+  son: 'family.relation.category.fallback.parentChild',
+  daughter: 'family.relation.category.fallback.parentChild',
+  child: 'family.relation.category.fallback.parentChild',
+  older_brother: 'family.relation.category.fallback.siblings',
+  older_sister: 'family.relation.category.fallback.siblings',
+  younger_brother: 'family.relation.category.fallback.siblings',
+  younger_sister: 'family.relation.category.fallback.siblings',
+  grandfather_paternal: 'family.relation.category.fallback.grandparentGrandchild',
+  grandmother_paternal: 'family.relation.category.fallback.grandparentGrandchild',
+  grandfather_maternal: 'family.relation.category.fallback.maternalGrandchild',
+  grandmother_maternal: 'family.relation.category.fallback.maternalGrandchild',
+  grandson: 'family.relation.category.fallback.grandson',
+  granddaughter: 'family.relation.category.fallback.granddaughter',
+  guardian: 'family.relation.category.fallback.guardianship',
+  ward: 'family.relation.category.fallback.guardianship',
+  caregiver: 'family.relation.category.fallback.care',
 };
-
 function getRelationLabel(relationType: string, locale: string | undefined) {
   const label = RELATION_LABELS[relationType];
-  return label ? pickLocaleText(locale, label) : relationType;
+  return label ? getFamilyMessage(locale, label) : relationType;
 }
-
 function getRelationCategoryFallback(relationType: string, locale: string | undefined) {
   const label = RELATION_CATEGORY_LABELS[relationType];
-  return label ? pickLocaleText(locale, label) : relationType;
+  return label ? getFamilyMessage(locale, label) : relationType;
 }
-
-/* 根据成员角色筛选可选的关系类型 */
 function coalesceGender(...genders: Array<Member['gender'] | undefined>): Member['gender'] {
   for (const gender of genders) {
     if (gender === 'male' || gender === 'female') {
@@ -1807,51 +1740,51 @@ function getResolvedPairGender(
 }
 
 function getSpouseCategoryLabel(firstGender: Member['gender'], secondGender: Member['gender'], locale: string | undefined) {
-  if (firstGender === 'male' && secondGender === 'male') return pickLocaleText(locale, { zhCN: '夫夫', zhTW: '夫夫', enUS: 'Husbands' });
-  if (firstGender === 'female' && secondGender === 'female') return pickLocaleText(locale, { zhCN: '妻妻', zhTW: '妻妻', enUS: 'Wives' });
+  if (firstGender === 'male' && secondGender === 'male') return getFamilyMessage(locale, 'family.relation.category.husbands');
+  if (firstGender === 'female' && secondGender === 'female') return getFamilyMessage(locale, 'family.relation.category.wives');
   if (
     (firstGender === 'male' && secondGender === 'female')
     || (firstGender === 'female' && secondGender === 'male')
   ) {
-    return pickLocaleText(locale, { zhCN: '夫妻', zhTW: '夫妻', enUS: 'Married couple' });
+    return getFamilyMessage(locale, 'family.relation.category.marriedCouple');
   }
-  return pickLocaleText(locale, { zhCN: '伴侣', zhTW: '伴侶', enUS: 'Partners' });
+  return getFamilyMessage(locale, 'family.relation.category.partners');
 }
 
 function getParentChildCategoryLabel(parentGender: Member['gender'], childGender: Member['gender'], locale: string | undefined) {
   if (parentGender === 'male') {
-    if (childGender === 'male') return pickLocaleText(locale, { zhCN: '父子', zhTW: '父子', enUS: 'Father-son' });
-    if (childGender === 'female') return pickLocaleText(locale, { zhCN: '父女', zhTW: '父女', enUS: 'Father-daughter' });
-    return pickLocaleText(locale, { zhCN: '父子/父女', zhTW: '父子／父女', enUS: 'Father-child' });
+    if (childGender === 'male') return getFamilyMessage(locale, 'family.relation.category.fatherSon');
+    if (childGender === 'female') return getFamilyMessage(locale, 'family.relation.category.fatherDaughter');
+    return getFamilyMessage(locale, 'family.relation.category.fatherChild');
   }
 
   if (parentGender === 'female') {
-    if (childGender === 'male') return pickLocaleText(locale, { zhCN: '母子', zhTW: '母子', enUS: 'Mother-son' });
-    if (childGender === 'female') return pickLocaleText(locale, { zhCN: '母女', zhTW: '母女', enUS: 'Mother-daughter' });
-    return pickLocaleText(locale, { zhCN: '母子/母女', zhTW: '母子／母女', enUS: 'Mother-child' });
+    if (childGender === 'male') return getFamilyMessage(locale, 'family.relation.category.motherSon');
+    if (childGender === 'female') return getFamilyMessage(locale, 'family.relation.category.motherDaughter');
+    return getFamilyMessage(locale, 'family.relation.category.motherChild');
   }
 
-  if (childGender === 'male') return pickLocaleText(locale, { zhCN: '父子/母子', zhTW: '父子／母子', enUS: 'Parent-son' });
-  if (childGender === 'female') return pickLocaleText(locale, { zhCN: '父女/母女', zhTW: '父女／母女', enUS: 'Parent-daughter' });
-  return pickLocaleText(locale, { zhCN: '亲子', zhTW: '親子', enUS: 'Parent-child' });
+  if (childGender === 'male') return getFamilyMessage(locale, 'family.relation.category.parentSon');
+  if (childGender === 'female') return getFamilyMessage(locale, 'family.relation.category.parentDaughter');
+  return getFamilyMessage(locale, 'family.relation.category.parentChild');
 }
 
 function getSiblingCategoryLabel(olderGender: Member['gender'], youngerGender: Member['gender'], locale: string | undefined) {
   if (olderGender === 'male') {
-    if (youngerGender === 'male') return pickLocaleText(locale, { zhCN: '兄弟', zhTW: '兄弟', enUS: 'Brothers' });
-    if (youngerGender === 'female') return pickLocaleText(locale, { zhCN: '兄妹', zhTW: '兄妹', enUS: 'Brother and sister' });
-    return pickLocaleText(locale, { zhCN: '兄弟/兄妹', zhTW: '兄弟／兄妹', enUS: 'Siblings' });
+    if (youngerGender === 'male') return getFamilyMessage(locale, 'family.relation.category.brothers');
+    if (youngerGender === 'female') return getFamilyMessage(locale, 'family.relation.category.brotherAndSister');
+    return getFamilyMessage(locale, 'family.relation.category.siblings');
   }
 
   if (olderGender === 'female') {
-    if (youngerGender === 'male') return pickLocaleText(locale, { zhCN: '姐弟', zhTW: '姐弟', enUS: 'Sister and brother' });
-    if (youngerGender === 'female') return pickLocaleText(locale, { zhCN: '姐妹', zhTW: '姐妹', enUS: 'Sisters' });
-    return pickLocaleText(locale, { zhCN: '姐弟/姐妹', zhTW: '姐弟／姐妹', enUS: 'Siblings' });
+    if (youngerGender === 'male') return getFamilyMessage(locale, 'family.relation.category.sisterAndBrother');
+    if (youngerGender === 'female') return getFamilyMessage(locale, 'family.relation.category.sisters');
+    return getFamilyMessage(locale, 'family.relation.category.siblings');
   }
 
-  if (youngerGender === 'male') return pickLocaleText(locale, { zhCN: '兄弟/姐弟', zhTW: '兄弟／姐弟', enUS: 'Siblings' });
-  if (youngerGender === 'female') return pickLocaleText(locale, { zhCN: '兄妹/姐妹', zhTW: '兄妹／姐妹', enUS: 'Siblings' });
-  return pickLocaleText(locale, { zhCN: '手足', zhTW: '手足', enUS: 'Siblings' });
+  if (youngerGender === 'male') return getFamilyMessage(locale, 'family.relation.category.siblings');
+  if (youngerGender === 'female') return getFamilyMessage(locale, 'family.relation.category.siblings');
+  return getFamilyMessage(locale, 'family.relation.category.handFoot');
 }
 
 function inferGrandparentSide(
@@ -1885,11 +1818,11 @@ function getGrandparentCategoryLabel(
   locale: string | undefined,
 ) {
   const maleLabel = side === 'maternal'
-    ? pickLocaleText(locale, { zhCN: '外孙', zhTW: '外孫', enUS: 'Maternal grandson' })
-    : pickLocaleText(locale, { zhCN: '孙子', zhTW: '孫子', enUS: 'Grandson' });
+    ? getFamilyMessage(locale, 'family.relation.category.maternalGrandson')
+    : getFamilyMessage(locale, 'family.relation.category.grandson');
   const femaleLabel = side === 'maternal'
-    ? pickLocaleText(locale, { zhCN: '外孙女', zhTW: '外孫女', enUS: 'Maternal granddaughter' })
-    : pickLocaleText(locale, { zhCN: '孙女', zhTW: '孫女', enUS: 'Granddaughter' });
+    ? getFamilyMessage(locale, 'family.relation.category.maternalGranddaughter')
+    : getFamilyMessage(locale, 'family.relation.category.granddaughter');
 
   if (grandchildGender === 'male') return maleLabel;
   if (grandchildGender === 'female') return femaleLabel;
@@ -1945,13 +1878,14 @@ function getRelationCategoryLabel(
       );
     case 'guardian':
     case 'ward':
-      return pickLocaleText(locale, { zhCN: '监护', zhTW: '監護', enUS: 'Guardianship' });
+      return getFamilyMessage(locale, 'family.relation.category.fallback.guardianship');
     case 'caregiver':
-      return pickLocaleText(locale, { zhCN: '照护', zhTW: '照護', enUS: 'Care' });
+      return getFamilyMessage(locale, 'family.relation.category.fallback.care');
     default:
       return getRelationCategoryFallback(relationType, locale);
   }
 }
+
 
 type RelationOption = { value: string; label: string };
 
@@ -1995,7 +1929,7 @@ function getRelationOptionsForRole(role: string, locale: string | undefined): Re
   }
 }
 
-/* ---- SVG 关系图谱 ---- */
+/* ---- SVG 鍏崇郴鍥捐氨 ---- */
 type GraphNode = { id: string; name: string; role: string; x: number; y: number; vx: number; vy: number };
 type GraphEdge = { source: string; target: string; label: string; relationType: string };
 
@@ -2021,7 +1955,7 @@ function buildGraphData(
     vx: 0, vy: 0,
   }));
 
-  // 去重: 对于 A→B 和 B→A 这种双向关系，只保留一条边
+  // 鍘婚噸: 瀵逛簬 A鈫払 鍜?B鈫扐 杩欑鍙屽悜鍏崇郴锛屽彧淇濈暀涓€鏉¤竟
   const edgeSet = new Set<string>();
   const edges: GraphEdge[] = [];
   for (const rel of relationships) {
@@ -2053,13 +1987,13 @@ function getEdgeLabelForPerspective(
   relationships: MemberRelationship[],
   locale: string | undefined,
 ): string {
-  // 从 selectedMember 视角: 找 selectedMember → other 的 relation_type
+  // 浠?selectedMember 瑙嗚: 鎵?selectedMember 鈫?other 鐨?relation_type
   const otherId = edge.source === selectedMemberId ? edge.target : edge.source;
   const rel = relationships.find(
     r => r.source_member_id === selectedMemberId && r.target_member_id === otherId,
   );
   if (rel) return getRelationLabel(rel.relation_type, locale);
-  // fallback: 反向
+  // fallback: 鍙嶅悜
   const revRel = relationships.find(
     r => r.source_member_id === otherId && r.target_member_id === selectedMemberId,
   );
@@ -2076,7 +2010,7 @@ function RelationshipGraph({ members, relationships, selectedMemberId, onSelectM
   const { locale } = useI18n();
   const { nodes, edges } = useMemo(() => buildGraphData(members, relationships, locale), [members, relationships, locale]);
 
-  // 简单的力导向模拟
+  // 绠€鍗曠殑鍔涘鍚戞ā鎷?
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
 
   useEffect(() => {
@@ -2090,13 +2024,13 @@ function RelationshipGraph({ members, relationships, selectedMemberId, onSelectM
     const maxIterations = 120;
 
     function tick() {
-      // 力导向计算
+      // 鍔涘鍚戣绠?
       for (const node of simNodes) {
         node.vx *= 0.85;
         node.vy *= 0.85;
       }
 
-      // 排斥力
+      // 鎺掓枼鍔?
       for (let i = 0; i < simNodes.length; i++) {
         for (let j = i + 1; j < simNodes.length; j++) {
           const a = simNodes[i], b = simNodes[j];
@@ -2111,7 +2045,7 @@ function RelationshipGraph({ members, relationships, selectedMemberId, onSelectM
         }
       }
 
-      // 引力 (连线的)
+      // 寮曞姏 (杩炵嚎鐨?
       for (const edge of edges) {
         const a = nodeMap[edge.source], b = nodeMap[edge.target];
         if (!a || !b) continue;
@@ -2124,13 +2058,13 @@ function RelationshipGraph({ members, relationships, selectedMemberId, onSelectM
         b.vx -= dx * force; b.vy -= dy * force;
       }
 
-      // 居中力
+      // 灞呬腑鍔?
       for (const node of simNodes) {
         node.vx += (250 - node.x) * 0.005;
         node.vy += (220 - node.y) * 0.005;
       }
 
-      // 更新位置
+      // 鏇存柊浣嶇疆
       for (const node of simNodes) {
         node.x = Math.max(40, Math.min(460, node.x + node.vx));
         node.y = Math.max(40, Math.min(400, node.y + node.vy));
@@ -2153,9 +2087,9 @@ function RelationshipGraph({ members, relationships, selectedMemberId, onSelectM
   const roleEmoji = (role: string) => {
     switch (role) {
       case 'elder': return '👵';
-      case 'child': return '👦';
-      case 'guest': return '🧑';
-      default: return '👨';
+      case 'child': return '🧒';
+      case 'guest': return '🙋';
+      default: return '🧑';
     }
   };
 
@@ -2168,7 +2102,7 @@ function RelationshipGraph({ members, relationships, selectedMemberId, onSelectM
           </filter>
         </defs>
 
-        {/* 连线 */}
+        {/* 杩炵嚎 */}
         {edges.map((edge, i) => {
           const s = getPos(edge.source), t = getPos(edge.target);
           const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
@@ -2201,7 +2135,7 @@ function RelationshipGraph({ members, relationships, selectedMemberId, onSelectM
           );
         })}
 
-        {/* 节点 */}
+        {/* 鑺傜偣 */}
         {nodes.map(node => {
           const pos = getPos(node.id);
           const isSelected = selectedMemberId === node.id;
@@ -2225,17 +2159,9 @@ function RelationshipGraph({ members, relationships, selectedMemberId, onSelectM
       </svg>
       {selectedMemberId && (
         <div className="graph-legend">
-          {pickLocaleText(locale, {
-            zhCN: '👆 已选中 ',
-            zhTW: '👆 已選中 ',
-            enUS: '👆 Viewing ',
-          })}
+          {getFamilyMessage(locale, 'family.graph.selectedPrefix')}
           <strong>{members.find(m => m.id === selectedMemberId)?.name}</strong>
-          {pickLocaleText(locale, {
-            zhCN: ' 的视角，点击空白处取消',
-            zhTW: ' 的視角，點擊空白處取消',
-            enUS: "'s perspective. Click empty space to clear.",
-          })}
+          {getFamilyMessage(locale, 'family.graph.selectedSuffix')}
         </div>
       )}
     </div>
@@ -2839,10 +2765,10 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
 
   const roleEmoji = (role: string) => {
     switch (role) {
-      case 'elder': return '👵';
+      case 'elder': return '👴';
       case 'child': return '🧒';
-      case 'guest': return '🧑‍🤝‍🧑';
-      default: return '🧑';
+      case 'guest': return '👤';
+      default: return '👤';
     }
   };
 
@@ -3011,22 +2937,18 @@ function DynamicRelationshipGraph({ members, relationships, selectedMemberId, on
       </svg>
       <div className="relationship-graph__toolbar">
         <button className="relationship-graph__toolbtn" type="button" onClick={() => zoomGraph(viewport.scale * 1.12)}>
-          ＋
+          +
         </button>
         <button className="relationship-graph__toolbtn" type="button" onClick={() => zoomGraph(viewport.scale * 0.9)}>
-          －
+          -
         </button>
         <button className="relationship-graph__toolbtn relationship-graph__toolbtn--wide" type="button" onClick={resetViewport}>
-          {pickLocaleText(locale, { zhCN: '重置', zhTW: '重設', enUS: 'Reset' })}
+          {getFamilyMessage(locale, 'family.graph.reset')}
         </button>
         <span className="relationship-graph__zoom">{Math.round(viewport.scale * 100)}%</span>
       </div>
       <div className="graph-legend">
-        {pickLocaleText(locale, {
-          zhCN: '🔗 拖拽节点可整理图谱，双击节点可取消固定；点击成员切换关系视角，点击空白取消选中。',
-          zhTW: '🔗 拖曳節點可整理圖譜，雙擊節點可取消固定；點擊成員切換關係視角，點擊空白取消選中。',
-          enUS: '🔗 Drag nodes to arrange the graph. Double-click to unpin a node. Click a member to switch perspective, or click empty space to clear.',
-        })}
+        {getFamilyMessage(locale, 'family.graph.legend')}
       </div>
     </div>
   );
@@ -3046,43 +2968,34 @@ export function FamilyRelationships() {
   const [error, setError] = useState('');
   const [deleting, setDeleting] = useState<string | null>(null);
   const copy = {
-    selectMembersAndType: pickLocaleText(locale, { zhCN: '请选择成员和关系类型。', zhTW: '請選擇成員和關係類型。', enUS: 'Select members and a relation type.' }),
-    createSuccess: pickLocaleText(locale, {
-      zhCN: '关系已创建，反向关系已自动建立。',
-      zhTW: '關係已建立，反向關係也已自動建立。',
-      enUS: 'Relationship created. The reverse relationship was created automatically.',
-    }),
-    createFailure: pickLocaleText(locale, { zhCN: '创建关系失败', zhTW: '建立關係失敗', enUS: 'Failed to create relationship' }),
-    deleteSuccess: pickLocaleText(locale, { zhCN: '关系已删除。', zhTW: '關係已刪除。', enUS: 'Relationship deleted.' }),
-    deleteFailure: pickLocaleText(locale, { zhCN: '删除关系失败', zhTW: '刪除關係失敗', enUS: 'Failed to delete relationship' }),
-    graphLoading: pickLocaleText(locale, { zhCN: '正在加载关系数据...', zhTW: '正在載入關係資料...', enUS: 'Loading relationship data...' }),
-    graphNeedMembers: pickLocaleText(locale, { zhCN: '至少需要 2 位成员才能创建关系', zhTW: '至少需要 2 位成員才能建立關係', enUS: 'At least 2 members are required before relationships can be created.' }),
-    graphEmpty: pickLocaleText(locale, { zhCN: '还没有创建任何关系，请在下方添加。', zhTW: '還沒有建立任何關係，請在下方新增。', enUS: 'No relationships yet. Add one below.' }),
-    addTitle: pickLocaleText(locale, { zhCN: '添加关系', zhTW: '新增關係', enUS: 'Add relationship' }),
-    selectMember: pickLocaleText(locale, { zhCN: '选择成员', zhTW: '選擇成員', enUS: 'Select member' }),
-    selectMemberPlaceholder: pickLocaleText(locale, { zhCN: '请选择成员', zhTW: '請選擇成員', enUS: 'Select a member' }),
-    selectRelationPlaceholder: pickLocaleText(locale, { zhCN: '请选择关系', zhTW: '請選擇關係', enUS: 'Select a relationship' }),
-    selectTargetPlaceholder: pickLocaleText(locale, { zhCN: '请选择目标成员', zhTW: '請選擇目標成員', enUS: 'Select a target member' }),
-    targetLabel: pickLocaleText(locale, { zhCN: '关系目标', zhTW: '關係目標', enUS: 'Relationship target' }),
-    addButton: pickLocaleText(locale, { zhCN: '新增关系', zhTW: '新增關係', enUS: 'Add relationship' }),
-    listTitle: pickLocaleText(locale, { zhCN: '关系列表', zhTW: '關系列表', enUS: 'Relationships' }),
-    deleteButton: pickLocaleText(locale, { zhCN: '删除', zhTW: '刪除', enUS: 'Delete' }),
-    deletingButton: pickLocaleText(locale, { zhCN: '删除中...', zhTW: '刪除中...', enUS: 'Deleting...' }),
+    selectMembersAndType: getFamilyMessage(locale, 'family.relationships.selectMembersAndType'),
+    createSuccess: getFamilyMessage(locale, 'family.relationships.createSuccess'),
+    createFailure: getFamilyMessage(locale, 'family.relationships.createFailure'),
+    deleteSuccess: getFamilyMessage(locale, 'family.relationships.deleteSuccess'),
+    deleteFailure: getFamilyMessage(locale, 'family.relationships.deleteFailure'),
+    graphLoading: getFamilyMessage(locale, 'family.relationships.graphLoading'),
+    graphNeedMembers: getFamilyMessage(locale, 'family.relationships.graphNeedMembers'),
+    graphEmpty: getFamilyMessage(locale, 'family.relationships.graphEmpty'),
+    addTitle: getFamilyMessage(locale, 'family.relationships.addTitle'),
+    selectMember: getFamilyMessage(locale, 'family.relationships.selectMember'),
+    selectMemberPlaceholder: getFamilyMessage(locale, 'family.relationships.selectMemberPlaceholder'),
+    selectRelationPlaceholder: getFamilyMessage(locale, 'family.relationships.selectRelationPlaceholder'),
+    selectTargetPlaceholder: getFamilyMessage(locale, 'family.relationships.selectTargetPlaceholder'),
+    targetLabel: getFamilyMessage(locale, 'family.relationships.targetLabel'),
+    addButton: getFamilyMessage(locale, 'family.relationships.addButton'),
+    listTitle: getFamilyMessage(locale, 'family.relationships.listTitle'),
+    deleteButton: getFamilyMessage(locale, 'family.relationships.deleteButton'),
+    deletingButton: getFamilyMessage(locale, 'family.relationships.deletingButton'),
   };
   const memberNameMap = Object.fromEntries(members.map(member => [member.id, member.name]));
   const relationshipTypeLabel = createForm.source_member_id
-    ? pickLocaleText(locale, {
-      zhCN: `关系类型（${memberNameMap[createForm.source_member_id] ?? ''} 的…）`,
-      zhTW: `關係類型（${memberNameMap[createForm.source_member_id] ?? ''} 的…）`,
-      enUS: `Relationship type (${memberNameMap[createForm.source_member_id] ?? ''}'s ...)`,
-    })
+    ? getFamilyMessage(locale, 'family.relationships.typeLabel', { name: memberNameMap[createForm.source_member_id] ?? '' })
     : '';
 
-  // 根据所选 source 成员过滤可选关系
   const sourceMember = members.find(m => m.id === createForm.source_member_id);
   const relationOptions = sourceMember ? getRelationOptionsForRole(sourceMember.role, locale) : [];
 
-  // 根据 source 去掉 source 自己
+  // 鏍规嵁 source 鍘绘帀 source 鑷繁
   const targetOptions = members.filter(m => m.id !== createForm.source_member_id);
 
   async function handleCreateRelationship(event: React.FormEvent<HTMLFormElement>) {
@@ -3124,7 +3037,7 @@ export function FamilyRelationships() {
     }
   }
 
-  // 按 source 分组
+  // 鎸?source 鍒嗙粍
   const groupedBySource = useMemo(() => {
     const groups: Record<string, MemberRelationship[]> = {};
     for (const rel of relationships) {
@@ -3135,7 +3048,7 @@ export function FamilyRelationships() {
 
   return (
     <div className="family-relationships">
-      {/* 关系图谱 */}
+      {/* 鍏崇郴鍥捐氨 */}
       <Card className="relationship-graph-card">
         {members.length >= 2 && relationships.length > 0 ? (
           <DynamicRelationshipGraph
@@ -3152,7 +3065,7 @@ export function FamilyRelationships() {
         )}
       </Card>
 
-      {/* 添加关系 */}
+      {/* 娣诲姞鍏崇郴 */}
       <Card className="relation-card" style={{ marginTop: '1rem' }}>
         <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--spacing-md)' }}>{copy.addTitle}</h3>
         <form className="settings-form relationship-create-form" onSubmit={handleCreateRelationship}>
@@ -3160,7 +3073,7 @@ export function FamilyRelationships() {
             <label>{copy.selectMember}</label>
             <select className="form-select" value={createForm.source_member_id} onChange={event => { setCreateForm(current => ({ ...current, source_member_id: event.target.value, relation_type: '', target_member_id: '' })); setStatus(''); setError(''); }}>
               <option value="">{copy.selectMemberPlaceholder}</option>
-              {members.map(member => <option key={member.id} value={member.id}>{member.name}（{formatRole(member.role, locale)}）</option>)}
+              {members.map(member => <option key={member.id} value={member.id}>{formatMemberOptionLabel(member.name, formatRole(member.role, locale), locale)}</option>)}
             </select>
           </div>
           {createForm.source_member_id && (
@@ -3176,7 +3089,7 @@ export function FamilyRelationships() {
                 <label>{copy.targetLabel}</label>
                 <select className="form-select" value={createForm.target_member_id} onChange={event => setCreateForm(current => ({ ...current, target_member_id: event.target.value }))}>
                   <option value="">{copy.selectTargetPlaceholder}</option>
-                  {targetOptions.map(member => <option key={member.id} value={member.id}>{member.name}（{formatRole(member.role, locale)}）</option>)}
+                  {targetOptions.map(member => <option key={member.id} value={member.id}>{formatMemberOptionLabel(member.name, formatRole(member.role, locale), locale)}</option>)}
                 </select>
               </div>
             </>
@@ -3187,16 +3100,12 @@ export function FamilyRelationships() {
         </form>
       </Card>
 
-      {/* 关系列表（按成员分组） */}
+      {/* 鍏崇郴鍒楄〃锛堟寜鎴愬憳鍒嗙粍锛?*/}
       {Object.keys(groupedBySource).length > 0 && (
         <Section title={copy.listTitle}>
           {Object.entries(groupedBySource).map(([sourceId, rels]) => (
             <div key={sourceId} className="relation-group">
-              <h4 className="relation-group__title">{pickLocaleText(locale, {
-                zhCN: `${memberNameMap[sourceId] ?? sourceId} 的关系`,
-                zhTW: `${memberNameMap[sourceId] ?? sourceId} 的關係`,
-                enUS: `${memberNameMap[sourceId] ?? sourceId}'s relationships`,
-              })}</h4>
+              <h4 className="relation-group__title">{getFamilyMessage(locale, 'family.relationships.groupTitle', { name: memberNameMap[sourceId] ?? sourceId })}</h4>
               <div className="relation-list">
                 {rels.map(item => {
                   const toName = memberNameMap[item.target_member_id] ?? item.target_member_id;
@@ -3225,3 +3134,4 @@ export function FamilyRelationships() {
     </div>
   );
 }
+

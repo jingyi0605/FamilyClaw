@@ -4,6 +4,7 @@ import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealti
 import { Bot, History, Info, Menu, MessageSquarePlus } from 'lucide-react';
 import { assistantApi } from './assistant.api';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel, isConversationAgent, pickDefaultConversationAgent } from './assistant.agents';
+import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import type {
   AgentSummary,
   ConversationActionRecord,
@@ -53,42 +54,34 @@ function createConversationRealtimeClient(options: {
   });
 }
 
-function pickLocaleText(locale: string, values: {
-  zhCN: string;
-  zhTW: string;
-  enUS: string;
-}) {
-  if (locale.toLowerCase().startsWith('en')) {
-    return values.enUS;
-  }
-  if (locale.toLowerCase().startsWith('zh-tw')) {
-    return values.zhTW;
-  }
-  return values.zhCN;
-}
-
 function formatRelativeTime(value: string, locale: string) {
+  const lowerLocale = locale.toLowerCase();
+  const normalizedLocale = lowerLocale.startsWith('en') ? 'en-US' : lowerLocale.startsWith('zh-tw') ? 'zh-TW' : 'zh-CN';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return pickLocaleText(locale, { zhCN: '刚刚', zhTW: '剛剛', enUS: 'Just now' });
+    return getPageMessage(locale, 'assistant.time.justNow');
   }
   const diffMinutes = Math.max(1, Math.floor((Date.now() - date.getTime()) / 60000));
   if (diffMinutes < 60) {
-    return locale.toLowerCase().startsWith('en')
-      ? `${diffMinutes} min ago`
-      : locale.toLowerCase().startsWith('zh-tw')
-        ? `${diffMinutes} 分鐘前`
-        : `${diffMinutes} 分钟前`;
+    return getPageMessage(locale, 'assistant.time.minutesAgo', { count: diffMinutes });
   }
   const diffHours = Math.floor(diffMinutes / 60);
   if (diffHours < 24) {
-    return locale.toLowerCase().startsWith('en')
-      ? `${diffHours} hr ago`
-      : locale.toLowerCase().startsWith('zh-tw')
-        ? `${diffHours} 小時前`
-        : `${diffHours} 小时前`;
+    return getPageMessage(locale, 'assistant.time.hoursAgo', { count: diffHours });
   }
-  return date.toLocaleDateString(locale.toLowerCase().startsWith('en') ? 'en-US' : locale.toLowerCase().startsWith('zh-tw') ? 'zh-TW' : 'zh-CN');
+  return date.toLocaleDateString(normalizedLocale);
+}
+
+function formatLocalizedList(items: string[], locale: string) {
+  const normalizedLocale = locale.toLowerCase().startsWith('en') ? 'en-US' : locale.toLowerCase().startsWith('zh-tw') ? 'zh-TW' : 'zh-CN';
+  if (typeof Intl.ListFormat === 'function') {
+    return new Intl.ListFormat(normalizedLocale, { style: 'long', type: 'conjunction' }).format(items);
+  }
+  const separator = getPageMessage(locale, 'assistant.separator.list');
+  return items.reduce((result, item, index) => {
+    if (index === 0) return item;
+    return `${result}${separator}${item}`;
+  }, '');
 }
 
 function upsertSession(sessions: ConversationSession[], next: ConversationSession) {
@@ -155,20 +148,20 @@ function getActionIcon(action: ConversationActionRecord) {
 }
 
 function getActionStatusText(action: ConversationActionRecord, locale: string) {
-  if (action.status === 'pending_confirmation') return pickLocaleText(locale, { zhCN: '等待你确认', zhTW: '等待你確認', enUS: 'Waiting for confirmation' });
-  if (action.status === 'completed') return pickLocaleText(locale, { zhCN: '已执行', zhTW: '已執行', enUS: 'Executed' });
-  if (action.status === 'dismissed') return pickLocaleText(locale, { zhCN: '已忽略', zhTW: '已忽略', enUS: 'Dismissed' });
-  if (action.status === 'undone') return pickLocaleText(locale, { zhCN: '已撤回', zhTW: '已撤回', enUS: 'Undone' });
-  if (action.status === 'undo_failed') return pickLocaleText(locale, { zhCN: '撤回失败', zhTW: '撤回失敗', enUS: 'Undo failed' });
-  return pickLocaleText(locale, { zhCN: '执行失败', zhTW: '執行失敗', enUS: 'Execution failed' });
+  if (action.status === 'pending_confirmation') return getPageMessage(locale, 'assistant.action.status.pendingConfirmation');
+  if (action.status === 'completed') return getPageMessage(locale, 'assistant.action.status.completed');
+  if (action.status === 'dismissed') return getPageMessage(locale, 'assistant.action.status.dismissed');
+  if (action.status === 'undone') return getPageMessage(locale, 'assistant.action.status.undone');
+  if (action.status === 'undo_failed') return getPageMessage(locale, 'assistant.action.status.undoFailed');
+  return getPageMessage(locale, 'assistant.action.status.failed');
 }
 
 function buildActionResultText(action: ConversationActionRecord, locale: string) {
-  if (action.status === 'completed' && action.action_name === 'memory.write') return pickLocaleText(locale, { zhCN: '已写入正式记忆', zhTW: '已寫入正式記憶', enUS: 'Saved to memory' });
-  if (action.status === 'completed' && action.action_name === 'config.apply') return pickLocaleText(locale, { zhCN: '已应用配置建议', zhTW: '已套用設定建議', enUS: 'Config applied' });
-  if (action.status === 'completed' && action.action_name === 'reminder.create') return pickLocaleText(locale, { zhCN: '已创建提醒', zhTW: '已建立提醒', enUS: 'Reminder created' });
-  if (action.status === 'undone') return pickLocaleText(locale, { zhCN: '这次操作已经撤回', zhTW: '這次操作已經撤回', enUS: 'This action was undone' });
-  if (action.status === 'dismissed') return pickLocaleText(locale, { zhCN: '这次操作已忽略', zhTW: '這次操作已忽略', enUS: 'This action was dismissed' });
+  if (action.status === 'completed' && action.action_name === 'memory.write') return getPageMessage(locale, 'assistant.action.result.savedToMemory');
+  if (action.status === 'completed' && action.action_name === 'config.apply') return getPageMessage(locale, 'assistant.action.result.configApplied');
+  if (action.status === 'completed' && action.action_name === 'reminder.create') return getPageMessage(locale, 'assistant.action.result.reminderCreated');
+  if (action.status === 'undone') return getPageMessage(locale, 'assistant.action.result.undone');
+  if (action.status === 'dismissed') return getPageMessage(locale, 'assistant.action.result.dismissed');
   const error = action.result_payload?.error;
   return typeof error === 'string' && error ? error : getActionStatusText(action, locale);
 }
@@ -185,43 +178,43 @@ function getProposalIcon(item: ConversationProposalItem) {
 }
 
 function getProposalStatusText(item: ConversationProposalItem, locale: string) {
-  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_create') return pickLocaleText(locale, { zhCN: '计划任务已经创建', zhTW: '計畫任務已建立', enUS: 'Task created' });
-  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_update') return pickLocaleText(locale, { zhCN: '计划任务已经更新', zhTW: '計畫任務已更新', enUS: 'Task updated' });
-  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_pause') return pickLocaleText(locale, { zhCN: '计划任务已经暂停', zhTW: '計畫任務已暫停', enUS: 'Task paused' });
-  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_resume') return pickLocaleText(locale, { zhCN: '计划任务已经恢复', zhTW: '計畫任務已恢復', enUS: 'Task resumed' });
-  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_delete') return pickLocaleText(locale, { zhCN: '计划任务已经删除', zhTW: '計畫任務已刪除', enUS: 'Task deleted' });
-  if (item.status === 'pending_confirmation') return pickLocaleText(locale, { zhCN: '等待你确认', zhTW: '等待你確認', enUS: 'Waiting for confirmation' });
-  if (item.status === 'completed' && item.proposal_kind === 'config_apply') return pickLocaleText(locale, { zhCN: '配置已经应用', zhTW: '設定已套用', enUS: 'Config applied' });
-  if (item.status === 'completed' && item.proposal_kind === 'memory_write') return pickLocaleText(locale, { zhCN: '记忆已经写入', zhTW: '記憶已寫入', enUS: 'Memory saved' });
-  if (item.status === 'completed' && item.proposal_kind === 'reminder_create') return pickLocaleText(locale, { zhCN: '提醒已经创建', zhTW: '提醒已建立', enUS: 'Reminder created' });
-  if (item.status === 'dismissed' || item.status === 'ignored') return pickLocaleText(locale, { zhCN: '这条建议已忽略', zhTW: '這條建議已忽略', enUS: 'Suggestion dismissed' });
-  if (item.status === 'failed') return pickLocaleText(locale, { zhCN: '执行失败', zhTW: '執行失敗', enUS: 'Execution failed' });
-  return pickLocaleText(locale, { zhCN: '建议已生成', zhTW: '建議已生成', enUS: 'Suggestion generated' });
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_create') return getPageMessage(locale, 'assistant.proposal.status.taskCreated');
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_update') return getPageMessage(locale, 'assistant.proposal.status.taskUpdated');
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_pause') return getPageMessage(locale, 'assistant.proposal.status.taskPaused');
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_resume') return getPageMessage(locale, 'assistant.proposal.status.taskResumed');
+  if (item.status === 'completed' && item.proposal_kind === 'scheduled_task_delete') return getPageMessage(locale, 'assistant.proposal.status.taskDeleted');
+  if (item.status === 'pending_confirmation') return getPageMessage(locale, 'assistant.proposal.status.pendingConfirmation');
+  if (item.status === 'completed' && item.proposal_kind === 'config_apply') return getPageMessage(locale, 'assistant.proposal.status.configApplied');
+  if (item.status === 'completed' && item.proposal_kind === 'memory_write') return getPageMessage(locale, 'assistant.proposal.status.memorySaved');
+  if (item.status === 'completed' && item.proposal_kind === 'reminder_create') return getPageMessage(locale, 'assistant.proposal.status.reminderCreated');
+  if (item.status === 'dismissed' || item.status === 'ignored') return getPageMessage(locale, 'assistant.proposal.status.dismissed');
+  if (item.status === 'failed') return getPageMessage(locale, 'assistant.proposal.status.failed');
+  return getPageMessage(locale, 'assistant.proposal.status.generated');
 }
 
 function getProposalPrimaryActionText(item: ConversationProposalItem, locale: string) {
-  if (item.proposal_kind === 'scheduled_task_create') return pickLocaleText(locale, { zhCN: '确认创建', zhTW: '確認建立', enUS: 'Create' });
-  if (item.proposal_kind === 'scheduled_task_update') return pickLocaleText(locale, { zhCN: '确认更新', zhTW: '確認更新', enUS: 'Update' });
-  if (item.proposal_kind === 'scheduled_task_pause') return pickLocaleText(locale, { zhCN: '确认暂停', zhTW: '確認暫停', enUS: 'Pause' });
-  if (item.proposal_kind === 'scheduled_task_resume') return pickLocaleText(locale, { zhCN: '确认恢复', zhTW: '確認恢復', enUS: 'Resume' });
-  if (item.proposal_kind === 'scheduled_task_delete') return pickLocaleText(locale, { zhCN: '确认删除', zhTW: '確認刪除', enUS: 'Delete' });
-  return pickLocaleText(locale, { zhCN: '确认应用', zhTW: '確認套用', enUS: 'Apply' });
+  if (item.proposal_kind === 'scheduled_task_create') return getPageMessage(locale, 'assistant.proposal.primary.create');
+  if (item.proposal_kind === 'scheduled_task_update') return getPageMessage(locale, 'assistant.proposal.primary.update');
+  if (item.proposal_kind === 'scheduled_task_pause') return getPageMessage(locale, 'assistant.proposal.primary.pause');
+  if (item.proposal_kind === 'scheduled_task_resume') return getPageMessage(locale, 'assistant.proposal.primary.resume');
+  if (item.proposal_kind === 'scheduled_task_delete') return getPageMessage(locale, 'assistant.proposal.primary.delete');
+  return getPageMessage(locale, 'assistant.proposal.primary.apply');
 }
 
 function getProposalDismissText(item: ConversationProposalItem, locale: string) {
-  if (item.proposal_kind === 'scheduled_task_create') return pickLocaleText(locale, { zhCN: '先不创建', zhTW: '先不建立', enUS: 'Not now' });
-  if (item.proposal_kind.startsWith('scheduled_task_')) return pickLocaleText(locale, { zhCN: '先不处理', zhTW: '先不處理', enUS: 'Skip for now' });
-  return pickLocaleText(locale, { zhCN: '先不改', zhTW: '先不改', enUS: 'Keep as is' });
+  if (item.proposal_kind === 'scheduled_task_create') return getPageMessage(locale, 'assistant.proposal.dismiss.notNow');
+  if (item.proposal_kind.startsWith('scheduled_task_')) return getPageMessage(locale, 'assistant.proposal.dismiss.skipForNow');
+  return getPageMessage(locale, 'assistant.proposal.dismiss.keepAsIs');
 }
 
 function getProposalMetaText(item: ConversationProposalItem, locale: string) {
   if (item.proposal_kind.startsWith('scheduled_task_')) {
     return item.status === 'pending_confirmation'
-      ? pickLocaleText(locale, { zhCN: 'AI 已经整理出一条计划任务，等你确认后才会正式创建。', zhTW: 'AI 已經整理出一條計畫任務，等你確認後才會正式建立。', enUS: 'AI prepared a scheduled task. It will be created after your confirmation.' })
+      ? getPageMessage(locale, 'assistant.proposal.meta.taskPending')
       : getProposalStatusText(item, locale);
   }
   return item.status === 'pending_confirmation'
-    ? pickLocaleText(locale, { zhCN: 'AI 整理出一条可执行建议，当前设置是先问你。', zhTW: 'AI 整理出一條可執行建議，目前設定是先問你。', enUS: 'AI prepared an actionable suggestion and is waiting for your confirmation.' })
+    ? getPageMessage(locale, 'assistant.proposal.meta.actionPending')
     : getProposalStatusText(item, locale);
 }
 
@@ -273,6 +266,7 @@ function AssistantPageContent() {
   const pendingSyncTimerRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const listBullet = '•';
 
   const conversationAgents = useMemo(() => agents.filter(isConversationAgent), [agents]);
   const defaultAgent = useMemo(() => pickDefaultConversationAgent(agents), [agents]);
@@ -328,10 +322,14 @@ function AssistantPageContent() {
   const recentActionRecords = useMemo(() => actionRecords.slice(-5).reverse(), [actionRecords]);
 
   useEffect(() => {
+    void Taro.setNavigationBarTitle({ title: t('nav.assistant') }).catch(() => undefined);
+  }, [t, locale]);
+
+  useEffect(() => {
     setError('');
     /*
         
-          setError(loadError instanceof Error ? loadError.message : pickLocaleText(locale, { zhCN: '加载对话失败', zhTW: '載入對話失敗', enUS: 'Failed to load conversations' }));
+          setError(loadError instanceof Error ? loadError.message : t('assistant.error.loadConversations'));
     */
   }, []);
 
@@ -384,7 +382,7 @@ function AssistantPageContent() {
         setActiveSessionId(sessionResult.items[0]?.id || '');
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : pickLocaleText(locale, { zhCN: '加载对话失败', zhTW: '載入對話失敗', enUS: 'Failed to load conversations' }));
+          setError(loadError instanceof Error ? loadError.message : t('assistant.error.loadConversations'));
         }
       } finally {
         if (!cancelled) {
@@ -414,7 +412,7 @@ function AssistantPageContent() {
       })
       .catch(detailError => {
         if (!cancelled) {
-          setError(detailError instanceof Error ? detailError.message : pickLocaleText(locale, { zhCN: '加载会话详情失败', zhTW: '載入會話詳情失敗', enUS: 'Failed to load conversation details' }));
+          setError(detailError instanceof Error ? detailError.message : t('assistant.error.loadConversationDetails'));
         }
       });
 
@@ -465,7 +463,7 @@ function AssistantPageContent() {
         if (sendingRef.current) {
           void syncActiveSessionDetail(activeSessionId);
           setSending(false);
-          setError(pickLocaleText(locale, { zhCN: '实时连接已断开，已尝试同步最新会话。', zhTW: '即時連線已中斷，已嘗試同步最新會話。', enUS: 'The realtime connection closed. The latest conversation has been synced.' }));
+          setError(t('assistant.error.connectionClosed'));
         }
       },
       onError: () => {
@@ -474,7 +472,7 @@ function AssistantPageContent() {
           void syncActiveSessionDetail(activeSessionId);
           setSending(false);
         }
-        setError(pickLocaleText(locale, { zhCN: '实时连接异常，请稍后重试。', zhTW: '即時連線異常，請稍後再試。', enUS: 'The realtime connection failed. Please try again later.' }));
+        setError(t('assistant.error.connectionFailed'));
       },
       onEvent: event => {
         if (event.type === 'session.snapshot') {
@@ -576,7 +574,7 @@ function AssistantPageContent() {
 
   async function ensureSession() {
     if (activeSessionDetail) return activeSessionDetail;
-    if (!currentHouseholdId) throw new Error(pickLocaleText(locale, { zhCN: '当前家庭不存在', zhTW: '目前家庭不存在', enUS: 'No household selected' }));
+    if (!currentHouseholdId) throw new Error(t('assistant.error.noHouseholdSelected'));
     const created = await assistantApi.createConversationSession({
       household_id: currentHouseholdId,
       active_agent_id: selectedAgent?.id ?? undefined,
@@ -606,11 +604,7 @@ function AssistantPageContent() {
     if (!activeSessionDetail || activeSessionDetail.messages.length === 0) return;
     const nextAgent = conversationAgents.find(item => item.id === agentId);
     if (!nextAgent) return;
-    setStatus(pickLocaleText(locale, {
-      zhCN: `已切换到 ${nextAgent.display_name}，新对话会按这个角色继续。`,
-      zhTW: `已切換到 ${nextAgent.display_name}，新對話會按這個角色繼續。`,
-      enUS: `Switched to ${nextAgent.display_name}. New chats will continue with this agent.`,
-    }));
+    setStatus(t('assistant.status.switchedAgent', { name: nextAgent.display_name }));
     await handleNewChat();
   }
 
@@ -633,7 +627,7 @@ function AssistantPageContent() {
     try {
       const session = await ensureSession();
       if (!realtimeClientRef.current || !realtimeReady) {
-        throw new Error(pickLocaleText(locale, { zhCN: '实时连接还没建立完成', zhTW: '即時連線尚未建立完成', enUS: 'The realtime connection is not ready yet' }));
+        throw new Error(t('assistant.error.realtimeNotReady'));
       }
       const requestId = newRealtimeRequestId();
       setActiveSessionDetail(current => (
@@ -660,7 +654,7 @@ function AssistantPageContent() {
       void refreshSessions(session.id).catch(() => undefined);
     } catch (submitError) {
       resetPendingSyncTimer();
-      setError(submitError instanceof Error ? submitError.message : pickLocaleText(locale, { zhCN: '提问失败', zhTW: '提問失敗', enUS: 'Failed to send the message' }));
+      setError(submitError instanceof Error ? submitError.message : t('assistant.error.submitFailed'));
       setSending(false);
     } finally {
       if (!realtimeReady) {
@@ -687,7 +681,7 @@ function AssistantPageContent() {
       setStatus(successText);
       setError('');
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : pickLocaleText(locale, { zhCN: '处理动作失败', zhTW: '處理動作失敗', enUS: 'Failed to process the action' }));
+      setError(actionError instanceof Error ? actionError.message : t('assistant.error.actionFailed'));
     } finally {
       setActionBusyId('');
     }
@@ -709,7 +703,7 @@ function AssistantPageContent() {
       setStatus(successText);
       setError('');
     } catch (proposalError) {
-      setError(proposalError instanceof Error ? proposalError.message : pickLocaleText(locale, { zhCN: '处理建议失败', zhTW: '處理建議失敗', enUS: 'Failed to process the suggestion' }));
+      setError(proposalError instanceof Error ? proposalError.message : t('assistant.error.proposalFailed'));
     } finally {
       setActionBusyId('');
     }
@@ -723,21 +717,21 @@ function AssistantPageContent() {
           <strong>{action.title}</strong>
         </div>
         {action.summary ? <p className="message__action-text">{action.summary}</p> : null}
-        <div className="message__action-meta">{pickLocaleText(locale, { zhCN: 'AI 识别到可执行动作，当前设置是先问你。', zhTW: 'AI 識別到可執行動作，目前設定是先問你。', enUS: 'AI detected an executable action and is asking for confirmation first.' })}</div>
+        <div className="message__action-meta">{t('assistant.action.askHint')}</div>
         <div className="message__actions">
           <button
             className="msg-action-btn"
             disabled={actionBusyId === action.id}
-            onClick={() => void handleConversationAction(action.id, 'confirm', pickLocaleText(locale, { zhCN: '已按你的确认执行这条动作。', zhTW: '已依照你的確認執行這條動作。', enUS: 'The action has been executed with your confirmation.' }))}
+            onClick={() => void handleConversationAction(action.id, 'confirm', t('assistant.action.confirmSuccess'))}
           >
-            {pickLocaleText(locale, { zhCN: '允许执行', zhTW: '允許執行', enUS: 'Allow' })}
+            {t('assistant.action.allow')}
           </button>
           <button
             className="msg-action-btn"
             disabled={actionBusyId === action.id}
-            onClick={() => void handleConversationAction(action.id, 'dismiss', pickLocaleText(locale, { zhCN: '已忽略这条动作。', zhTW: '已忽略這條動作。', enUS: 'The action has been dismissed.' }))}
+            onClick={() => void handleConversationAction(action.id, 'dismiss', t('assistant.action.dismissSuccess'))}
           >
-            {pickLocaleText(locale, { zhCN: '先不做', zhTW: '先不做', enUS: 'Not now' })}
+            {t('assistant.action.notNow')}
           </button>
         </div>
       </div>
@@ -759,9 +753,9 @@ function AssistantPageContent() {
             <button
               className="msg-action-btn"
               disabled={actionBusyId === action.id}
-              onClick={() => void handleConversationAction(action.id, 'undo', pickLocaleText(locale, { zhCN: '已撤回刚才这条动作。', zhTW: '已撤回剛才這條動作。', enUS: 'The last action has been undone.' }))}
+              onClick={() => void handleConversationAction(action.id, 'undo', t('assistant.action.undoLastSuccess'))}
             >
-              {pickLocaleText(locale, { zhCN: '撤回', zhTW: '撤回', enUS: 'Undo' })}
+              {t('assistant.action.undo')}
             </button>
           </div>
         ) : null}
@@ -794,7 +788,9 @@ function AssistantPageContent() {
             </div>
             {scheduledPayload.missing_field_labels.length > 0 ? (
               <div className="message__proposal-warning">
-                {pickLocaleText(locale, { zhCN: '还缺：', zhTW: '還缺：', enUS: 'Missing: ' })}{scheduledPayload.missing_field_labels.join('、')}
+                {t('assistant.proposal.missingFields', {
+                  fields: formatLocalizedList(scheduledPayload.missing_field_labels, locale),
+                })}
               </div>
             ) : null}
             {!scheduledPayload.can_confirm && scheduledPayload.confirm_block_reason ? (
@@ -808,8 +804,8 @@ function AssistantPageContent() {
             className="msg-action-btn"
             disabled={actionBusyId === item.id || Boolean(scheduledPayload && !scheduledPayload.can_confirm)}
             onClick={() => void handleConversationProposal(item.id, 'confirm', item.proposal_kind === 'scheduled_task_create'
-              ? pickLocaleText(locale, { zhCN: '已按你的确认创建这条计划任务。', zhTW: '已依照你的確認建立這條計畫任務。', enUS: 'The scheduled task has been created with your confirmation.' })
-              : pickLocaleText(locale, { zhCN: '已按你的确认应用这条建议。', zhTW: '已依照你的確認套用這條建議。', enUS: 'The suggestion has been applied with your confirmation.' }))}
+              ? t('assistant.proposal.confirmTaskSuccess')
+              : t('assistant.proposal.confirmSuggestionSuccess'))}
           >
             {getProposalPrimaryActionText(item, locale)}
           </button>
@@ -817,8 +813,8 @@ function AssistantPageContent() {
             className="msg-action-btn"
             disabled={actionBusyId === item.id}
             onClick={() => void handleConversationProposal(item.id, 'dismiss', item.proposal_kind === 'scheduled_task_create'
-              ? pickLocaleText(locale, { zhCN: '已忽略这条计划任务提案。', zhTW: '已忽略這條計畫任務提案。', enUS: 'The scheduled task proposal has been dismissed.' })
-              : pickLocaleText(locale, { zhCN: '已忽略这条建议。', zhTW: '已忽略這條建議。', enUS: 'The suggestion has been dismissed.' }))}
+              ? t('assistant.proposal.dismissTaskSuccess')
+              : t('assistant.proposal.dismissSuggestionSuccess'))}
           >
             {getProposalDismissText(item, locale)}
           </button>
@@ -874,7 +870,7 @@ function AssistantPageContent() {
               <span>{getActionIcon(action)}</span>
             </button>
           ))}
-          <span className="message__action-meta">{pickLocaleText(locale, { zhCN: '已自动执行', zhTW: '已自動執行', enUS: 'Auto-executed' })} {actions.length} {pickLocaleText(locale, { zhCN: '条动作', zhTW: '條動作', enUS: 'actions' })}</span>
+          <span className="message__action-meta">{t('assistant.action.autoExecuted', { count: actions.length })}</span>
         </div>
         {expanded ? (
           <div className="message__action-details">
@@ -891,9 +887,9 @@ function AssistantPageContent() {
                     <button
                       className="msg-action-btn"
                       disabled={actionBusyId === action.id}
-                      onClick={() => void handleConversationAction(action.id, 'undo', pickLocaleText(locale, { zhCN: '已撤回自动执行的动作。', zhTW: '已撤回自動執行的動作。', enUS: 'The auto-executed action has been undone.' }))}
+                      onClick={() => void handleConversationAction(action.id, 'undo', t('assistant.action.undoAutoSuccess'))}
                     >
-                      {pickLocaleText(locale, { zhCN: '撤回', zhTW: '撤回', enUS: 'Undo' })}
+                      {t('assistant.action.undo')}
                     </button>
                   </div>
                 ) : null}
@@ -956,7 +952,7 @@ function AssistantPageContent() {
       {contextPanelOpen ? <div className="assistant-panel-overlay" onClick={() => setContextPanelOpen(false)} /> : null}
       <div className={`assistant-panel assistant-panel--right ${contextPanelOpen ? 'is-open' : ''}`.trim()}>
         <div className="assistant-panel__header">
-          <h3>{pickLocaleText(locale, { zhCN: '会话详情', zhTW: '會話詳情', enUS: 'Conversation Details' })}</h3>
+          <h3>{t('assistant.panel.details')}</h3>
           <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(false)}>
             ✕
           </button>
@@ -966,15 +962,22 @@ function AssistantPageContent() {
             <h4 className="context-section__title">{t('assistant.context')}</h4>
             <div className="context-item">
               <span className="context-item__label">{t('assistant.currentFamily')}</span>
-              <span className="context-item__value">{currentHousehold?.name ?? '-'}</span>
+              <span className="context-item__value">{currentHousehold?.name ?? t('assistant.unavailable')}</span>
             </div>
             <div className="context-item">
               <span className="context-item__label">{t('assistant.currentAgent')}</span>
-              <span className="context-item__value">{selectedAgent ? `${selectedAgent.display_name} · ${getAgentStatusLabel(selectedAgent.status, locale)}` : '-'}</span>
+              <span className="context-item__value">
+                {selectedAgent
+                  ? t('assistant.panel.currentAgentValue', {
+                    name: selectedAgent.display_name,
+                    status: getAgentStatusLabel(selectedAgent.status, locale),
+                  })
+                  : t('assistant.unavailable')}
+              </span>
             </div>
             <div className="context-item">
-              <span className="context-item__label">{pickLocaleText(locale, { zhCN: '待确认动作', zhTW: '待確認動作', enUS: 'Pending Actions' })}</span>
-              <span className="context-item__value">{pendingActionCount} {pickLocaleText(locale, { zhCN: '条', zhTW: '條', enUS: '' })}</span>
+              <span className="context-item__label">{t('assistant.panel.pendingActions')}</span>
+              <span className="context-item__value">{t('assistant.panel.pendingActionsCount', { count: pendingActionCount })}</span>
             </div>
           </div>
 
@@ -984,13 +987,13 @@ function AssistantPageContent() {
               {recentFacts.length > 0 ? (
                 recentFacts.map(item => (
                   <div key={`${item.type}-${item.label}`} className="context-memory-item">
-                    <span>🧠</span> {item.label}
+                    <span>{listBullet}</span> {item.label}
                   </div>
                 ))
               ) : (
                 suggestions.slice(0, 3).map(question => (
                   <div key={question} className="context-memory-item">
-                    <span>💡</span> {question}
+                    <span>{listBullet}</span> {question}
                   </div>
                 ))
               )}
@@ -998,7 +1001,7 @@ function AssistantPageContent() {
           </div>
 
           <div className="context-section">
-            <h4 className="context-section__title">{pickLocaleText(locale, { zhCN: '最近动作', zhTW: '最近動作', enUS: 'Recent Actions' })}</h4>
+            <h4 className="context-section__title">{t('assistant.panel.recentActions')}</h4>
             <div className="context-memory-list">
               {recentActionRecords.length > 0 ? (
                 recentActionRecords.map(action => (
@@ -1009,7 +1012,7 @@ function AssistantPageContent() {
                 ))
               ) : (
                 <div className="context-memory-item">
-                  <span>🪶</span> {pickLocaleText(locale, { zhCN: '当前还没有 AI 动作', zhTW: '目前還沒有 AI 動作', enUS: 'No AI actions yet' })}
+                  <span>{listBullet}</span> {t('assistant.panel.noActions')}
                 </div>
               )}
             </div>
@@ -1026,83 +1029,6 @@ function AssistantPageContent() {
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="assistant-main">
-        <div className="assistant-toolbar">
-          <div className="assistant-toolbar__history-wrapper">
-            <button className="assistant-toolbar__btn" onClick={() => setIsSidebarOpen(prev => !prev)} title={pickLocaleText(locale, { zhCN: '历史会话', zhTW: '歷史會話', enUS: 'Conversation History' })}>
-              <History size={18} />
-              <span>{pickLocaleText(locale, { zhCN: '历史', zhTW: '歷史', enUS: 'History' })}</span>
-            </button>
-          </div>
-          <div className="assistant-toolbar__title">{activeSessionDetail?.title || t('nav.assistant')}</div>
-          <div className="assistant-toolbar__actions">
-            <button className="assistant-toolbar__btn" onClick={() => void handleNewChat()} title={pickLocaleText(locale, { zhCN: '新对话', zhTW: '新對話', enUS: 'New Chat' })}>
-              <MessageSquarePlus size={18} />
-              <span>{pickLocaleText(locale, { zhCN: '新建', zhTW: '新增', enUS: 'New' })}</span>
-            </button>
-            <button className="assistant-toolbar__btn" onClick={() => setContextPanelOpen(true)} title={pickLocaleText(locale, { zhCN: '会话详情', zhTW: '會話詳情', enUS: 'Conversation Details' })}>
-              <Info size={18} />
-              <span>{pickLocaleText(locale, { zhCN: '详情', zhTW: '詳情', enUS: 'Details' })}</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="assistant-mobile-header">
-          <button className="btn btn--icon btn--ghost p-sm assistant-menu-btn" onClick={() => setIsSidebarOpen(prev => !prev)}>
-            <Menu size={24} />
-          </button>
-          <div className="assistant-mobile-title">{activeSessionDetail?.title || t('nav.assistant')}</div>
-          <button className="btn btn--icon btn--ghost p-sm" onClick={() => void handleNewChat()} title={pickLocaleText(locale, { zhCN: '新对话', zhTW: '新對話', enUS: 'New Chat' })}>
-            <MessageSquarePlus size={20} />
-          </button>
-          <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(true)}>
-            <Info size={20} />
-          </button>
-        </div>
-
-        {isSidebarOpen ? (
-          <>
-            <div className="assistant-popover-overlay" onClick={() => setIsSidebarOpen(false)} />
-            <div className="assistant-popover">
-              <div className="assistant-popover__header">
-                <span>{pickLocaleText(locale, { zhCN: '历史会话', zhTW: '歷史會話', enUS: 'Conversation History' })}</span>
-                <button className="btn btn--icon btn--ghost p-xs" onClick={() => void handleNewChat()} title={pickLocaleText(locale, { zhCN: '新对话', zhTW: '新對話', enUS: 'New Chat' })}>
-                  <MessageSquarePlus size={16} />
-                </button>
-              </div>
-              <div className="assistant-popover__content">
-                {loading ? (
-                  <div className="context-memory-item">
-                    <span>⏳</span> {pickLocaleText(locale, { zhCN: '正在加载会话', zhTW: '正在載入會話', enUS: 'Loading conversations' })}
-                  </div>
-                ) : sessions.length === 0 ? (
-                  <div className="context-memory-item">
-                    <span>📝</span> {pickLocaleText(locale, { zhCN: '暂无历史会话', zhTW: '暫無歷史會話', enUS: 'No conversation history yet' })}
-                  </div>
-                ) : (
-                  sessions.map(session => (
-                    <div
-                      key={session.id}
-                      className={`session-item session-item--compact ${activeSessionId === session.id ? 'session-item--active' : ''}`.trim()}
-                      onClick={() => {
-                        setActiveSessionId(session.id);
-                        setIsSidebarOpen(false);
-                      }}
-                    >
-                      <div className="session-item__content">
-                        <span className="session-item__title">{session.title}</span>
-                        <span className="session-item__preview">{session.latest_message_preview ?? pickLocaleText(locale, { zhCN: '等待你的第一条消息', zhTW: '等待你的第一條訊息', enUS: 'Waiting for your first message' })}</span>
-                      </div>
-                      <span className="session-item__time">{formatRelativeTime(session.last_message_at, locale)}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </>
-        ) : null}
 
         <div className="conversation-agent-banner">
           <div className="conversation-agent-banner__main">
@@ -1112,17 +1038,17 @@ function AssistantPageContent() {
               onClick={handleAgentAvatarClick}
               disabled={!canSwitchAgent}
               title={canSwitchAgent
-                ? pickLocaleText(locale, { zhCN: '点击切换对话 Agent', zhTW: '點擊切換對話 Agent', enUS: 'Click to switch agent' })
-                : (selectedAgent?.display_name ?? pickLocaleText(locale, { zhCN: '当前对话 Agent', zhTW: '目前對話 Agent', enUS: 'Current conversation agent' }))}
+                ? t('assistant.agent.switchTitle')
+                : (selectedAgent?.display_name ?? t('assistant.agent.currentTitle'))}
             >
               {selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : <Bot size={18} />}
             </button>
             <div className="conversation-agent-banner__text">
               <div className="conversation-agent-banner__title-row">
-                <h2>{selectedAgent?.display_name ?? pickLocaleText(locale, { zhCN: 'AI 助手', zhTW: 'AI 助手', enUS: 'AI Assistant' })}</h2>
+                <h2>{selectedAgent?.display_name ?? t('assistant.agent.defaultName')}</h2>
                 {selectedAgent ? <span className="ai-pill ai-pill--outline">{getAgentTypeLabel(selectedAgent.agent_type, locale)}</span> : null}
               </div>
-              <p>{selectedAgent?.summary ?? pickLocaleText(locale, { zhCN: 'AI 管家，协助家庭日常事务。', zhTW: 'AI 管家，協助家庭日常事務。', enUS: 'An AI butler that helps with everyday family tasks.' })}</p>
+              <p>{selectedAgent?.summary ?? t('assistant.agent.defaultSummary')}</p>
             </div>
           </div>
         </div>
@@ -1137,25 +1063,28 @@ function AssistantPageContent() {
                       {message.role === 'assistant' ? (
                         <span>{selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : '🤖'}</span>
                       ) : (
-                        <span>{pickLocaleText(locale, { zhCN: '你', zhTW: '你', enUS: 'You' })}</span>
+                        <span>{t('assistant.you')}</span>
                       )}
                     </div>
                     <div className="message__content-wrapper">
                       <div className="message__bubble">
-                        <p className="message__content">{message.content || (message.status === 'pending' ? pickLocaleText(locale, { zhCN: '正在准备回复...', zhTW: '正在準備回覆...', enUS: 'Preparing a reply...' }) : '')}</p>
-                        {message.degraded ? <span className="message__memory-tag">⚠️ {pickLocaleText(locale, { zhCN: '当前回答已降级', zhTW: '目前回答已降級', enUS: 'Response degraded' })}</span> : null}
-                        {message.status === 'streaming' ? <span className="message__memory-tag">⏳ {pickLocaleText(locale, { zhCN: '正在生成', zhTW: '正在生成', enUS: 'Generating' })}</span> : null}
-                        {message.status === 'failed' ? <span className="message__memory-tag">❌ {pickLocaleText(locale, { zhCN: '本轮失败', zhTW: '本輪失敗', enUS: 'This turn failed' })}</span> : null}
+                        <p className="message__content">{message.content || (message.status === 'pending' ? t('assistant.message.preparingReply') : '')}</p>
+                        {message.degraded ? <span className="message__memory-tag">⚠️ {t('assistant.message.responseDegraded')}</span> : null}
+                        {message.status === 'streaming' ? <span className="message__memory-tag">⏳ {t('assistant.message.generating')}</span> : null}
+                        {message.status === 'failed' ? <span className="message__memory-tag">❌ {t('assistant.message.turnFailed')}</span> : null}
                       </div>
                       {renderMessageActions(message)}
                       {message.role === 'assistant' && message.status !== 'pending' ? (
                         <div className="message__actions">
-                          <button className="msg-action-btn" onClick={() => void submitQuestion(`${pickLocaleText(locale, { zhCN: '继续追问：', zhTW: '繼續追問：', enUS: 'Follow up: ' })}${message.content.slice(0, 40)}`)}>
+                          <button
+                            className="msg-action-btn"
+                            onClick={() => void submitQuestion(t('assistant.message.followUpQuestion', { content: message.content.slice(0, 40) }))}
+                          >
                             {t('assistant.askFollow')}
                           </button>
-                          <button className="msg-action-btn" onClick={() => void goToPage('/pages/family/index')}>{pickLocaleText(locale, { zhCN: '去家庭页', zhTW: '去家庭頁', enUS: 'Open Family' })}</button>
-                          <button className="msg-action-btn" onClick={() => void goToPage('/pages/settings/index')}>{pickLocaleText(locale, { zhCN: '去 AI 配置', zhTW: '去 AI 設定', enUS: 'Open AI Settings' })}</button>
-                          <button className="msg-action-btn" onClick={() => void goToPage('/pages/memories/index')}>{pickLocaleText(locale, { zhCN: '去记忆页', zhTW: '去記憶頁', enUS: 'Open Memories' })}</button>
+                          <button className="msg-action-btn" onClick={() => void goToPage('/pages/family/index')}>{t('nav.family')}</button>
+                          <button className="msg-action-btn" onClick={() => void goToPage('/pages/settings/index')}>{t('settings.ai')}</button>
+                          <button className="msg-action-btn" onClick={() => void goToPage('/pages/memories/index')}>{t('nav.memories')}</button>
                           {message.suggestions.slice(0, 2).map(suggestion => (
                             <button key={suggestion} className="msg-action-btn" onClick={() => void submitQuestion(suggestion)}>
                               {suggestion}
@@ -1197,7 +1126,7 @@ function AssistantPageContent() {
                   rows={2}
                 />
                 <div className="chat-composer__footer">
-                  <span className="chat-composer__hint">{pickLocaleText(locale, { zhCN: 'Enter 发送，Shift + Enter 换行', zhTW: 'Enter 發送，Shift + Enter 換行', enUS: 'Enter to send, Shift + Enter for a new line' })}</span>
+                  <span className="chat-composer__hint">{t('assistant.composer.hint')}</span>
                   <button type="submit" className="btn btn--primary" disabled={sending || !inputValue.trim() || !realtimeReady}>
                     {sending ? t('assistant.sending') : t('assistant.send')}
                   </button>

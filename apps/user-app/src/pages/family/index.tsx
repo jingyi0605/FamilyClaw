@@ -1,12 +1,16 @@
 import { FeaturePlaceholder } from '../../components/FeaturePlaceholder';
+import { useI18n } from '../../runtime';
+import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 
 export default function FamilyPage() {
+  const { locale } = useI18n();
+
   return (
     <FeaturePlaceholder
-      title="家庭页"
-      description="H5 已按 user-web 正式迁移旧家庭页；当前这个文件只保留 RN / 非 H5 的安全构建页。"
+      title={getPageMessage(locale, 'family.placeholder.title')}
+      description={getPageMessage(locale, 'family.placeholder.description')}
       parityStatus="h5_ready"
-      blockingReason="本轮按要求优先保证 H5 / PC 端 1:1 还原，RN 样式与交互后续再单独适配。"
+      blockingReason={getPageMessage(locale, 'family.placeholder.blockingReason')}
     />
   );
 }

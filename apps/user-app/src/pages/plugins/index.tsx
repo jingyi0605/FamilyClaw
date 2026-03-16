@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Taro from '@tarojs/taro';
 import { BadgeCheck, Package, Zap } from 'lucide-react';
 import { GuardedPage, useHouseholdContext } from '../../runtime';
 import { useI18n } from '../../runtime/h5-shell';
+import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, EmptyState, Section } from '../family/base';
 import { SettingsPageShell } from '../settings/SettingsPageShell';
 import { PluginDetailDrawer } from '../settings/components/PluginDetailDrawer';
@@ -9,29 +11,6 @@ import { ApiError, settingsApi } from '../settings/settingsApi';
 import type { PluginManifestType, PluginRegistryItem } from '../settings/settingsTypes';
 
 type ViewMode = 'card' | 'list';
-
-function pickLocaleText(
-  locale: string | undefined,
-  values: { zhCN: string; zhTW: string; enUS: string },
-) {
-  if (locale?.toLowerCase().startsWith('en')) {
-    return values.enUS;
-  }
-  if (locale?.toLowerCase().startsWith('zh-tw')) {
-    return values.zhTW;
-  }
-  return values.zhCN;
-}
-
-function resolveDateLocale(locale: string | undefined) {
-  if (locale?.toLowerCase().startsWith('en')) {
-    return 'en-US';
-  }
-  if (locale?.toLowerCase().startsWith('zh-tw')) {
-    return 'zh-TW';
-  }
-  return 'zh-CN';
-}
 
 const VIEW_MODE_KEY = 'plugin-view-mode';
 const FILTERABLE_TYPES: PluginManifestType[] = [
@@ -44,17 +23,14 @@ const FILTERABLE_TYPES: PluginManifestType[] = [
   'region-provider',
 ];
 
-function formatPluginType(type: PluginManifestType, locale: string | undefined) {
-  const labels: Record<PluginManifestType, { zhCN: string; zhTW: string; enUS: string }> = {
-    connector: { zhCN: '连接器', zhTW: '連接器', enUS: 'Connector' },
-    'memory-ingestor': { zhCN: '记忆摄取', zhTW: '記憶攝取', enUS: 'Memory Ingestor' },
-    action: { zhCN: '动作', zhTW: '動作', enUS: 'Action' },
-    'agent-skill': { zhCN: 'Agent 技能', zhTW: 'Agent 技能', enUS: 'Agent Skill' },
-    channel: { zhCN: '通讯通道', zhTW: '通訊通道', enUS: 'Channel' },
-    'locale-pack': { zhCN: '语言包', zhTW: '語言包', enUS: 'Locale Pack' },
-    'region-provider': { zhCN: '地区提供器', zhTW: '地區提供器', enUS: 'Region Provider' },
-  };
-  return pickLocaleText(locale, labels[type]);
+function resolveDateLocale(locale: string | undefined) {
+  if (locale?.toLowerCase().startsWith('en')) {
+    return 'en-US';
+  }
+  if (locale?.toLowerCase().startsWith('zh-tw')) {
+    return 'zh-TW';
+  }
+  return 'zh-CN';
 }
 
 function getInitialViewMode(): ViewMode {
@@ -65,14 +41,35 @@ function getInitialViewMode(): ViewMode {
   return saved === 'list' ? 'list' : 'card';
 }
 
+function formatPluginType(type: PluginManifestType, locale: string | undefined) {
+  switch (type) {
+    case 'connector':
+      return getPageMessage(locale, 'settings.plugin.type.connector');
+    case 'memory-ingestor':
+      return getPageMessage(locale, 'settings.plugin.type.memoryIngestor');
+    case 'action':
+      return getPageMessage(locale, 'settings.plugin.type.action');
+    case 'agent-skill':
+      return getPageMessage(locale, 'settings.plugin.type.agentSkill');
+    case 'channel':
+      return getPageMessage(locale, 'settings.plugin.type.channel');
+    case 'locale-pack':
+      return getPageMessage(locale, 'settings.plugin.type.localePack');
+    case 'region-provider':
+      return getPageMessage(locale, 'settings.plugin.type.regionProvider');
+    default:
+      return type;
+  }
+}
+
 function formatSourceType(sourceType: PluginRegistryItem['source_type'], locale: string | undefined): { label: string; tone: 'info' | 'success' | 'warning' } {
   switch (sourceType) {
     case 'builtin':
-      return { label: pickLocaleText(locale, { zhCN: '内置', zhTW: '內建', enUS: 'Built-in' }), tone: 'info' };
+      return { label: getPageMessage(locale, 'settings.plugin.source.builtin'), tone: 'info' };
     case 'official':
-      return { label: pickLocaleText(locale, { zhCN: '官方', zhTW: '官方', enUS: 'Official' }), tone: 'success' };
+      return { label: getPageMessage(locale, 'settings.plugin.source.official'), tone: 'success' };
     case 'third_party':
-      return { label: pickLocaleText(locale, { zhCN: '第三方', zhTW: '第三方', enUS: 'Third-party' }), tone: 'warning' };
+      return { label: getPageMessage(locale, 'settings.plugin.source.thirdParty'), tone: 'warning' };
     default:
       return { label: sourceType, tone: 'info' };
   }
@@ -81,11 +78,11 @@ function formatSourceType(sourceType: PluginRegistryItem['source_type'], locale:
 function formatRiskLevel(riskLevel: PluginRegistryItem['risk_level'], locale: string | undefined): { label: string; tone: 'success' | 'warning' | 'danger' } {
   switch (riskLevel) {
     case 'low':
-      return { label: pickLocaleText(locale, { zhCN: '低风险', zhTW: '低風險', enUS: 'Low risk' }), tone: 'success' };
+      return { label: getPageMessage(locale, 'settings.plugin.risk.low'), tone: 'success' };
     case 'medium':
-      return { label: pickLocaleText(locale, { zhCN: '中风险', zhTW: '中風險', enUS: 'Medium risk' }), tone: 'warning' };
+      return { label: getPageMessage(locale, 'settings.plugin.risk.medium'), tone: 'warning' };
     case 'high':
-      return { label: pickLocaleText(locale, { zhCN: '高风险', zhTW: '高風險', enUS: 'High risk' }), tone: 'danger' };
+      return { label: getPageMessage(locale, 'settings.plugin.risk.high'), tone: 'danger' };
     default:
       return { label: riskLevel, tone: 'warning' };
   }
@@ -94,26 +91,28 @@ function formatRiskLevel(riskLevel: PluginRegistryItem['risk_level'], locale: st
 function formatJobStatus(status: string, locale: string | undefined): { label: string; tone: 'success' | 'warning' | 'danger' | 'secondary' } {
   switch (status) {
     case 'succeeded':
-      return { label: pickLocaleText(locale, { zhCN: '成功', zhTW: '成功', enUS: 'Succeeded' }), tone: 'success' };
+      return { label: getPageMessage(locale, 'settings.plugin.job.succeeded'), tone: 'success' };
     case 'queued':
-      return { label: pickLocaleText(locale, { zhCN: '排队中', zhTW: '排隊中', enUS: 'Queued' }), tone: 'warning' };
+      return { label: getPageMessage(locale, 'settings.plugin.job.queued'), tone: 'warning' };
     case 'running':
-      return { label: pickLocaleText(locale, { zhCN: '执行中', zhTW: '執行中', enUS: 'Running' }), tone: 'warning' };
+      return { label: getPageMessage(locale, 'settings.plugin.job.running'), tone: 'warning' };
     case 'retry_waiting':
-      return { label: pickLocaleText(locale, { zhCN: '等待重试', zhTW: '等待重試', enUS: 'Waiting to retry' }), tone: 'warning' };
+      return { label: getPageMessage(locale, 'settings.plugin.job.retryWaiting'), tone: 'warning' };
     case 'waiting_response':
-      return { label: pickLocaleText(locale, { zhCN: '等待响应', zhTW: '等待回應', enUS: 'Waiting for response' }), tone: 'warning' };
+      return { label: getPageMessage(locale, 'settings.plugin.job.waitingResponse'), tone: 'warning' };
     case 'failed':
-      return { label: pickLocaleText(locale, { zhCN: '失败', zhTW: '失敗', enUS: 'Failed' }), tone: 'danger' };
+      return { label: getPageMessage(locale, 'settings.plugin.job.failed'), tone: 'danger' };
     case 'cancelled':
-      return { label: pickLocaleText(locale, { zhCN: '已取消', zhTW: '已取消', enUS: 'Cancelled' }), tone: 'secondary' };
+      return { label: getPageMessage(locale, 'settings.plugin.job.cancelled'), tone: 'secondary' };
     default:
       return { label: status, tone: 'secondary' };
   }
 }
 
 function formatTimestamp(value: string | null, locale: string | undefined) {
-  if (!value) return pickLocaleText(locale, { zhCN: '暂无', zhTW: '暫無', enUS: 'None yet' });
+  if (!value) {
+    return getPageMessage(locale, 'plugins.noneYet');
+  }
   try {
     return new Date(value).toLocaleString(resolveDateLocale(locale));
   } catch {
@@ -150,6 +149,15 @@ function PluginsPageContent() {
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
   const [selectedTypes, setSelectedTypes] = useState<PluginManifestType[]>([]);
 
+  const page = useCallback(
+    (key: Parameters<typeof getPageMessage>[1], params?: Parameters<typeof getPageMessage>[2]) => getPageMessage(locale, key, params),
+    [locale],
+  );
+
+  useEffect(() => {
+    void Taro.setNavigationBarTitle({ title: page('plugins.title') }).catch(() => undefined);
+  }, [page]);
+
   const handleViewModeChange = useCallback((mode: ViewMode) => {
     setViewMode(mode);
     if (typeof window !== 'undefined') {
@@ -158,12 +166,18 @@ function PluginsPageContent() {
   }, []);
 
   const filteredPlugins = useMemo(() => {
-    if (selectedTypes.length === 0) return plugins;
-    return plugins.filter((plugin) => plugin.types.some((type) => selectedTypes.includes(type)));
+    if (selectedTypes.length === 0) {
+      return plugins;
+    }
+    return plugins.filter(plugin => plugin.types.some(type => selectedTypes.includes(type)));
   }, [plugins, selectedTypes]);
 
   const toggleTypeFilter = useCallback((type: PluginManifestType) => {
-    setSelectedTypes((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type]);
+    setSelectedTypes(current => (
+      current.includes(type)
+        ? current.filter(item => item !== type)
+        : [...current, type]
+    ));
   }, []);
 
   const clearTypeFilter = useCallback(() => {
@@ -188,11 +202,7 @@ function PluginsPageContent() {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof ApiError ? loadError.message : pickLocaleText(locale, {
-            zhCN: '加载插件列表失败',
-            zhTW: '載入外掛列表失敗',
-            enUS: 'Failed to load plugins',
-          }));
+          setError(loadError instanceof ApiError ? loadError.message : page('plugins.loadFailed'));
         }
       } finally {
         if (!cancelled) {
@@ -205,7 +215,7 @@ function PluginsPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [currentHouseholdId, locale]);
+  }, [currentHouseholdId, page]);
 
   useEffect(() => {
     if (!currentHouseholdId || !selectedPluginId) {
@@ -265,33 +275,31 @@ function PluginsPageContent() {
   }, [currentHouseholdId, replacePluginLocales]);
 
   async function handleTogglePlugin(plugin: PluginRegistryItem) {
-    if (!currentHouseholdId) return;
+    if (!currentHouseholdId) {
+      return;
+    }
+
     setTogglingPluginId(plugin.id);
     setError('');
     setStatus('');
+
     try {
       const updated = await settingsApi.updatePluginState(currentHouseholdId, plugin.id, { enabled: !plugin.enabled });
-      setPlugins((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setDetailPlugin((current) => current && current.id === updated.id ? updated : current);
+      setPlugins(current => current.map(item => (item.id === updated.id ? updated : item)));
+      setDetailPlugin(current => (current && current.id === updated.id ? updated : current));
       if (updated.types.includes('locale-pack')) {
         await refreshPluginLocales();
       }
-      setStatus(updated.enabled
-        ? pickLocaleText(locale, { zhCN: '插件已启用', zhTW: '外掛已啟用', enUS: 'Plugin enabled' })
-        : pickLocaleText(locale, { zhCN: '插件已停用', zhTW: '外掛已停用', enUS: 'Plugin disabled' }));
+      setStatus(page(updated.enabled ? 'plugins.status.enabled' : 'plugins.status.disabled'));
     } catch (toggleError) {
-      setError(toggleError instanceof ApiError ? toggleError.message : pickLocaleText(locale, {
-        zhCN: '操作失败',
-        zhTW: '操作失敗',
-        enUS: 'Operation failed',
-      }));
+      setError(toggleError instanceof ApiError ? toggleError.message : page('plugins.operationFailed'));
     } finally {
       setTogglingPluginId(null);
     }
   }
 
   const pluginStats = useMemo(() => {
-    const enabled = filteredPlugins.filter((plugin) => plugin.enabled).length;
+    const enabled = filteredPlugins.filter(plugin => plugin.enabled).length;
     const total = filteredPlugins.length;
     return { enabled, total, disabled: total - enabled };
   }, [filteredPlugins]);
@@ -299,20 +307,41 @@ function PluginsPageContent() {
   return (
     <SettingsPageShell activeKey="plugins">
       <div className="settings-page">
-        <Section title={pickLocaleText(locale, { zhCN: '已安装插件', zhTW: '已安裝外掛', enUS: 'Installed Plugins' })}>
+        <Section title={page('plugins.section.installed')}>
           {plugins.length > 0 ? (
             <div className="plugin-toolbar">
               <div className="plugin-view-toggle">
-                <button className={`plugin-view-toggle__btn ${viewMode === 'card' ? 'plugin-view-toggle__btn--active' : ''}`} onClick={() => handleViewModeChange('card')} title={pickLocaleText(locale, { zhCN: '卡片视图', zhTW: '卡片視圖', enUS: 'Card view' })}>▥</button>
-                <button className={`plugin-view-toggle__btn ${viewMode === 'list' ? 'plugin-view-toggle__btn--active' : ''}`} onClick={() => handleViewModeChange('list')} title={pickLocaleText(locale, { zhCN: '列表视图', zhTW: '列表視圖', enUS: 'List view' })}>▤</button>
+                <button
+                  className={`plugin-view-toggle__btn ${viewMode === 'card' ? 'plugin-view-toggle__btn--active' : ''}`}
+                  onClick={() => handleViewModeChange('card')}
+                  title={page('plugins.view.card')}
+                >
+                  ▥
+                </button>
+                <button
+                  className={`plugin-view-toggle__btn ${viewMode === 'list' ? 'plugin-view-toggle__btn--active' : ''}`}
+                  onClick={() => handleViewModeChange('list')}
+                  title={page('plugins.view.list')}
+                >
+                  ▤
+                </button>
               </div>
 
               <div className="plugin-filter">
-                <span className="plugin-filter__label">{pickLocaleText(locale, { zhCN: '按类型筛选：', zhTW: '依類型篩選：', enUS: 'Filter by type:' })}</span>
+                <span className="plugin-filter__label">{page('plugins.filter.label')}</span>
                 <div className="plugin-filter__chips">
-                  <button className={`plugin-filter__chip ${selectedTypes.length === 0 ? 'plugin-filter__chip--active' : ''}`} onClick={clearTypeFilter}>{pickLocaleText(locale, { zhCN: '全部', zhTW: '全部', enUS: 'All' })}</button>
-                  {FILTERABLE_TYPES.map((type) => (
-                    <button key={type} className={`plugin-filter__chip ${selectedTypes.includes(type) ? 'plugin-filter__chip--active' : ''}`} onClick={() => toggleTypeFilter(type)}>
+                  <button
+                    className={`plugin-filter__chip ${selectedTypes.length === 0 ? 'plugin-filter__chip--active' : ''}`}
+                    onClick={clearTypeFilter}
+                  >
+                    {page('plugins.filter.all')}
+                  </button>
+                  {FILTERABLE_TYPES.map(type => (
+                    <button
+                      key={type}
+                      className={`plugin-filter__chip ${selectedTypes.includes(type) ? 'plugin-filter__chip--active' : ''}`}
+                      onClick={() => toggleTypeFilter(type)}
+                    >
                       {formatPluginType(type, locale)}
                     </button>
                   ))}
@@ -324,23 +353,53 @@ function PluginsPageContent() {
           {plugins.length > 0 ? (
             <Card className="plugin-stats-card">
               <div className="plugin-stats">
-                <div className="plugin-stat"><span className="plugin-stat__value">{pluginStats.total}</span><span className="plugin-stat__label">{pickLocaleText(locale, { zhCN: '总数', zhTW: '總數', enUS: 'Total' })}</span></div>
-                <div className="plugin-stat"><span className="plugin-stat__value plugin-stat__value--success">{pluginStats.enabled}</span><span className="plugin-stat__label">{pickLocaleText(locale, { zhCN: '已启用', zhTW: '已啟用', enUS: 'Enabled' })}</span></div>
-                <div className="plugin-stat"><span className="plugin-stat__value plugin-stat__value--secondary">{pluginStats.disabled}</span><span className="plugin-stat__label">{pickLocaleText(locale, { zhCN: '已停用', zhTW: '已停用', enUS: 'Disabled' })}</span></div>
-                {selectedTypes.length > 0 ? <div className="plugin-stat"><span className="plugin-stat__value">{filteredPlugins.length}</span><span className="plugin-stat__label">{pickLocaleText(locale, { zhCN: '筛选结果', zhTW: '篩選結果', enUS: 'Filtered' })}</span></div> : null}
+                <div className="plugin-stat">
+                  <span className="plugin-stat__value">{pluginStats.total}</span>
+                  <span className="plugin-stat__label">{page('plugins.stats.total')}</span>
+                </div>
+                <div className="plugin-stat">
+                  <span className="plugin-stat__value plugin-stat__value--success">{pluginStats.enabled}</span>
+                  <span className="plugin-stat__label">{page('plugins.status.enabled')}</span>
+                </div>
+                <div className="plugin-stat">
+                  <span className="plugin-stat__value plugin-stat__value--secondary">{pluginStats.disabled}</span>
+                  <span className="plugin-stat__label">{page('plugins.status.disabled')}</span>
+                </div>
+                {selectedTypes.length > 0 ? (
+                  <div className="plugin-stat">
+                    <span className="plugin-stat__value">{filteredPlugins.length}</span>
+                    <span className="plugin-stat__label">{page('plugins.stats.filtered')}</span>
+                  </div>
+                ) : null}
               </div>
             </Card>
           ) : null}
 
-          {loading && plugins.length === 0 ? <div className="settings-note"><span>⏳</span> {pickLocaleText(locale, { zhCN: '加载中...', zhTW: '載入中...', enUS: 'Loading...' })}</div> : null}
+          {loading && plugins.length === 0 ? (
+            <div className="settings-note">
+              <span>⏳</span>
+              {' '}
+              {page('common.loading')}
+            </div>
+          ) : null}
           {error ? <div className="settings-note settings-note--error"><span>⚠️</span> {error}</div> : null}
-          {status ? <div className="settings-note settings-note--success"><span>✓</span> {status}</div> : null}
-          {!loading && plugins.length === 0 && !error ? <EmptyState title={pickLocaleText(locale, { zhCN: '还没有可展示的插件', zhTW: '還沒有可顯示的外掛', enUS: 'No plugins to show' })} description={pickLocaleText(locale, { zhCN: '当前家庭还没有注册成功的插件。', zhTW: '目前家庭還沒有註冊成功的外掛。', enUS: 'No plugins have been registered for this household yet.' })} /> : null}
-          {!loading && plugins.length > 0 && filteredPlugins.length === 0 ? <EmptyState title={pickLocaleText(locale, { zhCN: '没有筛选结果', zhTW: '沒有篩選結果', enUS: 'No matching plugins' })} description={pickLocaleText(locale, { zhCN: '你把列表筛空了，换个条件。', zhTW: '你把列表篩空了，換個條件。', enUS: 'Your current filters removed everything. Try another filter.' })} /> : null}
+          {status ? <div className="settings-note settings-note--success"><span>✅</span> {status}</div> : null}
+          {!loading && plugins.length === 0 && !error ? (
+            <EmptyState
+              title={page('plugins.empty.none')}
+              description={page('plugins.empty.noneDesc')}
+            />
+          ) : null}
+          {!loading && plugins.length > 0 && filteredPlugins.length === 0 ? (
+            <EmptyState
+              title={page('plugins.empty.filtered')}
+              description={page('plugins.empty.filteredDesc')}
+            />
+          ) : null}
 
           {viewMode === 'card' && filteredPlugins.length > 0 ? (
             <div className="plugin-list">
-              {filteredPlugins.map((plugin) => {
+              {filteredPlugins.map(plugin => {
                 const sourceInfo = formatSourceType(plugin.source_type, locale);
                 const riskInfo = formatRiskLevel(plugin.risk_level, locale);
                 const isEnabled = plugin.enabled;
@@ -363,7 +422,11 @@ function PluginsPageContent() {
                         </div>
                       </div>
                       <div className="plugin-card__toggle">
-                        <div className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`} onClick={() => !isToggling && void handleTogglePlugin(plugin)} title={pickLocaleText(locale, { zhCN: isEnabled ? '停用' : '启用', zhTW: isEnabled ? '停用' : '啟用', enUS: isEnabled ? 'Disable' : 'Enable' })}>
+                        <div
+                          className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`}
+                          onClick={() => !isToggling && void handleTogglePlugin(plugin)}
+                          title={page(isEnabled ? 'settings.plugin.disable' : 'settings.plugin.enable')}
+                        >
                           <div className="toggle-switch__thumb" />
                         </div>
                       </div>
@@ -372,23 +435,33 @@ function PluginsPageContent() {
                     <div className="plugin-card__tags">
                       <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
                       <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>
-                      {plugin.types.slice(0, 2).map((type) => <span key={type} className="badge badge--secondary">{formatPluginType(type, locale)}</span>)}
+                      {plugin.types.slice(0, 2).map(type => (
+                        <span key={type} className="badge badge--secondary">{formatPluginType(type, locale)}</span>
+                      ))}
                       {plugin.types.length > 2 ? <span className="badge badge--secondary">+{plugin.types.length - 2}</span> : null}
                     </div>
 
                     <div className="plugin-card__footer">
-                      <button className="btn btn--ghost btn--sm" onClick={() => openPluginDetail(plugin)}>{pickLocaleText(locale, { zhCN: '查看详情', zhTW: '查看詳情', enUS: 'Details' })}</button>
-                      <button className="btn btn--outline btn--sm" onClick={() => setSelectedPluginId(isSelected ? null : plugin.id)} disabled={jobsLoading}>{pickLocaleText(locale, { zhCN: '查看任务', zhTW: '查看任務', enUS: 'Jobs' })}</button>
+                      <button className="btn btn--ghost btn--sm" onClick={() => openPluginDetail(plugin)}>
+                        {page('plugins.action.details')}
+                      </button>
+                      <button
+                        className="btn btn--outline btn--sm"
+                        onClick={() => setSelectedPluginId(isSelected ? null : plugin.id)}
+                        disabled={jobsLoading}
+                      >
+                        {page('plugins.action.jobs')}
+                      </button>
                     </div>
 
                     {isSelected ? (
                       <div className="plugin-card__jobs">
-                        <h4>{pickLocaleText(locale, { zhCN: '最近任务', zhTW: '最近任務', enUS: 'Recent Jobs' })}</h4>
+                        <h4>{getPageMessage(locale, 'settings.plugin.section.jobs')}</h4>
                         {jobsLoading ? (
-                          <div className="settings-note">{pickLocaleText(locale, { zhCN: '加载中...', zhTW: '載入中...', enUS: 'Loading...' })}</div>
+                          <div className="settings-note">{getPageMessage(locale, 'settings.plugin.section.loadingJobs')}</div>
                         ) : jobs && jobs.items.length > 0 ? (
                           <div className="plugin-job-list">
-                            {jobs.items.map((item) => {
+                            {jobs.items.map(item => {
                               const jobStatus = formatJobStatus(item.job.status, locale);
                               return (
                                 <div key={item.job.id} className="plugin-job-item">
@@ -399,14 +472,18 @@ function PluginsPageContent() {
                                   <div className="plugin-job-item__meta">
                                     <span>{formatTimestamp(item.job.created_at, locale)}</span>
                                     <span>·</span>
-                                    <span>{pickLocaleText(locale, { zhCN: '尝试次数', zhTW: '嘗試次數', enUS: 'Attempts' })}：{item.job.current_attempt}/{item.job.max_attempts}</span>
+                                    <span>
+                                      {getPageMessage(locale, 'settings.plugin.section.attempts')}
+                                      ：
+                                      {item.job.current_attempt}/{item.job.max_attempts}
+                                    </span>
                                   </div>
                                   {item.job.last_error_message ? <div className="plugin-job-item__error">{item.job.last_error_message}</div> : null}
                                   {item.allowed_actions.length > 0 ? (
                                     <div className="plugin-job-item__actions">
-                                      {item.allowed_actions.includes('retry') ? <button className="btn btn--outline btn--sm">{pickLocaleText(locale, { zhCN: '重试', zhTW: '重試', enUS: 'Retry' })}</button> : null}
-                                      {item.allowed_actions.includes('confirm') ? <button className="btn btn--outline btn--sm">{pickLocaleText(locale, { zhCN: '确认', zhTW: '確認', enUS: 'Confirm' })}</button> : null}
-                                      {item.allowed_actions.includes('cancel') ? <button className="btn btn--outline btn--sm">{pickLocaleText(locale, { zhCN: '取消', zhTW: '取消', enUS: 'Cancel' })}</button> : null}
+                                      {item.allowed_actions.includes('retry') ? <button className="btn btn--outline btn--sm">{page('plugins.action.retry')}</button> : null}
+                                      {item.allowed_actions.includes('confirm') ? <button className="btn btn--outline btn--sm">{page('plugins.action.confirm')}</button> : null}
+                                      {item.allowed_actions.includes('cancel') ? <button className="btn btn--outline btn--sm">{page('plugins.action.cancel')}</button> : null}
                                     </div>
                                   ) : null}
                                 </div>
@@ -414,7 +491,7 @@ function PluginsPageContent() {
                             })}
                           </div>
                         ) : (
-                          <div className="settings-note">{pickLocaleText(locale, { zhCN: '最近没有任务', zhTW: '最近沒有任務', enUS: 'No recent jobs' })}</div>
+                          <div className="settings-note">{getPageMessage(locale, 'settings.plugin.section.noJobs')}</div>
                         )}
                       </div>
                     ) : null}
@@ -429,20 +506,21 @@ function PluginsPageContent() {
               <table className="plugin-table">
                 <thead>
                   <tr>
-                    <th className="plugin-table__th plugin-table__th--name">{pickLocaleText(locale, { zhCN: '名称', zhTW: '名稱', enUS: 'Name' })}</th>
-                    <th className="plugin-table__th plugin-table__th--types">{pickLocaleText(locale, { zhCN: '类型', zhTW: '類型', enUS: 'Type' })}</th>
-                    <th className="plugin-table__th plugin-table__th--source">{pickLocaleText(locale, { zhCN: '来源', zhTW: '來源', enUS: 'Source' })}</th>
-                    <th className="plugin-table__th plugin-table__th--risk">{pickLocaleText(locale, { zhCN: '风险', zhTW: '風險', enUS: 'Risk' })}</th>
-                    <th className="plugin-table__th plugin-table__th--status">{pickLocaleText(locale, { zhCN: '状态', zhTW: '狀態', enUS: 'Status' })}</th>
-                    <th className="plugin-table__th plugin-table__th--actions">{pickLocaleText(locale, { zhCN: '操作', zhTW: '操作', enUS: 'Actions' })}</th>
+                    <th className="plugin-table__th plugin-table__th--name">{page('plugins.table.name')}</th>
+                    <th className="plugin-table__th plugin-table__th--types">{page('plugins.table.type')}</th>
+                    <th className="plugin-table__th plugin-table__th--source">{page('plugins.table.source')}</th>
+                    <th className="plugin-table__th plugin-table__th--risk">{page('plugins.table.risk')}</th>
+                    <th className="plugin-table__th plugin-table__th--status">{page('plugins.table.status')}</th>
+                    <th className="plugin-table__th plugin-table__th--actions">{page('plugins.table.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredPlugins.map((plugin) => {
+                  {filteredPlugins.map(plugin => {
                     const sourceInfo = formatSourceType(plugin.source_type, locale);
                     const riskInfo = formatRiskLevel(plugin.risk_level, locale);
                     const isEnabled = plugin.enabled;
                     const isToggling = togglingPluginId === plugin.id;
+
                     return (
                       <tr key={plugin.id} className="plugin-table__row">
                         <td className="plugin-table__td plugin-table__td--name">
@@ -451,16 +529,28 @@ function PluginsPageContent() {
                             <span className="plugin-table__id">{plugin.id} · v{plugin.version}</span>
                           </div>
                         </td>
-                        <td className="plugin-table__td plugin-table__td--types">{plugin.types.map((type) => formatPluginType(type, locale)).join('、')}</td>
-                        <td className="plugin-table__td plugin-table__td--source"><span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span></td>
-                        <td className="plugin-table__td plugin-table__td--risk"><span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span></td>
+                        <td className="plugin-table__td plugin-table__td--types">
+                          {plugin.types.map(type => formatPluginType(type, locale)).join('、')}
+                        </td>
+                        <td className="plugin-table__td plugin-table__td--source">
+                          <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
+                        </td>
+                        <td className="plugin-table__td plugin-table__td--risk">
+                          <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>
+                        </td>
                         <td className="plugin-table__td plugin-table__td--status">
-                          <div className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`} onClick={() => !isToggling && void handleTogglePlugin(plugin)} title={pickLocaleText(locale, { zhCN: isEnabled ? '停用' : '启用', zhTW: isEnabled ? '停用' : '啟用', enUS: isEnabled ? 'Disable' : 'Enable' })}>
+                          <div
+                            className={`toggle-switch toggle-switch--compact ${isEnabled ? 'toggle-switch--on' : ''} ${isToggling ? 'toggle-switch--loading' : ''}`}
+                            onClick={() => !isToggling && void handleTogglePlugin(plugin)}
+                            title={page(isEnabled ? 'settings.plugin.disable' : 'settings.plugin.enable')}
+                          >
                             <div className="toggle-switch__thumb" />
                           </div>
                         </td>
                         <td className="plugin-table__td plugin-table__td--actions">
-                          <button className="btn btn--ghost btn--sm" onClick={() => openPluginDetail(plugin)}>{pickLocaleText(locale, { zhCN: '查看详情', zhTW: '查看詳情', enUS: 'Details' })}</button>
+                          <button className="btn btn--ghost btn--sm" onClick={() => openPluginDetail(plugin)}>
+                            {page('plugins.action.details')}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -471,12 +561,12 @@ function PluginsPageContent() {
           ) : null}
         </Section>
 
-        <Section title={pickLocaleText(locale, { zhCN: '插件市场', zhTW: '外掛市場', enUS: 'Plugin Marketplace' })}>
+        <Section title={page('plugins.section.marketplace')}>
           <Card className="plugin-market-placeholder">
             <div className="plugin-market-placeholder__content">
               <span className="plugin-market-placeholder__icon">🛍</span>
-              <h3>{pickLocaleText(locale, { zhCN: '市场入口暂未开放', zhTW: '市場入口暫未開放', enUS: 'Marketplace not open yet' })}</h3>
-              <p>{pickLocaleText(locale, { zhCN: '先把已安装插件管稳，再谈市场。这不是拖延，是避免一地鸡毛。', zhTW: '先把已安裝外掛管穩，再談市場。這不是拖延，是避免一地雞毛。', enUS: 'Stabilize installed plugins first, then talk about a marketplace. That is not procrastination. It is basic engineering hygiene.' })}</p>
+              <h3>{page('plugins.marketplace.closedTitle')}</h3>
+              <p>{page('plugins.marketplace.closedDesc')}</p>
             </div>
           </Card>
         </Section>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import Taro from '@tarojs/taro';
-import { GuardedPage, useHouseholdContext } from '../../../runtime';
+import { GuardedPage, useHouseholdContext, useI18n } from '../../../runtime';
+import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, EmptyState, Section } from '../../family/base';
 import { SettingsPageShell } from '../SettingsPageShell';
 import { ChannelAccountBindingsPanel } from '../components/ChannelAccountBindingsPanel';
@@ -18,7 +19,8 @@ import type {
   PluginRegistryItem,
 } from '../settingsTypes';
 
-type PlatformInfo = { code: string; name: string; icon: string };
+type MessageKey = Parameters<typeof getPageMessage>[1];
+type PlatformInfo = { code: string; nameKey: MessageKey | null; icon: string };
 type ConfigFieldDef = {
   key: string;
   label: string;
@@ -26,6 +28,14 @@ type ConfigFieldDef = {
   required: boolean;
   placeholder: string;
   helpText?: string;
+};
+type ConfigFieldMessageDef = {
+  key: string;
+  labelKey: MessageKey;
+  type: 'text' | 'password';
+  required: boolean;
+  placeholderKey: MessageKey;
+  helpTextKey?: MessageKey;
 };
 type AccountFormState = {
   plugin_id: string;
@@ -35,84 +45,203 @@ type AccountFormState = {
   status: ChannelAccountStatus;
 };
 
-const PLATFORM_CONFIG_FIELDS: Record<string, ConfigFieldDef[]> = {
+const PLATFORM_CONFIG_FIELDS: Record<string, ConfigFieldMessageDef[]> = {
   discord: [
-    { key: 'application_public_key', label: 'Application Public Key', type: 'text', required: true, placeholder: 'abc123def456...', helpText: 'Discord Developer Portal 的公钥' },
-    { key: 'bot_token', label: 'Bot Token', type: 'password', required: false, placeholder: '可选，用于主动发消息', helpText: '没有主动发消息需求就别填' },
+    {
+      key: 'application_public_key',
+      labelKey: 'settings.channelAccess.configField.discord.applicationPublicKey.label',
+      type: 'text',
+      required: true,
+      placeholderKey: 'settings.channelAccess.configField.discord.applicationPublicKey.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.discord.applicationPublicKey.help',
+    },
+    {
+      key: 'bot_token',
+      labelKey: 'settings.channelAccess.configField.discord.botToken.label',
+      type: 'password',
+      required: false,
+      placeholderKey: 'settings.channelAccess.configField.discord.botToken.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.discord.botToken.help',
+    },
   ],
   feishu: [
-    { key: 'app_id', label: 'App ID', type: 'text', required: true, placeholder: 'cli_xxx', helpText: '飞书开放平台应用 ID' },
-    { key: 'app_secret', label: 'App Secret', type: 'password', required: true, placeholder: '应用密钥', helpText: '飞书开放平台应用密钥' },
-    { key: 'encrypt_key', label: 'Encrypt Key', type: 'password', required: false, placeholder: '可选，加密密钥', helpText: '用于消息加解密' },
-    { key: 'base_url', label: 'Base URL', type: 'text', required: false, placeholder: 'https://open.feishu.cn', helpText: '私有部署时才改' },
+    {
+      key: 'app_id',
+      labelKey: 'settings.channelAccess.configField.feishu.appId.label',
+      type: 'text',
+      required: true,
+      placeholderKey: 'settings.channelAccess.configField.feishu.appId.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.feishu.appId.help',
+    },
+    {
+      key: 'app_secret',
+      labelKey: 'settings.channelAccess.configField.feishu.appSecret.label',
+      type: 'password',
+      required: true,
+      placeholderKey: 'settings.channelAccess.configField.feishu.appSecret.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.feishu.appSecret.help',
+    },
+    {
+      key: 'encrypt_key',
+      labelKey: 'settings.channelAccess.configField.feishu.encryptKey.label',
+      type: 'password',
+      required: false,
+      placeholderKey: 'settings.channelAccess.configField.feishu.encryptKey.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.feishu.encryptKey.help',
+    },
+    {
+      key: 'base_url',
+      labelKey: 'settings.channelAccess.configField.feishu.baseUrl.label',
+      type: 'text',
+      required: false,
+      placeholderKey: 'settings.channelAccess.configField.feishu.baseUrl.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.feishu.baseUrl.help',
+    },
   ],
   dingtalk: [
-    { key: 'app_key', label: 'App Key', type: 'text', required: true, placeholder: 'dingxxx', helpText: '钉钉开放平台应用 Key' },
-    { key: 'app_secret', label: 'App Secret', type: 'password', required: false, placeholder: '可选', helpText: '需要 API 调用时才填' },
+    {
+      key: 'app_key',
+      labelKey: 'settings.channelAccess.configField.dingtalk.appKey.label',
+      type: 'text',
+      required: true,
+      placeholderKey: 'settings.channelAccess.configField.dingtalk.appKey.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.dingtalk.appKey.help',
+    },
+    {
+      key: 'app_secret',
+      labelKey: 'settings.channelAccess.configField.dingtalk.appSecret.label',
+      type: 'password',
+      required: false,
+      placeholderKey: 'settings.channelAccess.configField.dingtalk.appSecret.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.dingtalk.appSecret.help',
+    },
   ],
   wecom_app: [
-    { key: 'corp_id', label: 'Corp ID', type: 'text', required: true, placeholder: 'ww1234567890abcdef', helpText: '企业微信后台的 Corp ID' },
-    { key: 'corp_secret', label: 'App Secret', type: 'password', required: true, placeholder: '应用凭证密钥', helpText: '企业微信应用 Secret' },
-    { key: 'agent_id', label: 'Agent ID', type: 'text', required: true, placeholder: '1000001', helpText: '企业微信 AgentId' },
-    { key: 'callback_token', label: 'Callback Token', type: 'password', required: true, placeholder: '回调 Token', helpText: '接收回调消息时使用' },
-    { key: 'encoding_aes_key', label: 'Encoding AES Key', type: 'password', required: true, placeholder: '消息加解密密钥', helpText: '企业微信 AES Key' },
+    {
+      key: 'corp_id',
+      labelKey: 'settings.channelAccess.configField.wecomApp.corpId.label',
+      type: 'text',
+      required: true,
+      placeholderKey: 'settings.channelAccess.configField.wecomApp.corpId.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.wecomApp.corpId.help',
+    },
+    {
+      key: 'corp_secret',
+      labelKey: 'settings.channelAccess.configField.wecomApp.corpSecret.label',
+      type: 'password',
+      required: true,
+      placeholderKey: 'settings.channelAccess.configField.wecomApp.corpSecret.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.wecomApp.corpSecret.help',
+    },
+    {
+      key: 'agent_id',
+      labelKey: 'settings.channelAccess.configField.wecomApp.agentId.label',
+      type: 'text',
+      required: true,
+      placeholderKey: 'settings.channelAccess.configField.wecomApp.agentId.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.wecomApp.agentId.help',
+    },
+    {
+      key: 'callback_token',
+      labelKey: 'settings.channelAccess.configField.wecomApp.callbackToken.label',
+      type: 'password',
+      required: true,
+      placeholderKey: 'settings.channelAccess.configField.wecomApp.callbackToken.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.wecomApp.callbackToken.help',
+    },
+    {
+      key: 'encoding_aes_key',
+      labelKey: 'settings.channelAccess.configField.wecomApp.encodingAesKey.label',
+      type: 'password',
+      required: true,
+      placeholderKey: 'settings.channelAccess.configField.wecomApp.encodingAesKey.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.wecomApp.encodingAesKey.help',
+    },
   ],
   wecom_bot: [
-    { key: 'webhook_url', label: 'Webhook URL', type: 'text', required: false, placeholder: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx', helpText: '与机器人 key 二选一' },
-    { key: 'key', label: 'Bot Key', type: 'password', required: false, placeholder: 'Webhook key 参数', helpText: '与 Webhook URL 二选一' },
+    {
+      key: 'webhook_url',
+      labelKey: 'settings.channelAccess.configField.wecomBot.webhookUrl.label',
+      type: 'text',
+      required: false,
+      placeholderKey: 'settings.channelAccess.configField.wecomBot.webhookUrl.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.wecomBot.webhookUrl.help',
+    },
+    {
+      key: 'key',
+      labelKey: 'settings.channelAccess.configField.wecomBot.key.label',
+      type: 'password',
+      required: false,
+      placeholderKey: 'settings.channelAccess.configField.wecomBot.key.placeholder',
+      helpTextKey: 'settings.channelAccess.configField.wecomBot.key.help',
+    },
   ],
 };
 
 const PLATFORMS: PlatformInfo[] = [
-  { code: 'telegram', name: 'Telegram', icon: '📮' },
-  { code: 'discord', name: 'Discord', icon: '🎮' },
-  { code: 'feishu', name: 'Feishu', icon: '🪽' },
-  { code: 'dingtalk', name: 'DingTalk', icon: '📱' },
-  { code: 'wecom_app', name: 'WeCom App', icon: '🏢' },
-  { code: 'wecom_bot', name: 'WeCom Bot', icon: '🤖' },
+  { code: 'telegram', nameKey: 'settings.channelAccess.platform.telegram', icon: '✈️' },
+  { code: 'discord', nameKey: 'settings.channelAccess.platform.discord', icon: '🎮' },
+  { code: 'feishu', nameKey: 'settings.channelAccess.platform.feishu', icon: '🪶' },
+  { code: 'dingtalk', nameKey: 'settings.channelAccess.platform.dingtalk', icon: '💬' },
+  { code: 'wecom_app', nameKey: 'settings.channelAccess.platform.wecomApp', icon: '🏢' },
+  { code: 'wecom_bot', nameKey: 'settings.channelAccess.platform.wecomBot', icon: '🤖' },
 ];
 
 function buildInitialAccountForm(): AccountFormState {
   return { plugin_id: '', display_name: '', connection_mode: 'polling', config: {}, status: 'draft' };
 }
 
+function normalizeLocale(locale?: string) {
+  return locale?.toLowerCase().startsWith('en') ? 'en-US' : 'zh-CN';
+}
+
 function getPlatformInfo(platformCode: string): PlatformInfo {
-  return PLATFORMS.find((item) => item.code === platformCode) ?? { code: platformCode, name: platformCode, icon: '🔌' };
+  return PLATFORMS.find((item) => item.code === platformCode) ?? {
+    code: platformCode,
+    nameKey: null,
+    icon: '🔌',
+  };
 }
 
-function formatStatus(status: string): { label: string; tone: 'success' | 'warning' | 'secondary' | 'danger' } {
-  if (status === 'active') return { label: '已启用', tone: 'success' };
-  if (status === 'draft') return { label: '草稿', tone: 'secondary' };
-  if (status === 'degraded') return { label: '降级', tone: 'warning' };
-  if (status === 'disabled') return { label: '已停用', tone: 'secondary' };
+function formatStatus(
+  status: string,
+  locale: string | undefined,
+): { label: string; tone: 'success' | 'warning' | 'secondary' | 'danger' } {
+  if (status === 'active') return { label: getPageMessage(locale, 'settings.channelAccess.accountStatus.active'), tone: 'success' };
+  if (status === 'draft') return { label: getPageMessage(locale, 'settings.channelAccess.accountStatus.draft'), tone: 'secondary' };
+  if (status === 'degraded') return { label: getPageMessage(locale, 'settings.channelAccess.accountStatus.degraded'), tone: 'warning' };
+  if (status === 'disabled') return { label: getPageMessage(locale, 'settings.channelAccess.accountStatus.disabled'), tone: 'secondary' };
   return { label: status, tone: 'secondary' };
 }
 
-function formatProbeStatus(status: string | null): { label: string; tone: 'success' | 'warning' | 'secondary' | 'danger' } {
-  if (!status) return { label: '未检查', tone: 'secondary' };
-  if (status === 'ok') return { label: '连接正常', tone: 'success' };
-  if (status === 'failed') return { label: '检查失败', tone: 'danger' };
-  if (status === 'pending') return { label: '检查中', tone: 'warning' };
+function formatProbeStatus(
+  status: string | null,
+  locale: string | undefined,
+): { label: string; tone: 'success' | 'warning' | 'secondary' | 'danger' } {
+  if (!status) return { label: getPageMessage(locale, 'settings.channelAccess.probeStatus.unchecked'), tone: 'secondary' };
+  if (status === 'ok') return { label: getPageMessage(locale, 'settings.channelAccess.probeStatus.ok'), tone: 'success' };
+  if (status === 'failed') return { label: getPageMessage(locale, 'settings.channelAccess.probeStatus.failed'), tone: 'danger' };
+  if (status === 'pending') return { label: getPageMessage(locale, 'settings.channelAccess.probeStatus.pending'), tone: 'warning' };
   return { label: status, tone: 'secondary' };
 }
 
-function formatConnectionMode(mode: ChannelConnectionMode) {
-  if (mode === 'webhook') return '自动接收消息';
-  if (mode === 'polling') return '定时拉取消息';
-  if (mode === 'websocket') return '长连接';
+function formatConnectionMode(mode: ChannelConnectionMode, locale: string | undefined) {
+  if (mode === 'webhook') return getPageMessage(locale, 'settings.channelAccess.connectionMode.webhook');
+  if (mode === 'polling') return getPageMessage(locale, 'settings.channelAccess.connectionMode.polling');
+  if (mode === 'websocket') return getPageMessage(locale, 'settings.channelAccess.connectionMode.websocket');
   return mode;
 }
 
-function formatTimestamp(value: string | null) {
-  if (!value) return '暂无';
+function formatTimestamp(value: string | null, locale: string | undefined) {
+  if (!value) return getPageMessage(locale, 'settings.channelAccess.time.empty');
   try {
-    return new Date(value).toLocaleString('zh-CN');
+    return new Date(value).toLocaleString(normalizeLocale(locale));
   } catch {
     return value;
   }
 }
 
-function formatApiErrorMessage(error: ApiError): string {
+function formatApiErrorMessage(error: ApiError, locale: string | undefined): string {
   const payload = error.payload as { detail?: unknown } | undefined;
   const detail = payload?.detail;
   if (typeof detail === 'string' && detail.trim()) return detail;
@@ -122,18 +251,26 @@ function formatApiErrorMessage(error: ApiError): string {
         if (!item || typeof item !== 'object') return null;
         const message = 'msg' in item && typeof item.msg === 'string' ? item.msg : null;
         const location = 'loc' in item && Array.isArray(item.loc)
-          ? item.loc.filter((part: unknown): part is string | number => typeof part === 'string' || typeof part === 'number').join('.')
+          ? item.loc
+            .filter((part: unknown): part is string | number => typeof part === 'string' || typeof part === 'number')
+            .join('.')
           : '';
         if (message && location) return `${location}: ${message}`;
         return message;
       })
       .filter((item): item is string => Boolean(item));
-    if (messages.length > 0) return messages.join('; ');
+    if (messages.length > 0) {
+      return messages.join(getPageMessage(locale, 'settings.channelAccess.separator.errorList'));
+    }
   }
-  return error.message || '保存失败';
+  return error.message || getPageMessage(locale, 'settings.channelAccess.status.saveFailed');
 }
 
-function getConfigFields(plugin: PluginRegistryItem | null, platformCode: string | null): ConfigFieldDef[] {
+function getConfigFields(
+  plugin: PluginRegistryItem | null,
+  platformCode: string | null,
+  locale: string | undefined,
+): ConfigFieldDef[] {
   const configSpec = plugin?.config_specs?.find((item) => item.scope_type === 'channel_account');
   if (configSpec) {
     const fieldMap = new Map(configSpec.config_schema.fields.map((field) => [field.key, field]));
@@ -154,6 +291,7 @@ function getConfigFields(plugin: PluginRegistryItem | null, platformCode: string
       }];
     });
   }
+
   const legacyFields = plugin?.capabilities.channel?.ui?.account_config_fields;
   if (legacyFields?.length) {
     return legacyFields.map((field) => ({
@@ -165,7 +303,16 @@ function getConfigFields(plugin: PluginRegistryItem | null, platformCode: string
       helpText: field.help_text ?? undefined,
     }));
   }
-  return platformCode ? (PLATFORM_CONFIG_FIELDS[platformCode] ?? []) : [];
+
+  const fallbackFields = platformCode ? (PLATFORM_CONFIG_FIELDS[platformCode] ?? []) : [];
+  return fallbackFields.map((field) => ({
+    key: field.key,
+    label: getPageMessage(locale, field.labelKey),
+    type: field.type,
+    required: field.required,
+    placeholder: getPageMessage(locale, field.placeholderKey),
+    helpText: field.helpTextKey ? getPageMessage(locale, field.helpTextKey) : undefined,
+  }));
 }
 
 function getSupportedConnectionModes(plugin: PluginRegistryItem | null): ChannelConnectionMode[] {
@@ -180,6 +327,7 @@ function resolveDefaultConnectionMode(plugin: PluginRegistryItem | null): Channe
 
 function SettingsChannelAccessContent() {
   const { currentHouseholdId } = useHouseholdContext();
+  const { locale } = useI18n();
   const [accounts, setAccounts] = useState<ChannelAccountRead[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [channelPlugins, setChannelPlugins] = useState<PluginRegistryItem[]>([]);
@@ -195,6 +343,13 @@ function SettingsChannelAccessContent() {
   const [editingAccount, setEditingAccount] = useState<ChannelAccountRead | null>(null);
   const [accountForm, setAccountForm] = useState<AccountFormState>(buildInitialAccountForm);
   const [modalLoading, setModalLoading] = useState(false);
+
+  const t = (key: MessageKey, params?: Record<string, string | number>) => getPageMessage(locale, key, params);
+  const separator = t('settings.channelAccess.separator.dot');
+
+  useEffect(() => {
+    void Taro.setNavigationBarTitle({ title: t('settings.channelAccess.sectionTitle') }).catch(() => undefined);
+  }, [locale]);
 
   async function loadAccounts(cancelled?: () => boolean) {
     if (!currentHouseholdId) {
@@ -217,7 +372,9 @@ function SettingsChannelAccessContent() {
       setMembers(membersResult.items);
       return true;
     } catch (loadError) {
-      if (!cancelled?.()) setError(loadError instanceof Error ? loadError.message : '加载平台账号失败');
+      if (!cancelled?.()) {
+        setError(loadError instanceof Error ? loadError.message : t('settings.channelAccess.status.loadAccountsFailed'));
+      }
       return false;
     } finally {
       if (!cancelled?.()) setLoading(false);
@@ -253,7 +410,7 @@ function SettingsChannelAccessContent() {
       setFailedDeliveries(deliveriesResult.slice(0, 5));
       setFailedInboundEvents(inboundResult.slice(0, 5));
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '加载详情失败');
+      setError(loadError instanceof Error ? loadError.message : t('settings.channelAccess.status.loadDetailsFailed'));
     } finally {
       setDetailLoading(false);
     }
@@ -291,7 +448,13 @@ function SettingsChannelAccessContent() {
 
   function openEditModal(account: ChannelAccountRead) {
     setEditingAccount(account);
-    setAccountForm({ plugin_id: account.plugin_id, display_name: account.display_name, connection_mode: account.connection_mode, config: account.config, status: account.status });
+    setAccountForm({
+      plugin_id: account.plugin_id,
+      display_name: account.display_name,
+      connection_mode: account.connection_mode,
+      config: account.config,
+      status: account.status,
+    });
     setAccountModalOpen(true);
   }
 
@@ -300,7 +463,7 @@ function SettingsChannelAccessContent() {
     const loaded = await loadAccounts();
     if (!loaded) return;
     if (expandedAccountId) await loadAccountDetail(expandedAccountId);
-    setStatus('平台账号列表已刷新。');
+    setStatus(t('settings.channelAccess.status.refreshSuccess'));
   }
 
   async function handleSaveAccount(event: FormEvent<HTMLFormElement>) {
@@ -311,19 +474,36 @@ function SettingsChannelAccessContent() {
     setStatus('');
     try {
       if (editingAccount) {
-        const payload: ChannelAccountUpdate = { display_name: accountForm.display_name, connection_mode: accountForm.connection_mode, config: accountForm.config, status: accountForm.status };
+        const payload: ChannelAccountUpdate = {
+          display_name: accountForm.display_name,
+          connection_mode: accountForm.connection_mode,
+          config: accountForm.config,
+          status: accountForm.status,
+        };
         const result = await settingsApi.updateChannelAccount(currentHouseholdId, editingAccount.id, payload);
         setAccounts((current) => current.map((item) => item.id === result.id ? result : item));
-        setStatus('平台账号已更新。');
+        setStatus(t('settings.channelAccess.status.updateSuccess'));
       } else {
-        const payload: ChannelAccountCreate = { plugin_id: accountForm.plugin_id, display_name: accountForm.display_name, connection_mode: accountForm.connection_mode, config: accountForm.config, status: accountForm.status };
+        const payload: ChannelAccountCreate = {
+          plugin_id: accountForm.plugin_id,
+          display_name: accountForm.display_name,
+          connection_mode: accountForm.connection_mode,
+          config: accountForm.config,
+          status: accountForm.status,
+        };
         const result = await settingsApi.createChannelAccount(currentHouseholdId, payload);
         setAccounts((current) => [result, ...current]);
-        setStatus('平台账号已创建。');
+        setStatus(t('settings.channelAccess.status.createSuccess'));
       }
       setAccountModalOpen(false);
     } catch (saveError) {
-      setError(saveError instanceof ApiError ? formatApiErrorMessage(saveError) : saveError instanceof Error ? saveError.message : '保存失败');
+      setError(
+        saveError instanceof ApiError
+          ? formatApiErrorMessage(saveError, locale)
+          : saveError instanceof Error
+            ? saveError.message
+            : t('settings.channelAccess.status.saveFailed'),
+      );
     } finally {
       setModalLoading(false);
     }
@@ -337,9 +517,9 @@ function SettingsChannelAccessContent() {
       const result = await settingsApi.probeChannelAccount(currentHouseholdId, accountId);
       setAccounts((current) => current.map((item) => item.id === result.account.id ? result.account : item));
       if (expandedAccountId === accountId) setAccountStatus(result);
-      setStatus('连接检查已完成。');
+      setStatus(t('settings.channelAccess.status.probeSuccess'));
     } catch (probeError) {
-      setError(probeError instanceof Error ? probeError.message : '连接检查失败');
+      setError(probeError instanceof Error ? probeError.message : t('settings.channelAccess.status.probeFailed'));
     } finally {
       setLoading(false);
     }
@@ -353,9 +533,13 @@ function SettingsChannelAccessContent() {
     try {
       const result = await settingsApi.updateChannelAccount(currentHouseholdId, account.id, { status: nextStatus });
       setAccounts((current) => current.map((item) => item.id === result.id ? result : item));
-      setStatus(nextStatus === 'active' ? '账号已启用。' : '账号已停用。');
+      setStatus(
+        nextStatus === 'active'
+          ? t('settings.channelAccess.status.enableSuccess')
+          : t('settings.channelAccess.status.disableSuccess'),
+      );
     } catch (toggleError) {
-      setError(toggleError instanceof Error ? toggleError.message : '操作失败');
+      setError(toggleError instanceof Error ? toggleError.message : t('settings.channelAccess.status.actionFailed'));
     } finally {
       setLoading(false);
     }
@@ -364,10 +548,10 @@ function SettingsChannelAccessContent() {
   async function handleDeleteAccount(account: ChannelAccountRead) {
     if (!currentHouseholdId) return;
     const result = await Taro.showModal({
-      title: '删除平台账号',
-      content: `确定要彻底删除“${account.display_name}”吗？该账号下的成员绑定、入站记录和发送记录都会一起删除，这一步不能撤销。`,
-      confirmText: '确认删除',
-      cancelText: '取消',
+      title: t('settings.channelAccess.modal.deleteTitle'),
+      content: t('settings.channelAccess.modal.deleteContent', { name: account.display_name }),
+      confirmText: t('settings.channelAccess.modal.deleteConfirm'),
+      cancelText: t('settings.channelAccess.actions.cancel'),
     });
     if (!result.confirm) return;
     setLoading(true);
@@ -377,17 +561,32 @@ function SettingsChannelAccessContent() {
       await settingsApi.deleteChannelAccount(currentHouseholdId, account.id);
       setAccounts((current) => current.filter((item) => item.id !== account.id));
       if (expandedAccountId === account.id) resetExpandedState();
-      setStatus('平台账号已删除。');
+      setStatus(t('settings.channelAccess.status.deleteSuccess'));
     } catch (deleteError) {
-      setError(deleteError instanceof ApiError ? formatApiErrorMessage(deleteError) : deleteError instanceof Error ? deleteError.message : '删除失败');
+      setError(
+        deleteError instanceof ApiError
+          ? formatApiErrorMessage(deleteError, locale)
+          : deleteError instanceof Error
+            ? deleteError.message
+            : t('settings.channelAccess.status.deleteFailed'),
+      );
     } finally {
       setLoading(false);
     }
   }
 
-  const selectedPlugin = editingAccount?.plugin_id ? channelPluginMap.get(editingAccount.plugin_id) ?? null : accountForm.plugin_id ? channelPluginMap.get(accountForm.plugin_id) ?? null : null;
-  const selectedPlatformCode = editingAccount?.platform_code ?? availableChannelPlugins.find((plugin) => plugin.pluginId === accountForm.plugin_id)?.platformCode ?? null;
-  const configFields = getConfigFields(selectedPlugin, selectedPlatformCode);
+  const selectedPlugin = editingAccount?.plugin_id
+    ? channelPluginMap.get(editingAccount.plugin_id) ?? null
+    : accountForm.plugin_id
+      ? channelPluginMap.get(accountForm.plugin_id) ?? null
+      : null;
+  const selectedPlatformCode = editingAccount?.platform_code
+    ?? availableChannelPlugins.find((plugin) => plugin.pluginId === accountForm.plugin_id)?.platformCode
+    ?? null;
+  const configFields = useMemo(
+    () => getConfigFields(selectedPlugin, selectedPlatformCode, locale),
+    [selectedPlugin, selectedPlatformCode, locale],
+  );
   const supportedConnectionModes = useMemo(() => getSupportedConnectionModes(selectedPlugin), [selectedPlugin]);
 
   useEffect(() => {
@@ -400,44 +599,60 @@ function SettingsChannelAccessContent() {
 
   const headerActions = (
     <div className="channel-account-card__actions">
-      <button className="btn btn--outline btn--sm" onClick={() => void handleRefreshAccounts()} disabled={loading}>刷新</button>
-      <button className="btn btn--primary btn--sm" onClick={openCreateModal} disabled={availableChannelPlugins.length === 0 || loading}>新增平台账号</button>
+      <button className="btn btn--outline btn--sm" onClick={() => void handleRefreshAccounts()} disabled={loading}>
+        {t('settings.channelAccess.actions.refresh')}
+      </button>
+      <button
+        className="btn btn--primary btn--sm"
+        onClick={openCreateModal}
+        disabled={availableChannelPlugins.length === 0 || loading}
+      >
+        {t('settings.channelAccess.actions.addAccount')}
+      </button>
     </div>
   );
 
   return (
     <SettingsPageShell activeKey="channel-access">
       <div className="settings-page">
-        <Section title="通讯平台接入">
+        <Section title={t('settings.channelAccess.sectionTitle')}>
           <Card className="channel-access-notice">
             <div className="channel-access-notice__content">
-              <h3>把常用聊天工具接进来</h3>
-              <p>配置 Telegram、Discord、飞书这类平台后，家庭成员就能直接在熟悉的聊天窗口里和系统沟通。</p>
+              <h3>{t('settings.channelAccess.notice.title')}</h3>
+              <p>{t('settings.channelAccess.notice.description')}</p>
             </div>
           </Card>
           {error ? <div className="settings-note settings-note--error"><span>⚠️</span> {error}</div> : null}
-          {status ? <div className="settings-note settings-note--success"><span>✓</span> {status}</div> : null}
+          {status ? <div className="settings-note settings-note--success"><span>✅</span> {status}</div> : null}
           <div className="channel-account-list">
-            {loading && accounts.length === 0 ? <div className="text-text-secondary">正在加载平台账号...</div> : null}
+            {loading && accounts.length === 0 ? <div className="text-text-secondary">{t('settings.channelAccess.list.loading')}</div> : null}
             {!loading && accounts.length === 0 ? (
-              <EmptyState icon="🔌" title="还没有接入聊天平台" description="先把第一个家庭常用聊天工具接进来。" action={headerActions} />
+              <EmptyState
+                icon="🔌"
+                title={t('settings.channelAccess.list.emptyTitle')}
+                description={t('settings.channelAccess.list.emptyDescription')}
+                action={headerActions}
+              />
             ) : null}
             {accounts.length > 0 ? (
               <>
                 <div className="channel-account-list__header">
-                  <span>已配置 {accounts.length} 个平台账号</span>
+                  <span>{t('settings.channelAccess.list.configuredCount', { count: accounts.length })}</span>
                   {headerActions}
                 </div>
                 {accounts.map((account) => {
                   const platform = getPlatformInfo(account.platform_code);
-                  const statusInfo = formatStatus(account.status);
-                  const probeInfo = formatProbeStatus(account.last_probe_status);
+                  const platformName = platform.nameKey ? t(platform.nameKey) : account.platform_code;
+                  const statusInfo = formatStatus(account.status, locale);
+                  const probeInfo = formatProbeStatus(account.last_probe_status, locale);
                   const isExpanded = expandedAccountId === account.id;
                   const pluginState = getAccountPluginState(account);
                   const pluginDisabled = isAccountPluginDisabled(account);
-                  const pluginDisabledReason = pluginState?.disabled_reason ?? '当前家庭已经停用了这个通道插件。';
+                  const pluginDisabledReason = pluginState?.disabled_reason ?? t('settings.channelAccess.status.pluginDisabledFallback');
                   const supportsMemberBinding = pluginState?.capabilities.channel?.supports_member_binding !== false;
-                  const accountMessageClassName = account.last_probe_status === 'ok' ? 'channel-account-card__success' : 'channel-account-card__error';
+                  const accountMessageClassName = account.last_probe_status === 'ok'
+                    ? 'channel-account-card__success'
+                    : 'channel-account-card__error';
 
                   return (
                     <Card key={account.id} className="channel-account-card">
@@ -450,45 +665,150 @@ function SettingsChannelAccessContent() {
                             <span className={`badge badge--${probeInfo.tone}`}>{probeInfo.label}</span>
                           </div>
                           <div className="channel-account-card__meta">
-                            {platform.name} · {formatConnectionMode(account.connection_mode)}
-                            {pluginDisabled ? <span className="channel-account-card__error"> · 插件已停用</span> : null}
-                            {account.last_error_message ? <span className={accountMessageClassName}> · {account.last_error_message}</span> : null}
+                            <span>{platformName}</span>
+                            <span>{separator}</span>
+                            <span>{formatConnectionMode(account.connection_mode, locale)}</span>
+                            {pluginDisabled ? (
+                              <>
+                                <span>{separator}</span>
+                                <span className="channel-account-card__error">{t('settings.channelAccess.card.pluginDisabled')}</span>
+                              </>
+                            ) : null}
+                            {account.last_error_message ? (
+                              <>
+                                <span>{separator}</span>
+                                <span className={accountMessageClassName}>{account.last_error_message}</span>
+                              </>
+                            ) : null}
                           </div>
                           {pluginDisabled ? <div className="channel-account-card__times">{pluginDisabledReason}</div> : null}
-                          <div className="channel-account-card__times">最近收到消息：{formatTimestamp(account.last_inbound_at)} · 最近发送消息：{formatTimestamp(account.last_outbound_at)}</div>
+                          <div className="channel-account-card__times">
+                            <span>{t('settings.channelAccess.card.recentReceived', { time: formatTimestamp(account.last_inbound_at, locale) })}</span>
+                            <span>{separator}</span>
+                            <span>{t('settings.channelAccess.card.recentSent', { time: formatTimestamp(account.last_outbound_at, locale) })}</span>
+                          </div>
                         </div>
                         <div className="channel-account-card__actions">
-                          <button className="btn btn--outline btn--sm" onClick={() => openEditModal(account)} disabled={loading || pluginDisabled}>编辑</button>
-                          <button className="btn btn--outline btn--sm" onClick={() => void handleProbeAccount(account.id)} disabled={loading || pluginDisabled}>检查连接</button>
-                          <button className="btn btn--outline btn--sm" onClick={() => void handleToggleAccountStatus(account)} disabled={loading || pluginDisabled}>{account.status === 'disabled' ? '启用' : '停用'}</button>
-                          <button className="btn btn--outline btn--sm" onClick={() => void handleDeleteAccount(account)} disabled={loading}>删除</button>
-                          <button className="btn btn--outline btn--sm" onClick={() => toggleAccountExpand(account.id)}>{isExpanded ? '收起详情' : '查看详情'}</button>
+                          <button
+                            className="btn btn--outline btn--sm"
+                            onClick={() => openEditModal(account)}
+                            disabled={loading || pluginDisabled}
+                          >
+                            {t('settings.channelAccess.actions.edit')}
+                          </button>
+                          <button
+                            className="btn btn--outline btn--sm"
+                            onClick={() => void handleProbeAccount(account.id)}
+                            disabled={loading || pluginDisabled}
+                          >
+                            {t('settings.channelAccess.actions.checkConnection')}
+                          </button>
+                          <button
+                            className="btn btn--outline btn--sm"
+                            onClick={() => void handleToggleAccountStatus(account)}
+                            disabled={loading || pluginDisabled}
+                          >
+                            {account.status === 'disabled'
+                              ? t('settings.channelAccess.actions.enable')
+                              : t('settings.channelAccess.actions.disable')}
+                          </button>
+                          <button
+                            className="btn btn--outline btn--sm"
+                            onClick={() => void handleDeleteAccount(account)}
+                            disabled={loading}
+                          >
+                            {t('settings.channelAccess.actions.delete')}
+                          </button>
+                          <button className="btn btn--outline btn--sm" onClick={() => toggleAccountExpand(account.id)}>
+                            {isExpanded
+                              ? t('settings.channelAccess.actions.hideDetails')
+                              : t('settings.channelAccess.actions.viewDetails')}
+                          </button>
                         </div>
                       </div>
                       {isExpanded ? (
                         <div className="channel-account-card__detail">
-                          {detailLoading ? <div className="text-text-secondary">加载详情中...</div> : (
+                          {detailLoading ? <div className="text-text-secondary">{t('settings.channelAccess.detail.loading')}</div> : (
                             <>
                               {accountStatus ? (
                                 <div className="channel-detail-section">
-                                  <h4>连接情况</h4>
+                                  <h4>{t('settings.channelAccess.detail.connectionTitle')}</h4>
                                   <div className="channel-detail-stats">
-                                    <div className="channel-detail-stat"><span className="channel-detail-stat__value">{accountStatus.recent_failure_summary.recent_failure_count}</span><span className="channel-detail-stat__label">最近失败次数</span></div>
-                                    <div className="channel-detail-stat"><span className="channel-detail-stat__value">{accountStatus.recent_delivery_count}</span><span className="channel-detail-stat__label">最近发送消息</span></div>
-                                    <div className="channel-detail-stat"><span className="channel-detail-stat__value">{accountStatus.recent_inbound_count}</span><span className="channel-detail-stat__label">最近收到消息</span></div>
+                                    <div className="channel-detail-stat">
+                                      <span className="channel-detail-stat__value">
+                                        {accountStatus.recent_failure_summary.recent_failure_count}
+                                      </span>
+                                      <span className="channel-detail-stat__label">
+                                        {t('settings.channelAccess.detail.recentFailureCount')}
+                                      </span>
+                                    </div>
+                                    <div className="channel-detail-stat">
+                                      <span className="channel-detail-stat__value">{accountStatus.recent_delivery_count}</span>
+                                      <span className="channel-detail-stat__label">
+                                        {t('settings.channelAccess.detail.recentDeliveryCount')}
+                                      </span>
+                                    </div>
+                                    <div className="channel-detail-stat">
+                                      <span className="channel-detail-stat__value">{accountStatus.recent_inbound_count}</span>
+                                      <span className="channel-detail-stat__label">
+                                        {t('settings.channelAccess.detail.recentInboundCount')}
+                                      </span>
+                                    </div>
                                   </div>
-                                  {accountStatus.recent_failure_summary.last_error_message ? <div className="channel-detail-error"><strong>最近一次失败：</strong>{accountStatus.recent_failure_summary.last_error_message}<span className="channel-detail-error__time">（{formatTimestamp(accountStatus.recent_failure_summary.last_failed_at)}）</span></div> : null}
+                                  {accountStatus.recent_failure_summary.last_error_message ? (
+                                    <div className="channel-detail-error">
+                                      <strong>{t('settings.channelAccess.detail.lastFailure')}</strong>
+                                      {accountStatus.recent_failure_summary.last_error_message}
+                                      <span className="channel-detail-error__time">
+                                        {t('settings.channelAccess.detail.lastFailureTime', {
+                                          time: formatTimestamp(accountStatus.recent_failure_summary.last_failed_at, locale),
+                                        })}
+                                      </span>
+                                    </div>
+                                  ) : null}
                                 </div>
                               ) : null}
                               <div className="channel-detail-section">
-                                <h4>成员绑定</h4>
-                                <ChannelAccountBindingsPanel householdId={currentHouseholdId ?? ''} accountId={account.id} members={activeMembers} plugin={pluginState} supportsMemberBinding={supportsMemberBinding} />
+                                <h4>{t('settings.channelAccess.detail.memberBindings')}</h4>
+                                <ChannelAccountBindingsPanel
+                                  householdId={currentHouseholdId ?? ''}
+                                  accountId={account.id}
+                                  members={activeMembers}
+                                  plugin={pluginState}
+                                  supportsMemberBinding={supportsMemberBinding}
+                                />
                               </div>
                               {failedDeliveries.length > 0 || failedInboundEvents.length > 0 ? (
                                 <div className="channel-detail-section">
-                                  <h4>最近失败记录</h4>
-                                  {failedDeliveries.length > 0 ? <div className="channel-failure-list"><h5>发送失败（最近 5 条）</h5>{failedDeliveries.map((item) => <div key={item.id} className="channel-failure-item"><span className="channel-failure-item__type">{item.delivery_type}</span><span className="channel-failure-item__error">{item.last_error_message ?? '未知错误'}</span><span className="channel-failure-item__time">{formatTimestamp(item.created_at)}</span></div>)}</div> : null}
-                                  {failedInboundEvents.length > 0 ? <div className="channel-failure-list"><h5>接收失败（最近 5 条）</h5>{failedInboundEvents.map((item) => <div key={item.id} className="channel-failure-item"><span className="channel-failure-item__type">{item.event_type}</span><span className="channel-failure-item__error">{item.error_message ?? '未知错误'}</span><span className="channel-failure-item__time">{formatTimestamp(item.received_at)}</span></div>)}</div> : null}
+                                  <h4>{t('settings.channelAccess.detail.recentFailures')}</h4>
+                                  {failedDeliveries.length > 0 ? (
+                                    <div className="channel-failure-list">
+                                      <h5>{t('settings.channelAccess.detail.failedDeliveriesTitle')}</h5>
+                                      {failedDeliveries.map((item) => (
+                                        <div key={item.id} className="channel-failure-item">
+                                          <span className="channel-failure-item__type">{item.delivery_type}</span>
+                                          <span className="channel-failure-item__error">
+                                            {item.last_error_message ?? t('settings.channelAccess.detail.unknownError')}
+                                          </span>
+                                          <span className="channel-failure-item__time">{formatTimestamp(item.created_at, locale)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                  {failedInboundEvents.length > 0 ? (
+                                    <div className="channel-failure-list">
+                                      <h5>{t('settings.channelAccess.detail.failedInboundTitle')}</h5>
+                                      {failedInboundEvents.map((item) => (
+                                        <div key={item.id} className="channel-failure-item">
+                                          <span className="channel-failure-item__type">{item.event_type}</span>
+                                          <span className="channel-failure-item__error">
+                                            {item.error_message ?? t('settings.channelAccess.detail.unknownError')}
+                                          </span>
+                                          <span className="channel-failure-item__time">{formatTimestamp(item.received_at, locale)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null}
                                 </div>
                               ) : null}
                             </>
@@ -506,38 +826,122 @@ function SettingsChannelAccessContent() {
           <div className="member-modal-overlay" onClick={() => setAccountModalOpen(false)}>
             <div className="member-modal" onClick={(event) => event.stopPropagation()}>
               <div className="member-modal__header">
-                <h3>{editingAccount ? '编辑平台账号' : '新增平台账号'}</h3>
-                <p>配置外部聊天平台的接入信息，账号代码由系统自动生成，不需要手填。</p>
+                <h3>{editingAccount ? t('settings.channelAccess.modal.editTitle') : t('settings.channelAccess.modal.createTitle')}</h3>
+                <p>{t('settings.channelAccess.modal.description')}</p>
               </div>
               <form className="settings-form" onSubmit={handleSaveAccount}>
                 <div className="form-group">
-                  <label>平台类型</label>
-                  <select className="form-select" value={accountForm.plugin_id} onChange={(event) => {
-                    const nextPlugin = channelPluginMap.get(event.target.value) ?? null;
-                    setAccountForm((current) => ({ ...current, plugin_id: event.target.value, connection_mode: resolveDefaultConnectionMode(nextPlugin) }));
-                  }} disabled={Boolean(editingAccount)} required>
-                    <option value="">请选择平台</option>
-                    {availableChannelPlugins.map((plugin) => <option key={plugin.pluginId} value={plugin.pluginId}>{plugin.icon} {plugin.name}</option>)}
+                  <label>{t('settings.channelAccess.form.platformType')}</label>
+                  <select
+                    className="form-select"
+                    value={accountForm.plugin_id}
+                    onChange={(event) => {
+                      const nextPlugin = channelPluginMap.get(event.target.value) ?? null;
+                      setAccountForm((current) => ({
+                        ...current,
+                        plugin_id: event.target.value,
+                        connection_mode: resolveDefaultConnectionMode(nextPlugin),
+                      }));
+                    }}
+                    disabled={Boolean(editingAccount)}
+                    required
+                  >
+                    <option value="">{t('settings.channelAccess.form.platformPlaceholder')}</option>
+                    {availableChannelPlugins.map((plugin) => (
+                      <option key={plugin.pluginId} value={plugin.pluginId}>
+                        {plugin.icon} {plugin.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
-                <div className="form-group"><label>显示名称</label><input className="form-input" value={accountForm.display_name} onChange={(event) => setAccountForm((current) => ({ ...current, display_name: event.target.value }))} placeholder="例如：家庭 Telegram 助手" required /></div>
                 <div className="form-group">
-                  <label>连接方式</label>
-                  {supportedConnectionModes.length > 1 ? <select className="form-select" value={accountForm.connection_mode} onChange={(event) => setAccountForm((current) => ({ ...current, connection_mode: event.target.value as ChannelConnectionMode }))}>{supportedConnectionModes.map((mode) => <option key={mode} value={mode}>{formatConnectionMode(mode)}</option>)}</select> : <div className="form-input form-input--readonly">{formatConnectionMode(accountForm.connection_mode)}</div>}
-                  <div className="form-help">{supportedConnectionModes.length <= 1 ? '当前平台只支持这一种接入方式，系统会自动使用它。' : '按平台声明选择接入方式，不再手工猜。'}</div>
+                  <label>{t('settings.channelAccess.form.displayName')}</label>
+                  <input
+                    className="form-input"
+                    value={accountForm.display_name}
+                    onChange={(event) => setAccountForm((current) => ({ ...current, display_name: event.target.value }))}
+                    placeholder={t('settings.channelAccess.form.displayNamePlaceholder')}
+                    required
+                  />
                 </div>
                 <div className="form-group">
-                  <label>状态</label>
-                  <select className="form-select" value={accountForm.status} onChange={(event) => setAccountForm((current) => ({ ...current, status: event.target.value as ChannelAccountStatus }))}>
-                    <option value="draft">草稿</option>
-                    <option value="active">启用</option>
-                    <option value="disabled">停用</option>
+                  <label>{t('settings.channelAccess.form.connectionMode')}</label>
+                  {supportedConnectionModes.length > 1 ? (
+                    <select
+                      className="form-select"
+                      value={accountForm.connection_mode}
+                      onChange={(event) => setAccountForm((current) => ({
+                        ...current,
+                        connection_mode: event.target.value as ChannelConnectionMode,
+                      }))}
+                    >
+                      {supportedConnectionModes.map((mode) => (
+                        <option key={mode} value={mode}>{formatConnectionMode(mode, locale)}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="form-input form-input--readonly">{formatConnectionMode(accountForm.connection_mode, locale)}</div>
+                  )}
+                  <div className="form-help">
+                    {supportedConnectionModes.length <= 1
+                      ? t('settings.channelAccess.form.connectionModeSingleHelp')
+                      : t('settings.channelAccess.form.connectionModeMultiHelp')}
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>{t('settings.channelAccess.form.status')}</label>
+                  <select
+                    className="form-select"
+                    value={accountForm.status}
+                    onChange={(event) => setAccountForm((current) => ({
+                      ...current,
+                      status: event.target.value as ChannelAccountStatus,
+                    }))}
+                  >
+                    <option value="draft">{t('settings.channelAccess.accountStatus.draft')}</option>
+                    <option value="active">{t('settings.channelAccess.accountStatus.active')}</option>
+                    <option value="disabled">{t('settings.channelAccess.accountStatus.disabled')}</option>
                   </select>
                 </div>
-                {configFields.length > 0 ? <div className="form-group channel-config-section"><label>平台配置</label><div className="channel-config-fields">{configFields.map((field) => <div key={field.key} className="channel-config-field"><label className="channel-config-field__label">{field.label}{field.required ? <span className="required-mark">*</span> : null}</label><input type={field.type} className="form-input" value={String(accountForm.config[field.key] ?? '')} onChange={(event) => setAccountForm((current) => ({ ...current, config: { ...current.config, [field.key]: event.target.value } }))} placeholder={field.placeholder} required={field.required} />{field.helpText ? <div className="form-help">{field.helpText}</div> : null}</div>)}</div></div> : null}
+                {configFields.length > 0 ? (
+                  <div className="form-group channel-config-section">
+                    <label>{t('settings.channelAccess.form.platformConfig')}</label>
+                    <div className="channel-config-fields">
+                      {configFields.map((field) => (
+                        <div key={field.key} className="channel-config-field">
+                          <label className="channel-config-field__label">
+                            {field.label}
+                            {field.required ? <span className="required-mark">*</span> : null}
+                          </label>
+                          <input
+                            type={field.type}
+                            className="form-input"
+                            value={String(accountForm.config[field.key] ?? '')}
+                            onChange={(event) => setAccountForm((current) => ({
+                              ...current,
+                              config: { ...current.config, [field.key]: event.target.value },
+                            }))}
+                            placeholder={field.placeholder}
+                            required={field.required}
+                          />
+                          {field.helpText ? <div className="form-help">{field.helpText}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="member-modal__actions">
-                  <button className="btn btn--outline btn--sm" type="button" onClick={() => setAccountModalOpen(false)} disabled={modalLoading}>取消</button>
-                  <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading}>{modalLoading ? '保存中...' : '保存'}</button>
+                  <button
+                    className="btn btn--outline btn--sm"
+                    type="button"
+                    onClick={() => setAccountModalOpen(false)}
+                    disabled={modalLoading}
+                  >
+                    {t('settings.channelAccess.actions.cancel')}
+                  </button>
+                  <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading}>
+                    {modalLoading ? t('settings.channelAccess.actions.saving') : t('settings.channelAccess.actions.save')}
+                  </button>
                 </div>
               </form>
             </div>

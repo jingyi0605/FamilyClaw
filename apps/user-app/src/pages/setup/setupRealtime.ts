@@ -1,3 +1,4 @@
+import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import type { ButlerBootstrapDraft } from './setupTypes';
 
 export type BootstrapRealtimeEventType =
@@ -55,6 +56,13 @@ function parseBootstrapRealtimeEvent(value: unknown): BootstrapRealtimeEvent {
   return value as BootstrapRealtimeEvent;
 }
 
+function resolveRuntimeLocale() {
+  if (typeof navigator !== 'undefined' && navigator.language) {
+    return navigator.language;
+  }
+  return 'zh-CN';
+}
+
 function buildBootstrapRealtimeUrl(sessionId: string, householdId: string, baseUrl = '/api/v1', origin = window.location.origin) {
   const resolvedUrl = new URL(baseUrl, origin);
   resolvedUrl.protocol = resolvedUrl.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -91,7 +99,7 @@ export function createBrowserRealtimeClient(options: {
       socket.send(JSON.stringify({ type: 'ping', session_id: options.sessionId, payload: { nonce: nonce ?? null } }));
     },
     sendUserMessage(requestId: string, text: string) {
-      if (socket.readyState !== 1) throw new Error('实时连接还没建立完成');
+      if (socket.readyState !== 1) throw new Error(getPageMessage(resolveRuntimeLocale(), 'setup.butler.error.realtimeNotReady'));
       socket.send(JSON.stringify({ type: 'user.message', session_id: options.sessionId, request_id: requestId, payload: { text } }));
     },
   };
