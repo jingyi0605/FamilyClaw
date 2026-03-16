@@ -1,10 +1,12 @@
+from dataclasses import dataclass
 import logging
 from typing import cast
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.dependencies import ActorContext
+from app.core.blocking import BlockingCallPolicy, run_blocking_db
 from app.core.config import settings
 from app.core.logging import dump_conversation_debug_event, get_conversation_debug_logger
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
@@ -73,10 +75,23 @@ from app.modules.scheduler.service import delete_task_definition, set_task_enabl
 from app.modules.scheduler.schemas import ScheduledTaskDefinitionUpdate
 
 logger = logging.getLogger(__name__)
+CONVERSATION_REALTIME_DB_TIMEOUT_SECONDS = 30.0
 
 
 class ConversationNotFoundError(LookupError):
     pass
+
+
+@dataclass(slots=True)
+class ConversationRealtimeTurnSetup:
+    session_id: str
+    household_id: str
+    requester_member_id: str | None
+    session_mode: str
+    active_agent_id: str | None
+    user_message_id: str
+    assistant_message_id: str
+    conversation_history: list[dict[str, str]]
 
 
 def record_conversation_turn_source(
@@ -2245,6 +2260,537 @@ async def _broadcast_conversation_event(
     await connection_manager.broadcast(household_id=household_id, session_id=session.id, event=event)
 
 
+if False:
+    """
+async def _abroadcast_conversation_event(
+    *,
+    session_factory: sessionmaker[Session],
+    connection_manager: RealtimeConnectionManager,
+    household_id: str,
+    session_id: str,
+    event_type: str,
+    payload: dict[str, object],
+    request_id: str | None = None,
+) -> None:
+    seq = await run_blocking_db(
+        lambda db: _claim_next_conversation_event_seq_sync(db, session_id=session_id),
+        session_factory=session_factory,
+        policy=_build_conversation_realtime_policy(label="conversation.realtime.event_seq"),
+        commit=True,
+        logger=logger,
+        context={"session_id": session_id, "event_type": event_type},
+    )
+    event = build_bootstrap_realtime_event(
+        event_type=event_type,  # type: ignore[arg-type]
+        session_id=session_id,
+        request_id=request_id,
+        seq=seq,
+        payload=payload,
+    )
+    await connection_manager.broadcast(household_id=household_id, session_id=session_id, event=event)
+
+
+def _prepare_conversation_realtime_turn_sync(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str,
+    user_message: str,
+    actor: ActorContext,
+) -> ConversationRealtimeTurnSetup:
+    session = _get_visible_session(db, session_id=session_id, actor=actor)
+    if session.current_request_id and session.current_request_id != request_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="涓婁竴杞繕娌＄粨鏉燂紝璇风◢鍚庡啀璇?)
+
+    payload = ConversationTurnCreate(message=user_message, agent_id=session.active_agent_id, channel="user_web")
+    request_id, user_message_row, assistant_message_row = _create_pending_turn(
+        db,
+        session=session,
+        payload=payload,
+        request_id=request_id,
+    )
+    session.current_request_id = request_id
+    db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.received",
+        source="service",
+        message="鏀跺埌鏂扮殑瀹炴椂鑱婂ぉ璇锋眰銆?,
+        payload={
+            "user_message_id": user_message_row.id,
+            "assistant_message_id": assistant_message_row.id,
+            "message": user_message.strip(),
+            "channel": payload.channel,
+            "session_mode": session.session_mode,
+            "realtime": True,
+        },
+    )
+    return ConversationRealtimeTurnSetup(
+        session_id=session.id,
+        household_id=session.household_id,
+        requester_member_id=session.requester_member_id,
+        session_mode=session.session_mode,
+        active_agent_id=session.active_agent_id,
+        user_message_id=user_message_row.id,
+        assistant_message_id=assistant_message_row.id,
+        conversation_history=_build_recent_conversation_history(
+            db,
+            session_id=session.id,
+            current_request_id=request_id,
+        ),
+    )
+
+
+def _finish_conversation_realtime_turn_sync(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    result: ConversationOrchestratorResult,
+    actor: ActorContext,
+    chunk_count: int,
+    user_message: str,
+) -> ConversationSessionDetailRead:
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    user_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.user_message_id)
+    assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
+    if user_message_row is None or assistant_message_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation turn messages not found")
+
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="orchestrator.completed",
+        source="orchestrator",
+        message="瀹炴椂缂栨帓灞傚凡瀹屾垚鎰忓浘璇嗗埆鍜屼富璺敱銆?,
+        payload=_build_orchestrator_debug_payload(result),
+    )
+    _complete_assistant_message(
+        db,
+        session=session,
+        assistant_message=assistant_message_row,
+        result=result,
+    )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="assistant.completed",
+        source="service",
+        message="瀹炴椂鍔╂墜娑堟伅宸茶惤搴撱€?,
+        payload={
+            "assistant_message_id": assistant_message_row.id,
+            "intent": result.intent.value,
+            "content_preview": result.text[:120],
+            "degraded": result.degraded,
+        },
+    )
+    proposal_pipeline_result = _run_proposal_pipeline_for_turn(
+        db,
+        session=session,
+        request_id=request_id,
+        user_message=user_message_row,
+        assistant_message=assistant_message_row,
+        result=result,
+        actor=actor,
+    )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="proposal.model.applied",
+        source="proposal",
+        message="鏈疆瀹炴椂閾捐矾宸茬洿鎺ュ垏鍒版柊鎻愭妯″瀷锛屼笉鍐嶅啓鏃у€欓€夊拰鏃у姩浣滆褰曘€?,
+        payload={
+            "proposal_batch_id": None if proposal_pipeline_result is None else proposal_pipeline_result.batch_id,
+            "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
+        },
+    )
+    session.current_request_id = None
+    session.updated_at = utc_now_iso()
+    db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.completed",
+        source="service",
+        message="鏈疆瀹炴椂鑱婂ぉ澶勭悊瀹屾垚銆?,
+        payload={"outcome": "completed", "chunk_count": chunk_count, "message": user_message},
+    )
+    return _to_session_detail_read(db, session)
+
+
+def _fail_conversation_realtime_turn_sync(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    actor: ActorContext,
+    partial_text: str,
+    error_message: str,
+    error_code: str,
+) -> ConversationSessionDetailRead:
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
+    if assistant_message_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation assistant message not found")
+
+    if partial_text:
+        assistant_message_row.content = partial_text
+        assistant_message_row.status = "failed"
+        assistant_message_row.message_type = "error"
+        assistant_message_row.error_code = error_code
+        assistant_message_row.updated_at = utc_now_iso()
+        session.last_message_at = assistant_message_row.updated_at
+        session.updated_at = assistant_message_row.updated_at
+        db.flush()
+    else:
+        _fail_assistant_message(
+            db,
+            session=session,
+            assistant_message=assistant_message_row,
+            error_message=error_message,
+            error_code=error_code,
+        )
+    session.current_request_id = None
+    session.updated_at = utc_now_iso()
+    db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.failed",
+        source="service",
+        level="error",
+        message="鏈疆瀹炴椂鑱婂ぉ澶勭悊澶辫触銆?,
+        payload={
+            "error_message": error_message,
+            "error_code": error_code,
+            "partial_text": partial_text,
+        },
+    )
+    return _to_session_detail_read(db, session)
+
+
+def _build_realtime_session_stub(turn_setup: ConversationRealtimeTurnSetup) -> ConversationSession:
+    return ConversationSession(
+        id=turn_setup.session_id,
+        household_id=turn_setup.household_id,
+        requester_member_id=turn_setup.requester_member_id,
+        session_mode=turn_setup.session_mode,
+        active_agent_id=turn_setup.active_agent_id,
+        title="",
+        status="active",
+        last_message_at=utc_now_iso(),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
+    )
+
+
+def _find_conversation_message_by_id(
+    db: Session,
+    *,
+    session_id: str,
+    message_id: str,
+) -> ConversationMessage | None:
+    return next((item for item in repository.list_messages(db, session_id=session_id) if item.id == message_id), None)
+
+
+def _claim_next_conversation_event_seq_sync(db: Session, *, session_id: str) -> int:
+    session = repository.get_session(db, session_id)
+    if session is None:
+        return 0
+    return repository.claim_next_event_seq(db, session=session)
+
+
+def _build_conversation_thread_session_factory(db: Session) -> sessionmaker[Session]:
+    return sessionmaker(
+        bind=db.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        class_=Session,
+    )
+
+
+def _build_conversation_realtime_policy(*, label: str) -> BlockingCallPolicy:
+    return BlockingCallPolicy(
+        label=label,
+        kind="sync_db",
+        timeout_seconds=CONVERSATION_REALTIME_DB_TIMEOUT_SECONDS,
+    )
+
+
+    """
+
+
+async def _abroadcast_conversation_event(
+    *,
+    session_factory: sessionmaker[Session],
+    connection_manager: RealtimeConnectionManager,
+    household_id: str,
+    session_id: str,
+    event_type: str,
+    payload: dict[str, object],
+    request_id: str | None = None,
+) -> None:
+    seq = await run_blocking_db(
+        lambda db: _claim_next_conversation_event_seq_sync(db, session_id=session_id),
+        session_factory=session_factory,
+        policy=_build_conversation_realtime_policy(label="conversation.realtime.event_seq"),
+        commit=True,
+        logger=logger,
+        context={"session_id": session_id, "event_type": event_type},
+    )
+    event = build_bootstrap_realtime_event(
+        event_type=event_type,  # type: ignore[arg-type]
+        session_id=session_id,
+        request_id=request_id,
+        seq=seq,
+        payload=payload,
+    )
+    await connection_manager.broadcast(household_id=household_id, session_id=session_id, event=event)
+
+
+def _prepare_conversation_realtime_turn_sync(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str,
+    user_message: str,
+    actor: ActorContext,
+) -> ConversationRealtimeTurnSetup:
+    session = _get_visible_session(db, session_id=session_id, actor=actor)
+    if session.current_request_id and session.current_request_id != request_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="上一轮还没结束，请稍后再试")
+
+    payload = ConversationTurnCreate(message=user_message, agent_id=session.active_agent_id, channel="user_web")
+    request_id, user_message_row, assistant_message_row = _create_pending_turn(
+        db,
+        session=session,
+        payload=payload,
+        request_id=request_id,
+    )
+    session.current_request_id = request_id
+    db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.received",
+        source="service",
+        message="收到新的实时聊天请求。",
+        payload={
+            "user_message_id": user_message_row.id,
+            "assistant_message_id": assistant_message_row.id,
+            "message": user_message.strip(),
+            "channel": payload.channel,
+            "session_mode": session.session_mode,
+            "realtime": True,
+        },
+    )
+    return ConversationRealtimeTurnSetup(
+        session_id=session.id,
+        household_id=session.household_id,
+        requester_member_id=session.requester_member_id,
+        session_mode=session.session_mode,
+        active_agent_id=session.active_agent_id,
+        user_message_id=user_message_row.id,
+        assistant_message_id=assistant_message_row.id,
+        conversation_history=_build_recent_conversation_history(
+            db,
+            session_id=session.id,
+            current_request_id=request_id,
+        ),
+    )
+
+
+def _finish_conversation_realtime_turn_sync(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    result: ConversationOrchestratorResult,
+    actor: ActorContext,
+    chunk_count: int,
+    user_message: str,
+) -> ConversationSessionDetailRead:
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    user_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.user_message_id)
+    assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
+    if user_message_row is None or assistant_message_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation turn messages not found")
+
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="orchestrator.completed",
+        source="orchestrator",
+        message="实时编排层已完成意图识别和主路由。",
+        payload=_build_orchestrator_debug_payload(result),
+    )
+    _complete_assistant_message(
+        db,
+        session=session,
+        assistant_message=assistant_message_row,
+        result=result,
+    )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="assistant.completed",
+        source="service",
+        message="实时助手消息已落库。",
+        payload={
+            "assistant_message_id": assistant_message_row.id,
+            "intent": result.intent.value,
+            "content_preview": result.text[:120],
+            "degraded": result.degraded,
+        },
+    )
+    proposal_pipeline_result = _run_proposal_pipeline_for_turn(
+        db,
+        session=session,
+        request_id=request_id,
+        user_message=user_message_row,
+        assistant_message=assistant_message_row,
+        result=result,
+        actor=actor,
+    )
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="proposal.model.applied",
+        source="proposal",
+        message="本轮实时链路已切到新提案模型，不再写旧候选和旧动作记录。",
+        payload={
+            "proposal_batch_id": None if proposal_pipeline_result is None else proposal_pipeline_result.batch_id,
+            "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
+        },
+    )
+    session.current_request_id = None
+    session.updated_at = utc_now_iso()
+    db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.completed",
+        source="service",
+        message="本轮实时聊天处理完成。",
+        payload={"outcome": "completed", "chunk_count": chunk_count, "message": user_message},
+    )
+    return _to_session_detail_read(db, session)
+
+
+def _fail_conversation_realtime_turn_sync(
+    db: Session,
+    *,
+    turn_setup: ConversationRealtimeTurnSetup,
+    request_id: str,
+    actor: ActorContext,
+    partial_text: str,
+    error_message: str,
+    error_code: str,
+) -> ConversationSessionDetailRead:
+    session = _get_visible_session(db, session_id=turn_setup.session_id, actor=actor)
+    assistant_message_row = _find_conversation_message_by_id(db, session_id=session.id, message_id=turn_setup.assistant_message_id)
+    if assistant_message_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation assistant message not found")
+
+    if partial_text:
+        assistant_message_row.content = partial_text
+        assistant_message_row.status = "failed"
+        assistant_message_row.message_type = "error"
+        assistant_message_row.error_code = error_code
+        assistant_message_row.updated_at = utc_now_iso()
+        session.last_message_at = assistant_message_row.updated_at
+        session.updated_at = assistant_message_row.updated_at
+        db.flush()
+    else:
+        _fail_assistant_message(
+            db,
+            session=session,
+            assistant_message=assistant_message_row,
+            error_message=error_message,
+            error_code=error_code,
+        )
+    session.current_request_id = None
+    session.updated_at = utc_now_iso()
+    db.flush()
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="turn.failed",
+        source="service",
+        level="error",
+        message="本轮实时聊天处理失败。",
+        payload={
+            "error_message": error_message,
+            "error_code": error_code,
+            "partial_text": partial_text,
+        },
+    )
+    return _to_session_detail_read(db, session)
+
+
+def _build_realtime_session_stub(turn_setup: ConversationRealtimeTurnSetup) -> ConversationSession:
+    return ConversationSession(
+        id=turn_setup.session_id,
+        household_id=turn_setup.household_id,
+        requester_member_id=turn_setup.requester_member_id,
+        session_mode=turn_setup.session_mode,
+        active_agent_id=turn_setup.active_agent_id,
+        title="",
+        status="active",
+        last_message_at=utc_now_iso(),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
+    )
+
+
+def _find_conversation_message_by_id(
+    db: Session,
+    *,
+    session_id: str,
+    message_id: str,
+) -> ConversationMessage | None:
+    return next((item for item in repository.list_messages(db, session_id=session_id) if item.id == message_id), None)
+
+
+def _claim_next_conversation_event_seq_sync(db: Session, *, session_id: str) -> int:
+    session = repository.get_session(db, session_id)
+    if session is None:
+        return 0
+    return repository.claim_next_event_seq(db, session=session)
+
+
+def _build_conversation_thread_session_factory(db: Session) -> sessionmaker[Session]:
+    return sessionmaker(
+        bind=db.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        class_=Session,
+    )
+
+
+def _build_conversation_realtime_policy(*, label: str) -> BlockingCallPolicy:
+    return BlockingCallPolicy(
+        label=label,
+        kind="sync_db",
+        timeout_seconds=CONVERSATION_REALTIME_DB_TIMEOUT_SECONDS,
+    )
+
+
 def _build_recent_conversation_history(
     db: Session,
     *,
@@ -2515,6 +3061,158 @@ async def run_conversation_realtime_turn(
             connection_manager=connection_manager,
             household_id=session.household_id,
             session=session,
+            event_type="session.snapshot",
+            payload={"snapshot": snapshot.model_dump(mode="json")},
+        )
+
+
+async def arun_conversation_realtime_turn(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str,
+    user_message: str,
+    actor: ActorContext,
+    connection_manager: RealtimeConnectionManager,
+    session_factory: sessionmaker[Session] | None = None,
+) -> None:
+    session_factory = session_factory or _build_conversation_thread_session_factory(db)
+    turn_setup = await run_blocking_db(
+        lambda thread_db: _prepare_conversation_realtime_turn_sync(
+            thread_db,
+            session_id=session_id,
+            request_id=request_id,
+            user_message=user_message,
+            actor=actor,
+        ),
+        session_factory=session_factory,
+        policy=_build_conversation_realtime_policy(label="conversation.realtime.turn.prepare"),
+        commit=True,
+        logger=logger,
+        context={"session_id": session_id, "request_id": request_id},
+    )
+
+    session = _build_realtime_session_stub(turn_setup)
+    await _abroadcast_conversation_event(
+        session_factory=session_factory,
+        connection_manager=connection_manager,
+        household_id=turn_setup.household_id,
+        session_id=turn_setup.session_id,
+        event_type="user.message.accepted",
+        request_id=request_id,
+        payload={},
+    )
+
+    result: ConversationOrchestratorResult | None = None
+    emitted_chunks: list[str] = []
+    try:
+        async for event_type, event_payload in stream_orchestrated_turn(
+            db,
+            session=session,
+            message=user_message.strip(),
+            actor=actor,
+            conversation_history=turn_setup.conversation_history,
+            request_context={
+                "request_id": request_id,
+                "trace_id": request_id,
+                "session_id": turn_setup.session_id,
+                "channel": "conversation_turn",
+            },
+        ):
+            if event_type == "chunk":
+                emitted_chunks.append(str(event_payload))
+                await _abroadcast_conversation_event(
+                    session_factory=session_factory,
+                    connection_manager=connection_manager,
+                    household_id=turn_setup.household_id,
+                    session_id=turn_setup.session_id,
+                    event_type="agent.chunk",
+                    request_id=request_id,
+                    payload={"text": str(event_payload)},
+                )
+                continue
+            result = cast(ConversationOrchestratorResult, event_payload)
+
+        if result is None:
+            raise RuntimeError("family_qa stream did not produce final result")
+
+        snapshot = await run_blocking_db(
+            lambda thread_db: _finish_conversation_realtime_turn_sync(
+                thread_db,
+                turn_setup=turn_setup,
+                request_id=request_id,
+                result=result,
+                actor=actor,
+                chunk_count=len(emitted_chunks),
+                user_message=user_message.strip(),
+            ),
+            session_factory=session_factory,
+            policy=_build_conversation_realtime_policy(label="conversation.realtime.turn.finish"),
+            commit=True,
+            logger=logger,
+            context={"session_id": session_id, "request_id": request_id},
+        )
+        await _abroadcast_conversation_event(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+            household_id=turn_setup.household_id,
+            session_id=turn_setup.session_id,
+            event_type="agent.done",
+            request_id=request_id,
+            payload={},
+        )
+        await _abroadcast_conversation_event(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+            household_id=turn_setup.household_id,
+            session_id=turn_setup.session_id,
+            event_type="session.snapshot",
+            payload={"snapshot": snapshot.model_dump(mode="json")},
+        )
+    except Exception as exc:
+        logger.exception(
+            "瀹炴椂浼氳瘽澶勭悊澶辫触 session_id=%s request_id=%s household_id=%s requester_member_id=%s error_code=%s partial_chunks=%s",
+            turn_setup.session_id,
+            request_id,
+            turn_setup.household_id,
+            turn_setup.requester_member_id or "-",
+            _resolve_turn_error_code(exc),
+            len(emitted_chunks),
+        )
+        partial_text = "".join(emitted_chunks).strip()
+        snapshot = await run_blocking_db(
+            lambda thread_db: _fail_conversation_realtime_turn_sync(
+                thread_db,
+                turn_setup=turn_setup,
+                request_id=request_id,
+                actor=actor,
+                partial_text=partial_text,
+                error_message=_render_turn_error(exc),
+                error_code=_resolve_turn_error_code(exc),
+            ),
+            session_factory=session_factory,
+            policy=_build_conversation_realtime_policy(label="conversation.realtime.turn.fail"),
+            commit=True,
+            logger=logger,
+            context={"session_id": session_id, "request_id": request_id},
+        )
+        await _abroadcast_conversation_event(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+            household_id=turn_setup.household_id,
+            session_id=turn_setup.session_id,
+            event_type="agent.error",
+            request_id=request_id,
+            payload={
+                "detail": _render_turn_error(exc),
+                "error_code": _resolve_turn_error_code(exc),
+            },
+        )
+        await _abroadcast_conversation_event(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+            household_id=turn_setup.household_id,
+            session_id=turn_setup.session_id,
             event_type="session.snapshot",
             payload={"snapshot": snapshot.model_dump(mode="json")},
         )

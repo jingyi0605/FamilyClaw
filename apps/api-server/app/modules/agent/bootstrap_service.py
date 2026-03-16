@@ -1,10 +1,12 @@
 """管家引导服务 - 通过 AI 对话创建首个管家。"""
+from dataclasses import dataclass
 import logging
 from typing import Any, cast
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.blocking import BlockingCallPolicy, run_blocking_db
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.agent import repository
 from app.modules.agent.models import FamilyAgentBootstrapMessage, FamilyAgentBootstrapSession
@@ -34,6 +36,16 @@ BOOTSTRAP_FIELD_ORDER: tuple[ButlerBootstrapField, ...] = (
     "speaking_style",
 )
 logger = logging.getLogger(__name__)
+BOOTSTRAP_REALTIME_DB_TIMEOUT_SECONDS = 30.0
+
+
+@dataclass(slots=True)
+class BootstrapRealtimeTurnSetup:
+    household_id: str
+    session_id: str
+    draft: ButlerBootstrapDraft
+    transcript: list[dict[str, str]]
+    user_context: str
 
 
 def start_butler_bootstrap_session(
@@ -283,6 +295,155 @@ async def run_butler_bootstrap_realtime_turn(
             },
         )
         return
+
+
+async def arun_butler_bootstrap_realtime_turn(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+    request_id: str,
+    user_message: str,
+    connection_manager: RealtimeConnectionManager,
+    session_factory: sessionmaker[Session] | None = None,
+) -> None:
+    session_factory = session_factory or _build_thread_session_factory(db)
+    turn_setup = await run_blocking_db(
+        lambda thread_db: _prepare_bootstrap_realtime_turn_sync(
+            thread_db,
+            household_id=household_id,
+            session_id=session_id,
+            request_id=request_id,
+            user_message=user_message,
+        ),
+        session_factory=session_factory,
+        policy=_build_bootstrap_realtime_policy(label="agent.bootstrap.turn.prepare"),
+        commit=True,
+        logger=logger,
+        context={"household_id": household_id, "session_id": session_id, "request_id": request_id},
+    )
+
+    message = user_message.strip()
+    await _abroadcast_bootstrap_realtime_event(
+        session_factory=session_factory,
+        connection_manager=connection_manager,
+        household_id=turn_setup.household_id,
+        session_id=turn_setup.session_id,
+        event_type="user.message.accepted",
+        request_id=request_id,
+        payload={},
+    )
+
+    final_text = ""
+    try:
+        async for event in stream_llm(
+            db,
+            task_type="butler_bootstrap",
+            variables={
+                "collected_info": _format_collected_info(turn_setup.draft),
+                "user_message": message,
+                "user_context": turn_setup.user_context,
+            },
+            household_id=household_id,
+            conversation_history=turn_setup.transcript,
+        ):
+            if event.event_type == "chunk" and event.content:
+                await _abroadcast_bootstrap_realtime_event(
+                    session_factory=session_factory,
+                    connection_manager=connection_manager,
+                    household_id=turn_setup.household_id,
+                    session_id=turn_setup.session_id,
+                    event_type="agent.chunk",
+                    request_id=request_id,
+                    payload={"text": event.content},
+                )
+                continue
+
+            if event.event_type == "done" and event.result is not None:
+                final_text = event.result.text.strip()
+
+        next_draft = turn_setup.draft
+        state_patch = await _aextract_bootstrap_state_patch(
+            db,
+            household_id=household_id,
+            draft=turn_setup.draft,
+            user_message=message,
+            assistant_message=final_text,
+        )
+        if state_patch is not None:
+            next_draft = _merge_extracted_data(turn_setup.draft, state_patch)
+            patch_payload = _build_state_patch_payload(draft=turn_setup.draft, next_draft=next_draft)
+            if patch_payload:
+                await _abroadcast_bootstrap_realtime_event(
+                    session_factory=session_factory,
+                    connection_manager=connection_manager,
+                    household_id=turn_setup.household_id,
+                    session_id=turn_setup.session_id,
+                    event_type="agent.state_patch",
+                    request_id=request_id,
+                    payload=patch_payload,
+                )
+
+        session_read = _build_next_session(
+            session_id=session_id,
+            draft=next_draft,
+            assistant_message=final_text,
+        )
+        transcript = list(turn_setup.transcript)
+        transcript.append({"role": "user", "content": message})
+        transcript.append({"role": "assistant", "content": session_read.assistant_message})
+        await run_blocking_db(
+            lambda thread_db: _finish_bootstrap_realtime_turn_sync(
+                thread_db,
+                household_id=turn_setup.household_id,
+                session_id=turn_setup.session_id,
+                request_id=request_id,
+                session_read=session_read,
+                transcript=transcript,
+            ),
+            session_factory=session_factory,
+            policy=_build_bootstrap_realtime_policy(label="agent.bootstrap.turn.finish"),
+            commit=True,
+            logger=logger,
+            context={"household_id": household_id, "session_id": session_id, "request_id": request_id},
+        )
+        await _abroadcast_bootstrap_realtime_event(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+            household_id=turn_setup.household_id,
+            session_id=turn_setup.session_id,
+            event_type="agent.done",
+            request_id=request_id,
+            payload={},
+        )
+    except Exception as exc:
+        await run_blocking_db(
+            lambda thread_db: _fail_bootstrap_realtime_turn_sync(
+                thread_db,
+                household_id=turn_setup.household_id,
+                session_id=turn_setup.session_id,
+                request_id=request_id,
+                error_code=_resolve_realtime_error_code(exc),
+            ),
+            session_factory=session_factory,
+            policy=_build_bootstrap_realtime_policy(label="agent.bootstrap.turn.fail"),
+            commit=True,
+            logger=logger,
+            context={"household_id": household_id, "session_id": session_id, "request_id": request_id},
+        )
+        error_detail = str(exc.detail) if isinstance(exc, HTTPException) else "杩欒疆瀵硅瘽澶辫触浜嗭紝璇烽噸璇?"
+        await _abroadcast_bootstrap_realtime_event(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+            household_id=turn_setup.household_id,
+            session_id=turn_setup.session_id,
+            event_type="agent.error",
+            request_id=request_id,
+            payload={
+                "detail": error_detail,
+                "error_code": _resolve_realtime_error_code(exc),
+            },
+        )
 
 
 def advance_butler_bootstrap_session(
@@ -818,6 +979,180 @@ async def _broadcast_realtime_event(
         payload=payload,
     )
     await connection_manager.broadcast(household_id=household_id, session_id=session.id, event=event)
+
+
+async def _abroadcast_bootstrap_realtime_event(
+    *,
+    session_factory: sessionmaker[Session],
+    connection_manager: RealtimeConnectionManager,
+    household_id: str,
+    session_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    request_id: str | None = None,
+) -> None:
+    seq = await run_blocking_db(
+        lambda db: _claim_next_bootstrap_event_seq_sync(
+            db,
+            household_id=household_id,
+            session_id=session_id,
+        ),
+        session_factory=session_factory,
+        policy=_build_bootstrap_realtime_policy(label="agent.bootstrap.event_seq"),
+        commit=True,
+        logger=logger,
+        context={"household_id": household_id, "session_id": session_id, "event_type": event_type},
+    )
+    event = build_bootstrap_realtime_event(
+        event_type=cast(Any, event_type),
+        session_id=session_id,
+        request_id=request_id,
+        seq=seq,
+        payload=payload,
+    )
+    await connection_manager.broadcast(household_id=household_id, session_id=session_id, event=event)
+
+
+def _prepare_bootstrap_realtime_turn_sync(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+    request_id: str,
+    user_message: str,
+) -> BootstrapRealtimeTurnSetup:
+    _ensure_bootstrap_allowed(db, household_id=household_id)
+    session = _get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+    if False:
+        """
+
+    if session.status in {"completed", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="褰撳墠浼氳瘽宸插叧闂紝涓嶈兘缁х画鍙戦€佹秷鎭?)
+    if session.current_request_id and session.current_request_id != request_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="涓婁竴杞繕娌＄粨鏉燂紝璇风◢鍚庡啀璇?)
+
+        """
+    if session.status in {"completed", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="当前会话已关闭，不能继续发送消息")
+    if session.current_request_id and session.current_request_id != request_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="上一轮还没结束，请稍后再试")
+    message = user_message.strip()
+    if not message:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message 涓嶈兘涓虹┖")
+
+    draft = _load_draft(session, household_id=household_id)
+    transcript = _load_transcript(db, session)
+    request_started_at = utc_now_iso()
+    user_message_row = _append_bootstrap_message(
+        db,
+        session_id=session.id,
+        request_id=request_id,
+        role="user",
+        content=message,
+        created_at=request_started_at,
+    )
+    repository.add_bootstrap_request(
+        db,
+        row=_build_bootstrap_request(
+            request_id=request_id,
+            session_id=session.id,
+            user_message_id=user_message_row.id,
+            started_at=request_started_at,
+        ),
+    )
+    session.current_request_id = request_id
+    db.flush()
+    return BootstrapRealtimeTurnSetup(
+        household_id=household_id,
+        session_id=session.id,
+        draft=draft,
+        transcript=transcript,
+        user_context=_build_user_context(db, household_id),
+    )
+
+
+def _finish_bootstrap_realtime_turn_sync(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+    request_id: str,
+    session_read: ButlerBootstrapSessionRead,
+    transcript: list[dict[str, str]],
+) -> None:
+    session = repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+    if False:
+        """
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="寮曞浼氳瘽涓嶅瓨鍦?)
+        """
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="引导会话不存在")
+    request_row = repository.get_bootstrap_request(db, request_id=request_id)
+    if request_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="bootstrap request not found")
+    assistant_message_row = _append_bootstrap_message(
+        db,
+        session_id=session.id,
+        request_id=request_id,
+        role="assistant",
+        content=session_read.assistant_message,
+    )
+    request_row.status = "succeeded"
+    request_row.assistant_message_id = assistant_message_row.id
+    request_row.finished_at = utc_now_iso()
+    _save_session_state(db, session=session, session_read=session_read, transcript=transcript)
+
+
+def _fail_bootstrap_realtime_turn_sync(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+    request_id: str,
+    error_code: str,
+) -> None:
+    session = repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+    if session is None:
+        return
+    request_row = repository.get_bootstrap_request(db, request_id=request_id)
+    if request_row is not None:
+        request_row.status = "failed"
+        request_row.error_code = error_code
+        request_row.finished_at = utc_now_iso()
+    session.current_request_id = None
+    session.updated_at = utc_now_iso()
+    db.flush()
+
+
+def _claim_next_bootstrap_event_seq_sync(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+) -> int:
+    session = repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+    if session is None:
+        return 0
+    return repository.claim_next_bootstrap_event_seq(db, session=session)
+
+
+def _build_thread_session_factory(db: Session) -> sessionmaker[Session]:
+    return sessionmaker(
+        bind=db.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        class_=Session,
+    )
+
+
+def _build_bootstrap_realtime_policy(*, label: str) -> BlockingCallPolicy:
+    return BlockingCallPolicy(
+        label=label,
+        kind="sync_db",
+        timeout_seconds=BOOTSTRAP_REALTIME_DB_TIMEOUT_SECONDS,
+    )
 
 
 def _extract_bootstrap_state_patch(

@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.blocking import BlockingCallPolicy, run_blocking_db
 from app.db.session import get_db
 from app.modules.channel.gateway_service import (
     ChannelGatewayServiceError,
@@ -27,14 +28,27 @@ async def channel_gateway_webhook_endpoint(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> ChannelGatewayWebhookAck | Response:
+    session_factory = _build_thread_session_factory(db)
+    body = await request.body()
     try:
-        result = handle_channel_webhook(
-            db,
-            account_id=account_id,
-            method=request.method,
-            headers={key: value for key, value in request.headers.items()},
-            query_params={key: value for key, value in request.query_params.items()},
-            body=await request.body(),
+        result = await run_blocking_db(
+            lambda thread_db: handle_channel_webhook(
+                thread_db,
+                account_id=account_id,
+                method=request.method,
+                headers={key: value for key, value in request.headers.items()},
+                query_params={key: value for key, value in request.query_params.items()},
+                body=body,
+            ),
+            session_factory=session_factory,
+            policy=BlockingCallPolicy(
+                label="channel.gateway.webhook.handle",
+                kind="plugin_code",
+                timeout_seconds=30.0,
+            ),
+            commit=True,
+            logger=logger,
+            context={"account_id": account_id, "method": request.method},
         )
         if (
             result.http_response is not None
@@ -43,28 +57,18 @@ async def channel_gateway_webhook_endpoint(
             and not result.ack.duplicate
             and result.ack.inbound_event_id is not None
         ):
-            session_factory = sessionmaker(
-                bind=db.get_bind(),
-                autoflush=False,
-                autocommit=False,
-                future=True,
-                class_=Session,
-            )
             background_tasks.add_task(
                 _process_channel_inbound_event_in_background,
                 session_factory,
                 account_id,
                 result.ack.inbound_event_id,
             )
-        db.commit()
         if result.http_response is not None:
             return _build_http_response(result.http_response)
         return result.ack
     except ChannelGatewayServiceError as exc:
-        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except PluginExecutionError as exc:
-        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
@@ -101,3 +105,13 @@ def _process_channel_inbound_event_in_background(session_factory, account_id: st
         )
     finally:
         db.close()
+
+
+def _build_thread_session_factory(db: Session) -> sessionmaker[Session]:
+    return sessionmaker(
+        bind=db.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        class_=Session,
+    )

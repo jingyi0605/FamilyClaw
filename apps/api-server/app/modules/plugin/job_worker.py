@@ -7,6 +7,7 @@ from typing import Any, cast
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.worker_runtime import WorkerRuntime, WorkerRuntimeConfig
 from app.db.utils import load_json, new_uuid, utc_now_iso
 import app.db.session as db_session_module
 
@@ -29,41 +30,29 @@ logger = logging.getLogger(__name__)
 
 class PluginJobWorker:
     def __init__(self) -> None:
-        self.worker_id = f"plugin-worker-{id(self)}"
-        self._stop_event = asyncio.Event()
-        self._task: asyncio.Task[None] | None = None
+        self._runtime = WorkerRuntime(
+            config=WorkerRuntimeConfig(
+                worker_name="plugin-job-worker",
+                interval_seconds=max(settings.plugin_job_worker_poll_interval_seconds, 0.1),
+                tick_timeout_seconds=max(float(settings.plugin_job_default_timeout_seconds), 60.0),
+                max_consecutive_failures=3,
+                degrade_interval_seconds=max(settings.plugin_job_worker_poll_interval_seconds * 2, 0.2),
+            ),
+            logger=logger,
+        )
+        self.worker_id = self._runtime.worker_id
 
     async def start(self) -> None:
-        if self._task is not None:
-            return
-        self._stop_event.clear()
-        self._task = asyncio.create_task(self.run_forever(), name=self.worker_id)
+        await self._runtime.start(lambda: run_plugin_job_worker_cycle(worker_id=self.worker_id))
 
     async def stop(self) -> None:
-        self._stop_event.set()
-        if self._task is None:
-            return
-        await self._task
-        self._task = None
+        await self._runtime.stop()
 
     async def run_forever(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                processed = await run_plugin_job_worker_cycle(worker_id=self.worker_id)
-            except Exception:
-                logger.exception("插件后台任务 worker 周期执行失败")
-                processed = False
+        await self._runtime.run_forever(lambda: run_plugin_job_worker_cycle(worker_id=self.worker_id))
 
-            if processed:
-                continue
-
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(),
-                    timeout=max(settings.plugin_job_worker_poll_interval_seconds, 0.1),
-                )
-            except TimeoutError:
-                continue
+    def get_health_snapshot(self):
+        return self._runtime.get_health_snapshot()
 
 
 def enqueue_plugin_execution_job(

@@ -5,29 +5,30 @@ from http.cookies import SimpleCookie
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.dependencies import ActorContext, ensure_actor_can_access_household
+from app.core.blocking import BlockingCallPolicy, run_blocking_db
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.modules.account.service import resolve_authenticated_actor_by_session_token
 from app.modules.agent import repository as agent_repository
 from app.modules.agent.bootstrap_service import (
+    arun_butler_bootstrap_realtime_turn,
     get_butler_bootstrap_session_snapshot,
-    run_butler_bootstrap_realtime_turn,
-)
-from app.modules.conversation.service import (
-    ConversationNotFoundError,
-    get_conversation_session_snapshot,
-    run_conversation_realtime_turn,
 )
 from app.modules.conversation import repository as conversation_repository
+from app.modules.conversation.service import (
+    arun_conversation_realtime_turn,
+    get_conversation_session_snapshot,
+)
 from app.modules.realtime.connection_manager import realtime_connection_manager
 from app.modules.realtime.schemas import BootstrapRealtimeClientEvent, build_bootstrap_realtime_event
 from app.modules.voice.realtime_service import voice_realtime_service
 
 router = APIRouter(tags=["realtime"])
 logger = logging.getLogger(__name__)
+REALTIME_ENDPOINT_DB_TIMEOUT_SECONDS = 15.0
 
 
 @router.websocket("/realtime/voice")
@@ -39,19 +40,22 @@ async def realtime_voice_gateway_websocket(websocket: WebSocket) -> None:
 async def realtime_agent_bootstrap_websocket(websocket: WebSocket) -> None:
     household_id = (websocket.query_params.get("household_id") or "").strip()
     session_id = (websocket.query_params.get("session_id") or "").strip()
+    session_factory = SessionLocal
 
-    db: Session = SessionLocal()
     accepted = False
     try:
-        actor = _authenticate_websocket_actor(db, websocket)
+        actor = await _authenticate_websocket_actor(session_factory, websocket)
         ensure_actor_can_access_household(actor, household_id)
 
-        session = agent_repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
-        if session is None:
+        snapshot = await _load_bootstrap_session_snapshot(
+            session_factory,
+            household_id=household_id,
+            session_id=session_id,
+        )
+        if snapshot is None:
             await websocket.accept()
             accepted = True
             await _send_error_and_close(
-                db,
                 websocket,
                 session_id=session_id or "unknown-session",
                 detail="引导会话不存在",
@@ -64,15 +68,14 @@ async def realtime_agent_bootstrap_websocket(websocket: WebSocket) -> None:
         realtime_connection_manager.register(household_id=household_id, session_id=session_id, websocket=websocket)
 
         await _send_event(
-            db,
+            session_factory,
             websocket,
             event_type="session.ready",
             session_id=session_id,
             payload={},
         )
-        snapshot = get_butler_bootstrap_session_snapshot(db, household_id=household_id, session_id=session_id)
         await _send_event(
-            db,
+            session_factory,
             websocket,
             event_type="session.snapshot",
             session_id=session_id,
@@ -83,7 +86,7 @@ async def realtime_agent_bootstrap_websocket(websocket: WebSocket) -> None:
             client_event = BootstrapRealtimeClientEvent.model_validate(await websocket.receive_json())
             if client_event.session_id != session_id:
                 await _send_event(
-                    db,
+                    session_factory,
                     websocket,
                     event_type="agent.error",
                     session_id=session_id,
@@ -98,7 +101,7 @@ async def realtime_agent_bootstrap_websocket(websocket: WebSocket) -> None:
             if client_event.type == "ping":
                 ping_payload = cast(dict[str, Any], client_event.payload.model_dump(mode="json"))
                 await _send_event(
-                    db,
+                    session_factory,
                     websocket,
                     event_type="pong",
                     session_id=session_id,
@@ -108,18 +111,23 @@ async def realtime_agent_bootstrap_websocket(websocket: WebSocket) -> None:
 
             if client_event.type == "user.message":
                 message_payload = cast(dict[str, Any], client_event.payload.model_dump(mode="json"))
-                await run_butler_bootstrap_realtime_turn(
-                    db,
-                    household_id=household_id,
-                    session_id=session_id,
-                    request_id=client_event.request_id or "",
-                    user_message=str(message_payload.get("text") or ""),
-                    connection_manager=realtime_connection_manager,
-                )
+                turn_db = SessionLocal()
+                try:
+                    await arun_butler_bootstrap_realtime_turn(
+                        turn_db,
+                        household_id=household_id,
+                        session_id=session_id,
+                        request_id=client_event.request_id or "",
+                        user_message=str(message_payload.get("text") or ""),
+                        connection_manager=realtime_connection_manager,
+                        session_factory=session_factory,
+                    )
+                finally:
+                    turn_db.close()
                 continue
 
             await _send_event(
-                db,
+                session_factory,
                 websocket,
                 event_type="agent.error",
                 session_id=session_id,
@@ -142,20 +150,23 @@ async def realtime_agent_bootstrap_websocket(websocket: WebSocket) -> None:
     finally:
         if accepted and household_id and session_id:
             realtime_connection_manager.unregister(household_id=household_id, session_id=session_id, websocket=websocket)
-        db.close()
 
 
 @router.websocket("/realtime/conversation")
 async def realtime_conversation_websocket(websocket: WebSocket) -> None:
-    db = SessionLocal()
     accepted = False
     household_id = ""
     session_id = ""
+    session_factory = SessionLocal
     try:
         household_id = (websocket.query_params.get("household_id") or "").strip()
         session_id = (websocket.query_params.get("session_id") or "").strip()
-        actor_context = _authenticate_member_websocket_actor(db, websocket)
-        session_snapshot = get_conversation_session_snapshot(db, session_id=session_id, actor=actor_context)
+        actor_context = await _authenticate_member_websocket_actor(session_factory, websocket)
+        session_snapshot = await _load_conversation_session_snapshot(
+            session_factory,
+            session_id=session_id,
+            actor=actor_context,
+        )
         if not household_id:
             household_id = session_snapshot.household_id
         if household_id != session_snapshot.household_id:
@@ -166,14 +177,14 @@ async def realtime_conversation_websocket(websocket: WebSocket) -> None:
         realtime_connection_manager.register(household_id=household_id, session_id=session_id, websocket=websocket)
 
         await _send_event(
-            db,
+            session_factory,
             websocket,
             event_type="session.ready",
             session_id=session_id,
             payload={},
         )
         await _send_event(
-            db,
+            session_factory,
             websocket,
             event_type="session.snapshot",
             session_id=session_id,
@@ -184,7 +195,7 @@ async def realtime_conversation_websocket(websocket: WebSocket) -> None:
             client_event = BootstrapRealtimeClientEvent.model_validate(await websocket.receive_json())
             if client_event.session_id != session_id:
                 await _send_event(
-                    db,
+                    session_factory,
                     websocket,
                     event_type="agent.error",
                     session_id=session_id,
@@ -199,7 +210,7 @@ async def realtime_conversation_websocket(websocket: WebSocket) -> None:
             if client_event.type == "ping":
                 ping_payload = cast(dict[str, Any], client_event.payload.model_dump(mode="json"))
                 await _send_event(
-                    db,
+                    session_factory,
                     websocket,
                     event_type="pong",
                     session_id=session_id,
@@ -209,18 +220,23 @@ async def realtime_conversation_websocket(websocket: WebSocket) -> None:
 
             if client_event.type == "user.message":
                 message_payload = cast(dict[str, Any], client_event.payload.model_dump(mode="json"))
-                await run_conversation_realtime_turn(
-                    db,
-                    session_id=session_id,
-                    request_id=client_event.request_id or "",
-                    user_message=str(message_payload.get("text") or ""),
-                    actor=actor_context,
-                    connection_manager=realtime_connection_manager,
-                )
+                turn_db = SessionLocal()
+                try:
+                    await arun_conversation_realtime_turn(
+                        turn_db,
+                        session_id=session_id,
+                        request_id=client_event.request_id or "",
+                        user_message=str(message_payload.get("text") or ""),
+                        actor=actor_context,
+                        connection_manager=realtime_connection_manager,
+                        session_factory=session_factory,
+                    )
+                finally:
+                    turn_db.close()
                 continue
 
             await _send_event(
-                db,
+                session_factory,
                 websocket,
                 event_type="agent.error",
                 session_id=session_id,
@@ -230,14 +246,13 @@ async def realtime_conversation_websocket(websocket: WebSocket) -> None:
                     "error_code": "invalid_event_payload",
                 },
             )
-    except ConversationNotFoundError:
+    except HTTPException as exc:
         if accepted:
             await _send_error_and_close(
-                db,
                 websocket,
                 session_id=session_id,
-                detail="会话不存在",
-                error_code="session_not_found",
+                detail=str(exc.detail),
+                error_code="session_not_found" if exc.status_code == status.HTTP_404_NOT_FOUND else "invalid_event_payload",
             )
         else:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -254,11 +269,35 @@ async def realtime_conversation_websocket(websocket: WebSocket) -> None:
     finally:
         if accepted and household_id and session_id:
             realtime_connection_manager.unregister(household_id=household_id, session_id=session_id, websocket=websocket)
-        db.close()
 
 
-def _authenticate_websocket_actor(db: Session, websocket: WebSocket) -> ActorContext:
+async def _authenticate_websocket_actor(
+    session_factory: sessionmaker[Session],
+    websocket: WebSocket,
+) -> ActorContext:
     session_token = _extract_session_token(websocket)
+    return await run_blocking_db(
+        lambda db: _authenticate_websocket_actor_sync(db, session_token),
+        session_factory=session_factory,
+        policy=_build_realtime_policy(label="realtime.agent_bootstrap.authenticate"),
+        logger=logger,
+    )
+
+
+async def _authenticate_member_websocket_actor(
+    session_factory: sessionmaker[Session],
+    websocket: WebSocket,
+) -> ActorContext:
+    session_token = _extract_session_token(websocket)
+    return await run_blocking_db(
+        lambda db: _authenticate_member_websocket_actor_sync(db, session_token),
+        session_factory=session_factory,
+        policy=_build_realtime_policy(label="realtime.conversation.authenticate"),
+        logger=logger,
+    )
+
+
+def _authenticate_websocket_actor_sync(db: Session, session_token: str | None) -> ActorContext:
     actor = resolve_authenticated_actor_by_session_token(db, session_token)
     if actor is None:
         raise PermissionError("authentication required")
@@ -269,8 +308,7 @@ def _authenticate_websocket_actor(db: Session, websocket: WebSocket) -> ActorCon
     return actor_context
 
 
-def _authenticate_member_websocket_actor(db: Session, websocket: WebSocket) -> ActorContext:
-    session_token = _extract_session_token(websocket)
+def _authenticate_member_websocket_actor_sync(db: Session, session_token: str | None) -> ActorContext:
     actor = resolve_authenticated_actor_by_session_token(db, session_token)
     if actor is None:
         raise PermissionError("authentication required")
@@ -278,6 +316,49 @@ def _authenticate_member_websocket_actor(db: Session, websocket: WebSocket) -> A
     if actor_context.member_id is None and actor_context.account_type != "system":
         raise PermissionError("member role required")
     return actor_context
+
+
+async def _load_bootstrap_session_snapshot(
+    session_factory: sessionmaker[Session],
+    *,
+    household_id: str,
+    session_id: str,
+):
+    return await run_blocking_db(
+        lambda db: _load_bootstrap_session_snapshot_sync(
+            db,
+            household_id=household_id,
+            session_id=session_id,
+        ),
+        session_factory=session_factory,
+        policy=_build_realtime_policy(label="realtime.agent_bootstrap.snapshot"),
+        logger=logger,
+    )
+
+
+def _load_bootstrap_session_snapshot_sync(
+    db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+):
+    if agent_repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id) is None:
+        return None
+    return get_butler_bootstrap_session_snapshot(db, household_id=household_id, session_id=session_id)
+
+
+async def _load_conversation_session_snapshot(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    actor: ActorContext,
+):
+    return await run_blocking_db(
+        lambda db: get_conversation_session_snapshot(db, session_id=session_id, actor=actor),
+        session_factory=session_factory,
+        policy=_build_realtime_policy(label="realtime.conversation.snapshot"),
+        logger=logger,
+    )
 
 
 def _extract_session_token(websocket: WebSocket) -> str | None:
@@ -318,7 +399,7 @@ async def _log_and_close_websocket_on_error(
 
 
 async def _send_event(
-    db: Session,
+    session_factory: sessionmaker[Session],
     websocket: WebSocket,
     *,
     event_type: Any,
@@ -327,17 +408,18 @@ async def _send_event(
     request_id: str | None = None,
 ) -> None:
     household_id = (websocket.query_params.get("household_id") or "").strip()
-    bootstrap_session = agent_repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
-    if bootstrap_session is not None:
-        seq = agent_repository.claim_next_bootstrap_event_seq(db, session=bootstrap_session)
-        db.commit()
-    else:
-        conversation_session = conversation_repository.get_session(db, session_id)
-        if conversation_session is not None:
-            seq = conversation_repository.claim_next_event_seq(db, session=conversation_session)
-            db.commit()
-        else:
-            seq = 0
+    seq = await run_blocking_db(
+        lambda db: _claim_realtime_event_seq_sync(
+            db,
+            household_id=household_id,
+            session_id=session_id,
+        ),
+        session_factory=session_factory,
+        policy=_build_realtime_policy(label="realtime.endpoint.event_seq"),
+        commit=True,
+        logger=logger,
+        context={"household_id": household_id, "session_id": session_id, "event_type": str(event_type)},
+    )
     event = build_bootstrap_realtime_event(
         event_type=event_type,
         session_id=session_id,
@@ -348,8 +430,24 @@ async def _send_event(
     await realtime_connection_manager.send_event(websocket, event)
 
 
-async def _send_error_and_close(
+def _claim_realtime_event_seq_sync(
     db: Session,
+    *,
+    household_id: str,
+    session_id: str,
+) -> int:
+    if household_id:
+        bootstrap_session = agent_repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
+        if bootstrap_session is not None:
+            return agent_repository.claim_next_bootstrap_event_seq(db, session=bootstrap_session)
+
+    conversation_session = conversation_repository.get_session(db, session_id)
+    if conversation_session is not None:
+        return conversation_repository.claim_next_event_seq(db, session=conversation_session)
+    return 0
+
+
+async def _send_error_and_close(
     websocket: WebSocket,
     *,
     session_id: str,
@@ -364,3 +462,11 @@ async def _send_error_and_close(
     )
     await realtime_connection_manager.send_event(websocket, event)
     await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+
+
+def _build_realtime_policy(*, label: str) -> BlockingCallPolicy:
+    return BlockingCallPolicy(
+        label=label,
+        kind="sync_db",
+        timeout_seconds=REALTIME_ENDPOINT_DB_TIMEOUT_SECONDS,
+    )

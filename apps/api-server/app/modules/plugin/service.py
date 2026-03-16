@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import asyncio
+import logging
 import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 from pydantic import ValidationError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.dependencies import ActorContext
+from app.core.blocking import BlockingCallPolicy, run_blocking_db
 from app.core.config import settings
 from app.core.config import BASE_DIR
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
@@ -60,6 +61,7 @@ PLUGIN_DISABLED_ERROR_CODE = "plugin_disabled"
 PLUGIN_NOT_VISIBLE_ERROR_CODE = "plugin_not_visible_in_household"
 PLUGIN_STATE_OVERRIDE_INVALID_ERROR_CODE = "plugin_state_override_invalid"
 PLUGIN_EFFECTIVE_STATE_UNRESOLVED_ERROR_CODE = "plugin_effective_state_unresolved"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -170,6 +172,7 @@ def list_registered_plugins(
                 manifest_path=str(manifest_path),
                 entrypoints=manifest.entrypoints,
                 capabilities=manifest.capabilities,
+                dashboard_cards=manifest.dashboard_cards,
                 config_specs=manifest.config_specs,
                 locales=manifest.locales,
                 schedule_templates=manifest.schedule_templates,
@@ -207,6 +210,7 @@ def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest
             "manifest_path": mount.manifest_path,
             "entrypoints": manifest.entrypoints.model_dump(mode="json"),
             "capabilities": manifest.capabilities.model_dump(mode="json"),
+            "dashboard_cards": [item.model_dump(mode="json") for item in manifest.dashboard_cards],
             "config_specs": [item.model_dump(mode="json") for item in manifest.config_specs],
             "locales": [item.model_dump(mode="json") for item in manifest.locales],
             "schedule_templates": [item.model_dump(mode="json") for item in manifest.schedule_templates],
@@ -287,6 +291,7 @@ def _to_plugin_mount_read(row: PluginMount, *, manifest: PluginManifest | None =
             "triggers": current_manifest.triggers,
             "entrypoints": current_manifest.entrypoints.model_dump(mode="json"),
             "capabilities": current_manifest.capabilities.model_dump(mode="json"),
+            "dashboard_cards": [item.model_dump(mode="json") for item in current_manifest.dashboard_cards],
             "config_specs": [item.model_dump(mode="json") for item in current_manifest.config_specs],
             "locales": [item.model_dump(mode="json") for item in current_manifest.locales],
             "schedule_templates": [item.model_dump(mode="json") for item in current_manifest.schedule_templates],
@@ -966,11 +971,9 @@ async def aexecute_household_plugin(
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
 ) -> PluginExecutionResult:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        PLUGIN_EXECUTOR_POOL,
-        lambda: execute_household_plugin(
-            db,
+    return await run_blocking_db(
+        lambda thread_db: execute_household_plugin(
+            thread_db,
             household_id=household_id,
             request=request,
             root_dir=root_dir,
@@ -979,7 +982,21 @@ async def aexecute_household_plugin(
             execution_backend=execution_backend,
             runner_config=runner_config,
         ),
+        session_factory=_build_thread_session_factory(db),
+        policy=_build_plugin_blocking_policy(
+            label="plugin.aexecute_household_plugin",
+            runner_config=runner_config,
+        ),
+        executor=PLUGIN_EXECUTOR_POOL,
+        logger=logger,
+        context={
+            "household_id": household_id,
+            "plugin_id": request.plugin_id,
+            "trigger": request.trigger,
+        },
     )
+
+
 def enable_plugin(
     plugin_id: str,
     *,
@@ -1226,6 +1243,111 @@ def ingest_plugin_raw_records_to_memory(
     return written_cards
 
 
+def _sync_plugin_dashboard_cards(
+    db: Session,
+    *,
+    household_id: str,
+    execution: PluginExecutionResult,
+) -> int:
+    from .dashboard_service import (
+        record_plugin_dashboard_card_snapshot_error,
+        upsert_plugin_dashboard_card_snapshot,
+    )
+    from .schemas import (
+        PluginDashboardCardSnapshotErrorUpsert,
+        PluginDashboardCardSnapshotUpsert,
+    )
+
+    try:
+        plugin = get_household_plugin(db, household_id=household_id, plugin_id=execution.plugin_id)
+    except PluginServiceError:
+        return 0
+    if not plugin.dashboard_cards:
+        return 0
+
+    output = execution.output if isinstance(execution.output, dict) else {}
+    raw_snapshots = output.get("dashboard_snapshots")
+    if raw_snapshots is None:
+        return 0
+
+    if not isinstance(raw_snapshots, list):
+        for card_spec in plugin.dashboard_cards:
+            record_plugin_dashboard_card_snapshot_error(
+                db,
+                household_id=household_id,
+                plugin_id=execution.plugin_id,
+                payload=PluginDashboardCardSnapshotErrorUpsert(
+                    card_key=card_spec.card_key,
+                    error_code="plugin_dashboard_snapshot_invalid",
+                    error_message="插件返回的 dashboard_snapshots 不是数组，首页卡片已降级。",
+                ),
+            )
+        return 0
+
+    written_count = 0
+    for raw_item in raw_snapshots:
+        if not isinstance(raw_item, dict):
+            continue
+
+        raw_card_key = raw_item.get("card_key")
+        if not isinstance(raw_card_key, str) or not raw_card_key.strip():
+            continue
+
+        try:
+            snapshot_payload = PluginDashboardCardSnapshotUpsert.model_validate(raw_item)
+            upsert_plugin_dashboard_card_snapshot(
+                db,
+                household_id=household_id,
+                plugin_id=execution.plugin_id,
+                payload=snapshot_payload,
+            )
+            written_count += 1
+        except (ValidationError, PluginServiceError) as exc:
+            record_plugin_dashboard_card_snapshot_error(
+                db,
+                household_id=household_id,
+                plugin_id=execution.plugin_id,
+                payload=PluginDashboardCardSnapshotErrorUpsert(
+                    card_key=raw_card_key,
+                    error_code="plugin_dashboard_snapshot_invalid",
+                    error_message=str(exc),
+                ),
+            )
+
+    return written_count
+
+
+def _record_plugin_dashboard_cards_execution_error(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    error_code: str,
+    error_message: str,
+) -> None:
+    from .dashboard_service import record_plugin_dashboard_card_snapshot_error
+    from .schemas import PluginDashboardCardSnapshotErrorUpsert
+
+    try:
+        plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
+    except PluginServiceError:
+        return
+    if not plugin.dashboard_cards:
+        return
+
+    for card_spec in plugin.dashboard_cards:
+        record_plugin_dashboard_card_snapshot_error(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            payload=PluginDashboardCardSnapshotErrorUpsert(
+                card_key=card_spec.card_key,
+                error_code=error_code,
+                error_message=error_message,
+            ),
+        )
+
+
 def run_plugin_sync_pipeline(
     db: Session,
     *,
@@ -1270,6 +1392,7 @@ def run_plugin_sync_pipeline(
 
     raw_records: list[PluginRawRecordRead] = []
     written_memory_cards: list[dict] = []
+    dashboard_card_count = 0
 
     if execution.success:
         output = execution.output if isinstance(execution.output, dict) else {}
@@ -1290,12 +1413,24 @@ def run_plugin_sync_pipeline(
             execution_backend=execution_backend,
             runner_config=runner_config,
         )
+        dashboard_card_count = _sync_plugin_dashboard_cards(
+            db,
+            household_id=household_id,
+            execution=execution,
+        )
         run_row.status = "success"
         run_row.raw_record_count = len(raw_records)
         run_row.memory_card_count = len(written_memory_cards)
         run_row.error_code = None
         run_row.error_message = None
     else:
+        _record_plugin_dashboard_cards_execution_error(
+            db,
+            household_id=household_id,
+            plugin_id=execution.plugin_id,
+            error_code=execution.error_code or "plugin_execution_failed",
+            error_message=execution.error_message or "插件执行失败，首页卡片已降级。",
+        )
         run_row.status = "failed"
 
     run_row.finished_at = execution.finished_at
@@ -1315,6 +1450,7 @@ def run_plugin_sync_pipeline(
             "trigger": execution.trigger,
             "raw_record_count": run_row.raw_record_count,
             "memory_card_count": run_row.memory_card_count,
+            "dashboard_card_count": dashboard_card_count,
             "error_code": run_row.error_code,
             "error_message": run_row.error_message,
         },
@@ -1343,11 +1479,9 @@ async def arun_plugin_sync_pipeline(
 ) -> PluginSyncPipelineResult:
     from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
-    loop = asyncio.get_running_loop()
-    execution = await loop.run_in_executor(
-        PLUGIN_EXECUTOR_POOL,
-        lambda: execute_household_plugin(
-            db,
+    execution = await run_blocking_db(
+        lambda thread_db: execute_household_plugin(
+            thread_db,
             household_id=household_id,
             request=request,
             root_dir=root_dir,
@@ -1356,6 +1490,18 @@ async def arun_plugin_sync_pipeline(
             execution_backend=execution_backend,
             runner_config=runner_config,
         ),
+        session_factory=_build_thread_session_factory(db),
+        policy=_build_plugin_blocking_policy(
+            label="plugin.arun_plugin_sync_pipeline",
+            runner_config=runner_config,
+        ),
+        executor=PLUGIN_EXECUTOR_POOL,
+        logger=logger,
+        context={
+            "household_id": household_id,
+            "plugin_id": request.plugin_id,
+            "trigger": request.trigger,
+        },
     )
     run_row = PluginRun(
         id=execution.run_id,
@@ -1376,6 +1522,7 @@ async def arun_plugin_sync_pipeline(
     db.flush()
     raw_records: list[PluginRawRecordRead] = []
     written_memory_cards: list[dict] = []
+    dashboard_card_count = 0
     if execution.success:
         output = execution.output if isinstance(execution.output, dict) else {}
         raw_records = save_plugin_raw_records(db, household_id=household_id, execution_result=execution, raw_records=output.get("records", []))
@@ -1391,12 +1538,24 @@ async def arun_plugin_sync_pipeline(
                 execution_backend=execution_backend,
                 runner_config=runner_config,
             )
+        dashboard_card_count = _sync_plugin_dashboard_cards(
+            db,
+            household_id=household_id,
+            execution=execution,
+        )
         run_row.status = "success"
         run_row.raw_record_count = len(raw_records)
         run_row.memory_card_count = len(written_memory_cards)
         run_row.error_code = None
         run_row.error_message = None
     else:
+        _record_plugin_dashboard_cards_execution_error(
+            db,
+            household_id=household_id,
+            plugin_id=execution.plugin_id,
+            error_code=execution.error_code or "plugin_execution_failed",
+            error_message=execution.error_message or "插件执行失败，首页卡片已降级。",
+        )
         run_row.status = "failed"
     db.flush()
     if actor is not None:
@@ -1408,7 +1567,13 @@ async def arun_plugin_sync_pipeline(
             target_type="plugin",
             target_id=request.plugin_id,
             result="success" if run_row.status == "success" else "fail",
-            details={"run_id": run_row.id, "plugin_type": request.plugin_type, "raw_record_count": run_row.raw_record_count, "memory_card_count": run_row.memory_card_count},
+            details={
+                "run_id": run_row.id,
+                "plugin_type": request.plugin_type,
+                "raw_record_count": run_row.raw_record_count,
+                "memory_card_count": run_row.memory_card_count,
+                "dashboard_card_count": dashboard_card_count,
+            },
         )
     return PluginSyncPipelineResult(run=_to_plugin_run_read(run_row), execution=execution, raw_records=raw_records, written_memory_cards=written_memory_cards)
 
@@ -1470,6 +1635,33 @@ def _to_plugin_run_read(row: PluginRun) -> PluginRunRead:
             "finished_at": row.finished_at,
             "created_at": row.created_at,
         }
+    )
+
+
+def _build_thread_session_factory(db: Session) -> sessionmaker[Session]:
+    return sessionmaker(
+        bind=db.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        class_=Session,
+    )
+
+
+def _build_plugin_blocking_policy(
+    *,
+    label: str,
+    runner_config: PluginRunnerConfig | None,
+) -> BlockingCallPolicy:
+    timeout_seconds = float(
+        runner_config.timeout_seconds
+        if runner_config is not None and runner_config.timeout_seconds is not None
+        else settings.plugin_job_default_timeout_seconds
+    )
+    return BlockingCallPolicy(
+        label=label,
+        kind="plugin_code",
+        timeout_seconds=timeout_seconds,
     )
 
 
