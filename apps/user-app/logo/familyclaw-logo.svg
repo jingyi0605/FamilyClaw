@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>FamilyClaw Logo</title>
+  <desc>爪印造型，象征家庭的守护与连接</desc>
+
+  <!-- 背景圆形（用于 App Icon） -->
+  <circle cx="512" cy="512" r="512" fill="#d97756"/>
+
+  <!-- 心形掌垫 - 整体下移实现垂直居中 -->
+  <path
+    d="M512 914
+       C470 914 428 887 384 846
+       C310 776 256 712 256 632
+       C256 520 336 440 432 440
+       C480 440 512 464 512 504
+       C512 464 544 440 592 440
+       C688 440 768 520 768 632
+       C768 712 714 776 640 846
+       C596 887 554 914 512 914Z"
+    fill="#ffffff"
+    opacity="0.95"
+  />
+
+  <!-- 左上爪垫 -->
+  <ellipse cx="273" cy="293" rx="90" ry="110" fill="#ffffff"/>
+
+  <!-- 中上爪垫 -->
+  <ellipse cx="512" cy="219" rx="90" ry="110" fill="#ffffff"/>
+
+  <!-- 右上爪垫 -->
+  <ellipse cx="751" cy="293" rx="90" ry="110" fill="#ffffff"/>
+
+  <!-- 左侧小爪垫 -->
+  <ellipse cx="164" cy="453" rx="72" ry="90" fill="#ffffff" opacity="0.9"/>
+
+  <!-- 右侧小爪垫 -->
+  <ellipse cx="860" cy="453" rx="72" ry="90" fill="#ffffff" opacity="0.9"/>
+</svg>
