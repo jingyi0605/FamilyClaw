@@ -36,7 +36,9 @@ from app.modules.member.models import Member, MemberPreference
 from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember, MemoryCardRevision
 from app.modules.permission.models import MemberPermission
 from app.modules.plugin.models import (
+    MemberDashboardLayout,
     PluginConfigInstance,
+    PluginDashboardCardSnapshot,
     PluginJob,
     PluginJobAttempt,
     PluginJobNotification,
@@ -89,8 +91,10 @@ __all__ = [
     "Member",
     "MemberChannelBinding",
     "MemberPermission",
+    "MemberDashboardLayout",
     "PluginRawRecord",
     "PluginConfigInstance",
+    "PluginDashboardCardSnapshot",
     "PluginJob",
     "PluginJobAttempt",
     "PluginJobNotification",

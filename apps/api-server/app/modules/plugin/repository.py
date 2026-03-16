@@ -4,7 +4,9 @@ from sqlalchemy import Select, select, update
 from sqlalchemy.orm import Session
 
 from app.modules.plugin.models import (
+    MemberDashboardLayout,
     PluginConfigInstance,
+    PluginDashboardCardSnapshot,
     PluginJob,
     PluginJobAttempt,
     PluginJobNotification,
@@ -74,9 +76,93 @@ def add_plugin_mount(db: Session, row: PluginMount) -> PluginMount:
     return row
 
 
+def add_plugin_dashboard_card_snapshot(db: Session, row: PluginDashboardCardSnapshot) -> PluginDashboardCardSnapshot:
+    db.add(row)
+    return row
+
+
+def get_plugin_dashboard_card_snapshot(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    placement: str,
+    card_key: str,
+) -> PluginDashboardCardSnapshot | None:
+    stmt: Select[tuple[PluginDashboardCardSnapshot]] = select(PluginDashboardCardSnapshot).where(
+        PluginDashboardCardSnapshot.household_id == household_id,
+        PluginDashboardCardSnapshot.plugin_id == plugin_id,
+        PluginDashboardCardSnapshot.placement == placement,
+        PluginDashboardCardSnapshot.card_key == card_key,
+    )
+    return db.scalar(stmt)
+
+
+def list_plugin_dashboard_card_snapshots(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str | None = None,
+    placement: str | None = None,
+    state: str | None = None,
+) -> list[PluginDashboardCardSnapshot]:
+    filters = [PluginDashboardCardSnapshot.household_id == household_id]
+    if plugin_id is not None:
+        filters.append(PluginDashboardCardSnapshot.plugin_id == plugin_id)
+    if placement is not None:
+        filters.append(PluginDashboardCardSnapshot.placement == placement)
+    if state is not None:
+        filters.append(PluginDashboardCardSnapshot.state == state)
+
+    stmt: Select[tuple[PluginDashboardCardSnapshot]] = (
+        select(PluginDashboardCardSnapshot)
+        .where(*filters)
+        .order_by(PluginDashboardCardSnapshot.updated_at.desc(), PluginDashboardCardSnapshot.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
 def add_plugin_config_instance(db: Session, row: PluginConfigInstance) -> PluginConfigInstance:
     db.add(row)
     return row
+
+
+def add_member_dashboard_layout(db: Session, row: MemberDashboardLayout) -> MemberDashboardLayout:
+    db.add(row)
+    return row
+
+
+def get_member_dashboard_layout(
+    db: Session,
+    *,
+    member_id: str,
+    placement: str,
+) -> MemberDashboardLayout | None:
+    stmt: Select[tuple[MemberDashboardLayout]] = select(MemberDashboardLayout).where(
+        MemberDashboardLayout.member_id == member_id,
+        MemberDashboardLayout.placement == placement,
+    )
+    return db.scalar(stmt)
+
+
+def list_member_dashboard_layouts(
+    db: Session,
+    *,
+    member_id: str | None = None,
+    placement: str | None = None,
+) -> list[MemberDashboardLayout]:
+    filters = []
+    if member_id is not None:
+        filters.append(MemberDashboardLayout.member_id == member_id)
+    if placement is not None:
+        filters.append(MemberDashboardLayout.placement == placement)
+
+    stmt: Select[tuple[MemberDashboardLayout]] = (
+        select(MemberDashboardLayout)
+        .where(*filters)
+        .order_by(MemberDashboardLayout.updated_at.desc(), MemberDashboardLayout.id.desc())
+    )
+    return list(db.scalars(stmt).all())
 
 
 def get_plugin_config_instance(

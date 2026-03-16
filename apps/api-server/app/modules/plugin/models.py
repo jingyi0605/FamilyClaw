@@ -127,6 +127,61 @@ class PluginConfigInstance(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
 
 
+class PluginDashboardCardSnapshot(Base):
+    __tablename__ = "plugin_dashboard_card_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "household_id",
+            "plugin_id",
+            "placement",
+            "card_key",
+            name="uq_plugin_dashboard_card_snapshots_household_plugin_card",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    household_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    plugin_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    card_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    placement: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    state: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
+
+
+class MemberDashboardLayout(Base):
+    __tablename__ = "member_dashboard_layouts"
+    __table_args__ = (
+        UniqueConstraint(
+            "member_id",
+            "placement",
+            name="uq_member_dashboard_layouts_member_placement",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    member_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("members.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    placement: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    layout_json: Mapped[str] = mapped_column(Text, nullable=False, default='{"items":[]}')
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
+
+
 class PluginJob(Base):
     __tablename__ = "plugin_jobs"
     __table_args__ = (
