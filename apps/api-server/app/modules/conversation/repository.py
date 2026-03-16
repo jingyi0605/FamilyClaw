@@ -11,6 +11,7 @@ from app.modules.conversation.models import (
     ConversationProposalBatch,
     ConversationProposalItem,
     ConversationSession,
+    ConversationTurnSource,
 )
 
 
@@ -44,6 +45,27 @@ def list_sessions(
 def add_message(db: Session, row: ConversationMessage) -> ConversationMessage:
     db.add(row)
     return row
+
+
+def add_turn_source(db: Session, row: ConversationTurnSource) -> ConversationTurnSource:
+    db.add(row)
+    return row
+
+
+def get_turn_source_by_turn_id(db: Session, *, conversation_turn_id: str) -> ConversationTurnSource | None:
+    stmt: Select[tuple[ConversationTurnSource]] = select(ConversationTurnSource).where(
+        ConversationTurnSource.conversation_turn_id == conversation_turn_id
+    )
+    return db.scalar(stmt)
+
+
+def list_turn_sources(db: Session, *, session_id: str) -> Sequence[ConversationTurnSource]:
+    stmt: Select[tuple[ConversationTurnSource]] = (
+        select(ConversationTurnSource)
+        .where(ConversationTurnSource.conversation_session_id == session_id)
+        .order_by(ConversationTurnSource.created_at.asc(), ConversationTurnSource.id.asc())
+    )
+    return list(db.scalars(stmt).all())
 
 
 def list_messages(db: Session, *, session_id: str) -> Sequence[ConversationMessage]:

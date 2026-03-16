@@ -12,6 +12,7 @@ from app.modules.channel.conversation_bridge import (
     ChannelConversationBridgeError,
     handle_inbound_message,
 )
+from app.modules.channel.conversation_routing import resolve_channel_conversation_route
 from app.modules.channel.delivery_service import send_reply
 from app.modules.channel import repository
 from app.modules.channel.schemas import (
@@ -19,6 +20,7 @@ from app.modules.channel.schemas import (
     ChannelGatewayHttpResponse,
     ChannelGatewayInboundEvent,
     ChannelGatewayWebhookAck,
+    ChannelInboundMessage,
     ChannelInboundEventCreate,
     ChannelInboundProcessingRead,
 )
@@ -246,14 +248,18 @@ def process_channel_inbound_event(
     provider_message_ref: str | None = None
     if reply_text is not None and reply_text.strip():
         try:
+            normalized_message = _parse_channel_inbound_message(inbound_event)
+            delivery_route = resolve_channel_conversation_route(
+                inbound_event.external_conversation_key,
+                external_user_id=inbound_event.external_user_id,
+                chat_type=normalized_message.chat_type,
+                thread_key=normalized_message.thread_key,
+            )
             dispatch = send_reply(
                 db,
                 household_id=account.household_id,
                 channel_account_id=account.id,
-                external_conversation_key=_resolve_delivery_conversation_key(
-                    inbound_event.external_conversation_key,
-                    external_user_id=inbound_event.external_user_id,
-                ),
+                external_conversation_key=delivery_route.delivery_conversation_key,
                 text=reply_text,
                 delivery_type="reply" if member_id is not None else "notice",
                 conversation_session_id=conversation_session_id,
@@ -299,21 +305,17 @@ def _extract_delivery_metadata(inbound_event) -> dict[str, Any]:
     return metadata if isinstance(metadata, dict) else {}
 
 
+def _parse_channel_inbound_message(inbound_event) -> ChannelInboundMessage:
+    try:
+        normalized_payload = json.loads(inbound_event.normalized_payload_json or "{}")
+    except json.JSONDecodeError as exc:
+        raise ChannelGatewayServiceError("channel inbound normalized payload is invalid") from exc
+    return ChannelInboundMessage.model_validate(normalized_payload)
+
+
 def _parse_http_response(payload: Any) -> ChannelGatewayHttpResponse | None:
     if payload is None:
         return None
     if not isinstance(payload, dict):
         raise ChannelGatewayServiceError("channel plugin http_response must be an object")
     return ChannelGatewayHttpResponse.model_validate(payload)
-
-
-def _resolve_delivery_conversation_key(
-    external_conversation_key: str | None,
-    *,
-    external_user_id: str | None,
-) -> str:
-    if isinstance(external_conversation_key, str) and external_conversation_key.strip():
-        return external_conversation_key.strip()
-    if isinstance(external_user_id, str) and external_user_id.strip():
-        return f"direct:{external_user_id.strip()}"
-    raise ChannelGatewayServiceError("delivery target external conversation key is missing")

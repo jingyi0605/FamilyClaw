@@ -7,15 +7,24 @@ from app.db.utils import new_uuid, utc_now_iso
 from app.modules.channel import repository
 from app.modules.channel.account_service import get_channel_account_or_404
 from app.modules.channel.binding_service import resolve_member_binding_for_inbound
+from app.modules.channel.conversation_routing import resolve_channel_conversation_route
 from app.modules.channel.models import ChannelConversationBinding
 from app.modules.channel.schemas import (
     ChannelConversationBridgeRead,
     ChannelInboundMessage,
 )
 from app.modules.channel.service import ChannelServiceError
+from app.modules.conversation.inbound_command_service import (
+    execute_channel_inbound_command,
+    parse_inbound_conversation_command,
+)
 from app.modules.conversation.models import ConversationSession
 from app.modules.conversation.schemas import ConversationSessionCreate, ConversationTurnCreate
-from app.modules.conversation.service import create_conversation_session, create_conversation_turn
+from app.modules.conversation.service import (
+    create_conversation_session,
+    create_conversation_turn,
+    record_conversation_turn_source,
+)
 
 
 class ChannelConversationBridgeError(ValueError):
@@ -72,17 +81,44 @@ def handle_inbound_message(
             created_conversation_binding=False,
         )
 
-    external_conversation_key = _resolve_external_conversation_key(
+    conversation_route = resolve_channel_conversation_route(
         inbound_event.external_conversation_key,
         external_user_id=inbound_event.external_user_id,
         chat_type=normalized_message.chat_type,
         thread_key=normalized_message.thread_key,
     )
+    inbound_command = parse_inbound_conversation_command(normalized_message.text)
+    if inbound_command is not None:
+        command_result = execute_channel_inbound_command(
+            db,
+            household_id=household_id,
+            member_id=binding.member_id,
+            channel_account=account,
+            external_conversation_key=conversation_route.binding_conversation_key,
+            external_user_id=inbound_event.external_user_id,
+            command=inbound_command,
+        )
+        inbound_event.status = "dispatched"
+        inbound_event.conversation_session_id = command_result.conversation_session_id
+        inbound_event.processed_at = now
+        return ChannelConversationBridgeRead(
+            inbound_event_id=inbound_event.id,
+            disposition="dispatched",
+            member_id=binding.member_id,
+            binding_strategy=binding.strategy,
+            conversation_session_id=command_result.conversation_session_id,
+            assistant_message_id=None,
+            request_id=None,
+            reply_text=command_result.reply_text,
+            created_session=True,
+            created_conversation_binding=command_result.created_binding,
+        )
+
     conversation_binding, created_conversation_binding, created_session = _get_or_create_conversation_binding(
         db,
         household_id=household_id,
         account=account,
-        external_conversation_key=external_conversation_key,
+        external_conversation_key=conversation_route.binding_conversation_key,
         external_user_id=inbound_event.external_user_id,
         member_id=binding.member_id,
         now=now,
@@ -97,6 +133,17 @@ def handle_inbound_message(
             channel=f"channel_{account.platform_code}",
         ),
         actor=system_actor,
+    )
+    record_conversation_turn_source(
+        db,
+        conversation_session_id=conversation_binding.conversation_session_id,
+        conversation_turn_id=turn.request_id,
+        source_kind="channel",
+        platform_code=account.platform_code,
+        channel_account_id=account.id,
+        external_conversation_key=conversation_route.base_conversation_key,
+        thread_key=conversation_route.thread_key,
+        channel_inbound_event_id=inbound_event.id,
     )
 
     conversation_binding.last_message_at = now
@@ -117,26 +164,6 @@ def handle_inbound_message(
         created_session=created_session,
         created_conversation_binding=created_conversation_binding,
     )
-
-
-def _resolve_external_conversation_key(
-    external_conversation_key: str | None,
-    *,
-    external_user_id: str | None,
-    chat_type: str,
-    thread_key: str | None,
-) -> str:
-    if isinstance(external_conversation_key, str) and external_conversation_key.strip():
-        key = external_conversation_key.strip()
-    elif chat_type == "direct" and isinstance(external_user_id, str) and external_user_id.strip():
-        key = f"direct:{external_user_id.strip()}"
-    else:
-        raise ChannelConversationBridgeError("external conversation key is required")
-    if isinstance(thread_key, str) and thread_key.strip():
-        return f"{key}#thread:{thread_key.strip()}"
-    return key
-
-
 def _get_or_create_conversation_binding(
     db,
     *,

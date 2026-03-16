@@ -4,15 +4,25 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
-from app.db.utils import new_uuid
+from app.db.utils import new_uuid, utc_now_iso
+from app.modules.conversation.inbound_command_service import (
+    execute_voice_terminal_inbound_command,
+    parse_inbound_conversation_command,
+)
 from app.modules.conversation.schemas import ConversationSessionCreate, ConversationMessageRead
 from app.modules.conversation.service import (
     create_conversation_session,
     get_conversation_session_detail,
+    record_conversation_turn_source,
     run_conversation_realtime_turn,
 )
 from app.modules.voice.identity_service import VoiceIdentityResolution
 from app.modules.voice.registry import VoiceSessionState, VoiceTerminalState
+from app.modules.voice.service import (
+    bind_voice_terminal_conversation,
+    get_active_voice_terminal_conversation_binding,
+    resolve_voice_terminal_binding_key,
+)
 
 _STREAM_SENTENCE_ENDINGS = frozenset({"。", "！", "？", "!", "?", "；", ";"})
 
@@ -74,7 +84,35 @@ class VoiceConversationBridge:
         identity: VoiceIdentityResolution | None = None,
     ) -> VoiceConversationBridgeResult:
         actor = self._build_actor(session=session, identity=identity)
+        terminal_type, terminal_code = resolve_voice_terminal_binding_key(terminal=terminal)
+        inbound_command = parse_inbound_conversation_command(transcript_text)
+        if inbound_command is not None:
+            command_result = execute_voice_terminal_inbound_command(
+                db,
+                household_id=session.household_id,
+                terminal_type=terminal_type,
+                terminal_code=terminal_code,
+                member_id=identity.primary_member_id if identity is not None else None,
+                command=inbound_command,
+                title=f"语音会话 {terminal.name or session.terminal_id}",
+            )
+            return VoiceConversationBridgeResult(
+                conversation_session_id=command_result.conversation_session_id,
+                response_text=command_result.reply_text,
+                degraded=False,
+                error_code=None,
+                streaming_playback=False,
+            )
         conversation_session_id = session.conversation_session_id
+        if not conversation_session_id:
+            existing_binding = get_active_voice_terminal_conversation_binding(
+                db,
+                household_id=session.household_id,
+                terminal_type=terminal_type,
+                terminal_code=terminal_code,
+            )
+            if existing_binding is not None:
+                conversation_session_id = existing_binding.conversation_session_id
         if not conversation_session_id:
             conversation_session = create_conversation_session(
                 db,
@@ -87,16 +125,26 @@ class VoiceConversationBridge:
                 actor=actor,
             )
             conversation_session_id = conversation_session.id
+        bind_voice_terminal_conversation(
+            db,
+            household_id=session.household_id,
+            terminal_type=terminal_type,
+            terminal_code=terminal_code,
+            conversation_session_id=conversation_session_id,
+            member_id=identity.primary_member_id if identity is not None else None,
+            last_message_at=utc_now_iso(),
+        )
 
         streamer = _VoiceConversationStreamForwarder(
             voice_session_id=session.session_id,
             terminal_id=session.terminal_id,
         )
+        request_id = new_uuid()
         try:
             await run_conversation_realtime_turn(
                 db,
                 session_id=conversation_session_id,
-                request_id=new_uuid(),
+                request_id=request_id,
                 user_message=transcript_text,
                 actor=actor,
                 connection_manager=streamer,
@@ -109,6 +157,14 @@ class VoiceConversationBridge:
                 error_code="conversation_bridge_unavailable",
                 streaming_playback=False,
             )
+        record_conversation_turn_source(
+            db,
+            conversation_session_id=conversation_session_id,
+            conversation_turn_id=request_id,
+            source_kind="voice_terminal",
+            platform_code=terminal.adapter_type or "voice_terminal",
+            voice_terminal_code=terminal_code,
+        )
 
         session_detail = get_conversation_session_detail(
             db,

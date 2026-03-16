@@ -26,6 +26,7 @@ from app.modules.conversation.models import (
     ConversationProposalBatch,
     ConversationProposalItem,
     ConversationSession,
+    ConversationTurnSource,
 )
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.family_qa.models import QaQueryLog
@@ -52,6 +53,7 @@ from app.modules.scene.models import SceneExecution, SceneExecutionStep, SceneTe
 from app.modules.room.models import Room
 from app.modules.scheduler.models import ScheduledTaskDefinition, ScheduledTaskDelivery, ScheduledTaskRun
 from app.modules.voiceprint.models import MemberVoiceprintProfile, MemberVoiceprintSample, VoiceprintEnrollment
+from app.modules.voice.models import VoiceTerminalConversationBinding
 
 __all__ = [
     "Account",
@@ -80,6 +82,7 @@ __all__ = [
     "ConversationProposalItem",
     "ConversationActionRecord",
     "ConversationDebugLog",
+    "ConversationTurnSource",
     "Device",
     "DeviceBinding",
     "Household",
@@ -120,4 +123,5 @@ __all__ = [
     "VoiceprintEnrollment",
     "MemberVoiceprintProfile",
     "MemberVoiceprintSample",
+    "VoiceTerminalConversationBinding",
 ]

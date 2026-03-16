@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Index, Integer, String, Text
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -72,6 +72,42 @@ class ConversationMessage(Base):
     suggestions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+
+
+class ConversationTurnSource(Base):
+    __tablename__ = "conversation_turn_sources"
+    __table_args__ = (
+        UniqueConstraint("conversation_turn_id", name="uq_conversation_turn_sources_turn_id"),
+        Index("idx_conversation_turn_sources_session_id", "conversation_session_id"),
+        Index("idx_conversation_turn_sources_source_kind", "source_kind"),
+        Index("idx_conversation_turn_sources_platform_code", "platform_code"),
+        Index("idx_conversation_turn_sources_channel_account_id", "channel_account_id"),
+        Index("idx_conversation_turn_sources_voice_terminal_code", "voice_terminal_code"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    conversation_session_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    conversation_turn_id: Mapped[str] = mapped_column(Text, nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    platform_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    channel_account_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("channel_plugin_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    voice_terminal_code: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    external_conversation_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    thread_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    channel_inbound_event_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("channel_inbound_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
 
 
 class ConversationMemoryCandidate(Base):

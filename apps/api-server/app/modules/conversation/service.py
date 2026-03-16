@@ -22,6 +22,7 @@ from app.modules.conversation.models import (
     ConversationProposalBatch,
     ConversationProposalItem,
     ConversationSession,
+    ConversationTurnSource,
 )
 from app.modules.conversation.orchestrator import (
     ConversationIntent,
@@ -76,6 +77,44 @@ logger = logging.getLogger(__name__)
 
 class ConversationNotFoundError(LookupError):
     pass
+
+
+def record_conversation_turn_source(
+    db: Session,
+    *,
+    conversation_session_id: str,
+    conversation_turn_id: str,
+    source_kind: str,
+    platform_code: str | None = None,
+    channel_account_id: str | None = None,
+    voice_terminal_code: str | None = None,
+    external_conversation_key: str | None = None,
+    thread_key: str | None = None,
+    channel_inbound_event_id: str | None = None,
+) -> ConversationTurnSource:
+    existing = repository.get_turn_source_by_turn_id(
+        db,
+        conversation_turn_id=conversation_turn_id,
+    )
+    if existing is not None:
+        return existing
+
+    row = ConversationTurnSource(
+        id=new_uuid(),
+        conversation_session_id=conversation_session_id,
+        conversation_turn_id=conversation_turn_id,
+        source_kind=source_kind,
+        platform_code=_normalize_optional_text(platform_code),
+        channel_account_id=_normalize_optional_text(channel_account_id),
+        voice_terminal_code=_normalize_optional_text(voice_terminal_code),
+        external_conversation_key=_normalize_optional_text(external_conversation_key),
+        thread_key=_normalize_optional_text(thread_key),
+        channel_inbound_event_id=_normalize_optional_text(channel_inbound_event_id),
+        created_at=utc_now_iso(),
+    )
+    repository.add_turn_source(db, row)
+    db.flush()
+    return row
 
 
 def create_conversation_session(
@@ -2466,6 +2505,13 @@ async def run_conversation_realtime_turn(
             event_type="session.snapshot",
             payload={"snapshot": snapshot.model_dump(mode="json")},
         )
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _to_session_read(db: Session, row: ConversationSession) -> ConversationSessionRead:
