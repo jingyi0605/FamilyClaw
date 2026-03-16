@@ -3,11 +3,12 @@
 ## Document Metadata
 
 - Purpose: give first-time FamilyClaw plugin developers a clean starting point so they can understand the boundary, supported plugin types, and minimum development flow.
-- Current version: v1.1
+- Current version: v1.2
 - Related documents: `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `specs/004.3-插件开发规范与注册表/design.md`
 - Change log:
   - `2026-03-13`: created the first development guide.
   - `2026-03-13`: renamed by reading order and added document metadata.
+  - `2026-03-16`: added current formal plugin types and the formal configuration entry.
 
 This guide answers the first questions a third-party plugin developer will ask:
 
@@ -43,7 +44,7 @@ If your plan depends on any of those, stop. That is not what this Spec is solvin
 
 ## 2. Supported Plugin Types
 
-The backend currently recognizes only 4 plugin types. Do not invent a fifth one.
+The manifest now supports more than the original 4 types, but do not invent an eighth one.
 
 ### `connector`
 
@@ -69,6 +70,24 @@ The backend currently recognizes only 4 plugin types. Do not invent a fifth one.
 - Typical case: let the Agent call a controlled tool through a unified path
 - Extra limits: a plugin can provide capabilities, but cannot rewrite the Agent main flow
 
+### `locale-pack`
+
+- Purpose: register UI locales and translation resources
+- Typical case: add a new locale pack
+- Boundary: it does not run in workers and does not create execution jobs
+
+### `channel`
+
+- Purpose: integrate external messaging platforms
+- Typical case: Telegram, Discord, Feishu, WeCom bot
+- Boundary: platform account config and member binding should use the formal config protocol and channel path instead of host-page field constants
+
+### `region-provider`
+
+- Purpose: plug a region directory or region-resolution provider into the system
+- Typical case: add providers outside mainland China
+- Boundary: it currently runs through a controlled provider contract and runner path, not direct main-process imports
+
 ## 3. Minimum Development Flow
 
 Do it in this order. Do not start with fancy extras.
@@ -80,6 +99,10 @@ Do it in this order. Do not start with fancy extras.
 5. Compare with existing built-in plugins to make sure your fields and layout are aligned.
 6. Run one real background-job flow so task creation, worker execution, and result lookup all line up.
 7. Add minimal tests and self-check notes, then prepare later registry submission material.
+
+If the plugin needs management-side configuration, add one more step:
+
+8. declare `config_specs` in `manifest.json` instead of scattering field definitions across host pages or business tables.
 
 In one sentence: version one is about clear declaration, runnable entrypoints, and staying inside the boundary.
 
@@ -140,6 +163,7 @@ That document explains the practical parts first:
 Then move on to the integration guide:
 
 - `docs/开发者文档/插件开发/en/05-plugin-integration-guide.md`
+- `docs/开发者文档/插件开发/en/11-plugin-configuration-integration.md`
 
 The integration guide explains:
 
@@ -177,7 +201,7 @@ In plain words: do not turn version one into an unbounded remote execution platf
 
 Before you go deeper, check these 8 items:
 
-1. Did I use only the 4 supported plugin types?
+1. Did I use only formally supported plugin types?
 2. Did I miss any entrypoint, permission, or risk level in `manifest.json`?
 3. Can each entrypoint be imported for real?
 4. Are my triggers limited to currently controlled cases?

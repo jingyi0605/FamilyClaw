@@ -2,30 +2,39 @@
 
 ## 文档元数据
 
-- 文档目的：明确 `manifest.json` 的字段定义、硬约束、推荐写法和当前实现边界，避免开发者靠猜。
-- 当前版本：v1.3
-- 关联文档：`docs/开发者文档/插件开发/zh-CN/01-插件开发总览.md`、`docs/开发者文档/插件开发/zh-CN/02-插件开发环境与本地调试.md`、`docs/开发者文档/插件开发/zh-CN/04-插件目录结构规范.md`、`apps/api-server/app/modules/plugin/schemas.py`
+- 文档目的：把 `manifest.json` 里哪些字段是正式入口、哪些约束是硬规则、哪些细节应该去别处查，说清楚。
+- 当前版本：v1.4
+- 关联文档：`docs/开发者文档/插件开发/zh-CN/00-文档使用与维护原则.md`、`docs/开发者文档/插件开发/zh-CN/11-插件配置接入说明.md`、`specs/004.2.3-插件配置协议与动态表单/docs/README.md`、`apps/api-server/app/modules/plugin/schemas.py`
 - 修改记录：
   - `2026-03-13`：创建首版 manifest 字段规范。
-  - `2026-03-13`：调整为按阅读顺序编号，并补充文档元数据。
-  - `2026-03-14`：新增 `locale-pack` 类型和 `locales` 字段说明。
-  - `2026-03-14`：补充地区上下文读取声明和地区 provider 运行字段。
-  - `2026-03-14`：补充计划触发资格和 `schedule_templates` 字段规则。
+  - `2026-03-14`：补充 `locale-pack`、地区上下文和 `schedule_templates` 规则。
+  - `2026-03-16`：补充 `channel`、`region-provider`、正式配置协议入口，并改成“稳定规则 + 事实来源引用”写法。
 
-这份文档就是把 `manifest.json` 说透，不让开发者靠猜。
+这份文档只保留稳定规则，不复制一大坨会频繁变化的字段表。
 
-这里的规则优先对齐当前仓库已经实现的校验逻辑，主要来源是：
+需要看当前可运行的精确字段形状、配置样例、接口样例时，直接看这些事实来源：
 
 - `apps/api-server/app/modules/plugin/schemas.py`
-- `apps/api-server/app/plugins/builtin/` 里的现有内置插件
+- `specs/004.2.3-插件配置协议与动态表单/docs/20260316-manifest-示例.md`
+- `specs/004.2.3-插件配置协议与动态表单/docs/20260316-api-示例.md`
 
-这里顺手再把边界说死：
+## 1. 先说边界
 
-- `manifest.json` 负责声明插件是什么、入口在哪、风险多高
-- 它不负责替代后台任务模型
-- 对外执行现在默认先创建 `plugin_job`，而不是根据 `manifest` 直接同步跑完整插件
+`manifest.json` 负责声明三件事：
 
-## 1. 第一版最小示例
+- 这个插件是什么
+- 这个插件有哪些正式入口
+- 这个插件需要哪些运行时声明
+
+它不负责这几件事：
+
+- 不替代后台任务模型
+- 不替代页面实现
+- 不替代配置实例持久化
+
+对外执行现在默认先创建 `plugin_job`，而不是因为你写了入口函数，就让接口同步把插件跑完。
+
+## 2. 第一版最小示例
 
 ```json
 {
@@ -51,46 +60,23 @@
 }
 ```
 
-注意：`description`、`vendor` 现在是规范建议字段，不是现有运行时硬校验字段。你可以先写上，后续注册表和市场都会用到。
+如果插件需要正式配置，再补 `config_specs`。如果插件需要读家庭地区上下文，再补 `capabilities.context_reads.household_region_context=true`。
 
-如果插件需要正式读取家庭地区上下文，可以再补一段：
-
-```json
-{
-  "capabilities": {
-    "context_reads": {
-      "household_region_context": true
-    }
-  }
-}
-```
-
-## 2. 字段逐项说明
+## 3. 字段逐项说明
 
 ### `id`
 
 - 必填
 - 类型：`string`
 - 规则：只能包含小写字母、数字和中划线
-- 建议：直接拿它做目录名、注册表主键和仓库 slug 的基础
-
-合格示例：
-
-- `health-basic-reader`
-- `homeassistant-device-sync`
-
-不合格示例：
-
-- `HealthBasicReader`
-- `health_basic_reader`
-- `健康插件`
+- 建议：直接把它当目录名、注册表主键和仓库 slug 的基础
 
 ### `name`
 
 - 必填
 - 类型：`string`
 - 规则：去掉首尾空格后不能为空
-- 建议：一句人能看懂的展示名，不要写内部代号
+- 建议：写人能看懂的展示名，不要写内部代号
 
 ### `version`
 
@@ -103,20 +89,25 @@
 
 - 必填
 - 类型：`string[]`
-- 规则：至少 1 个；不能重复；只能是这 5 个值：
-  - `connector`
-  - `memory-ingestor`
-  - `action`
-  - `agent-skill`
-  - `locale-pack`
+- 规则：至少 1 个；不能重复；只能使用当前正式支持的类型
 
-其中前 4 个是可执行插件类型，`locale-pack` 是语言包插件类型。
+当前已经正式进入体系的类型有：
 
-它的边界也要说死：
+- `connector`
+- `memory-ingestor`
+- `action`
+- `agent-skill`
+- `locale-pack`
+- `channel`
+- `region-provider`
 
-- `locale-pack` 不走 worker，不创建后台执行任务
-- 它的作用只是把语言元数据和文案资源注册进系统
-- 比如繁体中文这种界面文案扩展，就应该用它，不要硬塞进 `action` 或 `agent-skill`
+这里不要再写死成“只有 5 类”或者“只有 4 类”。
+
+边界也别搞混：
+
+- `locale-pack` 负责注册语言资源，不走 worker 执行链
+- `channel` 负责通讯平台进出站接入
+- `region-provider` 负责地区目录能力，不是普通同步插件换个名字
 
 ### `permissions`
 
@@ -125,120 +116,46 @@
 - 规则：允许空数组；不能有空字符串；不能重复
 - 建议：只声明运行所需的最小权限
 
-现有插件里能看到的例子：
-
-- `health.read`
-- `device.read`
-- `device.control`
-- `memory.write.device`
-- `memory.write.observation`
-
 ### `risk_level`
 
 - 必填
 - 类型：`string`
 - 允许值：`low` / `medium` / `high`
 
-现有行为边界：
-
-- `low`：普通读数据插件常见
-- `medium`：普通设备动作插件常见
-- `high`：门锁这类高风险动作会触发人工确认入口
-
 ### `triggers`
 
 - 必填
 - 类型：`string[]`
 - 规则：允许空数组；不能有空字符串；不能重复
-- 第一版建议值：`manual`、`schedule`、`agent`
+- 第一版常用值：`manual`、`schedule`、`agent`
 
-这里先写可控触发，不要发明一堆系统还没支持的自动触发语义。
-
-这里把计划任务边界直接说死：
-
-- 只有 `triggers` 里明确写了 `schedule`，这个插件才允许被计划任务系统引用
-- 没写 `schedule` 的插件，就算你手动填进计划任务目标里，后端也会拒绝
-- 插件作者不能靠 `manifest` 自己往系统里偷偷注册定时任务；正式入口还是计划任务系统和 `plugin_job`
-- 家庭或挂载层把插件禁用后，这个插件也不会再被新的计划任务分发链路接受
-
-说白了：`schedule` 是“有资格被计划任务调用”，不是“插件自己接管调度器”。
+这里的 `schedule` 只表示“允许被计划任务系统调用”，不表示“插件自己接管调度器”。
 
 ### `schedule_templates`
 
 - 选填
 - 类型：`object[]`
-- 用途：给计划任务管理页或后续对话草稿提供推荐模板，不是直接创建任务
+- 用途：给计划任务页面提供推荐模板，不会自动给任何家庭建任务
 
-每一项当前支持这些字段：
-
-- `code`：模板编码，插件内唯一
-- `name`：模板展示名
-- `description`：给人看的说明
-- `default_definition`：默认任务定义片段，比如推荐的 `trigger_type`、`schedule_type`、`schedule_expr`
-- `enabled_by_default`：默认是否建议启用
-
-最小示例：
-
-```json
-{
-  "triggers": ["manual", "schedule"],
-  "schedule_templates": [
-    {
-      "code": "daily-check",
-      "name": "每日巡检",
-      "description": "每天固定跑一次基础同步",
-      "default_definition": {
-        "trigger_type": "schedule",
-        "schedule_type": "daily",
-        "schedule_expr": "09:00"
-      },
-      "enabled_by_default": false
-    }
-  ]
-}
-```
-
-硬规则也别含糊：
-
-- 只要声明了 `schedule_templates`，`triggers` 就必须包含 `schedule`
-- `schedule_templates` 只是推荐入口，不会自动给任何家庭建任务
-- 模板里写的默认值只是建议，真正入库时还要再走计划任务 service 的权限、归属和目标校验
+只要声明了 `schedule_templates`，`triggers` 就必须包含 `schedule`。
 
 ### `entrypoints`
 
-- 对可执行插件必填；纯 `locale-pack` 插件可以留空对象
+- 对可执行插件必填
 - 类型：`object`
 - 规则：值必须是“模块路径 + 函数名”，而且能被真实 import 到
-- 规则：你声明了什么可执行类型，这里就必须给对应入口
+- 规则：声明了什么可执行类型，这里就必须给对应入口
 
-支持的 key：
+当前常见 key：
 
 - `connector`
 - `memory_ingestor` 或 `memory-ingestor`
 - `action`
 - `agent_skill` 或 `agent-skill`
+- `channel`
+- `region_provider` 或 `region-provider`
 
-文档里推荐统一写下划线 key，因为运行时最终也会归一成下划线。
-
-合格示例：
-
-```json
-{
-  "connector": "app.plugins.builtin.health_basic.connector.sync",
-  "memory_ingestor": "app.plugins.builtin.health_basic.ingestor.transform"
-}
-```
-
-不合格示例：
-
-```json
-{
-  "connector": "health_basic_connector",
-  "memory_ingestor": "app.plugins.builtin.health_basic.ingestor"
-}
-```
-
-第一个少了函数名，第二个也少了函数名。
+文档里统一推荐写下划线 key，因为运行时最终也会归一到下划线。
 
 ### `locales`
 
@@ -246,53 +163,57 @@
 - 类型：`object[]`
 - 规则：声明了 `locale-pack` 就至少要有 1 个 locale
 
+### `capabilities`
+
+- 选填
+- 类型：`object`
+- 用途：声明插件要读取哪些受控上下文，或者把自己挂成正式扩展能力
+
+当前这轮已经正式可用的能力声明：
+
+- `context_reads.household_region_context`
+- `region_provider.*`
+
+如果是通道插件，平台能力相关声明继续写在通道插件自己的正式字段里，不要再把通道字段散落到页面常量里。
+
+### `config_specs`
+
+- 选填
+- 类型：`object[]`
+- 用途：声明正式插件配置协议
+
 每一项至少包含：
 
-- `id`：语言 id，比如 `zh-TW`
-- `label`：给通用界面或后台展示用的语言名，比如 `Traditional Chinese`
-- `native_label`：给用户看的本地名称，比如 `繁體中文`
-- `resource`：语言资源相对路径，比如 `locales/zh-TW.json`
-- `fallback`：可选，缺失翻译时要回退到哪个语言，比如 `zh-CN`
+- `scope_type`
+- `schema_version`
+- `config_schema`
+- `ui_schema`
 
-最小示例：
+这轮只支持两个正式作用域：
 
-```json
-{
-  "types": ["locale-pack"],
-  "entrypoints": {},
-  "locales": [
-    {
-      "id": "zh-TW",
-      "label": "Traditional Chinese",
-      "native_label": "繁體中文",
-      "resource": "locales/zh-TW.json",
-      "fallback": "zh-CN"
-    }
-  ]
-}
-```
+- `plugin`
+- `channel_account`
 
-再把冲突规则说清楚，别靠猜：
+这里故意不把完整字段类型表、widget 表、显示条件表再抄一遍。那些会变，直接看：
 
-- 如果同一个家庭里有多个语言包都声明同一个 `locale id`
-- 系统不会把它们全部同时暴露给前端
-- 只会选一个生效，优先级是：`builtin > official > third_party`
-- 如果来源级别一样，就按 `plugin_id` 稳定排序，字典序更小的那个生效
-- 被压下去的插件不会报废，但会出现在接口的 `overridden_plugin_ids` 里
+- `docs/开发者文档/插件开发/zh-CN/11-插件配置接入说明.md`
+- `specs/004.2.3-插件配置协议与动态表单/docs/README.md`
+- `apps/api-server/app/modules/plugin/schemas.py`
 
-说白了，第三方插件不要指望去覆盖内置 `zh-TW`。你真要换文案，要么改内置包，要么换一个新的 locale id。
+稳定规则只有这几条：
+
+1. 字段定义只保留一份来源，也就是插件 manifest。
+2. 没有 `config_specs` 的旧插件仍然可以继续展示、启停、执行。
+3. secret 字段读取时绝不回显明文。
 
 ### `description`
 
 - 选填，但强烈建议填写
 - 类型：`string`
-- 用途：给维护者和后续市场看
-
-建议写法：
-
-- 这个插件解决什么问题
-- 它读什么数据，或者执行什么动作
-- 它明确不做什么
+- 建议写清楚：
+  - 这个插件解决什么问题
+  - 它读什么数据，或者执行什么动作
+  - 它明确不做什么
 
 ### `vendor`
 
@@ -300,78 +221,7 @@
 - 类型：`object`
 - 建议至少有：`name`、`contact`
 
-第一版不强制结构冻结，但必须让人能联系到维护者。
-
-### `capabilities`
-
-- 选填
-- 类型：`object`
-- 用途：声明插件要读取哪些受控上下文，以及是否要把自己当成地区 provider 挂进系统
-
-当前正式可用的有两项：
-
-- `context_reads.household_region_context: true`
-- `region_provider.*`
-
-写了这项以后，系统会在插件执行时把家庭地区上下文放进 `payload._system_context.region.household_context`。
-
-这一项不是让插件直接查数据库，而是走正式入口：
-
-- 受控入口名：`region.resolve_household_context`
-
-示例：
-
-```json
-{
-  "capabilities": {
-    "context_reads": {
-      "household_region_context": true
-    }
-  }
-}
-```
-
-如果你要把插件当成第三方地区 provider 真正挂进系统，还要再写一组字段：
-
-- `capabilities.region_provider.provider_code`
-- `capabilities.region_provider.country_codes`
-- `capabilities.region_provider.entrypoint`
-- `capabilities.region_provider.reserved`
-
-这组字段现在不是摆设，运行时会真的用到：
-
-- `provider_code`：这个 provider 的正式编码
-- `country_codes`：这个 provider 支持哪些国家代码
-- `entrypoint`：主服务调用 provider 的入口函数
-- `reserved`：`false` 表示这不是预留声明，而是真的要运行
-
-最小可运行示例：
-
-```json
-{
-  "types": ["region-provider"],
-  "entrypoints": {
-    "region_provider": "plugin.region_provider.handle"
-  },
-  "capabilities": {
-    "region_provider": {
-      "provider_code": "plugin.jp-sample",
-      "country_codes": ["JP"],
-      "entrypoint": "plugin.region_provider.handle",
-      "reserved": false
-    }
-  }
-}
-```
-
-这套写法现在已经能跑，但有几条硬规则：
-
-- `types` 里必须包含 `region-provider`
-- `entrypoints.region_provider` 必须和 `capabilities.region_provider.entrypoint` 一致
-- `country_codes` 至少要有一个值
-- 第三方 provider 仍然走 runner 子进程，不直接进主进程
-
-## 3. 类型和入口最小对照
+## 4. 类型和入口最小对照
 
 | 类型 | 推荐模块 | 推荐函数 | 说明 |
 | --- | --- | --- | --- |
@@ -379,25 +229,27 @@
 | `memory-ingestor` | `ingestor.py` | `transform` | 原始记录转标准记忆 |
 | `action` | `executor.py` | `run` | 执行动作 |
 | `agent-skill` | `skill.py` | `run` | 暴露给 Agent 的受控能力 |
+| `channel` | `channel.py` | `handle` | 处理通道平台进出站 |
+| `region-provider` | `region_provider.py` | `handle` | 提供地区目录能力 |
 | `locale-pack` | `locales/*.json` | 无 | 注册界面语言和文案资源 |
 
-## 4. 跟现有实现直接相关的硬约束
+## 5. 跟现有实现直接相关的硬约束
 
 这些不是建议，是不满足就会出问题：
 
-1. `id` 不能重复，插件注册中心会拒绝重复插件 id。
-2. `manifest.json` 顶层必须是对象，不能是数组。
-3. 可执行插件的 `entrypoints` 指到的函数必须可调用。
-4. `types` 中每一种可执行能力都必须有对应入口；`locale-pack` 不需要 Python 入口。
-5. Agent 统一入口当前只允许 `connector` 和 `agent-skill`。
-6. `action` 插件还要额外过权限检查；高风险动作还要人工确认。
-7. `locale-pack` 至少要声明一个 `locales` 项，而且 `resource` 必须是插件目录内的相对路径。
-8. 如果插件要被计划任务系统引用，`triggers` 里必须显式包含 `schedule`。
-9. 如果声明了 `schedule_templates`，`triggers` 里也必须包含 `schedule`。
-10. 如果插件要读家庭地区上下文，必须显式声明 `capabilities.context_reads.household_region_context=true`。
-11. 如果插件要作为地区 provider 运行，必须显式声明 `types=["region-provider"]` 和完整的 `capabilities.region_provider`。
+1. `id` 不能重复。
+2. `manifest.json` 顶层必须是对象。
+3. 可执行插件的 `entrypoints` 必须能定位到真实可调用函数。
+4. `types` 里每一种可执行能力都必须有对应入口。
+5. `locale-pack` 至少要声明一个 `locales` 项。
+6. 如果插件要被计划任务系统引用，`triggers` 里必须显式包含 `schedule`。
+7. 如果声明了 `schedule_templates`，`triggers` 里也必须包含 `schedule`。
+8. 如果插件要读家庭地区上下文，必须显式声明 `capabilities.context_reads.household_region_context=true`。
+9. 如果插件要作为地区 provider 运行，必须显式声明 `types=["region-provider"]` 和完整的 `capabilities.region_provider`。
+10. 如果插件声明了 `config_specs`，后端会按正式协议校验，不符合协议会直接报错。
+11. 没有配置协议的旧插件，不会因为这次新增 `config_specs` 被判成非法插件。
 
-## 5. 第一版先不要写进 manifest 的东西
+## 6. 第一版先不要写进 manifest 的东西
 
 这些东西现在看起来高级，实际上会把边界搞烂：
 
@@ -405,24 +257,23 @@
 - 自动下载脚本
 - 沙箱策略配置
 - 全量签名验证字段
-- 市场前端展示布局元数据
-- 把 `reserved=true` 的地区 provider 宣传成“已经接管系统地区目录”的误导字段
+- 市场页面布局元数据
+- 前端页面组件名
+- 一整份从后端复制出来的字段表
 
-一句话：先把运行声明写清楚，不要把还没实现的开放平台概念硬塞进去。
+一句话：先把正式运行声明写清楚，不要把未来可能有、现在还没落地的开放平台概念硬塞进去。
 
-## 6. 开发者提交前自检
+## 7. 开发者提交前自检
 
 1. `id` 是否满足字符规则？
-2. `types` 是否只用了当前支持的 5 类？
+2. `types` 是否只用了当前正式支持的类型？
 3. 如果是可执行插件，`entrypoints` 是否每一项都能 import 到真实函数？
 4. `permissions` 是否最小化，而不是乱申请？
 5. `risk_level` 是否和插件真实风险匹配？
-6. 如果是 `action`，是否已经明确风险和权限边界？
-7. 如果是 `locale-pack`，是否已经提供 `locales/*.json` 这类真实资源文件，并写清回退语言？
+6. 如果用了 `config_specs`，字段定义是否只保留在 manifest，而不是再去页面里写一份常量？
+7. 如果用了 secret 字段，是否确认读取不回显、清空走正式语义？
 8. 如果要给计划任务系统用，`triggers` 里是不是已经明确写了 `schedule`？
-9. 如果声明了 `schedule_templates`，是不是确认它们只是模板，不会误导别人以为插件会自动建任务？
+9. 如果是 `channel`，是不是按正式配置协议声明了 `channel_account` 作用域，而不是把字段继续写死在页面？
 10. 有没有偷偷依赖远程安装、远程执行、沙箱、签名平台？
 
-如果你声明的 locale id 跟现有内置语言重复，也要先想清楚：你大概率不会生效。
-
-这些都过了，再去准备注册表材料。
+这些都过了，再去准备注册表和联调材料。
