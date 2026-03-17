@@ -209,6 +209,60 @@ class ConversationDebugLog(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
 
 
+class ConversationDeviceControlShortcut(Base):
+    __tablename__ = "device_control_shortcuts"
+    __table_args__ = (
+        Index(
+            "idx_device_control_shortcuts_match_member",
+            "household_id",
+            "member_id",
+            "normalized_text",
+            "status",
+        ),
+        Index(
+            "idx_device_control_shortcuts_match_household",
+            "household_id",
+            "normalized_text",
+            "status",
+        ),
+        Index("idx_device_control_shortcuts_device_id", "device_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    household_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    member_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("members.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_text: Mapped[str] = mapped_column(Text, nullable=False)
+    device_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    params_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    resolution_source: Mapped[str] = mapped_column(String(32), nullable=False, default="tool_planner")
+    confidence: Mapped[float | None] = mapped_column(nullable=True)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_used_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default=utc_now_iso,
+        onupdate=utc_now_iso,
+    )
+
+
 class ConversationProposalBatch(Base):
     __tablename__ = "conversation_proposal_batches"
     __table_args__ = (

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import cast
+from typing import Any, cast
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -12,12 +12,28 @@ from app.core.config import settings
 from app.db.utils import utc_now_iso
 from app.modules.agent.service import build_agent_runtime_context
 from app.core.logging import dump_conversation_debug_event, get_conversation_debug_logger
+from app.modules.conversation.device_context_summary import ConversationDeviceContextSummary
+from app.modules.conversation.device_control_planner import (
+    ConversationDevicePlannerError,
+    plan_device_control,
+)
+from app.modules.conversation.device_control_toolkit import entity_supports_action
+from app.modules.conversation.device_shortcut_service import (
+    DeviceShortcutResolutionSource,
+    DeviceShortcutStatus,
+    DeviceShortcutUpsertPayload,
+    load_device_shortcut_params,
+    mark_device_shortcut_status,
+    match_device_shortcut,
+    touch_device_shortcut_hit,
+    upsert_device_shortcut,
+)
 from app.modules.device.models import Device
-from app.modules.device.service import list_devices
+from app.modules.device.service import list_device_entities, list_devices
 from app.modules.device_action.schemas import DeviceActionExecuteRequest
 from app.modules.device_action.service import aexecute_device_action, execute_device_action
 from app.modules.context.service import get_context_overview
-from app.modules.conversation.models import ConversationSession
+from app.modules.conversation.models import ConversationDeviceControlShortcut, ConversationSession
 from app.modules.family_qa.schemas import FamilyQaQueryRequest, FamilyQaQueryResponse
 from app.modules.family_qa.service import query_family_qa, stream_family_qa
 from app.modules.llm_task import ainvoke_llm, invoke_llm, stream_llm
@@ -34,6 +50,10 @@ INTENT_FALLBACK_THRESHOLD = 0.6
 INTENT_HISTORY_LIMIT = 6
 INTENT_DETECTION_TIMEOUT_MS = 4000
 FREE_CHAT_DEGRADED_TIMEOUT_MS = 8000
+FAST_ACTION_ACTION_KEYWORDS = ("打开", "开启", "关掉", "关闭", "关上", "停止", "锁上", "解锁", "拉开", "拉上")
+FAST_ACTION_DEVICE_KEYWORDS = ("灯", "空调", "窗帘", "门锁", "音箱", "设备")
+FAST_ACTION_QUESTION_KEYWORDS = ("怎么", "如何", "为什么", "能不能", "可以吗", "吗", "呢", "？", "?")
+FAST_ACTION_CONFIRMATION_KEYWORDS = ("是", "是的", "对", "对的", "嗯", "好的", "好", "确认", "没错", "就这个", "可以", "行")
 
 
 class ConversationIntentLabel(StrEnum):
@@ -81,9 +101,14 @@ class ConversationLaneSelection:
 
 @dataclass(frozen=True)
 class FastActionPlan:
-    device: Device
+    device_id: str
+    entity_id: str
     action: str
+    params: dict[str, Any]
+    reason: str
     confirm_high_risk: bool
+    resolution_trace: dict[str, Any] = field(default_factory=dict)
+    shortcut: ConversationDeviceControlShortcut | None = None
 
 
 @dataclass
@@ -144,6 +169,7 @@ def detect_conversation_intent(
     session: ConversationSession,
     message: str,
     conversation_history: list[dict[str, str]] | None = None,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ) -> ConversationIntentDetection:
     normalized_message = message.strip()
@@ -175,6 +201,7 @@ def detect_conversation_intent(
                 session=session,
                 message=normalized_message,
                 conversation_history=conversation_history or [],
+                device_context_summary=device_context_summary,
             ),
             household_id=session.household_id,
             request_context=request_context,
@@ -202,6 +229,7 @@ async def adetect_conversation_intent(
     session: ConversationSession,
     message: str,
     conversation_history: list[dict[str, str]],
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ) -> ConversationIntentDetection:
     normalized_message = message.strip()
@@ -233,6 +261,7 @@ async def adetect_conversation_intent(
                 session=session,
                 message=normalized_message,
                 conversation_history=conversation_history or [],
+                device_context_summary=device_context_summary,
             ),
             household_id=session.household_id,
             request_context=request_context,
@@ -261,19 +290,23 @@ def run_orchestrated_turn(
     message: str,
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
+    _log_device_context_summary(request_context=request_context, device_context_summary=device_context_summary)
     detection = detect_conversation_intent(
         db,
         session=session,
         message=message,
         conversation_history=conversation_history,
+        device_context_summary=device_context_summary,
         request_context=request_context,
     )
     lane_selection = select_conversation_lane(
         session=session,
         message=message,
         detection=detection,
+        device_context_summary=device_context_summary,
         request_context=request_context,
     )
     _log_route_selection(request_context=request_context, detection=detection)
@@ -286,6 +319,7 @@ def run_orchestrated_turn(
             message=message,
             actor=actor,
             conversation_history=conversation_history,
+            device_context_summary=device_context_summary,
             request_context=request_context,
         )
         return _attach_lane_selection(
@@ -300,6 +334,7 @@ def run_orchestrated_turn(
             actor=actor,
             detection=detection,
             lane_selection=lane_selection,
+            device_context_summary=device_context_summary,
             request_context=request_context,
         )
     return _run_non_realtime_lane(
@@ -310,6 +345,7 @@ def run_orchestrated_turn(
         conversation_history=conversation_history,
         detection=detection,
         lane_selection=lane_selection,
+        device_context_summary=device_context_summary,
         request_context=request_context,
     )
 
@@ -321,25 +357,41 @@ async def stream_orchestrated_turn(
     message: str,
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ):
+    _log_device_context_summary(request_context=request_context, device_context_summary=device_context_summary)
     detection = await adetect_conversation_intent(
         db,
         session=session,
         message=message,
         conversation_history=conversation_history,
+        device_context_summary=device_context_summary,
         request_context=request_context,
     )
     lane_selection = select_conversation_lane(
         session=session,
         message=message,
         detection=detection,
+        device_context_summary=device_context_summary,
         request_context=request_context,
     )
     _log_route_selection(request_context=request_context, detection=detection)
     if settings.conversation_lane_shadow_enabled and not settings.conversation_lane_takeover_enabled:
         _log_lane_shadow_result(request_context=request_context, detection=detection, lane_selection=lane_selection)
     if lane_selection.lane == ConversationLane.REALTIME_QUERY and settings.conversation_lane_takeover_enabled:
+        _log_orchestrator_debug_event(
+            request_context=request_context,
+            stage="structured_qa.request.started",
+            message="结构化问答开始读取家庭事实。",
+            payload={
+                "message": message,
+                "has_device_context": device_context_summary is not None and device_context_summary.latest_target is not None,
+                "device_context_summary": (
+                    device_context_summary.to_payload() if device_context_summary is not None else None
+                ),
+            },
+        )
         async for event_type, event_payload in stream_family_qa(
             db,
             FamilyQaQueryRequest(
@@ -348,15 +400,32 @@ async def stream_orchestrated_turn(
                 agent_id=session.active_agent_id,
                 question=message,
                 channel="conversation_turn",
-                context={"conversation_history": conversation_history, "request_context": request_context or {}},
+                context={
+                    "conversation_history": conversation_history,
+                    "request_context": request_context or {},
+                    "device_context_summary": (
+                        device_context_summary.to_payload() if device_context_summary is not None else {}
+                    ),
+                },
             ),
             actor,
         ):
             if event_type == "done":
+                result_payload = cast(FamilyQaQueryResponse, event_payload)
+                _log_orchestrator_debug_event(
+                    request_context=request_context,
+                    stage="structured_qa.request.completed",
+                    message="结构化问答已完成事实查询。",
+                    payload={
+                        "answer_type": result_payload.answer_type,
+                        "facts_count": len(result_payload.facts),
+                        "degraded": result_payload.degraded,
+                    },
+                )
                 yield event_type, _attach_lane_selection(
                     _from_family_qa_result(
                         ConversationIntent.STRUCTURED_QA,
-                        cast(FamilyQaQueryResponse, event_payload),
+                        result_payload,
                         detection=detection,
                     ),
                     lane_selection=lane_selection,
@@ -372,6 +441,7 @@ async def stream_orchestrated_turn(
             actor=actor,
             detection=detection,
             lane_selection=lane_selection,
+            device_context_summary=device_context_summary,
             request_context=request_context,
         )
         return
@@ -383,6 +453,7 @@ async def stream_orchestrated_turn(
         conversation_history=conversation_history,
         detection=detection,
         lane_selection=lane_selection,
+        device_context_summary=device_context_summary,
         request_context=request_context,
     ):
         yield event_type, event_payload
@@ -395,9 +466,22 @@ def _run_structured_qa(
     message: str,
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ) -> FamilyQaQueryResponse:
-    return query_family_qa(
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="structured_qa.request.started",
+        message="结构化问答开始读取家庭事实。",
+        payload={
+            "message": message,
+            "has_device_context": device_context_summary is not None and device_context_summary.latest_target is not None,
+            "device_context_summary": (
+                device_context_summary.to_payload() if device_context_summary is not None else None
+            ),
+        },
+    )
+    result = query_family_qa(
         db,
         FamilyQaQueryRequest(
             household_id=session.household_id,
@@ -405,10 +489,27 @@ def _run_structured_qa(
             agent_id=session.active_agent_id,
             question=message,
             channel="conversation_turn",
-            context={"conversation_history": conversation_history, "request_context": request_context or {}},
+            context={
+                "conversation_history": conversation_history,
+                "request_context": request_context or {},
+                "device_context_summary": (
+                    device_context_summary.to_payload() if device_context_summary is not None else {}
+                ),
+            },
         ),
         actor,
     )
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="structured_qa.request.completed",
+        message="结构化问答已完成事实查询。",
+        payload={
+            "answer_type": result.answer_type,
+            "facts_count": len(result.facts),
+            "degraded": result.degraded,
+        },
+    )
+    return result
 
 
 def select_conversation_lane(
@@ -416,6 +517,7 @@ def select_conversation_lane(
     session: ConversationSession,
     message: str,
     detection: ConversationIntentDetection,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ) -> ConversationLaneSelection:
     _ = request_context
@@ -441,6 +543,34 @@ def select_conversation_lane(
         )
         detection.lane_selection = selection
         return selection
+    if detection.route_intent in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA} and _looks_like_contextual_fast_action_request(
+        message,
+        device_context_summary,
+    ):
+        selection = ConversationLaneSelection(
+            lane=ConversationLane.FAST_ACTION,
+            confidence=0.84,
+            reason="当前句动作明确，且最近设备上下文只有一个可靠目标，优先进入 fast_action 车道。",
+            target_kind="device_action",
+            requires_clarification=False,
+            source="device_context",
+        )
+        detection.lane_selection = selection
+        return selection
+    if detection.route_intent in {ConversationIntent.FREE_CHAT, ConversationIntent.STRUCTURED_QA} and _looks_like_fast_action_confirmation_reply(
+        message,
+        device_context_summary,
+    ):
+        selection = ConversationLaneSelection(
+            lane=ConversationLane.FAST_ACTION,
+            confidence=0.9,
+            reason="当前句是上一轮设备控制确认回复，直接继续走 fast_action 车道。",
+            target_kind="device_action",
+            requires_clarification=False,
+            source="device_confirmation_context",
+        )
+        detection.lane_selection = selection
+        return selection
     selection = _build_lane_selection_from_intent(detection.route_intent)
     detection.lane_selection = selection
     return selection
@@ -455,6 +585,7 @@ def _run_non_realtime_lane(
     conversation_history: list[dict[str, str]],
     detection: ConversationIntentDetection,
     lane_selection: ConversationLaneSelection,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
     if settings.conversation_lane_takeover_enabled:
@@ -467,6 +598,7 @@ def _run_non_realtime_lane(
                 actor=actor,
                 conversation_history=conversation_history,
                 detection=detection,
+                device_context_summary=device_context_summary,
                 request_context=request_context,
             ),
             lane_selection=lane_selection,
@@ -519,6 +651,7 @@ def _run_non_realtime_lane(
             actor=actor,
             conversation_history=conversation_history,
             detection=detection,
+            device_context_summary=device_context_summary,
             request_context=request_context,
         ),
         lane_selection=lane_selection,
@@ -533,6 +666,7 @@ def _run_fast_action_lane(
     actor: ActorContext,
     detection: ConversationIntentDetection,
     lane_selection: ConversationLaneSelection,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
     plan, clarification = _resolve_fast_action_plan(
@@ -540,23 +674,45 @@ def _run_fast_action_lane(
         session=session,
         message=message,
         actor=actor,
+        device_context_summary=device_context_summary,
+        request_context=request_context,
     )
     if clarification is not None:
         return _attach_lane_selection(clarification, lane_selection=lane_selection)
     assert plan is not None
+    _log_fast_action_execution_started(request_context=request_context, plan=plan)
     try:
         response, _ = execute_device_action(
             db,
             payload=DeviceActionExecuteRequest(
                 household_id=session.household_id,
-                device_id=plan.device.id,
+                device_id=plan.device_id,
+                entity_id=plan.entity_id,
                 action=cast(str, plan.action),
-                params={},
-                reason="conversation.fast_action",
+                params=plan.params,
+                reason=plan.reason,
                 confirm_high_risk=plan.confirm_high_risk,
             ),
         )
+        if plan.shortcut is not None:
+            touch_device_shortcut_hit(db, shortcut=plan.shortcut)
+        else:
+            _persist_fast_action_shortcut(
+                db,
+                session=session,
+                actor=actor,
+                message=message,
+                plan=plan,
+                request_context=request_context,
+            )
     except Exception as exc:
+        _log_fast_action_execution_failed(request_context=request_context, plan=plan, exc=exc)
+        _handle_fast_action_shortcut_failure(
+            db,
+            plan=plan,
+            exc=exc,
+            request_context=request_context,
+        )
         return _attach_lane_selection(
             ConversationOrchestratorResult(
                 intent=ConversationIntent.FAST_ACTION,
@@ -575,11 +731,15 @@ def _run_fast_action_lane(
             ),
             lane_selection=lane_selection,
         )
+    _log_fast_action_execution_completed(request_context=request_context, plan=plan, response=response)
     receipt = {
         "type": "fast_action_receipt",
         "label": "设备动作执行结果",
         "source": "conversation_fast_action",
-        "extra": response.model_dump(mode="json"),
+        "extra": {
+            **response.model_dump(mode="json"),
+            "resolution_trace": plan.resolution_trace,
+        },
     }
     return _attach_lane_selection(
         ConversationOrchestratorResult(
@@ -609,6 +769,7 @@ async def _arun_fast_action_lane(
     actor: ActorContext,
     detection: ConversationIntentDetection,
     lane_selection: ConversationLaneSelection,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
     plan, clarification = _resolve_fast_action_plan(
@@ -616,23 +777,45 @@ async def _arun_fast_action_lane(
         session=session,
         message=message,
         actor=actor,
+        device_context_summary=device_context_summary,
+        request_context=request_context,
     )
     if clarification is not None:
         return _attach_lane_selection(clarification, lane_selection=lane_selection)
     assert plan is not None
+    _log_fast_action_execution_started(request_context=request_context, plan=plan)
     try:
         response, _ = await aexecute_device_action(
             db,
             payload=DeviceActionExecuteRequest(
                 household_id=session.household_id,
-                device_id=plan.device.id,
+                device_id=plan.device_id,
+                entity_id=plan.entity_id,
                 action=cast(str, plan.action),
-                params={},
-                reason="conversation.fast_action",
+                params=plan.params,
+                reason=plan.reason,
                 confirm_high_risk=plan.confirm_high_risk,
             ),
         )
+        if plan.shortcut is not None:
+            touch_device_shortcut_hit(db, shortcut=plan.shortcut)
+        else:
+            _persist_fast_action_shortcut(
+                db,
+                session=session,
+                actor=actor,
+                message=message,
+                plan=plan,
+                request_context=request_context,
+            )
     except Exception as exc:
+        _log_fast_action_execution_failed(request_context=request_context, plan=plan, exc=exc)
+        _handle_fast_action_shortcut_failure(
+            db,
+            plan=plan,
+            exc=exc,
+            request_context=request_context,
+        )
         return _attach_lane_selection(
             ConversationOrchestratorResult(
                 intent=ConversationIntent.FAST_ACTION,
@@ -651,11 +834,15 @@ async def _arun_fast_action_lane(
             ),
             lane_selection=lane_selection,
         )
+    _log_fast_action_execution_completed(request_context=request_context, plan=plan, response=response)
     receipt = {
         "type": "fast_action_receipt",
         "label": "设备动作执行结果",
         "source": "conversation_fast_action",
-        "extra": response.model_dump(mode="json"),
+        "extra": {
+            **response.model_dump(mode="json"),
+            "resolution_trace": plan.resolution_trace,
+        },
     }
     return _attach_lane_selection(
         ConversationOrchestratorResult(
@@ -686,6 +873,7 @@ async def _stream_non_realtime_lane(
     conversation_history: list[dict[str, str]],
     detection: ConversationIntentDetection,
     lane_selection: ConversationLaneSelection,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ):
     if settings.conversation_lane_takeover_enabled:
@@ -698,6 +886,7 @@ async def _stream_non_realtime_lane(
             conversation_history=conversation_history,
             detection=detection,
             lane_selection=lane_selection,
+            device_context_summary=device_context_summary,
             request_context=request_context,
         ):
             yield event_type, event_payload
@@ -753,6 +942,7 @@ async def _stream_non_realtime_lane(
         conversation_history=conversation_history,
         detection=detection,
         lane_selection=lane_selection,
+        device_context_summary=device_context_summary,
         request_context=request_context,
     ):
         yield event_type, event_payload
@@ -808,7 +998,19 @@ def _resolve_fast_action_plan(
     session: ConversationSession,
     message: str,
     actor: ActorContext,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
+    request_context: dict | None = None,
 ) -> tuple[FastActionPlan | None, ConversationOrchestratorResult | None]:
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.plan.resolve.started",
+        message="对话设备快控开始解析执行计划。",
+        payload={
+            "message": message,
+            "member_id": actor.member_id,
+            "household_id": session.household_id,
+        },
+    )
     if actor.account_type != "system" and actor.member_role != "admin":
         return None, ConversationOrchestratorResult(
             intent=ConversationIntent.FAST_ACTION,
@@ -824,6 +1026,176 @@ def _resolve_fast_action_plan(
             effective_agent_id=session.active_agent_id,
             effective_agent_name=None,
         )
+
+    pending_confirmation_plan = _build_fast_action_plan_from_confirmation_context(
+        db,
+        session=session,
+        message=message,
+        device_context_summary=device_context_summary,
+        request_context=request_context,
+    )
+    if pending_confirmation_plan is not None:
+        _log_fast_action_plan_selected(request_context=request_context, plan=pending_confirmation_plan)
+        return pending_confirmation_plan, None
+
+    shortcut = match_device_shortcut(
+        db,
+        household_id=session.household_id,
+        member_id=actor.member_id,
+        source_text=message,
+    )
+    if shortcut is not None:
+        device = db.get(Device, shortcut.device_id)
+        if device is not None and shortcut.action == "unlock" and not _is_high_risk_confirmation_present(message):
+            return None, ConversationOrchestratorResult(
+                intent=ConversationIntent.FAST_ACTION,
+                text=f"解锁 {device.name} 属于高风险动作。请明确说“确认解锁{device.name}”后我再执行。",
+                degraded=False,
+                facts=[],
+                suggestions=[f"确认解锁{device.name}", f"先查询{device.name}状态"],
+                memory_candidate_payloads=[],
+                config_suggestion=None,
+                action_payloads=[],
+                ai_trace_id=None,
+                ai_provider_code=None,
+                effective_agent_id=session.active_agent_id,
+                effective_agent_name=None,
+            )
+        _log_orchestrator_debug_event(
+            request_context=request_context,
+            stage="fast_action.shortcut.hit",
+            message="对话设备快控命中快捷路径。",
+            payload={
+                "shortcut_id": shortcut.id,
+                "device_id": shortcut.device_id,
+                "entity_id": shortcut.entity_id,
+                "action": shortcut.action,
+            },
+        )
+        plan = FastActionPlan(
+            device_id=shortcut.device_id,
+            entity_id=shortcut.entity_id,
+            action=shortcut.action,
+            params=load_device_shortcut_params(shortcut),
+            reason="conversation.fast_action.shortcut",
+            confirm_high_risk=shortcut.action == "unlock" and _is_high_risk_confirmation_present(message),
+            resolution_trace={
+                "source": "shortcut",
+                "shortcut_id": shortcut.id,
+                "confidence": shortcut.confidence,
+                "normalized_text": shortcut.normalized_text,
+            },
+            shortcut=shortcut,
+        )
+        _log_fast_action_plan_selected(request_context=request_context, plan=plan)
+        return plan, None
+
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.shortcut.miss",
+        message="对话设备快控未命中可用快捷路径。",
+        payload={"message": message, "member_id": actor.member_id},
+    )
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.tool_planner.started",
+        message="开始使用设备控制规划器解析目标设备和实体。",
+        payload={
+            "message": message,
+            "device_context_summary": (
+                device_context_summary.to_payload() if device_context_summary is not None else None
+            ),
+        },
+    )
+
+    try:
+        planner_result = plan_device_control(
+            db,
+            household_id=session.household_id,
+            message=message,
+            device_context_summary=device_context_summary,
+            request_context=request_context,
+        )
+    except ConversationDevicePlannerError as exc:
+        _log_orchestrator_debug_event(
+            request_context=request_context,
+            stage="fast_action.tool_planner.failed",
+            message="设备控制规划器失败，回退旧规则兜底。",
+            payload=_build_planner_error_payload(exc),
+        )
+    else:
+        if planner_result.clarification is not None:
+            clarification = planner_result.clarification
+            _log_orchestrator_debug_event(
+                request_context=request_context,
+                stage="fast_action.tool_planner.clarification",
+                message="设备控制规划器要求用户补充澄清信息。",
+                payload={
+                    **_summarize_resolution_trace(planner_result.resolution_trace),
+                    "code": clarification.code,
+                    "suggestions": clarification.suggestions,
+                },
+            )
+            return None, ConversationOrchestratorResult(
+                intent=ConversationIntent.FAST_ACTION,
+                text=clarification.message,
+                degraded=False,
+                facts=_build_fast_action_confirmation_facts(
+                    db,
+                    session=session,
+                    message=message,
+                    clarification=clarification,
+                    device_context_summary=device_context_summary,
+                    resolution_trace=planner_result.resolution_trace,
+                ),
+                suggestions=clarification.suggestions,
+                memory_candidate_payloads=[],
+                config_suggestion=None,
+                action_payloads=[],
+                ai_trace_id=None,
+                ai_provider_code=None,
+                effective_agent_id=session.active_agent_id,
+                effective_agent_name=None,
+            )
+        if planner_result.plan is not None:
+            device = db.get(Device, planner_result.plan.device_id)
+            if (
+                device is not None
+                and planner_result.plan.action == "unlock"
+                and not _is_high_risk_confirmation_present(message)
+            ):
+                return None, ConversationOrchestratorResult(
+                    intent=ConversationIntent.FAST_ACTION,
+                    text=f"解锁 {device.name} 属于高风险动作。请明确说“确认解锁{device.name}”后我再执行。",
+                    degraded=False,
+                    facts=[],
+                    suggestions=[f"确认解锁{device.name}", f"先查询{device.name}状态"],
+                    memory_candidate_payloads=[],
+                    config_suggestion=None,
+                    action_payloads=[],
+                    ai_trace_id=None,
+                    ai_provider_code=None,
+                    effective_agent_id=session.active_agent_id,
+                    effective_agent_name=None,
+                )
+            plan = FastActionPlan(
+                device_id=planner_result.plan.device_id,
+                entity_id=planner_result.plan.entity_id,
+                action=planner_result.plan.action,
+                params=planner_result.plan.params,
+                reason=planner_result.plan.reason,
+                confirm_high_risk=planner_result.plan.action == "unlock"
+                and _is_high_risk_confirmation_present(message),
+                resolution_trace=planner_result.resolution_trace,
+            )
+            _log_orchestrator_debug_event(
+                request_context=request_context,
+                stage="fast_action.tool_planner.completed",
+                message="设备控制规划器已产出正式执行计划。",
+                payload=_build_fast_action_plan_payload(plan),
+            )
+            _log_fast_action_plan_selected(request_context=request_context, plan=plan)
+            return plan, None
 
     devices, _ = list_devices(
         db,
@@ -850,6 +1222,24 @@ def _resolve_fast_action_plan(
         )
 
     matched_devices = _match_fast_action_devices(message=message, devices=controllable_devices, action=action)
+    if not matched_devices:
+        contextual_device = _resolve_contextual_fast_action_device(
+            devices=controllable_devices,
+            message=message,
+            device_context_summary=device_context_summary,
+        )
+        if contextual_device is not None:
+            matched_devices = [contextual_device]
+            _log_orchestrator_debug_event(
+                request_context=request_context,
+                stage="fast_action.legacy_rule.context_target_reused",
+                message="设备控制规划器失败后，旧规则已复用最近设备上下文目标。",
+                payload={
+                    "device_id": contextual_device.id,
+                    "device_name": contextual_device.name,
+                    "action": action,
+                },
+            )
     if not matched_devices:
         return None, ConversationOrchestratorResult(
             intent=ConversationIntent.FAST_ACTION,
@@ -882,6 +1272,15 @@ def _resolve_fast_action_plan(
         )
 
     device = matched_devices[0]
+    entity_id, entity_clarification = _resolve_fast_action_entity_for_device(
+        db,
+        session=session,
+        device=device,
+        action=action,
+    )
+    if entity_clarification is not None:
+        return None, entity_clarification
+    assert entity_id is not None
     if action == "unlock" and not _is_high_risk_confirmation_present(message):
         return None, ConversationOrchestratorResult(
             intent=ConversationIntent.FAST_ACTION,
@@ -897,11 +1296,74 @@ def _resolve_fast_action_plan(
             effective_agent_id=session.active_agent_id,
             effective_agent_name=None,
         )
-    return FastActionPlan(
-        device=device,
+    plan = FastActionPlan(
+        device_id=device.id,
+        entity_id=entity_id,
         action=action,
+        params={},
+        reason="conversation.fast_action.legacy_rule",
         confirm_high_risk=action == "unlock" and _is_high_risk_confirmation_present(message),
-    ), None
+        resolution_trace={
+            "source": "legacy_rule",
+            "device_id": device.id,
+            "entity_id": entity_id,
+            "action": action,
+        },
+    )
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.legacy_rule.completed",
+        message="设备控制规划器未产出结果，已回退旧规则并生成执行计划。",
+        payload=_build_fast_action_plan_payload(plan),
+    )
+    _log_fast_action_plan_selected(request_context=request_context, plan=plan)
+    return plan, None
+
+
+def _resolve_fast_action_entity_for_device(
+    db: Session,
+    *,
+    session: ConversationSession,
+    device: Device,
+    action: str,
+) -> tuple[str | None, ConversationOrchestratorResult | None]:
+    entity_list = list_device_entities(db, device_id=device.id, view="all")
+    matched_entities = [
+        entity
+        for entity in entity_list.items
+        if not entity.read_only and not entity.control.disabled and entity_supports_action(entity, action)
+    ]
+    if not matched_entities:
+        return None, ConversationOrchestratorResult(
+            intent=ConversationIntent.FAST_ACTION,
+            text=f"我找到设备 {device.name} 了，但它下面没有能执行这个动作的可控实体。",
+            degraded=False,
+            facts=[],
+            suggestions=["换个更明确的动作", "检查设备实体绑定"],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+        )
+    if len(matched_entities) > 1:
+        return None, ConversationOrchestratorResult(
+            intent=ConversationIntent.FAST_ACTION,
+            text=f"我找到了设备 {device.name}，但它下面有多个都能执行这个动作的实体，还不能直接选一个。",
+            degraded=False,
+            facts=[],
+            suggestions=[entity.name for entity in matched_entities[:3]],
+            memory_candidate_payloads=[],
+            config_suggestion=None,
+            action_payloads=[],
+            ai_trace_id=None,
+            ai_provider_code=None,
+            effective_agent_id=session.active_agent_id,
+            effective_agent_name=None,
+        )
+    return matched_entities[0].entity_id, None
 
 
 def _infer_fast_action(message: str, devices: list[Device]) -> str | None:
@@ -926,9 +1388,12 @@ def _infer_fast_action(message: str, devices: list[Device]) -> str | None:
 
 def _match_fast_action_devices(message: str, devices: list[Device], action: str) -> list[Device]:
     normalized = _normalize_fast_action_text(message)
+    requested_device_types = _extract_requested_device_types(normalized)
     scored_devices: list[tuple[int, Device]] = []
     for device in devices:
         if action not in _supported_actions_for_device_type(device.device_type):
+            continue
+        if requested_device_types and device.device_type not in requested_device_types:
             continue
         score = _score_device_match(normalized, device)
         if score <= 0:
@@ -960,6 +1425,21 @@ def _score_device_match(message: str, device: Device) -> int:
         if short_alias and short_alias in message:
             score += 3
     return score
+
+
+def _extract_requested_device_types(message: str) -> set[str]:
+    keyword_map = {
+        "light": ("灯", "灯光", "主灯", "壁灯", "台灯", "吊灯"),
+        "ac": ("空调",),
+        "curtain": ("窗帘",),
+        "speaker": ("音箱", "小爱", "喇叭"),
+        "lock": ("门锁", "锁"),
+    }
+    return {
+        device_type
+        for device_type, keywords in keyword_map.items()
+        if any(keyword in message for keyword in keywords)
+    }
 
 
 def _supported_actions_for_device_type(device_type: str) -> set[str]:
@@ -994,6 +1474,368 @@ def _normalize_fast_action_text(text: str) -> str:
 def _is_high_risk_confirmation_present(message: str) -> bool:
     normalized = _normalize_fast_action_text(message)
     return "确认" in normalized or "确定" in normalized
+
+
+def _persist_fast_action_shortcut(
+    db: Session,
+    *,
+    session: ConversationSession,
+    actor: ActorContext,
+    message: str,
+    plan: FastActionPlan,
+    request_context: dict | None,
+) -> None:
+    try:
+        upsert_device_shortcut(
+            db,
+            payload=DeviceShortcutUpsertPayload(
+                household_id=session.household_id,
+                member_id=actor.member_id,
+                source_text=message,
+                device_id=plan.device_id,
+                entity_id=plan.entity_id,
+                action=plan.action,
+                params=plan.params,
+                resolution_source=_map_shortcut_resolution_source(plan.resolution_trace.get("source")),
+                confidence=_extract_shortcut_confidence(plan.resolution_trace),
+                status=DeviceShortcutStatus.ACTIVE,
+            ),
+        )
+        db.flush()
+        _log_orchestrator_debug_event(
+            request_context=request_context,
+            stage="fast_action.shortcut.upserted",
+            message="对话设备快控已写回快捷路径。",
+            payload={
+                "device_id": plan.device_id,
+                "entity_id": plan.entity_id,
+                "action": plan.action,
+                "resolution_source": plan.resolution_trace.get("source"),
+            },
+        )
+    except Exception as exc:
+        _log_orchestrator_debug_event(
+            request_context=request_context,
+            stage="fast_action.shortcut.persist_failed",
+            message="对话设备快控快捷路径写回失败。",
+            payload={
+                "device_id": plan.device_id,
+                "entity_id": plan.entity_id,
+                "action": plan.action,
+                "error": str(exc),
+            },
+        )
+
+
+def _log_fast_action_plan_selected(
+    *,
+    request_context: dict | None,
+    plan: FastActionPlan,
+) -> None:
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.plan.selected",
+        message="对话设备快控已选定正式执行计划。",
+        payload=_build_fast_action_plan_payload(plan),
+    )
+
+
+def _log_fast_action_execution_started(
+    *,
+    request_context: dict | None,
+    plan: FastActionPlan,
+) -> None:
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.execution.started",
+        message="对话设备快控开始走统一执行链。",
+        payload=_build_fast_action_plan_payload(plan),
+    )
+
+
+def _log_fast_action_execution_completed(
+    *,
+    request_context: dict | None,
+    plan: FastActionPlan,
+    response: Any,
+) -> None:
+    response_device = getattr(response, "device", None)
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.execution.completed",
+        message="对话设备快控已完成统一执行链调用。",
+        payload={
+            **_build_fast_action_plan_payload(plan),
+            "response_action": getattr(response, "action", None),
+            "response_device_id": getattr(response_device, "id", None),
+            "response_device_name": getattr(response_device, "name", None),
+        },
+    )
+
+
+def _log_fast_action_execution_failed(
+    *,
+    request_context: dict | None,
+    plan: FastActionPlan,
+    exc: Exception,
+) -> None:
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.execution.failed",
+        message="对话设备快控在统一执行链阶段失败。",
+        payload={
+            **_build_fast_action_plan_payload(plan),
+            "error_code": _extract_fast_action_error_code(exc),
+            "error_message": _extract_fast_action_error_message(exc),
+        },
+    )
+
+
+def _handle_fast_action_shortcut_failure(
+    db: Session,
+    *,
+    plan: FastActionPlan,
+    exc: Exception,
+    request_context: dict | None,
+) -> None:
+    if plan.shortcut is None or not _should_mark_shortcut_stale(exc):
+        return
+    mark_device_shortcut_status(db, shortcut=plan.shortcut, status=DeviceShortcutStatus.STALE)
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.shortcut.marked_stale",
+        message="快捷路径执行失败后被标记为 stale。",
+        payload={
+            "shortcut_id": plan.shortcut.id,
+            "device_id": plan.shortcut.device_id,
+            "entity_id": plan.shortcut.entity_id,
+            "action": plan.shortcut.action,
+            "error": _extract_fast_action_error_code(exc),
+        },
+    )
+
+
+def _should_mark_shortcut_stale(exc: Exception) -> bool:
+    return _extract_fast_action_error_code(exc) in {
+        "device_binding_missing",
+        "action_not_supported",
+        "device_not_controllable",
+        "device_disabled",
+    }
+
+
+def _map_shortcut_resolution_source(source: object) -> str:
+    normalized = str(source or "").strip()
+    if normalized == DeviceShortcutResolutionSource.SHORTCUT.value:
+        return DeviceShortcutResolutionSource.SHORTCUT.value
+    if normalized == DeviceShortcutResolutionSource.TOOL_PLANNER.value:
+        return DeviceShortcutResolutionSource.TOOL_PLANNER.value
+    if normalized == DeviceShortcutResolutionSource.MANUAL_SEED.value:
+        return DeviceShortcutResolutionSource.MANUAL_SEED.value
+    return DeviceShortcutResolutionSource.LEGACY_RULE.value
+
+
+def _extract_shortcut_confidence(resolution_trace: dict[str, Any]) -> float | None:
+    raw_value = resolution_trace.get("confidence")
+    if isinstance(raw_value, (int, float)):
+        return max(0.0, min(float(raw_value), 1.0))
+    final_plan = resolution_trace.get("final_plan")
+    if isinstance(final_plan, dict) and isinstance(final_plan.get("confidence"), (int, float)):
+        return max(0.0, min(float(final_plan["confidence"]), 1.0))
+    if resolution_trace.get("source") == "legacy_rule":
+        return 0.5
+    return None
+
+
+def _build_planner_error_payload(exc: ConversationDevicePlannerError) -> dict[str, Any]:
+    payload = {"error": getattr(exc, "code", str(exc))}
+    debug_payload = getattr(exc, "debug_payload", None)
+    if isinstance(debug_payload, dict):
+        payload.update(debug_payload)
+    return payload
+
+
+def _build_fast_action_plan_payload(plan: FastActionPlan) -> dict[str, Any]:
+    return {
+        "device_id": plan.device_id,
+        "entity_id": plan.entity_id,
+        "action": plan.action,
+        "reason": plan.reason,
+        **_summarize_resolution_trace(plan.resolution_trace),
+    }
+
+
+def _summarize_resolution_trace(resolution_trace: dict[str, Any]) -> dict[str, Any]:
+    tool_steps = resolution_trace.get("tool_steps")
+    tool_steps_count = len(tool_steps) if isinstance(tool_steps, list) else 0
+    final_plan = resolution_trace.get("final_plan") if isinstance(resolution_trace.get("final_plan"), dict) else {}
+    return {
+        "resolution_source": resolution_trace.get("source"),
+        "planner_outcome": resolution_trace.get("planner_outcome"),
+        "reason": resolution_trace.get("reason"),
+        "tool_steps_count": tool_steps_count,
+        "shortcut_id": resolution_trace.get("shortcut_id"),
+        "final_plan_device_id": final_plan.get("device_id"),
+        "final_plan_entity_id": final_plan.get("entity_id"),
+        "final_plan_action": final_plan.get("action"),
+    }
+
+
+def _build_fast_action_plan_from_confirmation_context(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    device_context_summary: ConversationDeviceContextSummary | None,
+    request_context: dict | None,
+) -> FastActionPlan | None:
+    if not _looks_like_fast_action_confirmation_reply(message, device_context_summary):
+        return None
+    if device_context_summary is None:
+        return None
+    target = device_context_summary.latest_confirmation_target
+    if target is None or not target.entity_id or not target.action:
+        return None
+
+    if target.action == "unlock" and not _is_high_risk_confirmation_present(message):
+        return None
+
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="fast_action.confirmation_context.hit",
+        message="对话设备快控命中待确认动作上下文，直接恢复执行计划。",
+        payload={
+            "device_id": target.device_id,
+            "entity_id": target.entity_id,
+            "action": target.action,
+            "source_type": target.source_type,
+        },
+    )
+    return FastActionPlan(
+        device_id=target.device_id,
+        entity_id=target.entity_id,
+        action=target.action,
+        params={},
+        reason="conversation.fast_action.confirmation_context",
+        confirm_high_risk=target.action == "unlock" and _is_high_risk_confirmation_present(message),
+        resolution_trace={
+            "source": "confirmation_context",
+            "device_id": target.device_id,
+            "entity_id": target.entity_id,
+            "action": target.action,
+            "source_message_id": target.message_id,
+        },
+    )
+
+
+def _build_fast_action_confirmation_facts(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    clarification,
+    device_context_summary: ConversationDeviceContextSummary | None,
+    resolution_trace: dict[str, Any],
+) -> list[dict[str, Any]]:
+    target_payload = _build_pending_confirmation_target_payload(
+        db,
+        session=session,
+        message=message,
+        clarification=clarification,
+        device_context_summary=device_context_summary,
+        resolution_trace=resolution_trace,
+    )
+    if target_payload is None:
+        return []
+    return [
+        {
+            "type": "fast_action_confirmation_request",
+            "label": target_payload["device_name"],
+            "source": "conversation_fast_action",
+            "extra": target_payload,
+        }
+    ]
+
+
+def _build_pending_confirmation_target_payload(
+    db: Session,
+    *,
+    session: ConversationSession,
+    message: str,
+    clarification,
+    device_context_summary: ConversationDeviceContextSummary | None,
+    resolution_trace: dict[str, Any],
+) -> dict[str, Any] | None:
+    target_device = _resolve_confirmation_target_device(
+        db,
+        session=session,
+        clarification=clarification,
+        device_context_summary=device_context_summary,
+    )
+    if target_device is None:
+        return None
+
+    action = _infer_fast_action(message, [target_device])
+    if not action:
+        return None
+
+    entity_id, entity_clarification = _resolve_fast_action_entity_for_device(
+        db,
+        session=session,
+        device=target_device,
+        action=action,
+    )
+    if entity_clarification is not None or entity_id is None:
+        return None
+
+    return {
+        "device_id": target_device.id,
+        "device_name": target_device.name,
+        "device_type": target_device.device_type,
+        "room_id": target_device.room_id,
+        "entity_id": entity_id,
+        "action": action,
+        "confidence": _extract_shortcut_confidence(resolution_trace),
+        "confirmation_message": clarification.message,
+        "confirmation_code": clarification.code,
+        "resolution_trace": resolution_trace,
+    }
+
+
+def _resolve_confirmation_target_device(
+    db: Session,
+    *,
+    session: ConversationSession,
+    clarification,
+    device_context_summary: ConversationDeviceContextSummary | None,
+) -> Device | None:
+    if (
+        device_context_summary is not None
+        and device_context_summary.resume_target is not None
+        and device_context_summary.resume_target.device_id
+    ):
+        device = db.get(Device, device_context_summary.resume_target.device_id)
+        if device is not None and device.household_id == session.household_id:
+            return device
+
+    suggestion_names = [
+        str(item).strip()
+        for item in getattr(clarification, "suggestions", [])
+        if str(item).strip()
+    ]
+    if len(suggestion_names) != 1:
+        return None
+
+    devices, _ = list_devices(
+        db,
+        household_id=session.household_id,
+        page=1,
+        page_size=200,
+    )
+    for device in devices:
+        if device.name == suggestion_names[0] and device.status == "active" and bool(device.controllable):
+            return device
+    return None
 
 
 def _build_fast_action_success_reply(*, device_name: str, action: str) -> str:
@@ -1036,11 +1878,77 @@ def _extract_fast_action_error_message(exc: Exception) -> str:
     return "系统暂时无法完成这次设备控制，请稍后再试。"
 
 
+def _extract_fast_action_error_code(exc: Exception) -> str:
+    if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+        return str(exc.detail.get("error_code") or "").strip()
+    return ""
+
+
 def _looks_like_fast_action_request(message: str) -> bool:
     normalized = _normalize_fast_action_text(message)
-    action_keywords = ("打开", "开启", "关掉", "关闭", "关上", "停止", "锁上", "解锁", "拉开", "拉上")
-    device_keywords = ("灯", "空调", "窗帘", "门锁", "音箱", "设备")
-    return any(keyword in normalized for keyword in action_keywords) and any(keyword in normalized for keyword in device_keywords)
+    return any(keyword in normalized for keyword in FAST_ACTION_ACTION_KEYWORDS) and any(
+        keyword in normalized for keyword in FAST_ACTION_DEVICE_KEYWORDS
+    )
+
+
+def _looks_like_contextual_fast_action_request(
+    message: str,
+    device_context_summary: ConversationDeviceContextSummary | None,
+) -> bool:
+    if device_context_summary is None or not device_context_summary.can_resume_control:
+        return False
+    if device_context_summary.resume_target is None:
+        return False
+    normalized = _normalize_fast_action_text(message)
+    if not normalized:
+        return False
+    if any(keyword in normalized for keyword in FAST_ACTION_DEVICE_KEYWORDS):
+        return False
+    if not any(keyword in normalized for keyword in FAST_ACTION_ACTION_KEYWORDS):
+        return False
+    if _looks_like_action_question(normalized):
+        return False
+    return True
+
+
+def _resolve_contextual_fast_action_device(
+    *,
+    devices: list[Device],
+    message: str,
+    device_context_summary: ConversationDeviceContextSummary | None,
+) -> Device | None:
+    if not _looks_like_contextual_fast_action_request(message, device_context_summary):
+        return None
+    assert device_context_summary is not None
+    target = device_context_summary.resume_target
+    if target is None:
+        return None
+    return next((item for item in devices if item.id == target.device_id), None)
+
+
+def _looks_like_fast_action_confirmation_reply(
+    message: str,
+    device_context_summary: ConversationDeviceContextSummary | None,
+) -> bool:
+    if device_context_summary is None or not device_context_summary.can_resume_confirmation:
+        return False
+    target = device_context_summary.latest_confirmation_target
+    if target is None or not target.action or not target.entity_id:
+        return False
+    normalized = _normalize_fast_action_text(message)
+    if not normalized or len(normalized) > 8:
+        return False
+    if any(keyword in normalized for keyword in FAST_ACTION_ACTION_KEYWORDS):
+        return False
+    if any(keyword in normalized for keyword in FAST_ACTION_DEVICE_KEYWORDS):
+        return False
+    if _looks_like_action_question(normalized):
+        return False
+    return normalized in FAST_ACTION_CONFIRMATION_KEYWORDS
+
+
+def _looks_like_action_question(normalized_message: str) -> bool:
+    return any(keyword in normalized_message for keyword in FAST_ACTION_QUESTION_KEYWORDS)
 
 
 async def _stream_non_qa_chat(
@@ -1053,6 +1961,7 @@ async def _stream_non_qa_chat(
     conversation_history: list[dict[str, str]],
     detection: ConversationIntentDetection,
     lane_selection: ConversationLaneSelection,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
 ):
     if intent == ConversationIntent.FREE_CHAT and detection.guardrail_rule == "fallback.free_chat":
@@ -1070,6 +1979,7 @@ async def _stream_non_qa_chat(
             actor=actor,
             conversation_history=conversation_history,
             detection=detection,
+            device_context_summary=device_context_summary,
             request_context=request_context,
             timeout_ms_override=FREE_CHAT_DEGRADED_TIMEOUT_MS,
             honor_timeout_override=True,
@@ -1088,6 +1998,7 @@ async def _stream_non_qa_chat(
             session=session,
             actor=actor,
             user_message=message,
+            device_context_summary=device_context_summary,
             request_context=request_context,
             log_memory_context=True,
         ),
@@ -1130,6 +2041,7 @@ def _run_non_qa_chat(
     actor: ActorContext,
     conversation_history: list[dict[str, str]],
     detection: ConversationIntentDetection,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
     timeout_ms_override: int | None = None,
     honor_timeout_override: bool = False,
@@ -1142,6 +2054,7 @@ def _run_non_qa_chat(
             session=session,
             actor=actor,
             user_message=message,
+            device_context_summary=device_context_summary,
             request_context=request_context,
             log_memory_context=True,
         ),
@@ -1607,6 +2520,7 @@ def _build_free_chat_variables(
     session: ConversationSession,
     actor: ActorContext,
     user_message: str,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
     request_context: dict | None = None,
     log_memory_context: bool = False,
 ) -> dict[str, str]:
@@ -1652,6 +2566,11 @@ def _build_free_chat_variables(
             f"说话风格：{identity.get('speaking_style') or '自然亲切'}。"
         ),
         "memory_context": memory_context_text,
+        "device_context": (
+            device_context_summary.to_prompt_text()
+            if device_context_summary is not None
+            else "最近对话里没有可靠的设备上下文。"
+        ),
         "household_context": (
             f"当前家庭概况：活跃成员 {overview.active_member.name if overview.active_member else '暂无'}；"
             f"家庭模式 {overview.home_mode}；"
@@ -1665,10 +2584,16 @@ def _build_intent_detection_variables(
     session: ConversationSession,
     message: str,
     conversation_history: list[dict[str, str]],
+    device_context_summary: ConversationDeviceContextSummary | None = None,
 ) -> dict[str, str]:
     return {
         "session_mode": session.session_mode,
         "conversation_excerpt": _build_conversation_excerpt(conversation_history, message),
+        "device_context_summary": (
+            device_context_summary.to_prompt_text()
+            if device_context_summary is not None
+            else "最近对话里没有可靠的设备上下文。"
+        ),
         "user_message": message,
     }
 
@@ -2030,6 +2955,23 @@ def _log_route_selection(
             "guardrail_rule": detection.guardrail_rule,
             "lane_selection": detection.lane_selection.to_payload() if detection.lane_selection is not None else None,
         },
+    )
+
+
+def _log_device_context_summary(
+    *,
+    request_context: dict | None,
+    device_context_summary: ConversationDeviceContextSummary | None,
+) -> None:
+    _log_orchestrator_debug_event(
+        request_context=request_context,
+        stage="device_context.summary.loaded",
+        message="已加载最近设备上下文摘要。",
+        payload=(
+            device_context_summary.to_payload()
+            if device_context_summary is not None
+            else {"has_context": False, "can_resume_control": False, "resume_reason": "最近没有设备上下文。"}
+        ),
     )
 
 

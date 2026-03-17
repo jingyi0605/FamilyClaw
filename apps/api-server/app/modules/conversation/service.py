@@ -16,6 +16,10 @@ from app.modules.agent.service import AgentNotFoundError, resolve_effective_agen
 from app.modules.account.service import AuthenticatedActor
 from app.modules.audit.service import write_audit_log
 from app.modules.conversation import repository
+from app.modules.conversation.device_context_summary import (
+    ConversationDeviceContextSummary,
+    build_conversation_device_context_summary,
+)
 from app.modules.conversation.models import (
     ConversationActionRecord,
     ConversationDebugLog,
@@ -95,6 +99,7 @@ class ConversationRealtimeTurnSetup:
     user_message_id: str
     assistant_message_id: str
     conversation_history: list[dict[str, str]]
+    device_context_summary: ConversationDeviceContextSummary
 
 
 @dataclass(slots=True)
@@ -1352,16 +1357,23 @@ def _run_orchestrated_turn(
     request_id: str,
     actor: ActorContext,
 ) -> ConversationOrchestratorResult:
+    conversation_history = _build_recent_conversation_history(
+        db,
+        session_id=session.id,
+        current_request_id=request_id,
+    )
+    device_context_summary = _build_recent_conversation_device_context_summary(
+        db,
+        session_id=session.id,
+        current_request_id=request_id,
+    )
     return run_orchestrated_turn(
         db,
         session=session,
         message=question,
         actor=actor,
-        conversation_history=_build_recent_conversation_history(
-            db,
-            session_id=session.id,
-            current_request_id=request_id,
-        ),
+        conversation_history=conversation_history,
+        device_context_summary=device_context_summary,
         request_context={
             "request_id": request_id,
             "trace_id": request_id,
@@ -1384,6 +1396,11 @@ async def _arun_orchestrated_turn(
         session_id=session.id,
         current_request_id=request_id,
     )
+    device_context_summary = _build_recent_conversation_device_context_summary(
+        db,
+        session_id=session.id,
+        current_request_id=request_id,
+    )
     request_context = {
         "request_id": request_id,
         "trace_id": request_id,
@@ -1398,6 +1415,7 @@ async def _arun_orchestrated_turn(
         message=question,
         actor=actor,
         conversation_history=conversation_history,
+        device_context_summary=device_context_summary,
         request_context=request_context,
     ):
         event_type, event_payload = event
@@ -2496,6 +2514,11 @@ def _prepare_conversation_realtime_turn_sync(
             session_id=session.id,
             current_request_id=request_id,
         ),
+        device_context_summary=_build_recent_conversation_device_context_summary(
+            db,
+            session_id=session.id,
+            current_request_id=request_id,
+        ),
     )
 
 
@@ -3039,6 +3062,11 @@ def _prepare_conversation_realtime_turn_sync(
             session_id=session.id,
             current_request_id=request_id,
         ),
+        device_context_summary=_build_recent_conversation_device_context_summary(
+            db,
+            session_id=session.id,
+            current_request_id=request_id,
+        ),
     )
 
 
@@ -3236,7 +3264,45 @@ def _build_recent_conversation_history(
     current_request_id: str,
     limit: int = 8,
 ) -> list[dict[str, str]]:
+    message_rows = _list_recent_completed_conversation_messages(
+        db,
+        session_id=session_id,
+        current_request_id=current_request_id,
+        limit=limit,
+    )
     history: list[dict[str, str]] = []
+    for item in message_rows:
+        content = item.content.strip()
+        if not content:
+            continue
+        history.append({"role": item.role, "content": content})
+    return history
+
+
+def _build_recent_conversation_device_context_summary(
+    db: Session,
+    *,
+    session_id: str,
+    current_request_id: str,
+    limit: int = 12,
+) -> ConversationDeviceContextSummary:
+    message_rows = _list_recent_completed_conversation_messages(
+        db,
+        session_id=session_id,
+        current_request_id=current_request_id,
+        limit=limit,
+    )
+    return build_conversation_device_context_summary(message_rows)
+
+
+def _list_recent_completed_conversation_messages(
+    db: Session,
+    *,
+    session_id: str,
+    current_request_id: str,
+    limit: int,
+) -> list[ConversationMessage]:
+    rows: list[ConversationMessage] = []
     for item in repository.list_messages(db, session_id=session_id):
         if item.request_id == current_request_id:
             continue
@@ -3244,11 +3310,8 @@ def _build_recent_conversation_history(
             continue
         if item.status != "completed":
             continue
-        content = item.content.strip()
-        if not content:
-            continue
-        history.append({"role": item.role, "content": content})
-    return history[-limit:]
+        rows.append(item)
+    return rows[-limit:]
 
 
 def _render_turn_error(exc: Exception) -> str:
@@ -3328,6 +3391,11 @@ async def run_conversation_realtime_turn(
             message=user_message.strip(),
             actor=actor,
             conversation_history=_build_recent_conversation_history(
+                db,
+                session_id=session.id,
+                current_request_id=request_id,
+            ),
+            device_context_summary=_build_recent_conversation_device_context_summary(
                 db,
                 session_id=session.id,
                 current_request_id=request_id,
@@ -3628,6 +3696,7 @@ async def arun_conversation_realtime_turn(
             message=user_message.strip(),
             actor=actor,
             conversation_history=turn_setup.conversation_history,
+            device_context_summary=turn_setup.device_context_summary,
             request_context={
                 "request_id": request_id,
                 "trace_id": request_id,

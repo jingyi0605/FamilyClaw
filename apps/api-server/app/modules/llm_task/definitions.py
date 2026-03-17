@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.modules.ai_gateway.schemas import AiCapability
 from app.modules.llm_task.output_models import (
     ButlerBootstrapOutput,
+    ConversationDevicePlannerStepOutput,
     ConversationIntentDetectionOutput,
     MemoryExtractionOutput,
     ProposalBatchExtractionOutput,
@@ -214,7 +215,8 @@ register(
 4. 只是随口提到偏好或经历，但没明确要求长期记住，判 free_chat。
 5. 不确定时，primary_intent 必须是 free_chat，confidence 要低。
 6. candidate_actions 只保留真实动作候选；没有就返回 []。
-7. 只能输出一个 `<output>...</output>`，块内必须是合法 JSON。
+7. 如果当前句省略了设备名，但最近设备上下文只指向一个可靠设备目标，可以把它理解成“继续上一轮设备相关话题”，不要草率判成 free_chat。
+8. 只能输出一个 `<output>...</output>`，块内必须是合法 JSON。
 
 <output>
 {output_format}
@@ -224,6 +226,9 @@ register(
 最近对话：
 {conversation_excerpt}
 
+最近设备上下文摘要：
+{device_context_summary}
+
 当前用户消息：
 {user_message}
 
@@ -231,6 +236,60 @@ register(
         output_model=ConversationIntentDetectionOutput,
         temperature=0.1,
         max_tokens=256,
+    )
+)
+
+
+register(
+    LlmTaskDef(
+        task_type="conversation_device_control_planner",
+        system_prompt="""你是家庭设备控制规划器。你的职责只有一个：基于用户这轮设备控制话术和已有工具结果，决定下一步该查什么，或者给出最终执行计划。
+
+你绝对不能猜 device_id、entity_id，也不能跳过工具结果硬编一个目标。
+
+可用 outcome：
+- tool_call：还需要调一次工具
+- final_plan：已经确定唯一设备和实体，可以输出正式执行计划
+- clarification：当前有歧义，必须追问用户
+- not_found：当前确实没找到目标
+- failed：工具结果明显不够，且继续下去只会乱猜
+
+可用工具目录：
+{tool_catalog}
+
+标准动作参考：
+{action_guide}
+
+规则：
+1. 最近设备上下文摘要是可信线索，可以决定你第一步该查哪个设备，但它不是已执行结果，也不是让你跳过校验的理由。
+2. 没有工具结果前，不要直接输出 final_plan；就算上下文已经给出 device_id，也至少先核验一次相关设备或实体画像。
+3. 只允许调用工具目录里的工具。
+4. 这阶段不要调用 execute_planned_device_action，真正执行由系统后续统一执行链负责。
+5. 如果搜索结果里有多个同等候选，必须输出 clarification，不要替用户拍板。
+6. 如果某个设备下有多个可控实体，必须先读实体画像，再决定是否 clarification 或 final_plan。
+7. `final_plan.action` 必须是标准动作名，`params` 没有就返回空对象。
+8. 高风险动作 `unlock` 时，把 `requires_high_risk_confirmation` 设为 true。
+9. 找不到设备或实体时，优先输出 not_found，不要乱造 ID。
+10. 只能输出一个 `<output>...</output>`，块内必须是合法 JSON。
+
+<output>
+{output_format}
+</output>""",
+        user_prompt="""当前第 {step_index} / {max_steps} 步。
+
+用户原话：
+{user_message}
+
+最近设备上下文摘要：
+{device_context_summary}
+
+已有工具结果：
+{tool_history}
+
+请给出本轮规划结果。""",
+        output_model=ConversationDevicePlannerStepOutput,
+        temperature=0.1,
+        max_tokens=512,
     )
 )
 
@@ -334,9 +393,11 @@ register(
 ## 边界要求
 - 如果用户问的是家庭实时状态、提醒、场景、设备、谁在家这类结构化问题，不要编造，应该提示自己会按家庭事实回答
 - 如果用户请求创作内容，可以正常创作
+- 最近设备上下文只用于理解用户这轮可能在指哪个设备，不能说成这轮已经执行过设备控制
 
 {agent_context}
 {memory_context}
+{device_context}
 {household_context}""",
         user_prompt="{user_message}",
         temperature=0.7,

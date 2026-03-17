@@ -20,6 +20,7 @@ from app.modules.channel.models import (
 from app.modules.context.models import ContextConfig
 from app.modules.conversation.models import (
     ConversationActionRecord,
+    ConversationDeviceControlShortcut,
     ConversationDebugLog,
     ConversationMemoryCandidate,
     ConversationMessage,
@@ -89,6 +90,7 @@ __all__ = [
     "ConversationProposalBatch",
     "ConversationProposalItem",
     "ConversationActionRecord",
+    "ConversationDeviceControlShortcut",
     "ConversationDebugLog",
     "ConversationTurnSource",
     "Device",

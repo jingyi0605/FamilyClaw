@@ -1,4 +1,5 @@
 from app.modules.conversation.models import (
+    ConversationDeviceControlShortcut,
     ConversationDebugLog,
     ConversationMemoryCandidate,
     ConversationMessage,
@@ -13,5 +14,6 @@ __all__ = [
     "ConversationMemoryCandidate",
     "ConversationProposalBatch",
     "ConversationProposalItem",
+    "ConversationDeviceControlShortcut",
     "ConversationDebugLog",
 ]

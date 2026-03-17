@@ -730,11 +730,261 @@ async def stream_provider_invoke(
             honor_timeout_override=honor_timeout_override,
         ):
             yield chunk
-    else:
-        raise ProviderRuntimeError(
+        return
+
+    if api_family == "anthropic_messages":
+        async for chunk in _stream_anthropic_messages(
+            provider_profile=provider_profile,
+            payload=payload,
+            timeout_ms=timeout_ms,
+            honor_timeout_override=honor_timeout_override,
+        ):
+            yield chunk
+        return
+
+    if api_family == "gemini_generate_content":
+        async for chunk in _stream_gemini_generate_content(
+            provider_profile=provider_profile,
+            payload=payload,
+            timeout_ms=timeout_ms,
+            honor_timeout_override=honor_timeout_override,
+        ):
+            yield chunk
+        return
+    raise ProviderRuntimeError(
             "stream_not_supported",
             f"{provider_profile.provider_code} 不支持流式调用，不能用于实时对话",
         )
+
+async def _stream_anthropic_messages(
+    *,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None,
+    honor_timeout_override: bool = False,
+) -> AsyncIterator[str]:
+    logger = logging.getLogger(__name__)
+    started_at = perf_counter()
+    extra_config = load_json(provider_profile.extra_config_json) or {}
+    model_name = _resolve_model_name(provider_profile)
+    request_context = _read_request_context(payload)
+    api_key = _resolve_provider_secret(provider_profile, extra_config)
+    if not api_key:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缂哄皯鍙敤鐨勫瘑閽?")
+
+    endpoint = _resolve_native_endpoint(provider_profile, extra_config, "/messages")
+    if not endpoint:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缂哄皯鍙敤鐨勬帴鍙ｅ湴鍧€")
+
+    system_prompt, messages = _split_system_and_messages(_build_messages(capability="qa_generation", payload=payload))
+    request_body: dict[str, object] = {
+        "model": model_name,
+        "messages": [
+            {"role": item["role"], "content": [{"type": "text", "text": item["content"]}]}
+            for item in messages
+        ],
+        "max_tokens": payload.get("max_tokens", extra_config.get("max_tokens", 512)),
+        "stream": True,
+    }
+    if system_prompt:
+        request_body["system"] = system_prompt
+
+    request_headers = {
+        "Content-Type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": str(extra_config.get("anthropic_version") or "2023-06-01"),
+    }
+    _apply_provider_specific_headers(
+        request_headers=request_headers,
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+    )
+
+    effective_timeout_ms = _resolve_effective_timeout_ms(
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+        requested_timeout_ms=timeout_ms,
+        honor_requested_timeout=honor_timeout_override,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout_ms / 1000)) as client:
+            async with client.stream("POST", endpoint, json=request_body, headers=request_headers) as response:
+                if response.is_error:
+                    detail = (await response.aread()).decode("utf-8", errors="ignore")
+                    raise ProviderRuntimeError(_map_http_status_to_error_code(response.status_code), detail or response.reason_phrase)
+
+                logger.info(
+                    "[Stream] Connected provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s connected_ms=%s",
+                    provider_profile.provider_code,
+                    model_name,
+                    request_context.request_id,
+                    request_context.trace_id,
+                    request_context.session_id,
+                    response.status_code,
+                    max(int((perf_counter() - started_at) * 1000), 1),
+                )
+
+                yielded_char_count = 0
+                event_count = 0
+                first_content_ms: int | None = None
+                async for event_name, data_str in _iter_sse_events(response):
+                    event_count += 1
+                    if data_str == "[DONE]":
+                        return
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(data, dict) and data.get("type") == "error":
+                        raise ProviderRuntimeError("provider_failed", json.dumps(data, ensure_ascii=False))
+                    content = _extract_anthropic_stream_text(data)
+                    if not content:
+                        continue
+                    yielded_char_count += len(content)
+                    if first_content_ms is None:
+                        first_content_ms = max(int((perf_counter() - started_at) * 1000), 1)
+                        logger.info(
+                            "[Stream] First content chunk provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunk_index=%s first_content_ms=%s event=%s preview=%s",
+                            provider_profile.provider_code,
+                            model_name,
+                            request_context.request_id,
+                            request_context.trace_id,
+                            request_context.session_id,
+                            event_count,
+                            first_content_ms,
+                            event_name,
+                            content[:80],
+                        )
+                    yield content
+
+                logger.info(
+                    "[Stream] Done provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunks=%s chars=%s first_content_ms=%s total_ms=%s",
+                    provider_profile.provider_code,
+                    model_name,
+                    request_context.request_id,
+                    request_context.trace_id,
+                    request_context.session_id,
+                    event_count,
+                    yielded_char_count,
+                    first_content_ms,
+                    max(int((perf_counter() - started_at) * 1000), 1),
+                )
+    except httpx.TimeoutException as exc:
+        raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+    except httpx.RequestError as exc:
+        raise ProviderRuntimeError("provider_failed", str(exc)) from exc
+
+
+async def _stream_gemini_generate_content(
+    *,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None,
+    honor_timeout_override: bool = False,
+) -> AsyncIterator[str]:
+    logger = logging.getLogger(__name__)
+    started_at = perf_counter()
+    extra_config = load_json(provider_profile.extra_config_json) or {}
+    model_name = _resolve_model_name(provider_profile)
+    request_context = _read_request_context(payload)
+    api_key = _resolve_provider_secret(provider_profile, extra_config)
+    if not api_key:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缂哄皯鍙敤鐨勫瘑閽?")
+
+    endpoint_base = _resolve_native_endpoint(provider_profile, extra_config, "")
+    if not endpoint_base:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缂哄皯鍙敤鐨勬帴鍙ｅ湴鍧€")
+
+    system_prompt, messages = _split_system_and_messages(_build_messages(capability="qa_generation", payload=payload))
+    endpoint = f"{endpoint_base.rstrip('/')}/models/{model_name}:streamGenerateContent?alt=sse&key={api_key}"
+    request_body: dict[str, object] = {
+        "contents": [
+            {
+                "role": "model" if item["role"] == "assistant" else "user",
+                "parts": [{"text": item["content"]}],
+            }
+            for item in messages
+        ],
+        "generationConfig": {
+            "temperature": payload.get("temperature", extra_config.get("temperature", 0.7)),
+            "maxOutputTokens": payload.get("max_tokens", extra_config.get("max_tokens", 512)),
+        },
+    }
+    if system_prompt:
+        request_body["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+
+    effective_timeout_ms = _resolve_effective_timeout_ms(
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+        requested_timeout_ms=timeout_ms,
+        honor_requested_timeout=honor_timeout_override,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout_ms / 1000)) as client:
+            async with client.stream("POST", endpoint, json=request_body, headers={"Content-Type": "application/json"}) as response:
+                if response.is_error:
+                    detail = (await response.aread()).decode("utf-8", errors="ignore")
+                    raise ProviderRuntimeError(_map_http_status_to_error_code(response.status_code), detail or response.reason_phrase)
+
+                logger.info(
+                    "[Stream] Connected provider=%s model=%s request_id=%s trace_id=%s session_id=%s status=%s connected_ms=%s",
+                    provider_profile.provider_code,
+                    model_name,
+                    request_context.request_id,
+                    request_context.trace_id,
+                    request_context.session_id,
+                    response.status_code,
+                    max(int((perf_counter() - started_at) * 1000), 1),
+                )
+
+                yielded_char_count = 0
+                event_count = 0
+                first_content_ms: int | None = None
+                async for _event_name, data_str in _iter_sse_events(response):
+                    event_count += 1
+                    if data_str == "[DONE]":
+                        return
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    content = _extract_gemini_stream_text(data)
+                    if not content:
+                        continue
+                    yielded_char_count += len(content)
+                    if first_content_ms is None:
+                        first_content_ms = max(int((perf_counter() - started_at) * 1000), 1)
+                        logger.info(
+                            "[Stream] First content chunk provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunk_index=%s first_content_ms=%s preview=%s",
+                            provider_profile.provider_code,
+                            model_name,
+                            request_context.request_id,
+                            request_context.trace_id,
+                            request_context.session_id,
+                            event_count,
+                            first_content_ms,
+                            content[:80],
+                        )
+                    yield content
+
+                logger.info(
+                    "[Stream] Done provider=%s model=%s request_id=%s trace_id=%s session_id=%s chunks=%s chars=%s first_content_ms=%s total_ms=%s",
+                    provider_profile.provider_code,
+                    model_name,
+                    request_context.request_id,
+                    request_context.trace_id,
+                    request_context.session_id,
+                    event_count,
+                    yielded_char_count,
+                    first_content_ms,
+                    max(int((perf_counter() - started_at) * 1000), 1),
+                )
+    except httpx.TimeoutException as exc:
+        raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+    except httpx.RequestError as exc:
+        raise ProviderRuntimeError("provider_failed", str(exc)) from exc
 
 
 def _invoke_simulated(
@@ -1015,6 +1265,31 @@ def _post_json(
     return parsed
 
 
+async def _iter_sse_events(response: httpx.Response) -> AsyncIterator[tuple[str | None, str]]:
+    event_name: str | None = None
+    data_lines: list[str] = []
+
+    async for raw_line in response.aiter_lines():
+        line = raw_line.rstrip("\r")
+        if not line:
+            if data_lines:
+                yield (event_name, "\n".join(data_lines))
+            event_name = None
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            candidate = line[6:].strip()
+            event_name = candidate or None
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+
+    if data_lines:
+        yield (event_name, "\n".join(data_lines))
+
+
 def _split_system_and_messages(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, str]]]:
     if messages and messages[0].get("role") == "system":
         return messages[0].get("content", ""), messages[1:]
@@ -1127,10 +1402,17 @@ def _build_messages(
         question = str(payload.get("question") or "")
         agent_prompt = _build_agent_prompt(payload)
         memory_prompt = _build_agent_memory_prompt(payload)
+        device_context_prompt = _build_device_context_prompt(payload)
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
-                "content": f"你是家庭服务助手。请基于提供的结构化事实，用中文输出简洁、可靠、可解释的回答。不要编造事实。{agent_prompt}{memory_prompt}",
+                "content": (
+                    "你是家庭服务助手。请基于提供的结构化事实，用中文输出简洁、可靠、可解释的回答。"
+                    "不要编造事实，也不要把最近对话里的控制请求、历史动作或上下文暗示说成“这轮已经执行过”。"
+                    "除非当前规则回答草稿明确包含执行结果，否则不能说“已为你打开/关闭/执行”。"
+                    "同样也不能说“我这就帮你打开/关闭/执行”这类即将执行的话，因为当前链路不是设备执行链。"
+                    f"{agent_prompt}{memory_prompt}{device_context_prompt}"
+                ),
             }
         ]
         messages.extend(_build_conversation_history_messages(payload))
@@ -1216,6 +1498,20 @@ def _extract_anthropic_response_text(response_json: dict[str, object]) -> str:
     raise ProviderRuntimeError("validation_error", "provider response missing text content")
 
 
+def _extract_anthropic_stream_text(response_json: object) -> str:
+    if not isinstance(response_json, dict):
+        return ""
+    if response_json.get("type") != "content_block_delta":
+        return ""
+    delta = response_json.get("delta")
+    if not isinstance(delta, dict):
+        return ""
+    if delta.get("type") != "text_delta":
+        return ""
+    text = delta.get("text")
+    return text if isinstance(text, str) else ""
+
+
 def _extract_gemini_response_text(response_json: dict[str, object]) -> str:
     candidates = response_json.get("candidates")
     if not isinstance(candidates, list) or not candidates:
@@ -1236,6 +1532,31 @@ def _extract_gemini_response_text(response_json: dict[str, object]) -> str:
     if text_parts:
         return "\n".join(text_parts)
     raise ProviderRuntimeError("validation_error", "provider response missing text part")
+
+
+def _extract_gemini_stream_text(response_json: object) -> str:
+    if not isinstance(response_json, dict):
+        return ""
+
+    candidates = response_json.get("candidates")
+    if not isinstance(candidates, list):
+        return ""
+
+    text_parts: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content")
+        if not isinstance(content, dict):
+            continue
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            continue
+        for item in parts:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                text_parts.append(str(item.get("text")))
+
+    return "".join(text_parts)
 
 
 def _extract_finish_reason(response_json: dict[str, object]) -> str:
@@ -1440,6 +1761,17 @@ def _build_agent_memory_prompt(payload: Mapping[str, object]) -> str:
     if not prompt_parts:
         return ""
     return "\n" + "\n".join(prompt_parts)
+
+
+def _build_device_context_prompt(payload: Mapping[str, object]) -> str:
+    summary_text = str(payload.get("device_context_summary_text") or "").strip()
+    if not summary_text:
+        return ""
+    return (
+        "\n最近设备上下文只用于理解用户这轮可能在指哪个设备，不能当成这轮已经执行成功的证据。"
+        "如果它和当前结构化事实冲突，以结构化事实为准。\n"
+        f"{summary_text}"
+    )
 
 
 def _read_agent_memory_summary(payload: Mapping[str, object]) -> str:

@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class ButlerBootstrapOutput(BaseModel):
@@ -127,3 +127,84 @@ class QaGenerationOutput(BaseModel):
 
     answer: str = Field(description="回答内容")
     confidence: str | None = Field(default=None, description="置信度: high/medium/low")
+
+
+class ConversationDevicePlannerToolCallOutput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    tool_name: str = Field(
+        description="本轮要调用的工具名",
+        validation_alias=AliasChoices("tool_name", "name"),
+    )
+    arguments: dict[str, Any] = Field(
+        default_factory=dict,
+        description="工具调用参数",
+        validation_alias=AliasChoices("arguments", "input"),
+    )
+
+    @field_validator("arguments", mode="before")
+    @classmethod
+    def normalize_arguments(cls, value: object) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+
+class ConversationDevicePlannerPlanOutput(BaseModel):
+    device_id: str = Field(description="最终执行设备 ID")
+    entity_id: str = Field(description="最终执行实体 ID")
+    action: str = Field(description="标准动作名")
+    params: dict[str, Any] = Field(default_factory=dict, description="标准动作参数")
+    confidence: float = Field(default=0.0, ge=0, le=1, description="规划结果置信度")
+    reason: str = Field(default="", description="为什么选择这个设备和实体")
+    requires_high_risk_confirmation: bool = Field(default=False, description="是否属于高风险动作")
+
+    @field_validator("params", mode="before")
+    @classmethod
+    def normalize_params(cls, value: object) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+
+class ConversationDevicePlannerStepOutput(BaseModel):
+    outcome: Literal["tool_call", "final_plan", "clarification", "not_found", "failed"] = Field(
+        description="本轮规划结果类型"
+    )
+    reason: str = Field(default="", description="人话解释")
+    tool_call: ConversationDevicePlannerToolCallOutput | None = Field(default=None, description="待执行工具调用")
+    final_plan: ConversationDevicePlannerPlanOutput | None = Field(default=None, description="最终执行计划")
+    clarification_question: str | None = Field(default=None, description="需要追问用户时的问题")
+    suggestions: list[str] = Field(default_factory=list, description="可直接提示给用户的候选建议")
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_step_reason(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+    @field_validator("clarification_question", mode="before")
+    @classmethod
+    def normalize_clarification_question(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("suggestions", mode="before")
+    @classmethod
+    def normalize_suggestions(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                normalized.append(text)
+        return normalized

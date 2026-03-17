@@ -1,10 +1,11 @@
 from collections.abc import Sequence
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.modules.conversation.models import (
     ConversationActionRecord,
+    ConversationDeviceControlShortcut,
     ConversationDebugLog,
     ConversationMemoryCandidate,
     ConversationMessage,
@@ -180,6 +181,77 @@ def claim_next_event_seq(db: Session, *, session: ConversationSession) -> int:
 def add_debug_log(db: Session, row: ConversationDebugLog) -> ConversationDebugLog:
     db.add(row)
     return row
+
+
+def add_device_control_shortcut(
+    db: Session,
+    row: ConversationDeviceControlShortcut,
+) -> ConversationDeviceControlShortcut:
+    db.add(row)
+    return row
+
+
+def list_device_control_shortcuts_by_phrase(
+    db: Session,
+    *,
+    household_id: str,
+    normalized_text: str,
+    member_id: str | None = None,
+    statuses: Sequence[str] | None = None,
+) -> Sequence[ConversationDeviceControlShortcut]:
+    stmt: Select[tuple[ConversationDeviceControlShortcut]] = (
+        select(ConversationDeviceControlShortcut)
+        .where(
+            ConversationDeviceControlShortcut.household_id == household_id,
+            ConversationDeviceControlShortcut.normalized_text == normalized_text,
+        )
+        .order_by(
+            case((ConversationDeviceControlShortcut.member_id == member_id, 0), else_=1),
+            ConversationDeviceControlShortcut.hit_count.desc(),
+            ConversationDeviceControlShortcut.last_used_at.desc().nullslast(),
+            ConversationDeviceControlShortcut.created_at.desc(),
+        )
+    )
+    if member_id is not None:
+        stmt = stmt.where(
+            or_(
+                ConversationDeviceControlShortcut.member_id == member_id,
+                ConversationDeviceControlShortcut.member_id.is_(None),
+            )
+        )
+    else:
+        stmt = stmt.where(ConversationDeviceControlShortcut.member_id.is_(None))
+    if statuses:
+        stmt = stmt.where(ConversationDeviceControlShortcut.status.in_(list(statuses)))
+    return list(db.scalars(stmt).all())
+
+
+def find_device_control_shortcut_for_upsert(
+    db: Session,
+    *,
+    household_id: str,
+    member_id: str | None,
+    normalized_text: str,
+    device_id: str,
+    entity_id: str,
+    action: str,
+) -> ConversationDeviceControlShortcut | None:
+    stmt: Select[tuple[ConversationDeviceControlShortcut]] = (
+        select(ConversationDeviceControlShortcut)
+        .where(
+            ConversationDeviceControlShortcut.household_id == household_id,
+            ConversationDeviceControlShortcut.normalized_text == normalized_text,
+            ConversationDeviceControlShortcut.device_id == device_id,
+            ConversationDeviceControlShortcut.entity_id == entity_id,
+            ConversationDeviceControlShortcut.action == action,
+        )
+        .order_by(ConversationDeviceControlShortcut.updated_at.desc())
+    )
+    if member_id is None:
+        stmt = stmt.where(ConversationDeviceControlShortcut.member_id.is_(None))
+    else:
+        stmt = stmt.where(ConversationDeviceControlShortcut.member_id == member_id)
+    return db.scalars(stmt).first()
 
 
 def list_debug_logs(

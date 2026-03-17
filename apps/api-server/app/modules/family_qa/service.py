@@ -12,6 +12,7 @@ from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
 from app.modules.agent.service import build_agent_runtime_context, resolve_effective_agent
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.agent.service import resolve_effective_agent
+from app.modules.conversation.device_context_summary import ConversationDeviceContextSummary
 from app.modules.family_qa import repository
 from app.modules.family_qa.fact_view_service import build_qa_fact_view
 from app.modules.family_qa.models import QaQueryLog
@@ -46,6 +47,7 @@ class PreparedFamilyQaTurn:
     suggestions: list[str]
     agent_runtime_context: dict[str, object]
     conversation_history: list[dict[str, str]]
+    device_context_summary: ConversationDeviceContextSummary
 
 
 def create_query_log(db: Session, payload: QaQueryLogCreate) -> QaQueryLogRead:
@@ -305,9 +307,13 @@ def _prepare_family_qa_turn(db: Session, payload: FamilyQaQueryRequest, actor: A
         actor=actor,
         question=payload.question,
     )
+    device_context_summary = ConversationDeviceContextSummary.from_payload(
+        payload.context.get("device_context_summary") if isinstance(payload.context, dict) else None
+    )
     answer_type, answer_text, confidence, facts, suggestions = _answer_from_fact_view(
         fact_view,
         payload.question,
+        device_context_summary=device_context_summary,
     )
 
     ai_trace_id: str | None = None
@@ -327,6 +333,7 @@ def _prepare_family_qa_turn(db: Session, payload: FamilyQaQueryRequest, actor: A
         suggestions=suggestions,
         agent_runtime_context=agent_runtime_context,
         conversation_history=conversation_history,
+        device_context_summary=device_context_summary,
     )
 
 
@@ -478,6 +485,8 @@ def _to_query_log_read(row: QaQueryLog) -> QaQueryLogRead:
 def _answer_from_fact_view(
     fact_view: QaFactViewRead,
     question: str,
+    *,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
 ) -> tuple[str, str, float, list[QaFactReference], list[str]]:
     normalized_question = question.strip().lower()
 
@@ -556,6 +565,31 @@ def _answer_from_fact_view(
             ]
             return "scene_status", answer, 0.88, facts, ["查看场景详情", "手动触发场景"]
         return "scene_status", "当前没有场景执行记录。", 0.4, [], ["查看场景模板"]
+
+    contextual_device = _resolve_contextual_device_state(
+        fact_view=fact_view,
+        normalized_question=normalized_question,
+        device_context_summary=device_context_summary,
+    )
+    if contextual_device is not None:
+        answer = f"{contextual_device.name} 当前状态是 {contextual_device.status}。"
+        facts = [
+            QaFactReference(
+                type="device_state",
+                label=contextual_device.name,
+                source="devices",
+                inferred=False,
+                extra={
+                    "device_id": contextual_device.device_id,
+                    "device_type": contextual_device.device_type,
+                    "status": contextual_device.status,
+                    "room_id": contextual_device.room_id,
+                    "room_name": contextual_device.room_name,
+                    "from_device_context_summary": True,
+                },
+            )
+        ]
+        return "device_status", answer, 0.9, facts, ["查看设备列表", "继续控制这个设备"]
 
     if _contains_any_keyword(normalized_question, ["灯", "空调", "窗帘", "门锁", "设备"]):
         if fact_view.device_states:
@@ -639,6 +673,8 @@ def _build_qa_generation_payload(prepared: PreparedFamilyQaTurn) -> dict[str, ob
         "fact_count": len(prepared.facts),
         "channel": prepared.payload.channel,
         "conversation_history": prepared.conversation_history,
+        "device_context_summary": prepared.device_context_summary.to_payload(),
+        "device_context_summary_text": prepared.device_context_summary.to_prompt_text(),
         "request_context": prepared.payload.context.get("request_context") if isinstance(prepared.payload.context, dict) else {},
         "agent_runtime_context": prepared.agent_runtime_context,
         "agent_memory_context": {
@@ -654,6 +690,77 @@ def _build_qa_generation_payload(prepared: PreparedFamilyQaTurn) -> dict[str, ob
             ],
         },
     }
+
+
+def _resolve_contextual_device_state(
+    *,
+    fact_view: QaFactViewRead,
+    normalized_question: str,
+    device_context_summary: ConversationDeviceContextSummary | None,
+):
+    if device_context_summary is None or not device_context_summary.can_resume_control:
+        return None
+    if _is_device_inventory_question(normalized_question):
+        return None
+
+    target = (
+        device_context_summary.resume_target
+        or device_context_summary.latest_query_target
+        or device_context_summary.latest_execution_target
+        or device_context_summary.latest_target
+    )
+    if target is None:
+        return None
+    if not _looks_like_contextual_device_question(normalized_question):
+        return None
+    if any(str(item.name or "").strip().lower() in normalized_question for item in fact_view.device_states if item.name):
+        return None
+
+    for device in fact_view.device_states:
+        if device.device_id == target.device_id:
+            return device
+    return None
+
+
+def _looks_like_contextual_device_question(question: str) -> bool:
+    return _contains_any_keyword(
+        question,
+        [
+            "它",
+            "这个",
+            "那个",
+            "刚才",
+            "刚刚",
+            "上一个",
+            "上次",
+            "状态",
+            "怎么样",
+            "咋样",
+            "还开着",
+            "还亮着",
+            "还关着",
+            "开着吗",
+            "亮着吗",
+            "关了吗",
+            "灭了吗",
+            "还在吗",
+        ],
+    )
+
+
+def _is_device_inventory_question(question: str) -> bool:
+    return _contains_any_keyword(
+        question,
+        [
+            "什么设备",
+            "哪些设备",
+            "都有设备",
+            "设备列表",
+            "家里设备",
+            "设备总览",
+            "设备清单",
+        ],
+    )
 
 
 def _build_family_qa_response(
