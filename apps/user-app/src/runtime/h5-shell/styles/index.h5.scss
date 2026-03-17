@@ -1383,14 +1383,14 @@ input, select, textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-lg);
+  gap: var(--btn-gap);
+  padding: var(--btn-padding-md);
   border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  border-radius: var(--btn-radius);
   background: transparent;
   color: inherit;
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--btn-font-weight);
   line-height: 1;
   cursor: pointer;
   transition: all var(--transition);
@@ -1399,10 +1399,23 @@ input, select, textarea {
 .btn--primary {
   background: var(--brand-primary);
   color: var(--text-inverse);
+  box-shadow: var(--btn-shadow);
 }
 
-.btn--primary:hover {
+.btn--primary:hover:not(:disabled) {
   background: var(--brand-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--btn-shadow-hover);
+}
+
+.btn--primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--btn-shadow);
+}
+
+.btn--primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn--outline {
@@ -1411,9 +1424,15 @@ input, select, textarea {
   color: var(--text-primary);
 }
 
-.btn--outline:hover {
+.btn--outline:hover:not(:disabled) {
   border-color: var(--brand-primary);
   color: var(--brand-primary);
+  background: var(--brand-primary-light);
+}
+
+.btn--outline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn--ghost {
@@ -1439,8 +1458,13 @@ input, select, textarea {
 }
 
 .btn--sm {
-  padding: var(--spacing-xs) var(--spacing-md);
+  padding: var(--btn-padding-sm);
   font-size: var(--font-size-xs);
+  box-shadow: none;
+}
+
+.btn--sm.btn--primary {
+  box-shadow: var(--btn-shadow);
 }
 
 .link-btn {
@@ -1572,10 +1596,19 @@ input, select, textarea {
   --list-gap: var(--spacing-sm);
   --list-item-padding: var(--spacing-xs) 0;
 
-  /* 按钮尺寸 */
-  --btn-gap: var(--spacing-sm);
-  --btn-padding: var(--spacing-sm) var(--spacing-md);
+  /* 按钮尺寸 - 使用 px 避免 Taro rem 转换 */
+  --btn-gap: 8px;
+  --btn-padding-xs: 4px 8px;
+  --btn-padding-sm: 6px 14px;
+  --btn-padding-md: 10px 20px;
+  --btn-padding-lg: 12px 28px;
   --btn-icon-size: var(--icon-box-md);
+  --btn-radius: var(--radius-lg);
+  --btn-shadow: var(--shadow-sm);
+  --btn-shadow-hover: var(--shadow-md);
+  --btn-font-weight: 600;
+  --btn-min-width: 80px;
+  --btn-min-width-primary: 100px;
 
   /* 标签/徽章 */
   --badge-padding: 2px 8px;
@@ -1796,6 +1829,10 @@ input, select, textarea {
 
 .family-device-feedback--error {
   color: var(--color-danger);
+}
+
+.family-device-feedback--success {
+  color: var(--color-success);
 }
 
 .family-device-filters {
@@ -5070,6 +5107,150 @@ input, select, textarea {
   font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
+}
+
+/* ============================================================
+ * 集成目录弹窗样式
+ * 设计理念：清晰的功能分区 + 优雅的视觉层次 + 温和的品牌感
+ * ============================================================ */
+
+.integration-catalog-modal {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 48px);
+}
+
+.integration-catalog-modal .member-modal__header {
+  margin-bottom: var(--spacing-xl);
+}
+
+.integration-catalog-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--spacing-md);
+}
+
+.integration-catalog-card {
+  display: flex;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-light);
+  background: var(--bg-card);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.integration-catalog-card:hover {
+  border-color: var(--brand-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.integration-catalog-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: var(--brand-primary-light);
+  flex-shrink: 0;
+}
+
+.integration-catalog-card__icon svg,
+.integration-catalog-card__icon span {
+  color: var(--brand-primary);
+  font-size: 24px;
+}
+
+.integration-catalog-card__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.integration-catalog-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.integration-catalog-card__title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.integration-catalog-card__badge {
+  flex-shrink: 0;
+}
+
+.integration-catalog-card__desc {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.integration-catalog-card__features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-xs);
+}
+
+.integration-catalog-card__feature {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  background: var(--bg-app);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.integration-catalog-card__feature svg {
+  width: 12px;
+  height: 12px;
+}
+
+.integration-catalog-card__actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}
+
+/* 弹窗内的按钮样式 - 仅保留弹窗特有的最小宽度设置 */
+.member-modal .btn--primary {
+  min-width: var(--btn-min-width-primary);
+}
+
+.member-modal .btn--outline {
+  min-width: var(--btn-min-width);
+}
+
+@media (max-width: 768px) {
+  .integration-catalog-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-md);
+  }
+
+  .integration-catalog-card__icon {
+    width: 48px;
+    height: 48px;
+  }
+
+  .integration-catalog-card__actions {
+    flex-direction: row;
+    justify-content: flex-start;
+    margin-top: var(--spacing-sm);
+  }
 }
 
 /* 集成页面响应式样式 */
@@ -8440,14 +8621,14 @@ body::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 36px;
+  color: var(--brand-primary);
   line-height: 1;
 }
 
 .login-brand__logo-text {
   display: inline-flex;
   align-items: center;
-  font-size: var(--font-size-xl);
+  font-size: 44px;
   font-weight: 700;
   color: var(--brand-primary);
   letter-spacing: -0.02em;

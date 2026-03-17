@@ -469,11 +469,11 @@ body,
 }
 
 .login-brand__logo-icon {
-  font-size: 36px;
+  color: var(--brand-primary);
 }
 
 .login-brand__logo-text {
-  font-size: var(--font-size-xl);
+  font-size: 44px;
   font-weight: 700;
   color: var(--brand-primary);
   letter-spacing: -0.02em;
