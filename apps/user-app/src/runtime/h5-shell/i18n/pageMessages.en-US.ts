@@ -1027,6 +1027,8 @@ export const PAGE_MESSAGES_EN_US = {
   'plugins.marketplace.panelTitle': 'GitHub Plugin Marketplace',
   'plugins.marketplace.panelDesc': 'The catalog comes from GitHub repositories. The official source is built in, third-party sources can be added manually, and installed plugins stay disabled until configuration is complete.',
   'plugins.marketplace.openButton': 'Marketplace',
+  'plugins.marketplace.sourcesSection': 'Marketplace Sources',
+  'plugins.marketplace.catalogSection': 'Plugin Catalog',
   'plugins.marketplace.modalClose': 'Close marketplace',
   'plugins.marketplace.emptyTitle': 'No marketplace entries yet',
   'plugins.marketplace.emptyDesc': 'Sync a marketplace source first. Until then, there is nothing to install here.',

@@ -981,6 +981,8 @@ export const PAGE_MESSAGES_ZH_CN = {
   'plugins.marketplace.panelTitle': 'GitHub 插件市场',
   'plugins.marketplace.panelDesc': '市场目录来自 GitHub 仓库。官方源内置，第三方源可以手动添加；安装成功后默认禁用，必须配置完成后再手动启用。',
   'plugins.marketplace.openButton': '插件市场',
+  'plugins.marketplace.sourcesSection': '市场源管理',
+  'plugins.marketplace.catalogSection': '插件目录',
   'plugins.marketplace.modalClose': '关闭插件市场',
   'plugins.marketplace.emptyTitle': '还没有可用市场条目',
   'plugins.marketplace.emptyDesc': '先同步一个市场源，目录出来以后这里才有东西可装。',

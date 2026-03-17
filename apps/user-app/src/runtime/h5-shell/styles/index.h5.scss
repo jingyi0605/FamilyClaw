@@ -11247,11 +11247,11 @@ body::before {
   color: var(--text-tertiary);
 }
 
-/* 插件市场 */
+/* 插件市场 - 美化版 */
 .marketplace-panel {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-xl);
 }
 
 .marketplace-panel__header h3,
@@ -11259,36 +11259,125 @@ body::before {
   margin: 0;
 }
 
-.marketplace-panel__header p {
-  color: var(--text-tertiary);
-  margin-top: var(--spacing-xs);
+.marketplace-panel__header h3 {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
 }
 
+.marketplace-panel__header p {
+  color: var(--text-secondary);
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+/* 市场源表单区域 */
 .marketplace-source-form {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  background: color-mix(in srgb, var(--brand-primary) 5%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--brand-primary) 40%, transparent);
+  border-radius: var(--radius-xl);
+  margin-bottom: var(--spacing-md);
 }
 
 .marketplace-source-form__input {
   width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
+.marketplace-source-form__input:focus {
+  outline: none;
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-primary) 15%, transparent);
+}
+
+.marketplace-source-form__input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* 市场源列表 */
 .marketplace-sources {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--spacing-md);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--spacing-lg);
 }
 
-.marketplace-source-card,
+/* 市场源卡片 */
+.marketplace-source-card {
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-xl);
+  padding: var(--spacing-lg);
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--surface-secondary) 60%, var(--surface-primary)) 0%,
+      var(--surface-primary) 100%);
+  box-shadow:
+    0 1px 3px color-mix(in srgb, var(--color-black) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-white) 5%, transparent);
+  transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
+}
+
+.marketplace-source-card:hover {
+  border-color: color-mix(in srgb, var(--brand-primary) 40%, transparent);
+  box-shadow:
+    0 4px 12px color-mix(in srgb, var(--brand-primary) 10%, color-mix(in srgb, var(--color-black) 5%, transparent));
+  transform: translateY(-2px);
+}
+
+/* 插件卡片 */
 .marketplace-card {
   border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg);
-  padding: var(--spacing-md);
+  border-radius: var(--radius-xl);
+  padding: var(--spacing-lg);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-primary) 92%, white) 0%, var(--surface-primary) 100%);
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface-secondary) 30%, var(--surface-primary)) 0%,
+      var(--surface-primary) 100%);
+  box-shadow:
+    0 2px 8px color-mix(in srgb, var(--color-black) 4%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-white) 8%, transparent);
+  transition: box-shadow 0.25s, border-color 0.25s, transform 0.25s;
+  position: relative;
+  overflow: hidden;
 }
 
+.marketplace-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--brand-primary), color-mix(in srgb, var(--brand-secondary) 80%, var(--brand-primary)));
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.marketplace-card:hover {
+  border-color: color-mix(in srgb, var(--brand-primary) 35%, transparent);
+  box-shadow:
+    0 8px 24px color-mix(in srgb, var(--brand-primary) 8%, color-mix(in srgb, var(--color-black) 6%, transparent));
+  transform: translateY(-3px);
+}
+
+.marketplace-card:hover::before {
+  opacity: 1;
+}
+
+/* 卡片顶部和标题区域 */
 .marketplace-source-card__top,
 .marketplace-card__header,
 .marketplace-card__actions,
@@ -11305,8 +11394,23 @@ body::before {
 .marketplace-card__header {
   justify-content: space-between;
   align-items: flex-start;
+  margin-bottom: var(--spacing-sm);
 }
 
+.marketplace-source-card__title,
+.marketplace-card__title {
+  align-items: center;
+  font-weight: 600;
+  font-size: var(--font-md);
+  color: var(--text-primary);
+}
+
+.marketplace-source-card__title span:first-child,
+.marketplace-card__title span:first-child {
+  margin-right: var(--spacing-xs);
+}
+
+/* 元数据区域 */
 .marketplace-source-card__meta,
 .marketplace-source-card__foot,
 .marketplace-card__meta {
@@ -11318,50 +11422,149 @@ body::before {
 }
 
 .marketplace-source-card__foot {
-  margin-top: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border-secondary);
 }
 
+/* 插件网格 */
 .marketplace-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--spacing-md);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--spacing-lg);
 }
 
+/* 插件摘要 */
 .marketplace-card__summary {
-  margin: var(--spacing-sm) 0;
+  margin: var(--spacing-md) 0;
   color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
+/* 指标区域 */
 .marketplace-card__metrics {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-  margin-bottom: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm);
+  background: color-mix(in srgb, var(--surface-secondary) 50%, transparent);
+  border-radius: var(--radius-md);
 }
 
 .marketplace-card__metrics span {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 2px var(--spacing-xs);
 }
 
+.marketplace-card__metrics svg {
+  color: var(--brand-primary);
+}
+
+/* 标签区域 */
+.marketplace-card__tags {
+  margin-bottom: var(--spacing-sm);
+}
+
+/* 操作按钮区域 */
 .marketplace-card__actions {
-  margin-top: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--border-secondary);
+  gap: var(--spacing-sm);
 }
 
+.marketplace-card__actions .btn {
+  flex-shrink: 0;
+}
+
+/* 提示文本 */
 .marketplace-card__hint {
   margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
 }
 
+/* 市场模态框 */
 .plugin-marketplace-modal {
-  width: min(1120px, calc(100vw - 32px));
+  width: min(1180px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  border-radius: var(--radius-xl);
+  box-shadow:
+    0 24px 80px color-mix(in srgb, var(--color-black) 25%, transparent),
+    0 8px 32px color-mix(in srgb, var(--color-black) 15%, transparent);
 }
 
 .plugin-marketplace-modal__body {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-xl);
+  padding: var(--spacing-lg);
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+/* 市场分区标题 */
+.marketplace-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.marketplace-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.marketplace-section__title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin: 0;
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.marketplace-section__title svg {
+  color: var(--brand-primary);
+}
+
+.marketplace-section__count {
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  background: var(--surface-secondary);
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-md);
+}
+
+/* 旋转动画 */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
 }
 
 /* Badge 扩展 - 用于插件管理 */
@@ -11437,11 +11640,46 @@ body::before {
 
   .marketplace-source-form {
     grid-template-columns: 1fr;
+    padding: var(--spacing-md);
   }
 
   .marketplace-source-card__top,
   .marketplace-card__header {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .marketplace-source-card__top > div:first-child,
+  .marketplace-card__header > div:first-child {
+    margin-bottom: var(--spacing-sm);
+  }
+
+  .marketplace-card__actions {
+    flex-direction: column;
+  }
+
+  .marketplace-card__actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .marketplace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .marketplace-sources {
+    grid-template-columns: 1fr;
+  }
+
+  .plugin-marketplace-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 32px);
+    margin: var(--spacing-xs);
+  }
+
+  .plugin-marketplace-modal__body {
+    padding: var(--spacing-md);
+    max-height: calc(100vh - 120px);
   }
 
   /* 列表视图在移动端隐藏部分列 */

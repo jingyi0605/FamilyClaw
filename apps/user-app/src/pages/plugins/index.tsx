@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Taro from '@tarojs/taro';
-import { BadgeCheck, Package, Zap } from 'lucide-react';
+import { BadgeCheck, Download, ExternalLink, Eye, GitFork, Package, RefreshCw, Settings2, Star, X, Zap } from 'lucide-react';
 import { GuardedPage, useHouseholdContext } from '../../runtime';
 import { useI18n } from '../../runtime/h5-shell';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, EmptyState, Section } from '../family/base';
 import { SettingsPageShell } from '../settings/SettingsPageShell';
 import { PluginDetailDrawer } from '../settings/components/PluginDetailDrawer';
+import { SettingsDialog } from '../settings/components/SettingsSharedBlocks';
 import { ApiError, settingsApi } from '../settings/settingsApi';
-import type { PluginManifestType, PluginRegistryItem } from '../settings/settingsTypes';
+import type { MarketplaceCatalogItemRead, MarketplaceInstallStateRead, MarketplaceSourceRead, PluginManifestType, PluginRegistryItem } from '../settings/settingsTypes';
 
 type ViewMode = 'card' | 'list';
 
@@ -21,6 +22,8 @@ const FILTERABLE_TYPES: PluginManifestType[] = [
   'channel',
   'locale-pack',
   'region-provider',
+  'theme-pack',
+  'ai-provider',
 ];
 
 function resolveDateLocale(locale: string | undefined) {
@@ -57,6 +60,10 @@ function formatPluginType(type: PluginManifestType, locale: string | undefined) 
       return getPageMessage(locale, 'settings.plugin.type.localePack');
     case 'region-provider':
       return getPageMessage(locale, 'settings.plugin.type.regionProvider');
+    case 'theme-pack':
+      return getPageMessage(locale, 'settings.plugin.type.themePack');
+    case 'ai-provider':
+      return getPageMessage(locale, 'settings.plugin.type.aiProvider');
     default:
       return type;
   }
@@ -133,6 +140,68 @@ function renderPluginIcon(sourceType: PluginRegistryItem['source_type']) {
   }
 }
 
+function formatMarketplaceTrustedLevel(
+  trustedLevel: MarketplaceSourceRead['trusted_level'],
+  locale: string | undefined,
+): { label: string; tone: 'success' | 'warning' } {
+  if (trustedLevel === 'official') {
+    return { label: getPageMessage(locale, 'plugins.marketplace.source.official'), tone: 'success' };
+  }
+  return { label: getPageMessage(locale, 'plugins.marketplace.source.thirdParty'), tone: 'warning' };
+}
+
+function formatMarketplaceSyncStatus(
+  status: MarketplaceSourceRead['last_sync_status'],
+  locale: string | undefined,
+): { label: string; tone: 'success' | 'warning' | 'danger' | 'secondary' } {
+  switch (status) {
+    case 'success':
+      return { label: getPageMessage(locale, 'plugins.marketplace.sync.success'), tone: 'success' };
+    case 'syncing':
+      return { label: getPageMessage(locale, 'plugins.marketplace.sync.syncing'), tone: 'warning' };
+    case 'failed':
+      return { label: getPageMessage(locale, 'plugins.marketplace.sync.failed'), tone: 'danger' };
+    case 'idle':
+    default:
+      return { label: getPageMessage(locale, 'plugins.marketplace.sync.idle'), tone: 'secondary' };
+  }
+}
+
+function formatMarketplaceInstallState(
+  state: MarketplaceInstallStateRead,
+  locale: string | undefined,
+): { label: string; tone: 'success' | 'warning' | 'danger' | 'secondary' } {
+  if (state.install_status === 'installed' && state.enabled) {
+    return { label: getPageMessage(locale, 'plugins.marketplace.installState.enabled'), tone: 'success' };
+  }
+  if (state.install_status === 'installed' && state.config_status !== 'configured') {
+    return { label: getPageMessage(locale, 'plugins.marketplace.installState.needsConfig'), tone: 'warning' };
+  }
+  if (state.install_status === 'installed') {
+    return { label: getPageMessage(locale, 'plugins.marketplace.installState.installedDisabled'), tone: 'secondary' };
+  }
+  if (state.install_status === 'install_failed') {
+    return { label: getPageMessage(locale, 'plugins.marketplace.installState.failed'), tone: 'danger' };
+  }
+  if (state.install_status === 'queued' || state.install_status === 'resolving' || state.install_status === 'downloading' || state.install_status === 'validating' || state.install_status === 'installing') {
+    return { label: getPageMessage(locale, 'plugins.marketplace.installState.installing'), tone: 'warning' };
+  }
+  return { label: getPageMessage(locale, 'plugins.marketplace.installState.notInstalled'), tone: 'secondary' };
+}
+
+function formatMarketplaceMetric(value: number | null | undefined, locale: string | undefined) {
+  if (value === null || value === undefined) {
+    return getPageMessage(locale, 'plugins.marketplace.metric.unavailable');
+  }
+  return new Intl.NumberFormat(resolveDateLocale(locale)).format(value);
+}
+
+function openExternalLink(url: string) {
+  if (typeof window !== 'undefined') {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}
+
 function PluginsPageContent() {
   const { currentHouseholdId } = useHouseholdContext();
   const { locale, replacePluginLocales } = useI18n();
@@ -147,7 +216,25 @@ function PluginsPageContent() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [togglingPluginId, setTogglingPluginId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
-  const [selectedTypes, setSelectedTypes] = useState<PluginManifestType[]>([]);
+  const [selectedType, setSelectedType] = useState<PluginManifestType | null>(null);
+  const [marketSources, setMarketSources] = useState<MarketplaceSourceRead[]>([]);
+  const [marketCatalog, setMarketCatalog] = useState<MarketplaceCatalogItemRead[]>([]);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketError, setMarketError] = useState('');
+  const [marketStatus, setMarketStatus] = useState('');
+  const [sourceError, setSourceError] = useState('');
+  const [sourceStatus, setSourceStatus] = useState('');
+  const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
+  const [installingKey, setInstallingKey] = useState<string | null>(null);
+  const [marketplaceBusyInstanceId, setMarketplaceBusyInstanceId] = useState<string | null>(null);
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const [sourceManagerOpen, setSourceManagerOpen] = useState(false);
+  const [marketRefreshing, setMarketRefreshing] = useState(false);
+  const [marketplaceForm, setMarketplaceForm] = useState({
+    repo_url: '',
+    branch: '',
+    entry_root: '',
+  });
 
   const page = useCallback(
     (key: Parameters<typeof getPageMessage>[1], params?: Parameters<typeof getPageMessage>[2]) => getPageMessage(locale, key, params),
@@ -166,27 +253,48 @@ function PluginsPageContent() {
   }, []);
 
   const filteredPlugins = useMemo(() => {
-    if (selectedTypes.length === 0) {
+    if (!selectedType) {
       return plugins;
     }
-    return plugins.filter(plugin => plugin.types.some(type => selectedTypes.includes(type)));
-  }, [plugins, selectedTypes]);
+    return plugins.filter(plugin => plugin.types.includes(selectedType));
+  }, [plugins, selectedType]);
 
-  const toggleTypeFilter = useCallback((type: PluginManifestType) => {
-    setSelectedTypes(current => (
-      current.includes(type)
-        ? current.filter(item => item !== type)
-        : [...current, type]
-    ));
+  const handleTypeFilterChange = useCallback((type: PluginManifestType) => {
+    setSelectedType(type);
   }, []);
 
   const clearTypeFilter = useCallback(() => {
-    setSelectedTypes([]);
+    setSelectedType(null);
   }, []);
+
+  const reloadInstalledPlugins = useCallback(async () => {
+    if (!currentHouseholdId) {
+      setPlugins([]);
+      return;
+    }
+    const registryResult = await settingsApi.listRegisteredPlugins(currentHouseholdId);
+    setPlugins(registryResult.items);
+  }, [currentHouseholdId]);
+
+  const reloadMarketplace = useCallback(async () => {
+    if (!currentHouseholdId) {
+      setMarketSources([]);
+      setMarketCatalog([]);
+      return;
+    }
+    const [sourcesResult, catalogResult] = await Promise.all([
+      settingsApi.listMarketplaceSources(),
+      settingsApi.listMarketplaceCatalog(currentHouseholdId),
+    ]);
+    setMarketSources(sourcesResult);
+    setMarketCatalog(catalogResult.items);
+  }, [currentHouseholdId]);
 
   useEffect(() => {
     if (!currentHouseholdId) {
       setPlugins([]);
+      setMarketSources([]);
+      setMarketCatalog([]);
       return;
     }
 
@@ -194,19 +302,31 @@ function PluginsPageContent() {
 
     async function loadData() {
       setLoading(true);
+      setMarketLoading(true);
       setError('');
+      setMarketError('');
+      setSourceError('');
       try {
-        const registryResult = await settingsApi.listRegisteredPlugins(currentHouseholdId);
+        const [registryResult, sourcesResult, catalogResult] = await Promise.all([
+          settingsApi.listRegisteredPlugins(currentHouseholdId),
+          settingsApi.listMarketplaceSources(),
+          settingsApi.listMarketplaceCatalog(currentHouseholdId),
+        ]);
         if (!cancelled) {
           setPlugins(registryResult.items);
+          setMarketSources(sourcesResult);
+          setMarketCatalog(catalogResult.items);
         }
       } catch (loadError) {
+        const message = loadError instanceof ApiError ? loadError.message : page('plugins.loadFailed');
         if (!cancelled) {
-          setError(loadError instanceof ApiError ? loadError.message : page('plugins.loadFailed'));
+          setError(message);
+          setMarketError(message);
         }
       } finally {
         if (!cancelled) {
           setLoading(false);
+          setMarketLoading(false);
         }
       }
     }
@@ -287,6 +407,7 @@ function PluginsPageContent() {
       const updated = await settingsApi.updatePluginState(currentHouseholdId, plugin.id, { enabled: !plugin.enabled });
       setPlugins(current => current.map(item => (item.id === updated.id ? updated : item)));
       setDetailPlugin(current => (current && current.id === updated.id ? updated : current));
+      await reloadMarketplace();
       if (updated.types.includes('locale-pack')) {
         await refreshPluginLocales();
       }
@@ -298,15 +419,530 @@ function PluginsPageContent() {
     }
   }
 
+  async function handleMarketplaceSourceSubmit() {
+    if (!marketplaceForm.repo_url.trim()) {
+      setSourceError(page('plugins.marketplace.form.repoRequired'));
+      return;
+    }
+    setSourceError('');
+    setSourceStatus('');
+    try {
+      await settingsApi.createMarketplaceSource({
+        repo_url: marketplaceForm.repo_url.trim(),
+        branch: marketplaceForm.branch.trim() || null,
+        entry_root: marketplaceForm.entry_root.trim() || null,
+      });
+      setMarketplaceForm({ repo_url: '', branch: '', entry_root: '' });
+      await reloadMarketplace();
+      setSourceStatus(page('plugins.marketplace.status.sourceAdded'));
+    } catch (submitError) {
+      setSourceError(submitError instanceof ApiError ? submitError.message : page('plugins.operationFailed'));
+    }
+  }
+
+  async function handleSyncMarketplaceSource(sourceId: string) {
+    setSyncingSourceId(sourceId);
+    setSourceError('');
+    setSourceStatus('');
+    try {
+      await settingsApi.syncMarketplaceSource(sourceId);
+      await reloadMarketplace();
+      setSourceStatus(page('plugins.marketplace.status.synced'));
+    } catch (syncError) {
+      setSourceError(syncError instanceof ApiError ? syncError.message : page('plugins.operationFailed'));
+    } finally {
+      setSyncingSourceId(null);
+    }
+  }
+
+  async function handleRefreshMarketplace() {
+    setMarketRefreshing(true);
+    setMarketError('');
+    setMarketStatus('');
+    try {
+      await reloadMarketplace();
+      setMarketStatus(page('plugins.marketplace.status.refreshed'));
+    } catch (refreshError) {
+      setMarketError(refreshError instanceof ApiError ? refreshError.message : page('plugins.operationFailed'));
+    } finally {
+      setMarketRefreshing(false);
+    }
+  }
+
+  async function handleInstallMarketplacePlugin(item: MarketplaceCatalogItemRead) {
+    if (!currentHouseholdId) {
+      return;
+    }
+    const installKey = `${item.source_id}:${item.plugin_id}`;
+    setInstallingKey(installKey);
+    setMarketError('');
+    setMarketStatus('');
+    try {
+      await settingsApi.createMarketplaceInstallTask({
+        household_id: currentHouseholdId,
+        source_id: item.source_id,
+        plugin_id: item.plugin_id,
+        version: item.latest_version,
+      });
+      await Promise.all([reloadInstalledPlugins(), reloadMarketplace()]);
+      setMarketStatus(page('plugins.marketplace.status.installed'));
+    } catch (installError) {
+      setMarketError(installError instanceof ApiError ? installError.message : page('plugins.operationFailed'));
+    } finally {
+      setInstallingKey(null);
+    }
+  }
+
+  async function handleToggleMarketplaceInstance(item: MarketplaceCatalogItemRead) {
+    const instanceId = item.install_state.instance_id;
+    if (!instanceId) {
+      return;
+    }
+    setMarketplaceBusyInstanceId(instanceId);
+    setMarketError('');
+    setMarketStatus('');
+    try {
+      const nextEnabled = !item.install_state.enabled;
+      await settingsApi.setMarketplaceInstanceEnabled(instanceId, { enabled: nextEnabled });
+      await Promise.all([reloadInstalledPlugins(), reloadMarketplace()]);
+      setMarketStatus(page(nextEnabled ? 'plugins.marketplace.status.enabled' : 'plugins.marketplace.status.disabled'));
+    } catch (toggleError) {
+      setMarketError(toggleError instanceof ApiError ? toggleError.message : page('plugins.operationFailed'));
+    } finally {
+      setMarketplaceBusyInstanceId(null);
+    }
+  }
+
   const pluginStats = useMemo(() => {
     const enabled = filteredPlugins.filter(plugin => plugin.enabled).length;
     const total = filteredPlugins.length;
     return { enabled, total, disabled: total - enabled };
   }, [filteredPlugins]);
 
+  const installedPluginMap = useMemo(() => {
+    return new Map(plugins.map(plugin => [plugin.id, plugin]));
+  }, [plugins]);
+
+  function renderMarketplaceContent() {
+    return (
+      <div className="plugin-marketplace-modal__body">
+        {/* 市场源管理区域 */}
+        <section className="marketplace-section">
+          <div className="marketplace-section__header">
+            <h4 className="marketplace-section__title">
+              <RefreshCw size={18} />
+              {page('plugins.marketplace.sourcesSection') || 'Marketplace Sources'}
+            </h4>
+          </div>
+          <Card className="marketplace-panel">
+            <div className="marketplace-source-form">
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.repo_url}
+                onChange={event => setMarketplaceForm(current => ({ ...current, repo_url: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.repoPlaceholder')}
+              />
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.branch}
+                onChange={event => setMarketplaceForm(current => ({ ...current, branch: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.branchPlaceholder')}
+              />
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.entry_root}
+                onChange={event => setMarketplaceForm(current => ({ ...current, entry_root: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.entryRootPlaceholder')}
+              />
+              <button className="btn btn--primary btn--sm" onClick={() => void handleMarketplaceSourceSubmit()}>
+                <Package size={14} />
+                {page('plugins.marketplace.form.add')}
+              </button>
+            </div>
+
+            {marketError ? <div className="settings-note settings-note--error"><span>⚠️</span> {marketError}</div> : null}
+            {marketStatus ? <div className="settings-note settings-note--success"><span>✅</span> {marketStatus}</div> : null}
+
+            <div className="marketplace-sources">
+              {marketSources.map(source => {
+                const trustedInfo = formatMarketplaceTrustedLevel(source.trusted_level, locale);
+                const syncInfo = formatMarketplaceSyncStatus(source.last_sync_status, locale);
+                const isSyncing = syncingSourceId === source.source_id;
+                return (
+                  <div key={source.source_id} className="marketplace-source-card">
+                    <div className="marketplace-source-card__top">
+                      <div>
+                        <div className="marketplace-source-card__title">
+                          <span>{source.name}</span>
+                          <span className={`badge badge--${trustedInfo.tone}`}>{trustedInfo.label}</span>
+                          <span className={`badge badge--${syncInfo.tone}`}>{syncInfo.label}</span>
+                        </div>
+                        <div className="marketplace-source-card__meta">
+                          <span>{source.repo_url}</span>
+                          {source.branch ? <><span>·</span><span>{source.branch}</span></> : null}
+                          {source.entry_root ? <><span>·</span><span>{source.entry_root}</span></> : null}
+                        </div>
+                      </div>
+                      <button
+                        className="btn btn--outline btn--sm"
+                        onClick={() => void handleSyncMarketplaceSource(source.source_id)}
+                        disabled={isSyncing}
+                      >
+                        <RefreshCw size={14} className={isSyncing ? 'animate-spin' : undefined} />
+                        {isSyncing ? page('plugins.marketplace.action.syncing') : page('plugins.marketplace.action.sync')}
+                      </button>
+                    </div>
+                    <div className="marketplace-source-card__foot">
+                      <span>{page('plugins.marketplace.lastSynced')}</span>
+                      <span>{formatTimestamp(source.last_synced_at, locale)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </section>
+
+        {/* 插件目录区域 */}
+        <section className="marketplace-section">
+          <div className="marketplace-section__header">
+            <h4 className="marketplace-section__title">
+              <Download size={18} />
+              {page('plugins.marketplace.catalogSection') || 'Plugin Catalog'}
+            </h4>
+            {marketCatalog.length > 0 ? (
+              <span className="marketplace-section__count">
+                {marketCatalog.length} {locale?.startsWith('zh') ? '个插件' : 'plugins'}
+              </span>
+            ) : null}
+          </div>
+
+          {marketLoading && marketCatalog.length === 0 ? (
+            <div className="settings-note">
+              <span>⏳</span>
+              {' '}
+              {page('common.loading')}
+            </div>
+          ) : null}
+
+          {!marketLoading && marketCatalog.length === 0 ? (
+            <EmptyState
+              title={page('plugins.marketplace.emptyTitle')}
+              description={page('plugins.marketplace.emptyDesc')}
+            />
+          ) : null}
+
+          {marketCatalog.length > 0 ? (
+            <div className="marketplace-grid">
+              {marketCatalog.map(item => {
+                const trustedInfo = formatMarketplaceTrustedLevel(
+                  item.trusted_level === 'official' ? 'official' : 'third_party',
+                  locale,
+                );
+                const installInfo = formatMarketplaceInstallState(item.install_state, locale);
+                const installKey = `${item.source_id}:${item.plugin_id}`;
+                const isInstalling = installingKey === installKey;
+                const isBusyInstance = marketplaceBusyInstanceId === item.install_state.instance_id;
+                const installedPlugin = installedPluginMap.get(item.plugin_id) ?? null;
+                const canEnable =
+                  item.install_state.instance_id &&
+                  (item.install_state.enabled || item.install_state.config_status === 'configured');
+                const toggleLabel = item.install_state.enabled
+                  ? page('plugins.marketplace.action.disable')
+                  : page('plugins.marketplace.action.enable');
+
+                return (
+                  <Card key={installKey} className="marketplace-card">
+                    <div className="marketplace-card__header">
+                      <div>
+                        <div className="marketplace-card__title">
+                          <span>{item.name}</span>
+                          <span className={`badge badge--${trustedInfo.tone}`}>{trustedInfo.label}</span>
+                          <span className={`badge badge--${installInfo.tone}`}>{installInfo.label}</span>
+                        </div>
+                        <div className="marketplace-card__meta">
+                          <span>{item.plugin_id}</span>
+                          <span>·</span>
+                          <span>v{item.latest_version}</span>
+                          <span>·</span>
+                          <span>{item.source_name}</span>
+                        </div>
+                      </div>
+                      <button className="btn btn--ghost btn--sm" onClick={() => openExternalLink(item.source_repo)}>
+                        <ExternalLink size={14} />
+                        GitHub
+                      </button>
+                    </div>
+
+                    <p className="marketplace-card__summary">{item.summary}</p>
+
+                    <div className="marketplace-card__metrics">
+                      <span><Star size={14} /> {formatMarketplaceMetric(item.repository_metrics?.stargazers_count, locale)}</span>
+                      <span><GitFork size={14} /> {formatMarketplaceMetric(item.repository_metrics?.forks_count, locale)}</span>
+                      <span><Eye size={14} /> {formatMarketplaceMetric(item.repository_metrics?.views_count, locale)}</span>
+                    </div>
+
+                    <div className="marketplace-card__tags">
+                      {item.categories.slice(0, 3).map(category => (
+                        <span key={category} className="badge badge--secondary">{category}</span>
+                      ))}
+                      {item.permissions.slice(0, 2).map(permission => (
+                        <span key={permission} className="badge badge--info">{permission}</span>
+                      ))}
+                    </div>
+
+                    <div className="marketplace-card__actions">
+                      {item.install_state.install_status === 'not_installed' || item.install_state.install_status === 'install_failed' ? (
+                        <button
+                          className="btn btn--primary btn--sm"
+                          onClick={() => void handleInstallMarketplacePlugin(item)}
+                          disabled={isInstalling}
+                        >
+                          <Download size={14} />
+                          {isInstalling ? page('plugins.marketplace.action.installing') : page('plugins.marketplace.action.install')}
+                        </button>
+                      ) : null}
+
+                      {item.install_state.instance_id ? (
+                        <button
+                          className="btn btn--outline btn--sm"
+                          onClick={() => void handleToggleMarketplaceInstance(item)}
+                          disabled={isBusyInstance || !canEnable}
+                        >
+                          <BadgeCheck size={14} />
+                          {isBusyInstance ? page('plugins.marketplace.action.updating') : toggleLabel}
+                        </button>
+                      ) : null}
+
+                      {installedPlugin ? (
+                        <button className="btn btn--ghost btn--sm" onClick={() => openPluginDetail(installedPlugin)}>
+                          <Settings2 size={14} />
+                          {page('plugins.marketplace.action.configure')}
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {!item.repository_metrics?.availability.views_count ? (
+                      <div className="marketplace-card__hint">{page('plugins.marketplace.viewsHint')}</div>
+                    ) : null}
+                  </Card>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
+      </div>
+    );
+  }
+
+  function renderMarketplaceCatalogContent() {
+    return (
+      <div className="plugin-marketplace-modal__body">
+        {marketError ? <div className="settings-note settings-note--error"><span>⚠️</span> {marketError}</div> : null}
+        {marketStatus ? <div className="settings-note settings-note--success"><span>✅</span> {marketStatus}</div> : null}
+
+        {marketLoading && marketCatalog.length === 0 ? (
+          <div className="settings-note">
+            <span>⏳</span>
+            {' '}
+            {page('common.loading')}
+          </div>
+        ) : null}
+
+        {!marketLoading && marketCatalog.length === 0 ? (
+          <EmptyState
+            title={page('plugins.marketplace.emptyTitle')}
+            description={page('plugins.marketplace.emptyDesc')}
+          />
+        ) : null}
+
+        {marketCatalog.length > 0 ? (
+          <div className="marketplace-grid">
+            {marketCatalog.map(item => {
+              const trustedInfo = formatMarketplaceTrustedLevel(
+                item.trusted_level === 'official' ? 'official' : 'third_party',
+                locale,
+              );
+              const installInfo = formatMarketplaceInstallState(item.install_state, locale);
+              const installKey = `${item.source_id}:${item.plugin_id}`;
+              const isInstalling = installingKey === installKey;
+              const isBusyInstance = marketplaceBusyInstanceId === item.install_state.instance_id;
+              const installedPlugin = installedPluginMap.get(item.plugin_id) ?? null;
+              const canEnable =
+                item.install_state.instance_id &&
+                (item.install_state.enabled || item.install_state.config_status === 'configured');
+              const toggleLabel = item.install_state.enabled
+                ? page('plugins.marketplace.action.disable')
+                : page('plugins.marketplace.action.enable');
+
+              return (
+                <Card key={installKey} className="marketplace-card">
+                  <div className="marketplace-card__header">
+                    <div>
+                      <div className="marketplace-card__title">
+                        <span>{item.name}</span>
+                        <span className={`badge badge--${trustedInfo.tone}`}>{trustedInfo.label}</span>
+                        <span className={`badge badge--${installInfo.tone}`}>{installInfo.label}</span>
+                      </div>
+                      <div className="marketplace-card__meta">
+                        <span>{item.plugin_id}</span>
+                        <span>·</span>
+                        <span>v{item.latest_version}</span>
+                        <span>·</span>
+                        <span>{item.source_name}</span>
+                      </div>
+                    </div>
+                    <button className="btn btn--ghost btn--sm" onClick={() => openExternalLink(item.source_repo)}>
+                      <ExternalLink size={14} />
+                      GitHub
+                    </button>
+                  </div>
+
+                  <p className="marketplace-card__summary">{item.summary}</p>
+
+                  <div className="marketplace-card__metrics">
+                    <span><Star size={14} /> {formatMarketplaceMetric(item.repository_metrics?.stargazers_count, locale)}</span>
+                    <span><GitFork size={14} /> {formatMarketplaceMetric(item.repository_metrics?.forks_count, locale)}</span>
+                    <span><Eye size={14} /> {formatMarketplaceMetric(item.repository_metrics?.views_count, locale)}</span>
+                  </div>
+
+                  <div className="marketplace-card__tags">
+                    {item.categories.slice(0, 3).map(category => (
+                      <span key={category} className="badge badge--secondary">{category}</span>
+                    ))}
+                    {item.permissions.slice(0, 2).map(permission => (
+                      <span key={permission} className="badge badge--info">{permission}</span>
+                    ))}
+                  </div>
+
+                  <div className="marketplace-card__actions">
+                    {item.install_state.install_status === 'not_installed' || item.install_state.install_status === 'install_failed' ? (
+                      <button
+                        className="btn btn--primary btn--sm"
+                        onClick={() => void handleInstallMarketplacePlugin(item)}
+                        disabled={isInstalling}
+                      >
+                        <Download size={14} />
+                        {isInstalling ? page('plugins.marketplace.action.installing') : page('plugins.marketplace.action.install')}
+                      </button>
+                    ) : null}
+
+                    {item.install_state.instance_id ? (
+                      <button
+                        className="btn btn--outline btn--sm"
+                        onClick={() => void handleToggleMarketplaceInstance(item)}
+                        disabled={isBusyInstance || !canEnable}
+                      >
+                        <BadgeCheck size={14} />
+                        {isBusyInstance ? page('plugins.marketplace.action.updating') : toggleLabel}
+                      </button>
+                    ) : null}
+
+                    {installedPlugin ? (
+                      <button className="btn btn--ghost btn--sm" onClick={() => openPluginDetail(installedPlugin)}>
+                        <Settings2 size={14} />
+                        {page('plugins.marketplace.action.configure')}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {!item.repository_metrics?.availability.views_count ? (
+                    <div className="marketplace-card__hint">{page('plugins.marketplace.viewsHint')}</div>
+                  ) : null}
+                </Card>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderMarketplaceSourceManagerContent() {
+    return (
+      <div className="plugin-marketplace-modal__body">
+        <Card className="marketplace-panel">
+          <div className="marketplace-source-form">
+            <input
+              className="marketplace-source-form__input"
+              value={marketplaceForm.repo_url}
+              onChange={event => setMarketplaceForm(current => ({ ...current, repo_url: event.target.value }))}
+              placeholder={page('plugins.marketplace.form.repoPlaceholder')}
+            />
+            <input
+              className="marketplace-source-form__input"
+              value={marketplaceForm.branch}
+              onChange={event => setMarketplaceForm(current => ({ ...current, branch: event.target.value }))}
+              placeholder={page('plugins.marketplace.form.branchPlaceholder')}
+            />
+            <input
+              className="marketplace-source-form__input"
+              value={marketplaceForm.entry_root}
+              onChange={event => setMarketplaceForm(current => ({ ...current, entry_root: event.target.value }))}
+              placeholder={page('plugins.marketplace.form.entryRootPlaceholder')}
+            />
+            <button className="btn btn--primary btn--sm" onClick={() => void handleMarketplaceSourceSubmit()}>
+              <Package size={14} />
+              {page('plugins.marketplace.form.add')}
+            </button>
+          </div>
+
+          {sourceError ? <div className="settings-note settings-note--error"><span>⚠️</span> {sourceError}</div> : null}
+          {sourceStatus ? <div className="settings-note settings-note--success"><span>✅</span> {sourceStatus}</div> : null}
+
+          <div className="marketplace-sources">
+            {marketSources.map(source => {
+              const trustedInfo = formatMarketplaceTrustedLevel(source.trusted_level, locale);
+              const syncInfo = formatMarketplaceSyncStatus(source.last_sync_status, locale);
+              const isSyncing = syncingSourceId === source.source_id;
+
+              return (
+                <div key={source.source_id} className="marketplace-source-card">
+                  <div className="marketplace-source-card__top">
+                    <div>
+                      <div className="marketplace-source-card__title">
+                        <span>{source.name}</span>
+                        <span className={`badge badge--${trustedInfo.tone}`}>{trustedInfo.label}</span>
+                        <span className={`badge badge--${syncInfo.tone}`}>{syncInfo.label}</span>
+                      </div>
+                      <div className="marketplace-source-card__meta">
+                        <span>{source.repo_url}</span>
+                        {source.branch ? <><span>·</span><span>{source.branch}</span></> : null}
+                        {source.entry_root ? <><span>·</span><span>{source.entry_root}</span></> : null}
+                      </div>
+                    </div>
+                    <button
+                      className="btn btn--outline btn--sm"
+                      onClick={() => void handleSyncMarketplaceSource(source.source_id)}
+                      disabled={isSyncing}
+                    >
+                      <RefreshCw size={14} className={isSyncing ? 'animate-spin' : undefined} />
+                      {isSyncing ? page('plugins.marketplace.action.syncing') : page('plugins.marketplace.action.sync')}
+                    </button>
+                  </div>
+                  <div className="marketplace-source-card__foot">
+                    <span>{page('plugins.marketplace.lastSynced')}</span>
+                    <span>{formatTimestamp(source.last_synced_at, locale)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <SettingsPageShell activeKey="plugins">
       <div className="settings-page">
+        <div className="plugins-page-actions">
+          <button className="btn btn--primary" onClick={() => setMarketplaceOpen(true)}>
+            <Package size={16} />
+            {page('plugins.marketplace.openButton')}
+          </button>
+        </div>
+
         <Section title={page('plugins.section.installed')}>
           {plugins.length > 0 ? (
             <div className="plugin-toolbar">
@@ -331,7 +967,7 @@ function PluginsPageContent() {
                 <span className="plugin-filter__label">{page('plugins.filter.label')}</span>
                 <div className="plugin-filter__chips">
                   <button
-                    className={`plugin-filter__chip ${selectedTypes.length === 0 ? 'plugin-filter__chip--active' : ''}`}
+                    className={`plugin-filter__chip ${selectedType === null ? 'plugin-filter__chip--active' : ''}`}
                     onClick={clearTypeFilter}
                   >
                     {page('plugins.filter.all')}
@@ -339,8 +975,8 @@ function PluginsPageContent() {
                   {FILTERABLE_TYPES.map(type => (
                     <button
                       key={type}
-                      className={`plugin-filter__chip ${selectedTypes.includes(type) ? 'plugin-filter__chip--active' : ''}`}
-                      onClick={() => toggleTypeFilter(type)}
+                      className={`plugin-filter__chip ${selectedType === type ? 'plugin-filter__chip--active' : ''}`}
+                      onClick={() => handleTypeFilterChange(type)}
                     >
                       {formatPluginType(type, locale)}
                     </button>
@@ -365,7 +1001,7 @@ function PluginsPageContent() {
                   <span className="plugin-stat__value plugin-stat__value--secondary">{pluginStats.disabled}</span>
                   <span className="plugin-stat__label">{page('plugins.status.disabled')}</span>
                 </div>
-                {selectedTypes.length > 0 ? (
+                {selectedType !== null ? (
                   <div className="plugin-stat">
                     <span className="plugin-stat__value">{filteredPlugins.length}</span>
                     <span className="plugin-stat__label">{page('plugins.stats.filtered')}</span>
@@ -561,15 +1197,258 @@ function PluginsPageContent() {
           ) : null}
         </Section>
 
-        <Section title={page('plugins.section.marketplace')}>
-          <Card className="plugin-market-placeholder">
-            <div className="plugin-market-placeholder__content">
-              <span className="plugin-market-placeholder__icon">🛍</span>
-              <h3>{page('plugins.marketplace.closedTitle')}</h3>
-              <p>{page('plugins.marketplace.closedDesc')}</p>
+        {false ? (
+          <Section title={page('plugins.section.marketplace')}>
+          <Card className="marketplace-panel">
+            <div className="marketplace-panel__header">
+              <div>
+                <h3>{page('plugins.marketplace.panelTitle')}</h3>
+                <p>{page('plugins.marketplace.panelDesc')}</p>
+              </div>
+            </div>
+
+            <div className="marketplace-source-form">
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.repo_url}
+                onChange={event => setMarketplaceForm(current => ({ ...current, repo_url: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.repoPlaceholder')}
+              />
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.branch}
+                onChange={event => setMarketplaceForm(current => ({ ...current, branch: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.branchPlaceholder')}
+              />
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.entry_root}
+                onChange={event => setMarketplaceForm(current => ({ ...current, entry_root: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.entryRootPlaceholder')}
+              />
+              <button className="btn btn--primary btn--sm" onClick={() => void handleMarketplaceSourceSubmit()}>
+                {page('plugins.marketplace.form.add')}
+              </button>
+            </div>
+
+            {marketError ? <div className="settings-note settings-note--error"><span>⚠️</span> {marketError}</div> : null}
+            {marketStatus ? <div className="settings-note settings-note--success"><span>✅</span> {marketStatus}</div> : null}
+
+            <div className="marketplace-sources">
+              {marketSources.map(source => {
+                const trustedInfo = formatMarketplaceTrustedLevel(source.trusted_level, locale);
+                const syncInfo = formatMarketplaceSyncStatus(source.last_sync_status, locale);
+                const isSyncing = syncingSourceId === source.source_id;
+                return (
+                  <div key={source.source_id} className="marketplace-source-card">
+                    <div className="marketplace-source-card__top">
+                      <div>
+                        <div className="marketplace-source-card__title">
+                          <span>{source.name}</span>
+                          <span className={`badge badge--${trustedInfo.tone}`}>{trustedInfo.label}</span>
+                          <span className={`badge badge--${syncInfo.tone}`}>{syncInfo.label}</span>
+                        </div>
+                        <div className="marketplace-source-card__meta">
+                          <span>{source.repo_url}</span>
+                          <span>·</span>
+                          <span>{source.branch}</span>
+                          <span>·</span>
+                          <span>{source.entry_root}</span>
+                        </div>
+                      </div>
+                      <button
+                        className="btn btn--outline btn--sm"
+                        onClick={() => void handleSyncMarketplaceSource(source.source_id)}
+                        disabled={isSyncing}
+                      >
+                        <RefreshCw size={14} />
+                        {isSyncing ? page('plugins.marketplace.action.syncing') : page('plugins.marketplace.action.sync')}
+                      </button>
+                    </div>
+                    <div className="marketplace-source-card__foot">
+                      <span>{page('plugins.marketplace.lastSynced')}</span>
+                      <span>{formatTimestamp(source.last_synced_at, locale)}</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </Card>
-        </Section>
+
+          {marketLoading && marketCatalog.length === 0 ? (
+            <div className="settings-note">
+              <span>⏳</span>
+              {' '}
+              {page('common.loading')}
+            </div>
+          ) : null}
+
+          {!marketLoading && marketCatalog.length === 0 ? (
+            <EmptyState
+              title={page('plugins.marketplace.emptyTitle')}
+              description={page('plugins.marketplace.emptyDesc')}
+            />
+          ) : null}
+
+          {marketCatalog.length > 0 ? (
+            <div className="marketplace-grid">
+              {marketCatalog.map(item => {
+                const trustedInfo = formatMarketplaceTrustedLevel(
+                  item.trusted_level === 'official' ? 'official' : 'third_party',
+                  locale,
+                );
+                const installInfo = formatMarketplaceInstallState(item.install_state, locale);
+                const installKey = `${item.source_id}:${item.plugin_id}`;
+                const isInstalling = installingKey === installKey;
+                const isBusyInstance = marketplaceBusyInstanceId === item.install_state.instance_id;
+                const installedPlugin = installedPluginMap.get(item.plugin_id) ?? null;
+                const canEnable =
+                  item.install_state.instance_id &&
+                  (item.install_state.enabled || item.install_state.config_status === 'configured');
+                const toggleLabel = item.install_state.enabled
+                  ? page('plugins.marketplace.action.disable')
+                  : page('plugins.marketplace.action.enable');
+
+                return (
+                  <Card key={installKey} className="marketplace-card">
+                    <div className="marketplace-card__header">
+                      <div>
+                        <div className="marketplace-card__title">
+                          <span>{item.name}</span>
+                          <span className={`badge badge--${trustedInfo.tone}`}>{trustedInfo.label}</span>
+                          <span className={`badge badge--${installInfo.tone}`}>{installInfo.label}</span>
+                        </div>
+                        <div className="marketplace-card__meta">
+                          <span>{item.plugin_id}</span>
+                          <span>·</span>
+                          <span>v{item.latest_version}</span>
+                          <span>·</span>
+                          <span>{item.source_name}</span>
+                        </div>
+                      </div>
+                      <button className="btn btn--ghost btn--sm" onClick={() => openExternalLink(item.source_repo)}>
+                        <ExternalLink size={14} />
+                        GitHub
+                      </button>
+                    </div>
+
+                    <p className="marketplace-card__summary">{item.summary}</p>
+
+                    <div className="marketplace-card__metrics">
+                      <span><Star size={14} /> {formatMarketplaceMetric(item.repository_metrics?.stargazers_count, locale)}</span>
+                      <span><GitFork size={14} /> {formatMarketplaceMetric(item.repository_metrics?.forks_count, locale)}</span>
+                      <span><Eye size={14} /> {formatMarketplaceMetric(item.repository_metrics?.views_count, locale)}</span>
+                    </div>
+
+                    <div className="marketplace-card__tags">
+                      {item.categories.map(category => (
+                        <span key={category} className="badge badge--secondary">{category}</span>
+                      ))}
+                      {item.permissions.slice(0, 2).map(permission => (
+                        <span key={permission} className="badge badge--secondary">{permission}</span>
+                      ))}
+                    </div>
+
+                    <div className="marketplace-card__actions">
+                      {item.install_state.install_status === 'not_installed' || item.install_state.install_status === 'install_failed' ? (
+                        <button
+                          className="btn btn--primary btn--sm"
+                          onClick={() => void handleInstallMarketplacePlugin(item)}
+                          disabled={isInstalling}
+                        >
+                          <Download size={14} />
+                          {isInstalling ? page('plugins.marketplace.action.installing') : page('plugins.marketplace.action.install')}
+                        </button>
+                      ) : null}
+
+                      {item.install_state.instance_id ? (
+                        <button
+                          className="btn btn--outline btn--sm"
+                          onClick={() => void handleToggleMarketplaceInstance(item)}
+                          disabled={isBusyInstance || !canEnable}
+                        >
+                          <BadgeCheck size={14} />
+                          {isBusyInstance ? page('plugins.marketplace.action.updating') : toggleLabel}
+                        </button>
+                      ) : null}
+
+                      {installedPlugin ? (
+                        <button className="btn btn--ghost btn--sm" onClick={() => openPluginDetail(installedPlugin)}>
+                          <Settings2 size={14} />
+                          {page('plugins.marketplace.action.configure')}
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {!item.repository_metrics?.availability.views_count ? (
+                      <div className="marketplace-card__hint">{page('plugins.marketplace.viewsHint')}</div>
+                    ) : null}
+                  </Card>
+                );
+              })}
+            </div>
+          ) : null}
+          </Section>
+        ) : null}
+
+        <SettingsDialog
+          open={marketplaceOpen}
+          title={page('plugins.marketplace.panelTitle')}
+          description={page('plugins.marketplace.panelDesc')}
+          className="plugin-marketplace-modal"
+          headerExtra={(
+            <div className="plugin-marketplace-modal__header-actions">
+              <button
+                type="button"
+                className="btn btn--outline btn--sm"
+                onClick={() => void handleRefreshMarketplace()}
+                disabled={marketRefreshing}
+              >
+                <RefreshCw size={14} className={marketRefreshing ? 'animate-spin' : undefined} />
+                {page('plugins.marketplace.action.refresh')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--outline btn--sm"
+                onClick={() => setSourceManagerOpen(true)}
+              >
+                <Settings2 size={14} />
+                {page('plugins.marketplace.action.sourceSettings')}
+              </button>
+              <button
+                type="button"
+                className="member-modal__close"
+                onClick={() => setMarketplaceOpen(false)}
+                aria-label={page('plugins.marketplace.modalClose')}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+          onClose={() => setMarketplaceOpen(false)}
+        >
+          {renderMarketplaceCatalogContent()}
+        </SettingsDialog>
+
+        <SettingsDialog
+          open={sourceManagerOpen}
+          title={page('plugins.marketplace.sourceDialogTitle')}
+          description={page('plugins.marketplace.sourceDialogDesc')}
+          className="plugin-marketplace-source-modal"
+          headerExtra={(
+            <button
+              type="button"
+              className="member-modal__close"
+              onClick={() => setSourceManagerOpen(false)}
+              aria-label={page('plugins.marketplace.sourceDialogClose')}
+            >
+              <X size={16} />
+            </button>
+          )}
+          onClose={() => setSourceManagerOpen(false)}
+        >
+          {renderMarketplaceSourceManagerContent()}
+        </SettingsDialog>
 
         <PluginDetailDrawer
           plugin={detailPlugin}
