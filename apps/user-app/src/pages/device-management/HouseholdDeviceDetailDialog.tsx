@@ -124,6 +124,7 @@ export function HouseholdDeviceDetailDialog({
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editDraft, setEditDraft] = useState<DeviceEditDraft>(EMPTY_DEVICE_EDIT_DRAFT);
   const [editError, setEditError] = useState('');
+  const [editModalOpen, setEditModalOpen] = useState(false);
   const [loadedEditSourceKey, setLoadedEditSourceKey] = useState<string | null>(null);
   const [actionSubmitting, setActionSubmitting] = useState<Record<string, boolean>>({});
   const [logsModalOpen, setLogsModalOpen] = useState(false);
@@ -156,6 +157,7 @@ export function HouseholdDeviceDetailDialog({
       setEntityView('favorites');
       setEntityResponse(null);
       setDeviceLogs(null);
+      setEditModalOpen(false);
       setLogsModalOpen(false);
       setEditDraft(EMPTY_DEVICE_EDIT_DRAFT);
       setEditError('');
@@ -164,6 +166,7 @@ export function HouseholdDeviceDetailDialog({
     }
     setEntityView('favorites');
     setDeviceLogs(null);
+    setEditModalOpen(false);
     setLogsModalOpen(false);
   }, [deviceId, open]);
 
@@ -386,6 +389,22 @@ export function HouseholdDeviceDetailDialog({
     await loadDeviceLogs(deviceId);
   }
 
+  function resetEditForm() {
+    setEditDraft(sourceDraft);
+    setEditError('');
+    setLoadedEditSourceKey(sourceDraftKey);
+  }
+
+  function openEditModal() {
+    resetEditForm();
+    setEditModalOpen(true);
+  }
+
+  function closeEditModal() {
+    resetEditForm();
+    setEditModalOpen(false);
+  }
+
   async function handleSaveDevice() {
     if (!deviceId) {
       return;
@@ -435,6 +454,7 @@ export function HouseholdDeviceDetailDialog({
         roomId: updatedDevice.room_id ?? '',
         enabled: getDeviceEnabledState(updatedDevice.status) === 'enabled',
       }));
+      setEditModalOpen(false);
       onStatus(page('settings.integrations.status.deviceUpdated', { name: updatedDevice.name }));
       await refreshCurrentDevice();
     } catch (error) {
@@ -537,6 +557,71 @@ export function HouseholdDeviceDetailDialog({
     return null;
   }
 
+  const editFormContent = (
+    <>
+      {editError ? <div className="form-error">{editError}</div> : null}
+      <div className="settings-form integration-device-detail__edit-form">
+        <div className="form-group">
+          <label htmlFor="integration-device-alias">{page('settings.integrations.deviceDetail.aliasLabel')}</label>
+          <input
+            id="integration-device-alias"
+            className="form-input"
+            type="text"
+            value={editDraft.name}
+            placeholder={page('settings.integrations.deviceDetail.aliasPlaceholder')}
+            disabled={editSubmitting || deleteSubmitting}
+            onChange={(event) => {
+              const nextName = event.currentTarget.value;
+              setEditError('');
+              setEditDraft((current) => ({ ...current, name: nextName }));
+            }}
+          />
+          <div className="form-help">{page('settings.integrations.deviceDetail.aliasHelp')}</div>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="integration-device-room">{page('settings.integrations.deviceDetail.roomLabel')}</label>
+          <select
+            id="integration-device-room"
+            className="form-select"
+            value={editDraft.roomId}
+            disabled={editSubmitting || deleteSubmitting || roomsLoading}
+            onChange={(event) => {
+              const nextRoomId = event.currentTarget.value;
+              setEditError('');
+              setEditDraft((current) => ({ ...current, roomId: nextRoomId }));
+            }}
+          >
+            <option value="">{page('settings.integrations.deviceDetail.roomUnassigned')}</option>
+            {sortedRooms.map((room) => (
+              <option key={room.id} value={room.id}>{room.name}</option>
+            ))}
+          </select>
+          <div className="form-help">
+            {roomsLoading
+              ? page('settings.integrations.deviceDetail.roomLoading')
+              : page('settings.integrations.deviceDetail.roomHelp')}
+          </div>
+        </div>
+
+        <div className="integration-device-detail__toggle-card">
+          <ToggleSwitch
+            checked={editDraft.enabled}
+            label={page('settings.integrations.deviceDetail.enabledLabel')}
+            description={editDraft.enabled
+              ? page('settings.integrations.deviceDetail.enabledDescEnabled')
+              : page('settings.integrations.deviceDetail.enabledDescDisabled')}
+            disabled={editSubmitting || deleteSubmitting}
+            onChange={(value) => {
+              setEditError('');
+              setEditDraft((current) => ({ ...current, enabled: value }));
+            }}
+          />
+        </div>
+      </div>
+    </>
+  );
+
   const dialogContent = (
     <>
       <div className="member-modal-overlay" onClick={onClose}>
@@ -582,6 +667,14 @@ export function HouseholdDeviceDetailDialog({
                 >
                   {page('settings.integrations.action.deleteDevice')}
                 </button>
+                <button
+                  className="btn btn--outline btn--sm"
+                  type="button"
+                  onClick={openEditModal}
+                  disabled={deleteSubmitting || editSubmitting}
+                >
+                  {page('settings.integrations.action.editDevice')}
+                </button>
               </div>
             </div>
 
@@ -590,85 +683,6 @@ export function HouseholdDeviceDetailDialog({
                 {page('settings.integrations.deviceDetail.deviceDisabledHint')}
               </div>
             ) : null}
-
-            <Card className="integration-device-detail__edit-card">
-              <div className="integration-device-detail__edit-header">
-                <div>
-                  <h4>{page('settings.integrations.deviceDetail.editTitle')}</h4>
-                  <p>{page('settings.integrations.deviceDetail.editDesc')}</p>
-                </div>
-                <button
-                  className="btn btn--outline btn--sm"
-                  type="button"
-                  onClick={() => void handleSaveDevice()}
-                  disabled={!isEditDirty || editSubmitting || deleteSubmitting}
-                >
-                  {editSubmitting
-                    ? page('settings.integrations.action.saving')
-                    : page('settings.integrations.action.saveDevice')}
-                </button>
-              </div>
-              {editError ? <div className="form-error">{editError}</div> : null}
-              <div className="settings-form integration-device-detail__edit-form">
-                <div className="form-group">
-                  <label htmlFor="integration-device-alias">{page('settings.integrations.deviceDetail.aliasLabel')}</label>
-                  <input
-                    id="integration-device-alias"
-                    className="form-input"
-                    type="text"
-                    value={editDraft.name}
-                    placeholder={page('settings.integrations.deviceDetail.aliasPlaceholder')}
-                    disabled={editSubmitting || deleteSubmitting}
-                    onChange={(event) => {
-                      const nextName = event.currentTarget.value;
-                      setEditError('');
-                      setEditDraft((current) => ({ ...current, name: nextName }));
-                    }}
-                  />
-                  <div className="form-help">{page('settings.integrations.deviceDetail.aliasHelp')}</div>
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="integration-device-room">{page('settings.integrations.deviceDetail.roomLabel')}</label>
-                  <select
-                    id="integration-device-room"
-                    className="form-select"
-                    value={editDraft.roomId}
-                    disabled={editSubmitting || deleteSubmitting || roomsLoading}
-                    onChange={(event) => {
-                      const nextRoomId = event.currentTarget.value;
-                      setEditError('');
-                      setEditDraft((current) => ({ ...current, roomId: nextRoomId }));
-                    }}
-                  >
-                    <option value="">{page('settings.integrations.deviceDetail.roomUnassigned')}</option>
-                    {sortedRooms.map((room) => (
-                      <option key={room.id} value={room.id}>{room.name}</option>
-                    ))}
-                  </select>
-                  <div className="form-help">
-                    {roomsLoading
-                      ? page('settings.integrations.deviceDetail.roomLoading')
-                      : page('settings.integrations.deviceDetail.roomHelp')}
-                  </div>
-                </div>
-
-                <div className="integration-device-detail__toggle-card">
-                  <ToggleSwitch
-                    checked={editDraft.enabled}
-                    label={page('settings.integrations.deviceDetail.enabledLabel')}
-                    description={editDraft.enabled
-                      ? page('settings.integrations.deviceDetail.enabledDescEnabled')
-                      : page('settings.integrations.deviceDetail.enabledDescDisabled')}
-                    disabled={editSubmitting || deleteSubmitting}
-                    onChange={(value) => {
-                      setEditError('');
-                      setEditDraft((current) => ({ ...current, enabled: value }));
-                    }}
-                  />
-                </div>
-              </div>
-            </Card>
 
             <div className="integration-device-detail__tabs">
               <button
@@ -745,6 +759,40 @@ export function HouseholdDeviceDetailDialog({
           </div>
         </div>
       </div>
+
+      {editModalOpen ? (
+        <div className="member-modal-overlay" onClick={closeEditModal}>
+          <div className="member-modal integration-device-edit-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="member-modal__header">
+              <div>
+                <h3>{page('settings.integrations.deviceDetail.editTitle')}</h3>
+                <p>{page('settings.integrations.deviceDetail.editDesc')}</p>
+              </div>
+              <button className="btn btn--outline btn--sm" type="button" onClick={closeEditModal}>
+                {page('settings.integrations.action.close')}
+              </button>
+            </div>
+            <div className="integration-device-edit-modal__body">
+              {editFormContent}
+            </div>
+            <div className="member-modal__actions">
+              <button className="btn btn--outline btn--sm" type="button" onClick={closeEditModal}>
+                {page('settings.integrations.action.close')}
+              </button>
+              <button
+                className="btn btn--primary btn--sm"
+                type="button"
+                onClick={() => void handleSaveDevice()}
+                disabled={!isEditDirty || editSubmitting || deleteSubmitting}
+              >
+                {editSubmitting
+                  ? page('settings.integrations.action.saving')
+                  : page('settings.integrations.action.saveDevice')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {logsModalOpen ? (
         <div className="member-modal-overlay" onClick={() => setLogsModalOpen(false)}>

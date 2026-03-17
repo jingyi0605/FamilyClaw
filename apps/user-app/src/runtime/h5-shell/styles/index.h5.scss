@@ -5112,6 +5112,17 @@ input, select, textarea {
   margin-bottom: 0;
 }
 
+.integration-device-edit-modal {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.integration-device-edit-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
 .integration-device-detail__header {
   display: flex;
   justify-content: space-between;
@@ -5139,31 +5150,6 @@ input, select, textarea {
   border-radius: var(--radius-md);
   background: var(--color-warning-light);
   color: var(--color-warning);
-  font-size: var(--font-size-sm);
-}
-
-.integration-device-detail__edit-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-}
-
-.integration-device-detail__edit-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--spacing-md);
-}
-
-.integration-device-detail__edit-header h4 {
-  margin: 0 0 4px;
-  font-size: var(--font-size-md);
-  font-weight: 700;
-}
-
-.integration-device-detail__edit-header p {
-  margin: 0;
-  color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
 
