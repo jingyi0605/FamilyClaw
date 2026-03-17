@@ -11,8 +11,6 @@
     "typecheck:user-app": "npm --prefix ./apps/user-app run typecheck"
   },
   "workspaces": [
-    "apps/admin-web",
-    "apps/user-web",
     "packages/*"
   ]
 }

@@ -6,7 +6,6 @@ const workspacePackageSrcRoots = [
   'user-platform',
   'user-core',
   'user-ui',
-  'user-testing',
 ].map(packageName => path.resolve(process.cwd(), `../../packages/${packageName}/src`));
 
 const h5Config = {

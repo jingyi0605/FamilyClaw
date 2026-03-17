@@ -107,7 +107,7 @@ class AgentCreate(BaseModel):
     service_boundaries: dict[str, Any] | None = None
     conversation_enabled: bool = True
     default_entry: bool = True
-    created_by: str = Field(default="user-web", min_length=1, max_length=30)
+    created_by: str = Field(default="user-app", min_length=1, max_length=30)
 
 
 class ButlerBootstrapDraft(BaseModel):
@@ -145,7 +145,7 @@ class ButlerBootstrapMessageCreate(BaseModel):
 
 class ButlerBootstrapConfirm(BaseModel):
     draft: ButlerBootstrapDraft
-    created_by: str = Field(default="user-web", min_length=1, max_length=30)
+    created_by: str = Field(default="user-app", min_length=1, max_length=30)
 
 
 class AgentUpdate(BaseModel):

@@ -8,7 +8,6 @@ const sharedPackagesRoot = path.join(workspaceRoot, 'packages')
 const sharedPackagePaths = [
   path.join(sharedPackagesRoot, 'user-core'),
   path.join(sharedPackagesRoot, 'user-platform'),
-  path.join(sharedPackagesRoot, 'user-testing'),
   path.join(sharedPackagesRoot, 'user-ui'),
 ]
 
@@ -29,8 +28,7 @@ const config = {
     extraNodeModules: {
       '@familyclaw/user-core': sharedPackagePaths[0],
       '@familyclaw/user-platform': sharedPackagePaths[1],
-      '@familyclaw/user-testing': sharedPackagePaths[2],
-      '@familyclaw/user-ui': sharedPackagePaths[3],
+      '@familyclaw/user-ui': sharedPackagePaths[2],
     },
   },
 }

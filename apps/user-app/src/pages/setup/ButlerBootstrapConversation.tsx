@@ -21,9 +21,9 @@ function getButlerEmoji(name: string): string {
 }
 function normalizeMessageContent(content: string) { return content.replace(/\r\n/g, '\n').replace(/\n{2,}/g, '\n').trim(); }
 
-export function ButlerBootstrapConversation(props: { householdId: string; source?: 'user-web' | 'setup-wizard'; existingButlerAgent?: AgentSummary | null; onCreated?: (agent: AgentDetail) => Promise<void> | void }) {
+export function ButlerBootstrapConversation(props: { householdId: string; source?: 'user-app' | 'setup-wizard'; existingButlerAgent?: AgentSummary | null; onCreated?: (agent: AgentDetail) => Promise<void> | void }) {
   const { t } = useI18n();
-  const { householdId, source = 'user-web', existingButlerAgent = null, onCreated } = props;
+  const { householdId, source = 'user-app', existingButlerAgent = null, onCreated } = props;
   const [session, setSession] = useState<ButlerBootstrapSession | null>(null);
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [input, setInput] = useState('');

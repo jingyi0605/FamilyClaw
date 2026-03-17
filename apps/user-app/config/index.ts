@@ -29,12 +29,10 @@ export default defineConfig(async merge => {
     'user-platform',
     'user-core',
     'user-ui',
-    'user-testing',
   ].map(packageName => path.resolve(process.cwd(), `../../packages/${packageName}/src`));
 
   const workspacePackageEntries = {
     '@familyclaw/user-core': path.resolve(process.cwd(), '../../packages/user-core/src/index.ts'),
-    '@familyclaw/user-testing': path.resolve(process.cwd(), '../../packages/user-testing/src/index.ts'),
     '@familyclaw/user-ui': path.resolve(process.cwd(), '../../packages/user-ui/src/index.ts'),
     '@familyclaw/user-platform/web': path.resolve(process.cwd(), '../../packages/user-platform/src/index.web.ts'),
     '@familyclaw/user-platform': path.resolve(
