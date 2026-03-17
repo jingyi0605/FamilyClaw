@@ -22,6 +22,8 @@ apps/api-server/scripts/20260314-语义路由评估.py
 apps/user-app/.tmp/*
 test*.py
 apps\api-server\tests\*
+!apps/api-server/tests/test_integration_plugin_state.py
+!apps/api-server/tests/test_scheduler_plugin_state.py
 
 # TypeScript compiled JS files (keep source ts/tsx)
 apps/user-app/**/*.js
