@@ -22,19 +22,38 @@ export function WelcomeStep(props: { onComplete: () => void }) {
           <div
             key={p.id}
             className="particle"
-            style={{ width: `${p.width}px`, height: `${p.width}px`, left: `${p.left}%`, top: `${p.top}%`, animationDelay: `${p.delay}s`, animationDuration: `${p.duration}s` }}
+            style={{
+              width: `${p.width}px`,
+              height: `${p.width}px`,
+              left: `${p.left}%`,
+              top: `${p.top}%`,
+              animationDelay: `${p.delay}s`,
+              animationDuration: `${p.duration}s`,
+            }}
           />
         ))}
       </div>
       <div className="welcome-content">
-        <div className="welcome-logo-wrapper"><div className="welcome-logo">✨</div></div>
-        <div className="welcome-text-wrapper"><h1 className="welcome-text">{t('setup.welcome.title')}</h1></div>
-        <div className="welcome-text-wrapper"><p className="welcome-subtext">{t('setup.welcome.subtitle')}</p></div>
+        <div className="welcome-logo-wrapper">
+          <div className="welcome-logo">✨</div>
+        </div>
+        <div className="welcome-text-wrapper">
+          <h1 className="welcome-text">{t('setup.welcome.title')}</h1>
+        </div>
+        <div className="welcome-text-wrapper">
+          <p className="welcome-subtext">{t('setup.welcome.subtitle')}</p>
+        </div>
         <div className="welcome-action">
-          <button className="welcome-btn" onClick={() => {
-            setFadeOut(true);
-            window.setTimeout(() => props.onComplete(), 500);
-          }}>{t('setup.welcome.continue')}</button>
+          <button
+            type="button"
+            className="btn btn--primary welcome-btn"
+            onClick={() => {
+              setFadeOut(true);
+              window.setTimeout(() => props.onComplete(), 500);
+            }}
+          >
+            {t('setup.welcome.continue')}
+          </button>
         </div>
       </div>
     </div>
