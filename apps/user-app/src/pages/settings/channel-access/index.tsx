@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import Taro from '@tarojs/taro';
+import { Gamepad2, Building2, Bot, Plus, Puzzle, MessageSquare } from 'lucide-react';
 import { GuardedPage, useHouseholdContext, useI18n } from '../../../runtime';
 import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, EmptyState, Section } from '../../family/base';
@@ -7,6 +8,12 @@ import { SettingsPageShell } from '../SettingsPageShell';
 import { ChannelAccountBindingsPanel } from '../components/ChannelAccountBindingsPanel';
 import { SettingsDialog, SettingsNotice } from '../components/SettingsSharedBlocks';
 import { ApiError, settingsApi } from '../settingsApi';
+import {
+  TelegramLogo,
+  DiscordLogo,
+  FeishuLogo,
+  DingtalkLogo,
+} from './assets/PlatformLogos';
 import type {
   ChannelAccountCreate,
   ChannelAccountRead,
@@ -21,7 +28,13 @@ import type {
 } from '../settingsTypes';
 
 type MessageKey = Parameters<typeof getPageMessage>[1];
-type PlatformInfo = { code: string; nameKey: MessageKey | null; icon: string };
+type PlatformInfo = {
+  code: string;
+  nameKey: MessageKey;
+  description: string; // 平台描述（直接使用字符串）
+  Logo: typeof TelegramLogo;
+  Icon: typeof MessageSquare; // 用于卡片的lucide图标作为备选
+};
 type ConfigFieldDef = {
   key: string;
   label: string;
@@ -180,12 +193,34 @@ const PLATFORM_CONFIG_FIELDS: Record<string, ConfigFieldMessageDef[]> = {
 };
 
 const PLATFORMS: PlatformInfo[] = [
-  { code: 'telegram', nameKey: 'settings.channelAccess.platform.telegram', icon: '✈️' },
-  { code: 'discord', nameKey: 'settings.channelAccess.platform.discord', icon: '🎮' },
-  { code: 'feishu', nameKey: 'settings.channelAccess.platform.feishu', icon: '🪶' },
-  { code: 'dingtalk', nameKey: 'settings.channelAccess.platform.dingtalk', icon: '💬' },
-  { code: 'wecom_app', nameKey: 'settings.channelAccess.platform.wecomApp', icon: '🏢' },
-  { code: 'wecom_bot', nameKey: 'settings.channelAccess.platform.wecomBot', icon: '🤖' },
+  {
+    code: 'telegram',
+    nameKey: 'settings.channelAccess.platform.telegram',
+    description: '全球流行的即时通讯平台，支持群组、频道和机器人',
+    Logo: TelegramLogo,
+    Icon: MessageSquare,
+  },
+  {
+    code: 'discord',
+    nameKey: 'settings.channelAccess.platform.discord',
+    description: '面向社区的语音、视频和文字通讯平台',
+    Logo: DiscordLogo,
+    Icon: Gamepad2,
+  },
+  {
+    code: 'feishu',
+    nameKey: 'settings.channelAccess.platform.feishu',
+    description: '字节跳动旗下企业协作平台，支持机器人与多维表格',
+    Logo: FeishuLogo,
+    Icon: Building2,
+  },
+  {
+    code: 'dingtalk',
+    nameKey: 'settings.channelAccess.platform.dingtalk',
+    description: '阿里巴巴旗下企业通讯与协作平台',
+    Logo: DingtalkLogo,
+    Icon: Bot,
+  },
 ];
 
 function buildInitialAccountForm(): AccountFormState {
@@ -199,8 +234,10 @@ function normalizeLocale(locale?: string) {
 function getPlatformInfo(platformCode: string): PlatformInfo {
   return PLATFORMS.find((item) => item.code === platformCode) ?? {
     code: platformCode,
-    nameKey: null,
-    icon: '🔌',
+    nameKey: 'settings.channelAccess.platform.telegram' as MessageKey,
+    description: '未知平台',
+    Logo: TelegramLogo,
+    Icon: MessageSquare,
   };
 }
 
@@ -340,6 +377,7 @@ function SettingsChannelAccessContent() {
   const [failedDeliveries, setFailedDeliveries] = useState<ChannelDeliveryRead[]>([]);
   const [failedInboundEvents, setFailedInboundEvents] = useState<ChannelInboundEventRead[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [platformSelectOpen, setPlatformSelectOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<ChannelAccountRead | null>(null);
   const [accountForm, setAccountForm] = useState<AccountFormState>(buildInitialAccountForm);
@@ -394,7 +432,7 @@ function SettingsChannelAccessContent() {
     .filter((plugin) => plugin.enabled && !!plugin.capabilities.channel?.platform_code)
     .map((plugin) => {
       const platformCode = plugin.capabilities.channel?.platform_code ?? plugin.id.replace(/^channel-/, '');
-      return { pluginId: plugin.id, platformCode, name: plugin.name, icon: getPlatformInfo(platformCode).icon };
+      return { pluginId: plugin.id, platformCode, name: plugin.name, Icon: getPlatformInfo(platformCode).Icon };
     }), [channelPlugins]);
   const activeMembers = useMemo(() => members.filter((member) => member.status === 'active'), [members]);
 
@@ -442,8 +480,18 @@ function SettingsChannelAccessContent() {
   }
 
   function openCreateModal() {
+    // 先打开平台选择对话框
+    setPlatformSelectOpen(true);
+  }
+
+  function selectPlatform(platformCode: string) {
+    // 选择平台后，关闭平台选择对话框，打开表单对话框
+    setPlatformSelectOpen(false);
     setEditingAccount(null);
-    setAccountForm(buildInitialAccountForm());
+    setAccountForm({
+      ...buildInitialAccountForm(),
+      plugin_id: `channel-${platformCode}`, // 假设插件ID格式
+    });
     setAccountModalOpen(true);
   }
 
@@ -629,7 +677,6 @@ function SettingsChannelAccessContent() {
             {loading && accounts.length === 0 ? <div className="text-text-secondary">{t('settings.channelAccess.list.loading')}</div> : null}
             {!loading && accounts.length === 0 ? (
               <EmptyState
-                icon="🔌"
                 title={t('settings.channelAccess.list.emptyTitle')}
                 description={t('settings.channelAccess.list.emptyDescription')}
                 action={headerActions}
@@ -658,7 +705,9 @@ function SettingsChannelAccessContent() {
                   return (
                     <Card key={account.id} className="channel-account-card">
                       <div className="channel-account-card__header">
-                        <div className="channel-account-card__icon">{platform.icon}</div>
+                        <div className="channel-account-card__icon">
+                          <platform.Icon size={24} />
+                        </div>
                         <div className="channel-account-card__info">
                           <div className="channel-account-card__title">
                             <span className="channel-account-card__name">{account.display_name}</span>
@@ -864,7 +913,7 @@ function SettingsChannelAccessContent() {
               <option value="">{t('settings.channelAccess.form.platformPlaceholder')}</option>
               {availableChannelPlugins.map((plugin) => (
                 <option key={plugin.pluginId} value={plugin.pluginId}>
-                  {plugin.icon} {plugin.name}
+                  {plugin.name}
                 </option>
               ))}
             </select>
@@ -946,6 +995,62 @@ function SettingsChannelAccessContent() {
             </div>
           ) : null}
         </SettingsDialog>
+
+        {/* 平台选择对话框 */}
+        {platformSelectOpen ? (
+          <div className="member-modal-overlay" onClick={() => setPlatformSelectOpen(false)}>
+            <div className="member-modal platform-select-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="member-modal__header">
+                <div>
+                  <h3>{locale.startsWith('en') ? 'Select Platform' : '选择平台'}</h3>
+                  <p>{locale.startsWith('en') ? 'Choose a communication platform to connect' : '选择要连接的通讯平台'}</p>
+                </div>
+                <button
+                  type="button"
+                  className="member-modal__close"
+                  onClick={() => setPlatformSelectOpen(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="platform-select-grid">
+                {PLATFORMS.map((platform) => {
+                  const { Logo, nameKey, description } = platform;
+                  return (
+                    <button
+                      key={platform.code}
+                      type="button"
+                      className="platform-select-card"
+                      onClick={() => selectPlatform(platform.code)}
+                    >
+                      <div className="platform-select-card__logo">
+                        <Logo width={48} height={48} />
+                      </div>
+                      <div className="platform-select-card__body">
+                        <h4 className="platform-select-card__name">{t(nameKey)}</h4>
+                        <p className="platform-select-card__desc">{description}</p>
+                      </div>
+                      <div className="platform-select-card__arrow">
+                        <Plus size={20} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="platform-select-footer">
+                <div className="platform-select-footer__icon">
+                  <Puzzle size={16} />
+                </div>
+                <span className="platform-select-footer__text">
+                  {locale.startsWith('en')
+                    ? 'More platforms can be extended via plugins'
+                    : '更多平台可通过插件扩展接入'}
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </SettingsPageShell>
   );
