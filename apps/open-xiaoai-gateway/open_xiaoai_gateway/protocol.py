@@ -16,7 +16,15 @@ GatewayEventType = Literal[
     "playback.interrupted",
     "playback.receipt",
 ]
-GatewayCommandType = Literal["session.ready", "play.start", "play.stop", "play.abort", "agent.error"]
+GatewayCommandType = Literal[
+    "session.ready",
+    "play.start",
+    "play.stop",
+    "play.abort",
+    "speaker.turn_on",
+    "speaker.set_volume",
+    "agent.error",
+]
 
 
 class _StrictModel(BaseModel):

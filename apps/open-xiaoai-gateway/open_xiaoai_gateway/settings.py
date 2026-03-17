@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     api_server_http_url: str = "http://127.0.0.1:8000/api/v1"
     api_server_ws_url: str = "ws://127.0.0.1:8000/api/v1/realtime/voice"
     voice_gateway_token: str = "dev-voice-gateway-token"
+    gateway_id: str = "open-xiaoai-gateway"
     claim_poll_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     recording_enabled: bool = True
     recording_pcm: str = "noop"

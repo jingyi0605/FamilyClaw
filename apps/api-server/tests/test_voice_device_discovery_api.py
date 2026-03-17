@@ -1,37 +1,39 @@
-﻿import tempfile
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
-from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
 from app.api.dependencies import ActorContext, require_admin_actor, require_bound_member_actor
-from app.api.v1.endpoints.devices import router as devices_router
+from app.api.v1.endpoints.device_actions import router as device_actions_router
+from app.api.v1.endpoints.integrations import router as integrations_router
 from app.core.config import settings
 from app.db.session import get_db
-from app.db.utils import new_uuid
-from app.modules.device.models import Device, DeviceBinding
+from app.modules.device.models import DeviceBinding
+from app.modules.device_control.schemas import DeviceControlRequest
+from app.modules.device_control.service import execute_device_control
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
-from app.modules.member.schemas import MemberCreate
-from app.modules.member.service import create_member
-from app.modules.room.service import create_room
-from app.modules.voice.discovery_registry import voice_terminal_discovery_registry
-from app.modules.voiceprint.models import VoiceprintEnrollment
+from app.modules.integration.models import IntegrationDiscovery
+
+
+def _build_alembic_config(database_url: str) -> Config:
+    alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+    return alembic_config
 
 
 class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
-        self._previous_database_url = settings.database_url
-        voice_terminal_discovery_registry.reset()
-
         from tests.test_db_support import PostgresTestDatabase
+
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
         self.database_url = self._db_helper.database_url
@@ -41,28 +43,10 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         with self.SessionLocal() as db:
             household = create_household(
                 db,
-                HouseholdCreate(name="Voice Home", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
-            )
-            room = create_room(
-                db,
-                household_id=household.id,
-                name="瀹㈠巺",
-                room_type="living_room",
-                privacy_level="public",
+                HouseholdCreate(name="XiaoAI Home", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
             )
             db.commit()
             self.household_id = household.id
-            self.room_id = room.id
-
-        app = FastAPI()
-        app.include_router(devices_router, prefix=settings.api_v1_prefix)
-
-        def _override_get_db():
-            db: Session = self.SessionLocal()
-            try:
-                yield db
-            finally:
-                db.close()
 
         actor = ActorContext(
             role="admin",
@@ -77,6 +61,18 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
             member_role="admin",
             is_authenticated=True,
         )
+
+        app = FastAPI()
+        app.include_router(integrations_router, prefix=settings.api_v1_prefix)
+        app.include_router(device_actions_router, prefix=settings.api_v1_prefix)
+
+        def _override_get_db():
+            db: Session = self.SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
         app.dependency_overrides[get_db] = _override_get_db
         app.dependency_overrides[require_admin_actor] = lambda: actor
         app.dependency_overrides[require_bound_member_actor] = lambda: actor
@@ -85,270 +81,263 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.client.close()
         self._db_helper.close()
-        voice_terminal_discovery_registry.reset()
         self._tempdir.cleanup()
 
-    def test_gateway_can_report_pending_voice_terminal(self) -> None:
-        response = self.client.post(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/report",
-            headers={"x-voice-gateway-token": settings.voice_gateway_token},
-            json={
-                "adapter_type": "open_xiaoai",
-                "fingerprint": "open_xiaoai:LX06:SN001",
-                "model": "LX06",
-                "sn": "SN001",
-                "runtime_version": "1.0.0",
-                "capabilities": ["audio_input", "audio_output", "playback_stop"],
-                "remote_addr": "192.168.1.22",
-                "connection_status": "online",
-            },
+    def test_open_xiaoai_plugin_can_be_created_as_formal_instance(self) -> None:
+        catalog = self.client.get(
+            f"{settings.api_v1_prefix}/integrations/catalog",
+            params={"household_id": self.household_id},
         )
 
-        self.assertEqual(200, response.status_code)
-        payload = response.json()
-        self.assertFalse(payload["claimed"])
-        self.assertEqual("open_xiaoai:LX06:SN001", payload["fingerprint"])
+        self.assertEqual(200, catalog.status_code)
+        plugin_ids = {item["plugin_id"] for item in catalog.json()["items"]}
+        self.assertIn("open-xiaoai-speaker", plugin_ids)
 
-    def test_member_can_list_pending_voice_terminals(self) -> None:
-        self._report_terminal("open_xiaoai:LX06:SN001", "LX06", "SN001")
+        response = self._create_instance(gateway_id="gateway-living-room")
+        self.assertEqual(201, response.status_code)
+        self.assertEqual("open-xiaoai-speaker", response.json()["plugin_id"])
+
+    def test_unbound_gateway_discovery_is_visible_in_page_view(self) -> None:
+        self._report_discovery(gateway_id="gateway-unbound", fingerprint="open_xiaoai:LX06:SN100", sn="SN100")
 
         response = self.client.get(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries",
+            f"{settings.api_v1_prefix}/integrations/page-view",
             params={"household_id": self.household_id},
         )
 
         self.assertEqual(200, response.status_code)
-        payload = response.json()
-        self.assertEqual(self.household_id, payload["household_id"])
-        self.assertEqual(1, len(payload["items"]))
-        self.assertEqual("LX06", payload["items"][0]["model"])
+        discoveries = response.json()["discoveries"]
+        self.assertEqual(1, len(discoveries))
+        self.assertIsNone(discoveries[0]["integration_instance_id"])
+        self.assertIsNone(discoveries[0]["household_id"])
+        self.assertEqual("gateway-unbound", discoveries[0]["metadata"]["gateway_id"])
 
-    def test_claim_creates_device_and_binding_and_gateway_can_query_result(self) -> None:
-        fingerprint = "open_xiaoai:LX06:SN001"
-        self._report_terminal(fingerprint, "LX06", "SN001")
+    def test_open_xiaoai_instance_can_auto_select_single_discovered_gateway(self) -> None:
+        self._report_discovery(gateway_id="gateway-auto", fingerprint="open_xiaoai:LX06:SN101", sn="SN101")
 
-        claim_response = self.client.post(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/claim",
-            json={
-                "household_id": self.household_id,
-                "room_id": self.room_id,
-                "terminal_name": "瀹㈠巺闊崇",
-            },
-        )
-
-        self.assertEqual(200, claim_response.status_code)
-        self.assertEqual("瀹㈠巺闊崇", claim_response.json()["terminal_name"])
-
-        binding_response = self.client.get(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/binding",
-            headers={"x-voice-gateway-token": settings.voice_gateway_token},
-        )
-        self.assertEqual(200, binding_response.status_code)
-        binding_payload = binding_response.json()
-        self.assertTrue(binding_payload["claimed"])
-        self.assertEqual(self.household_id, binding_payload["binding"]["household_id"])
-        self.assertFalse(binding_payload["binding"]["voice_auto_takeover_enabled"])
-        self.assertEqual(["璇?], binding_payload["binding"]["voice_takeover_prefixes"])
+        response = self._create_instance(gateway_id=None)
+        self.assertEqual(201, response.status_code)
+        instance_id = response.json()["id"]
 
         with self.SessionLocal() as db:
-            device = db.scalar(select(Device).where(Device.id == binding_payload["binding"]["terminal_id"]))
-            binding = db.scalar(
-                select(DeviceBinding).where(
-                    DeviceBinding.platform == "open_xiaoai",
-                    DeviceBinding.external_entity_id == fingerprint,
+            discovery = db.scalar(
+                select(IntegrationDiscovery).where(
+                    IntegrationDiscovery.plugin_id == "open-xiaoai-speaker",
+                    IntegrationDiscovery.discovery_key == "open_xiaoai:LX06:SN101",
                 )
             )
-            self.assertIsNotNone(device)
-            self.assertIsNotNone(binding)
-            assert device is not None
-            self.assertEqual("speaker", device.device_type)
-            self.assertEqual("xiaomi", device.vendor)
-            self.assertEqual(self.room_id, device.room_id)
-            self.assertEqual(0, device.voice_auto_takeover_enabled)
-            self.assertEqual(["璇?], device.voice_takeover_prefixes)
+            self.assertIsNotNone(discovery)
+            assert discovery is not None
+            self.assertEqual(instance_id, discovery.integration_instance_id)
+            self.assertEqual(self.household_id, discovery.household_id)
+            self.assertEqual("gateway-auto", discovery.gateway_id)
 
-    def test_device_takeover_settings_update_flow_back_to_binding_snapshot(self) -> None:
-        fingerprint = "open_xiaoai:LX06:SN002"
-        self._report_terminal(fingerprint, "LX06", "SN002")
+        candidates_response = self.client.post(
+            f"{settings.api_v1_prefix}/integrations/instances/{instance_id}/actions",
+            json={"action": "sync", "payload": {"sync_scope": "device_candidates"}},
+        )
+        self.assertEqual(200, candidates_response.status_code)
+        items = candidates_response.json()["output"]["items"]
+        self.assertEqual(["SN101"], [item["external_device_id"] for item in items])
 
-        claim_response = self.client.post(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/claim",
+    def test_open_xiaoai_instance_lists_candidates_and_syncs_multiple_speakers(self) -> None:
+        response = self._create_instance(gateway_id="gateway-living-room")
+        instance_id = response.json()["id"]
+
+        self._report_discovery(gateway_id="gateway-living-room", fingerprint="open_xiaoai:LX06:SN001", sn="SN001")
+        self._report_discovery(gateway_id="gateway-living-room", fingerprint="open_xiaoai:LX06:SN002", sn="SN002")
+
+        candidates_response = self.client.post(
+            f"{settings.api_v1_prefix}/integrations/instances/{instance_id}/actions",
+            json={"action": "sync", "payload": {"sync_scope": "device_candidates"}},
+        )
+        self.assertEqual(200, candidates_response.status_code)
+        items = candidates_response.json()["output"]["items"]
+        self.assertEqual(2, len(items))
+        self.assertEqual({"SN001", "SN002"}, {item["external_device_id"] for item in items})
+
+        sync_response = self.client.post(
+            f"{settings.api_v1_prefix}/integrations/instances/{instance_id}/actions",
             json={
-                "household_id": self.household_id,
-                "room_id": self.room_id,
-                "terminal_name": "椁愬巺闊崇",
+                "action": "sync",
+                "payload": {
+                    "sync_scope": "device_sync",
+                    "selected_external_ids": ["SN001", "SN002"],
+                },
             },
         )
-        self.assertEqual(200, claim_response.status_code)
-        device_id = claim_response.json()["terminal_id"]
+        self.assertEqual(200, sync_response.status_code)
+        summary = sync_response.json()["output"]["summary"]
+        self.assertEqual(2, summary["created_devices"])
+        self.assertEqual(2, summary["created_bindings"])
 
-        update_response = self.client.patch(
-            f"{settings.api_v1_prefix}/devices/{device_id}",
-            json={
-                "voice_auto_takeover_enabled": True,
-                "voiceprint_identity_enabled": True,
-                "voice_takeover_prefixes": ["璇?, "甯垜"],
-            },
-        )
-        self.assertEqual(200, update_response.status_code)
-        updated_payload = update_response.json()
-        self.assertTrue(updated_payload["voice_auto_takeover_enabled"])
-        self.assertTrue(updated_payload["voiceprint_identity_enabled"])
-        self.assertEqual(["璇?, "甯垜"], updated_payload["voice_takeover_prefixes"])
+        with self.SessionLocal() as db:
+            bindings = list(
+                db.scalars(
+                    select(DeviceBinding).where(DeviceBinding.integration_instance_id == instance_id)
+                ).all()
+            )
+        self.assertEqual(2, len(bindings))
+        self.assertEqual({"open-xiaoai-speaker"}, {item.plugin_id for item in bindings})
+        self.assertEqual({"open_xiaoai"}, {item.platform for item in bindings})
 
-        binding_response = self.client.get(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/binding",
-            headers={"x-voice-gateway-token": settings.voice_gateway_token},
-        )
-        self.assertEqual(200, binding_response.status_code)
-        binding_payload = binding_response.json()
-        self.assertTrue(binding_payload["binding"]["voice_auto_takeover_enabled"])
-        self.assertEqual(["璇?, "甯垜"], binding_payload["binding"]["voice_takeover_prefixes"])
-
-    def test_binding_query_returns_pending_voiceprint_enrollment(self) -> None:
+    def test_discovery_report_returns_claimed_binding_after_sync(self) -> None:
+        response = self._create_instance(gateway_id="gateway-study")
+        instance_id = response.json()["id"]
         fingerprint = "open_xiaoai:LX06:SN003"
-        self._report_terminal(fingerprint, "LX06", "SN003")
+        self._report_discovery(gateway_id="gateway-study", fingerprint=fingerprint, sn="SN003")
 
-        claim_response = self.client.post(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/claim",
+        self.client.post(
+            f"{settings.api_v1_prefix}/integrations/instances/{instance_id}/actions",
             json={
-                "household_id": self.household_id,
-                "room_id": self.room_id,
-                "terminal_name": "涓诲崸闊崇",
+                "action": "sync",
+                "payload": {
+                    "sync_scope": "device_sync",
+                    "selected_external_ids": ["SN003"],
+                },
             },
         )
-        self.assertEqual(200, claim_response.status_code)
-        terminal_id = claim_response.json()["terminal_id"]
 
-        with self.SessionLocal() as db:
-            member = create_member(
-                db,
-                MemberCreate(
-                    household_id=self.household_id,
-                    name="濡堝",
-                    role="adult",
-                ),
-            )
-            db.flush()
-            db.add(
-                VoiceprintEnrollment(
-                    id=new_uuid(),
-                    household_id=self.household_id,
-                    member_id=member.id,
-                    terminal_id=terminal_id,
-                    status="pending",
-                    expected_phrase="鎴戞槸濡堝",
-                    sample_goal=3,
-                    sample_count=1,
-                    expires_at="2026-03-16T12:00:00+08:00",
+        claimed_response = self._report_discovery(gateway_id="gateway-study", fingerprint=fingerprint, sn="SN003")
+        self.assertTrue(claimed_response.json()["claimed"])
+        self.assertTrue(claimed_response.json()["binding"]["terminal_id"])
+
+    def test_open_xiaoai_device_control_uses_formal_plugin_route(self) -> None:
+        device_id = self._sync_single_speaker(gateway_id="gateway-bedroom", sn="SN004")
+
+        with patch(
+            "app.modules.voice.realtime_service.voice_realtime_service.connection_manager.send_event",
+            new=AsyncMock(),
+        ) as mocked_send:
+            with self.SessionLocal() as db:
+                result = execute_device_control(
+                    db,
+                    request=DeviceControlRequest(
+                        household_id=self.household_id,
+                        device_id=device_id,
+                        action="play_pause",
+                        params={},
+                        reason="test.open_xiaoai.play_pause",
+                    ),
                 )
-            )
-            db.commit()
 
-        binding_response = self.client.get(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/binding",
-            headers={"x-voice-gateway-token": settings.voice_gateway_token},
-        )
-        self.assertEqual(200, binding_response.status_code)
-        binding_payload = binding_response.json()
-        pending = binding_payload["binding"]["pending_voiceprint_enrollment"]
-        self.assertIsNotNone(pending)
-        self.assertEqual("鎴戞槸濡堝", pending["expected_phrase"])
-        self.assertEqual(3, pending["sample_goal"])
-        self.assertEqual(1, pending["sample_count"])
+        self.assertEqual("open-xiaoai-speaker", result.plugin_id)
+        self.assertEqual("open_xiaoai", result.platform)
+        mocked_send.assert_awaited()
+        event = mocked_send.await_args.kwargs["event"]
+        self.assertEqual("play.stop", event.type)
+        self.assertEqual("device_control", event.payload.reason)
 
-    def test_claim_still_succeeds_when_registry_temporarily_loses_discovery(self) -> None:
-        fingerprint = "open_xiaoai:LX06:SN001"
-        self._report_terminal(fingerprint, "LX06", "SN001")
-        voice_terminal_discovery_registry.reset()
+    def test_open_xiaoai_device_control_turn_on_uses_formal_voice_command(self) -> None:
+        device_id = self._sync_single_speaker(gateway_id="gateway-kitchen", sn="SN005")
 
-        claim_response = self.client.post(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/claim",
-            json={
-                "household_id": self.household_id,
-                "room_id": self.room_id,
-                "terminal_name": "涔︽埧闊崇",
-                "model": "LX06",
-                "sn": "SN001",
-                "connection_status": "online",
-            },
-        )
-
-        self.assertEqual(200, claim_response.status_code)
-        self.assertEqual("涔︽埧闊崇", claim_response.json()["terminal_name"])
-
-        with self.SessionLocal() as db:
-            binding = db.scalar(
-                select(DeviceBinding).where(
-                    DeviceBinding.platform == "open_xiaoai",
-                    DeviceBinding.external_entity_id == fingerprint,
+        with patch(
+            "app.modules.voice.realtime_service.voice_realtime_service.connection_manager.send_event",
+            new=AsyncMock(),
+        ) as mocked_send:
+            with self.SessionLocal() as db:
+                result = execute_device_control(
+                    db,
+                    request=DeviceControlRequest(
+                        household_id=self.household_id,
+                        device_id=device_id,
+                        action="turn_on",
+                        params={},
+                        reason="test.open_xiaoai.turn_on",
+                    ),
                 )
-            )
-            self.assertIsNotNone(binding)
 
-    def test_claim_missing_discovery_returns_404(self) -> None:
-        response = self.client.post(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/open_xiaoai%3ALX06%3AMISSING/claim",
+        self.assertEqual("open-xiaoai-speaker", result.plugin_id)
+        self.assertEqual("speaker.turn_on", result.external_request["command"])
+        event = mocked_send.await_args.kwargs["event"]
+        self.assertEqual("speaker.turn_on", event.type)
+        self.assertEqual("device_control", event.payload.reason)
+
+    def test_open_xiaoai_device_control_set_volume_uses_formal_voice_command(self) -> None:
+        device_id = self._sync_single_speaker(gateway_id="gateway-study", sn="SN006")
+
+        with patch(
+            "app.modules.voice.realtime_service.voice_realtime_service.connection_manager.send_event",
+            new=AsyncMock(),
+        ) as mocked_send:
+            with self.SessionLocal() as db:
+                result = execute_device_control(
+                    db,
+                    request=DeviceControlRequest(
+                        household_id=self.household_id,
+                        device_id=device_id,
+                        action="set_volume",
+                        params={"volume_pct": 35},
+                        reason="test.open_xiaoai.set_volume",
+                    ),
+                )
+
+        self.assertEqual("open-xiaoai-speaker", result.plugin_id)
+        self.assertEqual("speaker.set_volume", result.external_request["command"])
+        self.assertEqual(35, result.external_request["payload"]["volume_pct"])
+        event = mocked_send.await_args.kwargs["event"]
+        self.assertEqual("speaker.set_volume", event.type)
+        self.assertEqual(35, event.payload.volume_pct)
+        self.assertEqual("device_control", event.payload.reason)
+
+    def _create_instance(self, *, gateway_id: str | None):
+        config = {"gateway_id": gateway_id} if gateway_id is not None else {}
+        return self.client.post(
+            f"{settings.api_v1_prefix}/integrations/instances",
             json={
                 "household_id": self.household_id,
-                "room_id": self.room_id,
-                "terminal_name": "瀹㈠巺闊崇",
+                "plugin_id": "open-xiaoai-speaker",
+                "display_name": "客厅小爱网关",
+                "config": config,
+                "clear_secret_fields": [],
             },
         )
 
-        self.assertEqual(404, response.status_code)
-        self.assertEqual("voice discovery not found", response.json()["detail"])
-
-    def test_binding_query_for_unknown_discovery_returns_404(self) -> None:
-        response = self.client.get(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/open_xiaoai%3ALX06%3AUNKNOWN/binding",
-            headers={"x-voice-gateway-token": settings.voice_gateway_token},
-        )
-
-        self.assertEqual(404, response.status_code)
-        self.assertEqual("voice discovery not found", response.json()["detail"])
-
-    def test_claim_and_binding_support_fingerprint_with_slash(self) -> None:
-        fingerprint = "open_xiaoai:LX06:23948/C4QX00829"
-        self._report_terminal(fingerprint, "LX06", "23948/C4QX00829")
-
-        claim_response = self.client.post(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/claim",
-            json={
-                "household_id": self.household_id,
-                "room_id": self.room_id,
-                "terminal_name": "涔︽埧灏忕埍闊崇",
-            },
-        )
-        self.assertEqual(200, claim_response.status_code)
-
-        binding_response = self.client.get(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/{fingerprint}/binding",
-            headers={"x-voice-gateway-token": settings.voice_gateway_token},
-        )
-        self.assertEqual(200, binding_response.status_code)
-        binding_payload = binding_response.json()
-        self.assertTrue(binding_payload["claimed"])
-        self.assertEqual(fingerprint, binding_payload["fingerprint"])
-
-    def _report_terminal(self, fingerprint: str, model: str, sn: str) -> None:
-        response = self.client.post(
-            f"{settings.api_v1_prefix}/devices/voice-terminals/discoveries/report",
+    def _report_discovery(self, *, gateway_id: str, fingerprint: str, sn: str, model: str = "LX06"):
+        return self.client.post(
+            f"{settings.api_v1_prefix}/integrations/discoveries/report",
             headers={"x-voice-gateway-token": settings.voice_gateway_token},
             json={
-                "adapter_type": "open_xiaoai",
+                "plugin_id": "open-xiaoai-speaker",
+                "gateway_id": gateway_id,
                 "fingerprint": fingerprint,
                 "model": model,
                 "sn": sn,
                 "runtime_version": "1.0.0",
-                "capabilities": ["audio_input", "audio_output", "playback_stop", "playback_abort", "heartbeat"],
-                "remote_addr": "192.168.1.22",
+                "capabilities": ["audio_input", "audio_output", "playback_stop"],
+                "remote_addr": "192.168.1.50",
                 "connection_status": "online",
             },
         )
-        self.assertEqual(200, response.status_code)
+
+    def _sync_single_speaker(self, *, gateway_id: str, sn: str) -> str:
+        response = self._create_instance(gateway_id=gateway_id)
+        instance_id = response.json()["id"]
+        fingerprint = f"open_xiaoai:LX06:{sn}"
+        self._report_discovery(gateway_id=gateway_id, fingerprint=fingerprint, sn=sn)
+        sync_response = self.client.post(
+            f"{settings.api_v1_prefix}/integrations/instances/{instance_id}/actions",
+            json={
+                "action": "sync",
+                "payload": {
+                    "sync_scope": "device_sync",
+                    "selected_external_ids": [sn],
+                },
+            },
+        )
+        self.assertEqual(200, sync_response.status_code)
+
+        with self.SessionLocal() as db:
+            binding = db.scalar(
+                select(DeviceBinding).where(
+                    DeviceBinding.integration_instance_id == instance_id,
+                    DeviceBinding.external_device_id == sn,
+                )
+            )
+            self.assertIsNotNone(binding)
+            assert binding is not None
+            return binding.device_id
 
 
 if __name__ == "__main__":
     unittest.main()
-

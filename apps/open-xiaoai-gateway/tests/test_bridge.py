@@ -798,6 +798,53 @@ class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
         ensure_worker_mock.assert_not_called()
         self.assertEqual(0, len(state.pending_playback_commands))
 
+    async def test_dispatch_api_command_stops_takeover_keepalive_before_speaker_turn_on(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        api_websocket = SimpleNamespace(send=AsyncMock())
+        state = GatewayRuntimeState(
+            context=TerminalBridgeContext(
+                fingerprint="open_xiaoai:LX06:SN001",
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                name="鐎广垹宸虹亸蹇曞煃",
+            ),
+            terminal_rpc=SimpleNamespace(),
+            remote_addr="192.168.1.22",
+        )
+        command = GatewayCommand.model_validate(
+            {
+                "type": "speaker.turn_on",
+                "terminal_id": "terminal-1",
+                "session_id": "device-control-terminal-1",
+                "seq": 6,
+                "payload": {"reason": "device_control"},
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+        outgoing_messages = [TerminalRpcRequest(command="run_shell", payload="mphelper play")]
+
+        with patch(
+            "open_xiaoai_gateway.bridge.translate_command_to_terminal",
+            return_value=outgoing_messages,
+        ), patch.object(
+            OpenXiaoAIGateway,
+            "_stop_takeover_keepalive",
+            new=AsyncMock(),
+        ) as stop_keepalive, patch.object(
+            OpenXiaoAIGateway,
+            "_dispatch_terminal_messages",
+            new=AsyncMock(),
+        ) as dispatch_terminal_messages:
+            await gateway._dispatch_api_command(
+                api_websocket=api_websocket,
+                state=state,
+                command=command,
+            )
+
+        stop_keepalive.assert_awaited_once()
+        dispatch_terminal_messages.assert_awaited_once()
+
 
 if __name__ == "__main__":
     unittest.main()

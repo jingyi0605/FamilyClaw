@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from app.modules.device_integration.schemas import DeviceIntegrationPluginPayload
@@ -76,15 +76,17 @@ def sync(payload: dict | None = None) -> dict:
 
 
 def _fetch_home_assistant_payloads(client) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
-    async def _run() -> tuple[list[dict], list[dict], list[dict], list[dict]]:
-        return await asyncio.gather(
-            asyncio.to_thread(client.get_device_registry),
-            asyncio.to_thread(client.get_entity_registry),
-            asyncio.to_thread(client.get_area_registry),
-            asyncio.to_thread(client.get_states),
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="ha-sync") as executor:
+        device_registry_future = executor.submit(client.get_device_registry)
+        entity_registry_future = executor.submit(client.get_entity_registry)
+        area_registry_future = executor.submit(client.get_area_registry)
+        states_future = executor.submit(client.get_states)
+        return (
+            device_registry_future.result(),
+            entity_registry_future.result(),
+            area_registry_future.result(),
+            states_future.result(),
         )
-
-    return asyncio.run(_run())
 
 
 def _build_sync_result(

@@ -112,8 +112,8 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
         items = response.json()["output"]["items"]
         self.assertEqual(1, len(items))
         self.assertEqual("ha-device-light-1", items[0]["external_device_id"])
-        self.assertEqual("瀹㈠巺涓荤伅", items[0]["name"])
-        self.assertEqual("瀹㈠巺", items[0]["room_name"])
+        self.assertEqual("客厅主灯", items[0]["name"])
+        self.assertEqual("客厅", items[0]["room_name"])
         self.assertEqual("light", items[0]["device_type"])
         source = inspect.getsource(device_integration_service_module)
         self.assertNotIn("async_list_home_assistant_device_candidates", source)
@@ -175,7 +175,7 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
 
     def test_candidate_endpoint_returns_structured_error_and_marks_instance_degraded(self) -> None:
         with patch(
-            "app.modules.integration.service.async_list_home_assistant_device_candidates_via_plugin",
+            "app.modules.integration.service.async_list_device_candidates_via_plugin",
             side_effect=DeviceIntegrationServiceError(
                 "connector db failed",
                 error_code="plugin_execution_failed",
@@ -215,7 +215,7 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
                 ),
             ):
                 with self.assertRaises(DeviceIntegrationServiceError) as caught:
-                    await device_integration_service_module.async_list_home_assistant_device_candidates_via_plugin(
+                    await device_integration_service_module.async_list_device_candidates_via_plugin(
                         db,
                         household_id=self.household_id,
                         integration_instance_id=self.integration_instance_id,

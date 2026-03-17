@@ -36,6 +36,8 @@ VoiceCommandEventType = Literal[
     "play.start",
     "play.stop",
     "play.abort",
+    "speaker.turn_on",
+    "speaker.set_volume",
     "agent.error",
 ]
 VoicePlaybackStatus = Literal["started", "completed", "failed", "interrupted"]
@@ -222,6 +224,15 @@ class PlayAbortPayload(_StrictModel):
     reason: str | None = None
 
 
+class SpeakerTurnOnPayload(_StrictModel):
+    reason: str | None = None
+
+
+class SpeakerSetVolumePayload(_StrictModel):
+    volume_pct: int = Field(ge=0, le=100)
+    reason: str | None = None
+
+
 class AgentErrorPayload(_StrictModel):
     detail: str = Field(min_length=1)
     error_code: VoiceErrorCode
@@ -239,7 +250,15 @@ VoiceGatewayPayload = (
     | PlaybackInterruptedPayload
     | PlaybackReceiptPayload
 )
-VoiceCommandPayload = SessionReadyPayload | PlayStartPayload | PlayStopPayload | PlayAbortPayload | AgentErrorPayload
+VoiceCommandPayload = (
+    SessionReadyPayload
+    | PlayStartPayload
+    | PlayStopPayload
+    | PlayAbortPayload
+    | SpeakerTurnOnPayload
+    | SpeakerSetVolumePayload
+    | AgentErrorPayload
+)
 
 _VOICE_GATEWAY_PAYLOAD_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "terminal.online": TypeAdapter(TerminalOnlinePayload),
@@ -257,6 +276,8 @@ _VOICE_COMMAND_PAYLOAD_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "play.start": TypeAdapter(PlayStartPayload),
     "play.stop": TypeAdapter(PlayStopPayload),
     "play.abort": TypeAdapter(PlayAbortPayload),
+    "speaker.turn_on": TypeAdapter(SpeakerTurnOnPayload),
+    "speaker.set_volume": TypeAdapter(SpeakerSetVolumePayload),
     "agent.error": TypeAdapter(AgentErrorPayload),
 }
 

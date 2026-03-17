@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -153,15 +153,7 @@ class GatewayApiClient:
         }
 
     def report_discovery(self, payload: dict[str, Any]) -> GatewayDiscoveryStatus:
-        response = self._request("POST", "/devices/voice-terminals/discoveries/report", payload)
-        return _parse_gateway_discovery_status(response)
-
-    def get_binding(self, fingerprint: str) -> GatewayDiscoveryStatus:
-        response = self._request(
-            "GET",
-            f"/devices/voice-terminals/discoveries/{quote(fingerprint, safe='')}/binding",
-            None,
-        )
+        response = self._request("POST", "/integrations/discoveries/report", payload)
         return _parse_gateway_discovery_status(response)
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -484,24 +476,19 @@ class OpenXiaoAIGateway:
         )
 
     async def _sync_binding_state_loop(self, state: GatewayRuntimeState, api_client: GatewayApiClient) -> None:
-        refresh_tick = 0
         while True:
             await asyncio.sleep(settings.claim_poll_interval_seconds)
             if not state.context.fingerprint:
                 continue
-            refresh_tick += 1
             try:
-                if refresh_tick % 3 == 0:
-                    status = await asyncio.to_thread(
-                        api_client.report_discovery,
-                        build_discovery_report_payload(
-                            state.context,
-                            remote_addr=state.remote_addr,
-                            connection_status="online",
-                        ),
-                    )
-                else:
-                    status = await asyncio.to_thread(api_client.get_binding, state.context.fingerprint)
+                status = await asyncio.to_thread(
+                    api_client.report_discovery,
+                    build_discovery_report_payload(
+                        state.context,
+                        remote_addr=state.remote_addr,
+                        connection_status="online",
+                    ),
+                )
             except GatewayApiError as exc:
                 logger.warning("claim poll failed status=%s detail=%s", exc.status_code, exc.detail)
                 continue
@@ -743,7 +730,7 @@ class OpenXiaoAIGateway:
         if not outgoing_messages:
             return
 
-        if command.type in {"play.start", "play.stop", "play.abort"}:
+        if command.type in {"play.start", "play.stop", "play.abort", "speaker.turn_on"}:
             await self._stop_takeover_keepalive(
                 state,
                 reason=f"api:{command.type}",

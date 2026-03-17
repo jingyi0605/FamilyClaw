@@ -1,0 +1,52 @@
+{
+  "id": "open-xiaoai-speaker",
+  "name": "小爱音箱网关",
+  "version": "0.1.0",
+  "types": ["action", "connector"],
+  "permissions": ["device.read", "device.control"],
+  "risk_level": "medium",
+  "triggers": ["manual"],
+  "entrypoints": {
+    "connector": "app.plugins.builtin.open_xiaoai_speaker.connector.sync",
+    "action": "app.plugins.builtin.open_xiaoai_speaker.executor.run"
+  },
+  "config_specs": [
+    {
+      "scope_type": "plugin",
+      "title": "小爱网关配置",
+      "description": "配置当前小爱网关实例的唯一标识，让平台能把网关上报的音箱发现结果归到正确实例下。",
+      "schema_version": 1,
+      "config_schema": {
+        "fields": [
+          {
+            "key": "gateway_id",
+            "label": "网关标识",
+            "type": "string",
+            "required": true,
+            "min_length": 1,
+            "max_length": 100,
+            "description": "必须和 open-xiaoai-gateway 的 FAMILYCLAW_OPEN_XIAOAI_GATEWAY_GATEWAY_ID 保持一致。"
+          }
+        ]
+      },
+      "ui_schema": {
+        "sections": [
+          {
+            "id": "gateway",
+            "title": "网关绑定",
+            "fields": ["gateway_id"]
+          }
+        ],
+        "field_order": ["gateway_id"],
+        "submit_text": "保存网关配置",
+        "widgets": {
+          "gateway_id": {
+            "widget": "input",
+            "placeholder": "xiaomi-gateway-living-room",
+            "help_text": "平台用这个标识把 gateway discovery 归到当前集成实例。"
+          }
+        }
+      }
+    }
+  ]
+}

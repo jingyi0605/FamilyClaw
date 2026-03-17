@@ -208,7 +208,8 @@ def build_discovery_report_payload(
     discovered_at = context.discovered_at or utc_now_iso()
     context.discovered_at = discovered_at
     return {
-        "adapter_type": context.adapter_type,
+        "plugin_id": "open-xiaoai-speaker",
+        "gateway_id": settings.gateway_id,
         "fingerprint": context.fingerprint,
         "model": context.model,
         "sn": context.sn,
@@ -397,6 +398,18 @@ def translate_command_to_terminal(command: GatewayCommand, context: TerminalBrid
 
     if command.type in {"play.stop", "play.abort"}:
         return [TerminalRpcRequest(command="run_shell", payload="mphelper pause")]
+
+    if command.type == "speaker.turn_on":
+        return [TerminalRpcRequest(command="run_shell", payload="mphelper play")]
+
+    if command.type == "speaker.set_volume":
+        try:
+            volume_pct = int(command.payload.get("volume_pct"))
+        except (TypeError, ValueError):
+            return []
+        if volume_pct < 0 or volume_pct > 100:
+            return []
+        return [TerminalRpcRequest(command="run_shell", payload=_build_set_volume_command(volume_pct))]
 
     return []
 
@@ -588,6 +601,10 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> T
 def _build_xiaoai_tts_command(text: str) -> str:
     normalized_text = _normalize_tts_text(text)
     return f"/usr/sbin/tts_play.sh {_shell_quote(normalized_text)} >/tmp/familyclaw-tts.log 2>&1"
+
+
+def _build_set_volume_command(volume_pct: int) -> str:
+    return f"mphelper volume_set {volume_pct}"
 
 
 def _translate_playing_event(data: Any, context: TerminalBridgeContext) -> TextTranslationResult:

@@ -65,7 +65,7 @@ class TranslatorTests(unittest.TestCase):
 
         payload = build_discovery_report_payload(context, remote_addr="192.168.1.22")
 
-        self.assertEqual("open_xiaoai", payload["adapter_type"])
+        self.assertNotIn("adapter_type", payload)
         self.assertEqual("open_xiaoai:LX06:SN001", payload["fingerprint"])
         self.assertEqual("LX06", payload["model"])
         self.assertEqual("SN001", payload["sn"])
@@ -426,6 +426,52 @@ class TranslatorTests(unittest.TestCase):
         self.assertIsInstance(messages[1], TerminalBinaryStream)
         assert isinstance(messages[1], TerminalBinaryStream)
         self.assertEqual(b"abc", messages[1].raw_bytes)
+
+    def test_turn_on_command_translates_to_terminal_resume_request(self) -> None:
+        context = self._build_claimed_context()
+
+        messages = translate_command_to_terminal(
+            GatewayCommand.model_validate(
+                {
+                    "type": "speaker.turn_on",
+                    "terminal_id": "terminal-1",
+                    "session_id": "device-control-terminal-1",
+                    "seq": 4,
+                    "payload": {"reason": "device_control"},
+                    "ts": "2026-03-15T00:00:00+08:00",
+                }
+            ),
+            context,
+        )
+
+        self.assertEqual(1, len(messages))
+        self.assertIsInstance(messages[0], TerminalRpcRequest)
+        assert isinstance(messages[0], TerminalRpcRequest)
+        self.assertEqual("run_shell", messages[0].command)
+        self.assertEqual("mphelper play", messages[0].payload)
+
+    def test_set_volume_command_translates_to_terminal_volume_request(self) -> None:
+        context = self._build_claimed_context()
+
+        messages = translate_command_to_terminal(
+            GatewayCommand.model_validate(
+                {
+                    "type": "speaker.set_volume",
+                    "terminal_id": "terminal-1",
+                    "session_id": "device-control-terminal-1",
+                    "seq": 5,
+                    "payload": {"volume_pct": 35, "reason": "device_control"},
+                    "ts": "2026-03-15T00:00:00+08:00",
+                }
+            ),
+            context,
+        )
+
+        self.assertEqual(1, len(messages))
+        self.assertIsInstance(messages[0], TerminalRpcRequest)
+        assert isinstance(messages[0], TerminalRpcRequest)
+        self.assertEqual("run_shell", messages[0].command)
+        self.assertEqual("mphelper volume_set 35", messages[0].payload)
 
     def test_playing_idle_marks_playback_completed(self) -> None:
         context = TerminalBridgeContext()
