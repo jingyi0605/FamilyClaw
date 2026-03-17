@@ -23,10 +23,12 @@ from app.modules.device_action.schemas import DeviceActionExecuteRequest
 from app.modules.device_action import service as device_action_service_module
 from app.modules.device_control.schemas import DeviceControlRequest
 from app.modules.device_control.service import DeviceControlServiceError, execute_device_control
+from app.modules.device.service import list_device_entities
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.scene import service as scene_service
 from app.modules.voice import fast_action_service as voice_fast_action_service_module
+from app.plugins.builtin.homeassistant_device_action.client import HomeAssistantClientError
 from app.plugins.builtin.homeassistant_device_action.executor import run as run_homeassistant_device_action
 from app.plugins.builtin.homeassistant_device_action.executor import run as run_homeassistant_door_lock_action
 from tests.homeassistant_test_support import seed_homeassistant_integration_instance
@@ -208,6 +210,129 @@ class DeviceControlPhase2Tests(unittest.TestCase):
         source = inspect.getsource(device_action_service_module)
         self.assertNotIn("execute_home_assistant_device_action", source)
         self.assertNotIn("async_execute_home_assistant_device_action", source)
+
+    def test_execute_device_control_routes_to_binding_that_contains_requested_entity(self) -> None:
+        with self.SessionLocal() as db:
+            multi_binding_device_id = self._add_device_with_binding(
+                db,
+                name="书房灯",
+                device_type="light",
+                plugin_id="homeassistant",
+                external_entity_id="sensor.study_light_power",
+                external_device_id="ha-device-study-light",
+            )
+            db.add(
+                DeviceBinding(
+                    id=new_uuid(),
+                    device_id=multi_binding_device_id,
+                    integration_instance_id=self.integration_instance_id,
+                    platform="home_assistant",
+                    plugin_id="homeassistant",
+                    binding_version=1,
+                    external_entity_id="light.study_main",
+                    external_device_id="ha-device-study-light",
+                    capabilities='{"entities":[{"entity_id":"light.study_main","name":"书房灯","domain":"light","state":"off","state_display":"关闭","control":{"kind":"toggle","value":false,"action_on":"turn_on","action_off":"turn_off"}}]}',
+                )
+            )
+            db.commit()
+            with patch("app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
+                result = execute_device_control(
+                    db,
+                    request=DeviceControlRequest(
+                        household_id=self.household_id,
+                        device_id=multi_binding_device_id,
+                        entity_id="light.study_main",
+                        action="turn_on",
+                        params={},
+                        reason="api.integration.phase2.multi-binding",
+                    ),
+                )
+
+        self.assertEqual("light.study_main", result.resolved_entity_id)
+        mocked_call.assert_called_once_with(
+            domain="light",
+            service="turn_on",
+            data={"entity_id": "light.study_main"},
+        )
+
+    def test_execute_device_control_accepts_legacy_primary_entity_binding(self) -> None:
+        class _FakeHomeAssistantClient:
+            def get_states(self) -> list[dict]:
+                return [
+                    {
+                        "entity_id": "light.study_main",
+                        "state": "on",
+                        "last_updated": "2026-03-17T10:00:00Z",
+                        "attributes": {},
+                    }
+                ]
+
+        with self.SessionLocal() as db:
+            device_id = self._add_device_with_binding(
+                db,
+                name="书房灯",
+                device_type="light",
+                plugin_id="homeassistant",
+                external_entity_id="sensor.study_light_power",
+                external_device_id="ha-device-study-light-legacy",
+            )
+            db.flush()
+            legacy_binding = db.query(DeviceBinding).filter(DeviceBinding.device_id == device_id).one()
+            legacy_binding.capabilities = (
+                '{"state":"off","primary_entity_id":"light.study_main",'
+                '"entity_ids":["light.study_main","sensor.study_light_power"]}'
+            )
+            db.add(legacy_binding)
+            db.commit()
+
+            with patch("app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
+                result = execute_device_control(
+                    db,
+                    request=DeviceControlRequest(
+                        household_id=self.household_id,
+                        device_id=device_id,
+                        entity_id="light.study_main",
+                        action="turn_on",
+                        params={},
+                        reason="api.integration.phase2.legacy-binding",
+                    ),
+                )
+            with patch(
+                "app.plugins.builtin.homeassistant_device_action.runtime.build_home_assistant_client_for_instance",
+                return_value=_FakeHomeAssistantClient(),
+            ):
+                entities = list_device_entities(db, device_id=device_id, view="all")
+
+        self.assertEqual("light.study_main", result.resolved_entity_id)
+        self.assertEqual("light.study_main", entities.items[0].entity_id)
+        self.assertEqual("开启", entities.items[0].state_display)
+        mocked_call.assert_called_once_with(
+            domain="light",
+            service="turn_on",
+            data={"entity_id": "light.study_main"},
+        )
+
+    def test_execute_device_control_reports_offline_when_home_assistant_unreachable(self) -> None:
+        with self.SessionLocal() as db:
+            with patch(
+                "app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service",
+                side_effect=HomeAssistantClientError("home assistant connection failed: timeout"),
+            ):
+                with self.assertRaises(DeviceControlServiceError) as context:
+                    execute_device_control(
+                        db,
+                        request=DeviceControlRequest(
+                            household_id=self.household_id,
+                            device_id=self.light_device_id,
+                            action="turn_on",
+                            params={},
+                            reason="api.integration.phase2.offline",
+                        ),
+                    )
+
+        self.assertEqual("platform_unreachable", context.exception.error_code)
+        self.assertEqual(503, context.exception.status_code)
+        self.assertEqual("device is offline", context.exception.message)
 
     def test_upstream_modules_do_not_directly_reference_legacy_ha_execute_functions(self) -> None:
         target_modules = (

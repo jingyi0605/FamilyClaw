@@ -9,6 +9,7 @@ from app.modules.device_control.protocol import DeviceActionName
 class DeviceActionExecuteRequest(BaseModel):
     household_id: str = Field(min_length=1)
     device_id: str = Field(min_length=1)
+    entity_id: str | None = Field(default=None, min_length=1)
     action: DeviceActionName
     params: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(default="context.fast_path", min_length=1, max_length=100)

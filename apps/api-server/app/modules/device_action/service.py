@@ -42,7 +42,7 @@ def _build_response(*, db: Session, payload: DeviceActionExecuteRequest, executi
         platform=execution.platform,
         service_domain=str(external_request.get("domain") or ""),
         service_name=str(external_request.get("service") or ""),
-        entity_id=str(external_request.get("entity_id") or ""),
+        entity_id=str(execution.resolved_entity_id or external_request.get("entity_id") or ""),
         params=execution.params,
         result="success",
         executed_at=utc_now_iso(),
@@ -55,6 +55,8 @@ def _build_audit_context(*, payload: DeviceActionExecuteRequest, execution) -> D
             "reason": payload.reason,
             "confirm_high_risk": payload.confirm_high_risk,
             "idempotency_key": payload.idempotency_key,
+            "requested_entity_id": payload.entity_id,
+            "resolved_entity_id": execution.resolved_entity_id,
             "plugin_id": execution.plugin_id,
             "platform": execution.platform,
             "action": execution.action,
@@ -79,6 +81,8 @@ def _translate_control_error(exc: DeviceControlServiceError) -> HTTPException:
         "invalid_action_params",
         "action_not_supported",
         "device_not_controllable",
+        "device_disabled",
+        "platform_unreachable",
         "permission_denied",
     }:
         detail = exc.to_detail()
@@ -96,6 +100,7 @@ def execute_device_action(
             request=DeviceControlRequest(
                 household_id=payload.household_id,
                 device_id=payload.device_id,
+                entity_id=payload.entity_id,
                 action=payload.action,
                 params=payload.params,
                 reason=payload.reason,
@@ -123,6 +128,7 @@ async def aexecute_device_action(
             request=DeviceControlRequest(
                 household_id=payload.household_id,
                 device_id=payload.device_id,
+                entity_id=payload.entity_id,
                 action=payload.action,
                 params=payload.params,
                 reason=payload.reason,

@@ -4,6 +4,7 @@ import { GuardedPage, useHouseholdContext, useI18n } from '../../../runtime';
 import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, Section } from '../../family/base';
 import { SettingsPageShell } from '../SettingsPageShell';
+import { IntegrationDevicePanel } from './IntegrationDevicePanel';
 import { ApiError, settingsApi } from '../settingsApi';
 import type {
   IntegrationActionResult,
@@ -504,21 +505,20 @@ function SettingsIntegrationsContent() {
                     <div className="integration-status__detail">{selectedInstance.last_error.message}</div>
                   ) : null}
 
-                  <div className="settings-card-grid">
-                    {selectedDevices.length === 0 ? (
-                      <Card>
-                        <div className="integration-status__detail">{page('settings.integrations.instance.devicesEmpty')}</div>
-                      </Card>
-                    ) : selectedDevices.map((device) => (
-                      <Card key={device.id} className="device-card">
-                        <div className="device-card__info">
-                          <span className="device-card__name">{device.name}</span>
-                          <span className="device-card__room">{device.room_name || page('settings.integrations.instance.noRoom')}</span>
-                          <span className="integration-status__detail">{device.category || selectedInstance.plugin_id}</span>
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
+                  <IntegrationDevicePanel
+                    currentHouseholdId={currentHouseholdId}
+                    page={page}
+                    selectedInstance={selectedInstance}
+                    selectedDevices={selectedDevices}
+                    onStatus={setStatus}
+                    onError={setError}
+                    onReload={async () => {
+                      if (!currentHouseholdId) {
+                        return;
+                      }
+                      await reload(currentHouseholdId, selectedInstance.id);
+                    }}
+                  />
                 </Card>
               ) : null}
             </>

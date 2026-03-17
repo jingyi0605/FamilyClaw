@@ -39,36 +39,54 @@ def build_service_call(
 
     if device_type == "light":
         if payload.action == "turn_on":
-            return _call("light", "turn_on", entity_id, {}, {"status": "active"})
+            return _call("light", "turn_on", entity_id, {}, {"status": "active", "state": "on", "value": True})
         if payload.action == "turn_off":
-            return _call("light", "turn_off", entity_id, {}, {"status": "inactive"})
+            return _call("light", "turn_off", entity_id, {}, {"status": "inactive", "state": "off", "value": False})
         if payload.action == "set_brightness":
-            return _call("light", "turn_on", entity_id, {"brightness_pct": params["brightness_pct"]}, {"status": "active"})
+            return _call(
+                "light",
+                "turn_on",
+                entity_id,
+                {"brightness_pct": params["brightness_pct"]},
+                {"status": "active", "state": "on", "value": params["brightness_pct"]},
+            )
 
     if device_type == "ac":
         if payload.action == "turn_on":
-            return _call("climate", "turn_on", entity_id, {}, {"status": "active"})
+            return _call("climate", "turn_on", entity_id, {}, {"status": "active", "state": "on"})
         if payload.action == "turn_off":
-            return _call("climate", "turn_off", entity_id, {}, {"status": "inactive"})
+            return _call("climate", "turn_off", entity_id, {}, {"status": "inactive", "state": "off"})
         if payload.action == "set_temperature":
-            return _call("climate", "set_temperature", entity_id, {"temperature": params["temperature_c"]}, {"status": "active"})
+            return _call(
+                "climate",
+                "set_temperature",
+                entity_id,
+                {"temperature": params["temperature_c"]},
+                {"status": "active", "value": params["temperature_c"]},
+            )
         if payload.action == "set_hvac_mode":
             next_status = "inactive" if params["hvac_mode"] == "off" else "active"
-            return _call("climate", "set_hvac_mode", entity_id, {"hvac_mode": params["hvac_mode"]}, {"status": next_status})
+            return _call(
+                "climate",
+                "set_hvac_mode",
+                entity_id,
+                {"hvac_mode": params["hvac_mode"]},
+                {"status": next_status, "state": params["hvac_mode"], "value": params["hvac_mode"]},
+            )
 
     if device_type == "curtain":
         if payload.action == "open":
-            return _call("cover", "open_cover", entity_id, {}, {"status": "active"})
+            return _call("cover", "open_cover", entity_id, {}, {"status": "active", "state": "open", "value": "open"})
         if payload.action == "close":
-            return _call("cover", "close_cover", entity_id, {}, {"status": "inactive"})
+            return _call("cover", "close_cover", entity_id, {}, {"status": "inactive", "state": "closed", "value": "closed"})
         if payload.action == "stop":
-            return _call("cover", "stop_cover", entity_id, {}, None)
+            return _call("cover", "stop_cover", entity_id, {}, {"value": "stopped"})
 
     if device_type == "speaker":
         if payload.action == "turn_on":
-            return _call("media_player", "turn_on", entity_id, {}, {"status": "active"})
+            return _call("media_player", "turn_on", entity_id, {}, {"status": "active", "state": "on"})
         if payload.action == "turn_off":
-            return _call("media_player", "turn_off", entity_id, {}, {"status": "inactive"})
+            return _call("media_player", "turn_off", entity_id, {}, {"status": "inactive", "state": "off"})
         if payload.action == "play_pause":
             return _call("media_player", "media_play_pause", entity_id, {}, {"status": "active"})
         if payload.action == "set_volume":
@@ -77,14 +95,14 @@ def build_service_call(
                 "volume_set",
                 entity_id,
                 {"volume_level": round(float(params["volume_pct"]) / 100.0, 4)},
-                {"status": "active"},
+                {"status": "active", "value": params["volume_pct"]},
             )
 
     if device_type == "lock":
         if payload.action == "lock":
-            return _call("lock", "lock", entity_id, {}, {"status": "inactive"})
+            return _call("lock", "lock", entity_id, {}, {"status": "inactive", "state": "locked", "value": "locked"})
         if payload.action == "unlock":
-            return _call("lock", "unlock", entity_id, {}, {"status": "active"})
+            return _call("lock", "unlock", entity_id, {}, {"status": "active", "state": "unlocked", "value": "unlocked"})
 
     raise HomeAssistantActionMappingError(
         f"设备类型 {device_type} 不支持动作 {payload.action}",
@@ -93,6 +111,15 @@ def build_service_call(
 
 
 def _resolve_entity_id(payload: DeviceControlPluginPayload) -> str:
+    requested_entity_id = (payload.target_entity_id or "").strip()
+    if requested_entity_id:
+        if requested_entity_id in _collect_binding_entity_ids(payload):
+            return requested_entity_id
+        raise HomeAssistantActionMappingError(
+            "请求的实体不属于当前设备",
+            error_code="platform_target_not_found",
+        )
+
     entity_id = (payload.binding.external_entity_id or "").strip()
     if entity_id:
         return entity_id
@@ -106,6 +133,38 @@ def _resolve_entity_id(payload: DeviceControlPluginPayload) -> str:
         "设备绑定缺少 Home Assistant entity_id",
         error_code="platform_target_not_found",
     )
+
+
+def _collect_binding_entity_ids(payload: DeviceControlPluginPayload) -> set[str]:
+    entity_ids: set[str] = set()
+    capabilities = payload.binding.capabilities or {}
+    for candidate in (
+        payload.binding.external_entity_id,
+        capabilities.get("primary_entity_id"),
+    ):
+        normalized = _normalize_entity_id(candidate)
+        if normalized:
+            entity_ids.add(normalized)
+
+    raw_entity_ids = capabilities.get("entity_ids")
+    if isinstance(raw_entity_ids, list):
+        for candidate in raw_entity_ids:
+            normalized = _normalize_entity_id(candidate)
+            if normalized:
+                entity_ids.add(normalized)
+
+    for raw_entity in capabilities.get("entities", []):
+        if not isinstance(raw_entity, dict):
+            continue
+        normalized = _normalize_entity_id(raw_entity.get("entity_id"))
+        if normalized:
+            entity_ids.add(normalized)
+    return entity_ids
+
+
+def _normalize_entity_id(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _call(

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.utils import load_json, new_uuid, utc_now_iso
 from app.modules.device.models import Device
-from app.modules.device.service import get_device_or_404
+from app.modules.device.service import get_device_or_404, update_binding_entity_state
 from app.modules.device_control.protocol import DeviceControlProtocolError, device_control_protocol_registry
 from app.modules.device_control.router import DevicePluginRoutingError, route_device_plugin
 from app.modules.device_control.schemas import (
@@ -62,6 +62,16 @@ def _ensure_device_controllable(device: Device) -> None:
             "device is not controllable",
             error_code="device_not_controllable",
             status_code=400,
+            field="device_id",
+        )
+
+
+def _ensure_device_enabled(device: Device) -> None:
+    if device.status == "disabled":
+        raise DeviceControlServiceError(
+            "device has been disabled",
+            error_code="device_disabled",
+            status_code=409,
             field="device_id",
         )
 
@@ -160,6 +170,7 @@ def _build_payload(
             controllable=bool(device.controllable),
             room_id=device.room_id,
         ),
+        target_entity_id=request.entity_id,
         action=request.action,
         params=normalized_params,
         timeout_seconds=timeout_seconds,
@@ -186,6 +197,9 @@ def _translate_execution_failure(error_code: str | None, error_message: str | No
     status_code = 502
     if normalized_error_code in {"plugin_not_visible_in_household", "plugin_disabled", "plugin_not_available"}:
         status_code = 409
+    elif normalized_error_code == "platform_unreachable":
+        status_code = 503
+        message = "device is offline"
     elif normalized_error_code == "plugin_type_not_supported":
         status_code = 400
     elif normalized_error_code == "plugin_execution_timeout":
@@ -199,6 +213,7 @@ def _finalize_execution(
     request: DeviceControlRequest,
     device: Device,
     plugin_id: str,
+    route_binding,
     risk_level: str,
     execution_output: Any,
     request_id: str,
@@ -228,13 +243,17 @@ def _finalize_execution(
             field="action",
         )
     if not plugin_result.success:
-        raise DeviceControlServiceError(
-            plugin_result.error_message or "插件执行失败",
-            error_code=plugin_result.error_code or "plugin_execution_failed",
-            status_code=502,
-        )
+        raise _translate_execution_failure(plugin_result.error_code, plugin_result.error_message)
 
     _apply_normalized_state_patch(db, device=device, patch=plugin_result.normalized_state_patch)
+    external_request = plugin_result.external_request if isinstance(plugin_result.external_request, dict) else {}
+    resolved_entity_id = external_request.get("entity_id") if isinstance(external_request.get("entity_id"), str) else None
+    update_binding_entity_state(
+        db,
+        binding=route_binding,
+        resolved_entity_id=resolved_entity_id,
+        patch=plugin_result.normalized_state_patch,
+    )
 
     return DeviceControlExecutionResult(
         request_id=request_id,
@@ -245,6 +264,7 @@ def _finalize_execution(
         plugin_id=plugin_id,
         platform=plugin_result.platform,
         risk_level=risk_level,
+        resolved_entity_id=resolved_entity_id,
         external_request=plugin_result.external_request,
         external_response=plugin_result.external_response,
         normalized_state_patch=plugin_result.normalized_state_patch,
@@ -254,6 +274,7 @@ def _finalize_execution(
 def execute_device_control(db: Session, *, request: DeviceControlRequest) -> DeviceControlExecutionResult:
     device = get_device_or_404(db, request.device_id)
     _ensure_device_belongs_to_household(device, request.household_id)
+    _ensure_device_enabled(device)
     _ensure_device_controllable(device)
 
     try:
@@ -263,7 +284,7 @@ def execute_device_control(db: Session, *, request: DeviceControlRequest) -> Dev
             params=request.params,
         )
         _ensure_high_risk_confirmed(action=request.action, confirm_high_risk=request.confirm_high_risk)
-        route = route_device_plugin(db, device=device)
+        route = route_device_plugin(db, device=device, requested_entity_id=request.entity_id)
         plugin = require_available_household_plugin(
             db,
             household_id=request.household_id,
@@ -307,6 +328,7 @@ def execute_device_control(db: Session, *, request: DeviceControlRequest) -> Dev
         request=request,
         device=device,
         plugin_id=route.plugin_id,
+        route_binding=route.binding,
         risk_level=definition.risk_level,
         execution_output=execution.output,
         request_id=payload.request_id,
@@ -317,6 +339,7 @@ def execute_device_control(db: Session, *, request: DeviceControlRequest) -> Dev
 async def aexecute_device_control(db: Session, *, request: DeviceControlRequest) -> DeviceControlExecutionResult:
     device = get_device_or_404(db, request.device_id)
     _ensure_device_belongs_to_household(device, request.household_id)
+    _ensure_device_enabled(device)
     _ensure_device_controllable(device)
 
     try:
@@ -326,7 +349,7 @@ async def aexecute_device_control(db: Session, *, request: DeviceControlRequest)
             params=request.params,
         )
         _ensure_high_risk_confirmed(action=request.action, confirm_high_risk=request.confirm_high_risk)
-        route = route_device_plugin(db, device=device)
+        route = route_device_plugin(db, device=device, requested_entity_id=request.entity_id)
         plugin = require_available_household_plugin(
             db,
             household_id=request.household_id,
@@ -370,6 +393,7 @@ async def aexecute_device_control(db: Session, *, request: DeviceControlRequest)
         request=request,
         device=device,
         plugin_id=route.plugin_id,
+        route_binding=route.binding,
         risk_level=definition.risk_level,
         execution_output=execution.output,
         request_id=payload.request_id,

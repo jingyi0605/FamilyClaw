@@ -28,7 +28,7 @@ from app.modules.conversation.models import (
     ConversationSession,
     ConversationTurnSource,
 )
-from app.modules.device.models import Device, DeviceBinding
+from app.modules.device.models import Device, DeviceBinding, DeviceEntityFavorite
 from app.modules.family_qa.models import QaQueryLog
 from app.modules.household.models import Household
 from app.modules.integration.models import IntegrationInstance
@@ -87,6 +87,7 @@ __all__ = [
     "ConversationTurnSource",
     "Device",
     "DeviceBinding",
+    "DeviceEntityFavorite",
     "Household",
     "Member",
     "MemberChannelBinding",

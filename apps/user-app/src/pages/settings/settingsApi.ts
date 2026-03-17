@@ -17,6 +17,10 @@ import type {
   ChannelInboundEventRead,
   ContextOverviewRead,
   Device,
+  DeviceActionExecuteRequest,
+  DeviceActionExecuteResponse,
+  DeviceActionLogListRead,
+  DeviceEntityListRead,
   IntegrationActionResult,
   IntegrationCatalogListRead,
   IntegrationInstance,
@@ -226,6 +230,43 @@ export const settingsApi = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
+  },
+  listDeviceEntities(deviceId: string, view: 'favorites' | 'all') {
+    return request<DeviceEntityListRead>(`/devices/${encodeURIComponent(deviceId)}/entities?view=${encodeURIComponent(view)}`);
+  },
+  updateDeviceEntityFavorite(deviceId: string, entityId: string, favorite: boolean) {
+    return request<DeviceEntityListRead>(`/devices/${encodeURIComponent(deviceId)}/entities/${encodeURIComponent(entityId)}/favorite`, {
+      method: 'PUT',
+      body: JSON.stringify({ favorite }),
+    });
+  },
+  executeDeviceAction(payload: DeviceActionExecuteRequest) {
+    return request<DeviceActionExecuteResponse>('/device-actions/execute', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  disableDevice(deviceId: string) {
+    return request<Device>(`/devices/${encodeURIComponent(deviceId)}/disable`, {
+      method: 'POST',
+    });
+  },
+  deleteDevice(deviceId: string) {
+    return request<void>(`/devices/${encodeURIComponent(deviceId)}`, {
+      method: 'DELETE',
+    });
+  },
+  listDeviceActionLogs(
+    deviceId: string,
+    params?: { page?: number; page_size?: number },
+  ) {
+    const query = new URLSearchParams();
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.page_size) query.set('page_size', String(params.page_size));
+    const queryString = query.toString();
+    return request<DeviceActionLogListRead>(
+      `/devices/${encodeURIComponent(deviceId)}/action-logs${queryString ? `?${queryString}` : ''}`,
+    );
   },
   getHouseholdVoiceprintSummary(householdId: string, terminalId: string) {
     return request<HouseholdVoiceprintSummaryRead>(

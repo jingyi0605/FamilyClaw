@@ -93,3 +93,32 @@ class DeviceBinding(Base):
     capabilities: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_sync_at: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+
+class DeviceEntityFavorite(Base):
+    __tablename__ = "device_entity_favorites"
+    __table_args__ = (
+        UniqueConstraint(
+            "household_id",
+            "device_id",
+            "entity_id",
+            name="uq_device_entity_favorites_household_device_entity",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    household_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    device_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+

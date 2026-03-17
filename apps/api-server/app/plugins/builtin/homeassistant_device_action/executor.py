@@ -100,6 +100,19 @@ def _map_client_error(message: str) -> str:
     lowered = message.lower()
     if "token" in lowered or "auth" in lowered:
         return "platform_auth_failed"
+    if any(
+        marker in lowered
+        for marker in (
+            "connection failed",
+            "could not resolve host",
+            "failed to establish",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "timed out",
+            "timeout",
+        )
+    ):
+        return "platform_unreachable"
     if "invalid json" in lowered:
         return "platform_response_invalid"
     return "platform_request_failed"

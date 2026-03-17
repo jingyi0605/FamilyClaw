@@ -22,6 +22,7 @@ from app.modules.device_control.protocol import device_control_protocol_registry
 from app.modules.device_control.router import route_device_plugin
 from app.modules.device_control.service import DeviceControlServiceError, execute_device_control
 from app.modules.device_control.schemas import DeviceControlRequest
+from app.modules.device.service import list_device_entities
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from tests.homeassistant_test_support import seed_homeassistant_integration_instance
@@ -173,6 +174,189 @@ class DeviceControlPhase1Tests(unittest.TestCase):
             assert device is not None
             route = route_device_plugin(db, device=device)
             self.assertEqual("homeassistant", route.plugin_id)
+
+    def test_router_prefers_binding_that_contains_requested_entity(self) -> None:
+        with self.SessionLocal() as db:
+            device = Device(
+                id=new_uuid(),
+                household_id=self.household_id,
+                room_id=None,
+                name="书房灯",
+                device_type="light",
+                vendor="ha",
+                status="active",
+                controllable=1,
+            )
+            db.add(device)
+            db.flush()
+            db.add_all(
+                [
+                    DeviceBinding(
+                        id=new_uuid(),
+                        device_id=device.id,
+                        integration_instance_id=self.integration_instance_id,
+                        platform="home_assistant",
+                        plugin_id="homeassistant",
+                        binding_version=1,
+                        external_entity_id="sensor.study_light_power",
+                        external_device_id="ha-device-study-light",
+                        capabilities='{"state":"on"}',
+                    ),
+                    DeviceBinding(
+                        id=new_uuid(),
+                        device_id=device.id,
+                        integration_instance_id=self.integration_instance_id,
+                        platform="home_assistant",
+                        plugin_id="homeassistant",
+                        binding_version=1,
+                        external_entity_id="light.study_main",
+                        external_device_id="ha-device-study-light",
+                        capabilities='{"state":"on"}',
+                    ),
+                ]
+            )
+            db.flush()
+
+            route = route_device_plugin(db, device=device, requested_entity_id="light.study_main")
+            entities = list_device_entities(db, device_id=device.id, view="all")
+
+            self.assertEqual("light.study_main", route.binding.external_entity_id)
+            self.assertEqual("开启", entities.items[0].state_display)
+
+    def test_router_matches_requested_entity_from_legacy_entity_ids(self) -> None:
+        with self.SessionLocal() as db:
+            device = Device(
+                id=new_uuid(),
+                household_id=self.household_id,
+                room_id=None,
+                name="书房主灯",
+                device_type="light",
+                vendor="ha",
+                status="active",
+                controllable=1,
+            )
+            db.add(device)
+            db.flush()
+            db.add(
+                DeviceBinding(
+                    id=new_uuid(),
+                    device_id=device.id,
+                    integration_instance_id=self.integration_instance_id,
+                    platform="home_assistant",
+                    plugin_id="homeassistant",
+                    binding_version=1,
+                    external_entity_id="sensor.study_light_power",
+                    external_device_id="ha-device-study-light-legacy",
+                    capabilities='{"state":"on","primary_entity_id":"light.study_main","entity_ids":["light.study_main","sensor.study_light_power"]}',
+                )
+            )
+            db.flush()
+
+            route = route_device_plugin(db, device=device, requested_entity_id="light.study_main")
+            entities = list_device_entities(db, device_id=device.id, view="all")
+
+            self.assertEqual("sensor.study_light_power", route.binding.external_entity_id)
+            self.assertEqual("light.study_main", entities.items[0].entity_id)
+            self.assertEqual("开启", entities.items[0].state_display)
+
+    def test_list_device_entities_prefers_live_state_and_repairs_legacy_toggle_control(self) -> None:
+        class _FakeHomeAssistantClient:
+            def get_states(self) -> list[dict]:
+                return [
+                    {
+                        "entity_id": "light.study_main",
+                        "state": "off",
+                        "last_updated": "2026-03-17T09:00:00Z",
+                        "attributes": {},
+                    }
+                ]
+
+        with self.SessionLocal() as db:
+            device = Device(
+                id=new_uuid(),
+                household_id=self.household_id,
+                room_id=None,
+                name="书房灯",
+                device_type="light",
+                vendor="ha",
+                status="active",
+                controllable=1,
+            )
+            db.add(device)
+            db.flush()
+            db.add(
+                DeviceBinding(
+                    id=new_uuid(),
+                    device_id=device.id,
+                    integration_instance_id=self.integration_instance_id,
+                    platform="home_assistant",
+                    plugin_id="homeassistant",
+                    binding_version=1,
+                    external_entity_id="light.study_main",
+                    external_device_id="ha-device-study-light-live",
+                    capabilities=(
+                        '{"state":"on","entities":[{"entity_id":"light.study_main","name":"书房灯","domain":"light",'
+                        '"state":"on","state_display":"开启","control":{"kind":"toggle","value":true,"action_on":"turn_off","action_off":"turn_on"}}]}'
+                    ),
+                )
+            )
+            db.flush()
+
+            with patch(
+                "app.plugins.builtin.homeassistant_device_action.runtime.build_home_assistant_client_for_instance",
+                return_value=_FakeHomeAssistantClient(),
+            ):
+                entities = list_device_entities(db, device_id=device.id, view="all")
+
+        self.assertEqual("off", entities.items[0].state)
+        self.assertEqual("关闭", entities.items[0].state_display)
+        self.assertFalse(entities.items[0].control.value)
+        self.assertEqual("turn_on", entities.items[0].control.action_on)
+        self.assertEqual("turn_off", entities.items[0].control.action_off)
+
+    def test_list_device_entities_reports_offline_when_home_assistant_unreachable(self) -> None:
+        with self.SessionLocal() as db:
+            device = Device(
+                id=new_uuid(),
+                household_id=self.household_id,
+                room_id=None,
+                name="书房灯",
+                device_type="light",
+                vendor="ha",
+                status="active",
+                controllable=1,
+            )
+            db.add(device)
+            db.flush()
+            db.add(
+                DeviceBinding(
+                    id=new_uuid(),
+                    device_id=device.id,
+                    integration_instance_id=self.integration_instance_id,
+                    platform="home_assistant",
+                    plugin_id="homeassistant",
+                    binding_version=1,
+                    external_entity_id="light.study_main",
+                    external_device_id="ha-device-study-light-offline",
+                    capabilities=(
+                        '{"state":"on","entities":[{"entity_id":"light.study_main","name":"书房灯","domain":"light",'
+                        '"state":"on","state_display":"开启","control":{"kind":"toggle","value":true,"action_on":"turn_on","action_off":"turn_off"}}]}'
+                    ),
+                )
+            )
+            db.flush()
+
+            with patch(
+                "app.plugins.builtin.homeassistant_device_action.runtime.build_home_assistant_client_for_instance",
+                side_effect=RuntimeError("home assistant unavailable"),
+            ):
+                entities = list_device_entities(db, device_id=device.id, view="all")
+
+        self.assertEqual("offline", entities.device.status)
+        self.assertEqual("unavailable", entities.items[0].state)
+        self.assertEqual("离线", entities.items[0].state_display)
+        self.assertTrue(entities.items[0].control.disabled)
+        self.assertEqual("设备离线，Home Assistant 当前不可用", entities.items[0].control.disabled_reason)
 
     def test_high_risk_action_requires_confirmation_before_plugin_execution(self) -> None:
         with self.SessionLocal() as db:

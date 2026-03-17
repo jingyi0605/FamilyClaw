@@ -1,7 +1,7 @@
 import type {
   ContextConfigRead,
   ContextOverviewRead,
-  Device,
+  Device as CoreDevice,
   Household,
   HouseholdSetupStatus,
   LoginResponse,
@@ -20,7 +20,6 @@ import type {
 export type {
   ContextConfigRead,
   ContextOverviewRead,
-  Device,
   Household,
   HouseholdSetupStatus,
   LoginResponse,
@@ -34,6 +33,10 @@ export type {
   RegionSelection,
   ReminderOverviewRead,
   Room,
+};
+
+export type Device = Omit<CoreDevice, 'status'> & {
+  status: CoreDevice['status'] | 'disabled';
 };
 
 export type AiProviderFieldOption = {
@@ -786,6 +789,98 @@ export type IntegrationActionResult = {
   config_form: PluginConfigFormRead | null;
   job: PluginJobRead | null;
   output: Record<string, unknown>;
+};
+
+export type DeviceEntityControlKind = 'none' | 'toggle' | 'range' | 'action_set';
+
+export type DeviceEntityControlOption = {
+  label: string;
+  value: string;
+  action: string;
+  params: Record<string, unknown>;
+};
+
+export type DeviceEntityControl = {
+  kind: DeviceEntityControlKind;
+  value: unknown;
+  unit: string | null;
+  min_value: number | null;
+  max_value: number | null;
+  step: number | null;
+  action: string | null;
+  action_on: string | null;
+  action_off: string | null;
+  options: DeviceEntityControlOption[];
+  disabled: boolean;
+  disabled_reason: string | null;
+};
+
+export type DeviceEntity = {
+  device_id: string;
+  integration_instance_id: string | null;
+  entity_id: string;
+  name: string;
+  domain: string;
+  state: string;
+  state_display: string;
+  unit: string | null;
+  favorite: boolean;
+  read_only: boolean;
+  control: DeviceEntityControl;
+  metadata: Record<string, unknown>;
+  updated_at: string;
+};
+
+export type DeviceEntityListRead = {
+  device: Device;
+  view: 'favorites' | 'all';
+  items: DeviceEntity[];
+};
+
+export type DeviceActionExecuteRequest = {
+  household_id: string;
+  device_id: string;
+  entity_id?: string;
+  action: string;
+  params: Record<string, unknown>;
+  reason?: string;
+  confirm_high_risk?: boolean;
+  idempotency_key?: string | null;
+};
+
+export type DeviceActionExecuteResponse = {
+  household_id: string;
+  device: Device;
+  action: string;
+  platform: string;
+  service_domain: string;
+  service_name: string;
+  entity_id: string;
+  params: Record<string, unknown>;
+  result: 'success';
+  executed_at: string;
+};
+
+export type DeviceActionLogRead = {
+  id: string;
+  action: string;
+  target_type: string;
+  result: string;
+  actor_type: string;
+  actor_id: string | null;
+  entity_id: string | null;
+  entity_name: string | null;
+  message: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+};
+
+export type DeviceActionLogListRead = {
+  device: Device;
+  items: DeviceActionLogRead[];
+  page: number;
+  page_size: number;
+  total: number;
 };
 
 export type PluginJobRead = {

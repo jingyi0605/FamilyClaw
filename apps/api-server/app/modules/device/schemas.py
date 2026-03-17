@@ -1,10 +1,14 @@
-from typing import Literal
+from __future__ import annotations
+
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DeviceType = Literal["light", "ac", "curtain", "speaker", "camera", "sensor", "lock"]
 DeviceVendor = Literal["xiaomi", "ha", "other"]
-DeviceStatus = Literal["active", "offline", "inactive"]
+DeviceStatus = Literal["active", "offline", "inactive", "disabled"]
+DeviceEntityView = Literal["favorites", "all"]
+DeviceEntityControlKind = Literal["none", "toggle", "range", "action_set"]
 
 
 class DeviceRead(BaseModel):
@@ -63,6 +67,90 @@ class DeviceUpdate(BaseModel):
 
 class DeviceListResponse(BaseModel):
     items: list[DeviceRead]
+    page: int
+    page_size: int
+    total: int
+
+
+class DeviceEntityControlOptionRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    value: str
+    action: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeviceEntityControlRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: DeviceEntityControlKind = "none"
+    value: Any | None = None
+    unit: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    step: float | None = None
+    action: str | None = None
+    action_on: str | None = None
+    action_off: str | None = None
+    options: list[DeviceEntityControlOptionRead] = Field(default_factory=list)
+    disabled: bool = False
+    disabled_reason: str | None = None
+
+
+class DeviceEntityRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    device_id: str
+    integration_instance_id: str | None = None
+    entity_id: str
+    name: str
+    domain: str
+    state: str
+    state_display: str
+    unit: str | None = None
+    favorite: bool = False
+    read_only: bool = False
+    control: DeviceEntityControlRead = Field(default_factory=DeviceEntityControlRead)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    updated_at: str
+
+
+class DeviceEntityListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    device: DeviceRead
+    view: DeviceEntityView
+    items: list[DeviceEntityRead] = Field(default_factory=list)
+
+
+class DeviceEntityFavoriteUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    favorite: bool
+
+
+class DeviceActionLogRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    action: str
+    target_type: str
+    result: str
+    actor_type: str
+    actor_id: str | None = None
+    entity_id: str | None = None
+    entity_name: str | None = None
+    message: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class DeviceActionLogListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    device: DeviceRead
+    items: list[DeviceActionLogRead] = Field(default_factory=list)
     page: int
     page_size: int
     total: int

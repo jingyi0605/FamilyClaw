@@ -17,8 +17,26 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.db.utils import utc_now_iso
 from app.modules.audit.service import write_audit_log
-from app.modules.device.schemas import DeviceListResponse, DeviceRead, DeviceStatus, DeviceType, DeviceUpdate
-from app.modules.device.service import get_device_or_404, list_devices, update_device
+from app.modules.device.schemas import (
+    DeviceActionLogListResponse,
+    DeviceEntityFavoriteUpdateRequest,
+    DeviceEntityListResponse,
+    DeviceListResponse,
+    DeviceRead,
+    DeviceStatus,
+    DeviceType,
+    DeviceUpdate,
+)
+from app.modules.device.service import (
+    delete_device,
+    disable_device,
+    get_device_or_404,
+    list_device_action_logs,
+    list_device_entities,
+    list_devices,
+    set_device_entity_favorite,
+    update_device,
+)
 from app.modules.household.service import get_household_or_404
 from app.modules.voice.discovery_registry import (
     VoiceTerminalBindingSnapshot,
@@ -302,4 +320,115 @@ def update_device_endpoint(
 
     db.refresh(device)
     return DeviceRead.model_validate(device)
+
+
+@router.get("/{device_id}/entities", response_model=DeviceEntityListResponse)
+def list_device_entities_endpoint(
+    device_id: str,
+    view: Annotated[Literal["favorites", "all"], Query()] = "favorites",
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> DeviceEntityListResponse:
+    device = get_device_or_404(db, device_id)
+    ensure_actor_can_access_household(actor, device.household_id)
+    return list_device_entities(db, device_id=device_id, view=view)
+
+
+@router.put("/{device_id}/entities/{entity_id:path}/favorite", response_model=DeviceEntityListResponse)
+def update_device_entity_favorite_endpoint(
+    device_id: str,
+    entity_id: str,
+    payload: DeviceEntityFavoriteUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> DeviceEntityListResponse:
+    device = get_device_or_404(db, device_id)
+    ensure_actor_can_access_household(actor, device.household_id)
+    result = set_device_entity_favorite(
+        db,
+        device_id=device_id,
+        entity_id=entity_id,
+        favorite=payload.favorite,
+        created_by=actor.actor_id,
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+    return result
+
+
+@router.post("/{device_id}/disable", response_model=DeviceRead)
+def disable_device_endpoint(
+    device_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> DeviceRead:
+    device = get_device_or_404(db, device_id)
+    ensure_actor_can_access_household(actor, device.household_id)
+    device, changed = disable_device(db, device)
+    if changed:
+        write_audit_log(
+            db,
+            household_id=device.household_id,
+            actor=actor,
+            action="device.disable",
+            target_type="device",
+            target_id=device.id,
+            result="success",
+            details={"status": device.status},
+        )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+    db.refresh(device)
+    return DeviceRead.model_validate(device)
+
+
+@router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_device_endpoint(
+    device_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> None:
+    device = get_device_or_404(db, device_id)
+    ensure_actor_can_access_household(actor, device.household_id)
+    device_snapshot = {
+        "device_id": device.id,
+        "name": device.name,
+        "status": device.status,
+        "device_type": device.device_type,
+    }
+    write_audit_log(
+        db,
+        household_id=device.household_id,
+        actor=actor,
+        action="device.delete",
+        target_type="device",
+        target_id=device.id,
+        result="success",
+        details=device_snapshot,
+    )
+    delete_device(db, device)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.get("/{device_id}/action-logs", response_model=DeviceActionLogListResponse)
+def list_device_action_logs_endpoint(
+    device_id: str,
+    pagination: tuple[int, int] = Depends(pagination_params),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> DeviceActionLogListResponse:
+    device = get_device_or_404(db, device_id)
+    ensure_actor_can_access_household(actor, device.household_id)
+    page, page_size = pagination
+    return list_device_action_logs(db, device_id=device_id, page=page, page_size=page_size)
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -30,12 +32,79 @@ def resolve_home_assistant_action_plugin_id(device_type: str) -> str:
     return HOME_ASSISTANT_PLUGIN_ID
 
 
-def get_device_binding(db: Session, *, device_id: str) -> DeviceBinding | None:
-    return db.scalar(select(DeviceBinding).where(DeviceBinding.device_id == device_id).order_by(DeviceBinding.id.asc()))
+def _binding_matches_entity(binding: DeviceBinding, requested_entity_id: str) -> bool:
+    entity_id = requested_entity_id.strip()
+    if not entity_id:
+        return False
+    return entity_id in _collect_binding_entity_ids(binding)
 
 
-def route_device_plugin(db: Session, *, device: Device) -> DevicePluginRoute:
-    binding = get_device_binding(db, device_id=device.id)
+def _collect_binding_entity_ids(binding: DeviceBinding) -> set[str]:
+    capabilities = _load_binding_capabilities(binding)
+    entity_ids: set[str] = set()
+    for candidate in (
+        binding.external_entity_id,
+        capabilities.get("primary_entity_id"),
+    ):
+        normalized = _normalize_entity_id(candidate)
+        if normalized:
+            entity_ids.add(normalized)
+
+    raw_entity_ids = capabilities.get("entity_ids")
+    if isinstance(raw_entity_ids, list):
+        for candidate in raw_entity_ids:
+            normalized = _normalize_entity_id(candidate)
+            if normalized:
+                entity_ids.add(normalized)
+
+    for raw_entity in _load_binding_entities_from_capabilities(capabilities):
+        normalized = _normalize_entity_id(raw_entity.get("entity_id"))
+        if normalized:
+            entity_ids.add(normalized)
+    return entity_ids
+
+
+def _load_binding_entities(binding: DeviceBinding) -> list[dict[str, Any]]:
+    return _load_binding_entities_from_capabilities(_load_binding_capabilities(binding))
+
+
+def _load_binding_entities_from_capabilities(capabilities: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_entities = capabilities.get("entities")
+    return [item for item in raw_entities if isinstance(item, dict)] if isinstance(raw_entities, list) else []
+
+
+def _load_binding_capabilities(binding: DeviceBinding) -> dict[str, Any]:
+    try:
+        from app.db.utils import load_json
+    except ImportError:
+        return {}
+    loaded = load_json(binding.capabilities)
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _normalize_entity_id(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def get_device_binding(db: Session, *, device_id: str, requested_entity_id: str | None = None) -> DeviceBinding | None:
+    bindings = list(
+        db.scalars(
+            select(DeviceBinding)
+            .where(DeviceBinding.device_id == device_id)
+            .order_by(DeviceBinding.last_sync_at.desc().nullslast(), DeviceBinding.id.asc())
+        ).all()
+    )
+    normalized_entity_id = (requested_entity_id or "").strip()
+    if normalized_entity_id:
+        for binding in bindings:
+            if _binding_matches_entity(binding, normalized_entity_id):
+                return binding
+    return bindings[0] if bindings else None
+
+
+def route_device_plugin(db: Session, *, device: Device, requested_entity_id: str | None = None) -> DevicePluginRoute:
+    binding = get_device_binding(db, device_id=device.id, requested_entity_id=requested_entity_id)
     if binding is None:
         raise DevicePluginRoutingError(
             "设备缺少正式绑定信息",

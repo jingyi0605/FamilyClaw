@@ -10,6 +10,7 @@ from app.modules.device_control.protocol import DeviceActionName, RiskLevel
 class DeviceControlRequest(BaseModel):
     household_id: str = Field(min_length=1)
     device_id: str = Field(min_length=1)
+    entity_id: str | None = Field(default=None, min_length=1)
     action: DeviceActionName
     params: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(min_length=1, max_length=100)
@@ -45,6 +46,7 @@ class DeviceControlPluginPayload(BaseModel):
     plugin_id: str
     binding: DeviceControlBindingSnapshot
     device_snapshot: DeviceControlDeviceSnapshot
+    target_entity_id: str | None = None
     action: DeviceActionName
     params: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: int = Field(ge=1)
@@ -84,6 +86,7 @@ class DeviceControlExecutionResult(BaseModel):
     plugin_id: str
     platform: str
     risk_level: RiskLevel
+    resolved_entity_id: str | None = None
     external_request: dict[str, Any] | None = None
     external_response: dict[str, Any] | list[Any] | None = None
     normalized_state_patch: dict[str, Any] | None = None

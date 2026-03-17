@@ -151,6 +151,11 @@ def _build_sync_result(
                         "ha_device_id": external_device_id,
                         "entity_ids": [entry["entity_id"] for entry in entity_entries],
                         "primary_entity_id": primary_entity_id,
+                        "entities": _build_entity_snapshots(
+                            entity_entries=entity_entries,
+                            state_map=state_map,
+                            supported_device_type=mapped_device_type,
+                        ),
                         "domain": domain,
                         "manufacturer": _normalize_optional_text(ha_device.get("manufacturer")),
                         "model": _normalize_optional_text(ha_device.get("model")),
@@ -215,6 +220,167 @@ def _build_observation_records(states: list[dict]) -> list[dict[str, Any]]:
             elif unit in {"%", "percent"} and _looks_like_humidity(entity_id, attributes):
                 records.append({"record_type": "humidity", "external_device_id": entity_id, "device": entity_id, "value": _safe_float(state.get("state")), "unit": "percent", "captured_at": captured_at})
     return [item for item in records if item.get("value") is not None]
+
+
+def _build_entity_snapshots(
+    *,
+    entity_entries: list[dict],
+    state_map: dict[str, dict],
+    supported_device_type: str,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for entry in sorted(entity_entries, key=lambda item: str(item.get("entity_id", ""))):
+        entity_id = _normalize_optional_text(entry.get("entity_id"))
+        if not entity_id or "." not in entity_id:
+            continue
+        domain = entity_id.split(".", 1)[0]
+        state = state_map.get(entity_id)
+        attributes = state.get("attributes") if isinstance(state, dict) and isinstance(state.get("attributes"), dict) else {}
+        unit = _normalize_optional_text(attributes.get("unit_of_measurement")) if isinstance(attributes, dict) else None
+        current_state = _normalize_optional_text(state.get("state")) if isinstance(state, dict) else None
+        items.append(
+            {
+                "entity_id": entity_id,
+                "name": _resolve_entity_name(entry=entry, state=state),
+                "domain": domain,
+                "state": current_state or "unknown",
+                "state_display": _friendly_state_display(current_state or "unknown"),
+                "unit": unit,
+                "control": _build_entity_control(
+                    supported_device_type=supported_device_type,
+                    domain=domain,
+                    state=current_state or "unknown",
+                    attributes=attributes if isinstance(attributes, dict) else {},
+                ),
+                "metadata": {
+                    "device_class": _normalize_optional_text(attributes.get("device_class")) if isinstance(attributes, dict) else None,
+                    "supported_features": attributes.get("supported_features") if isinstance(attributes, dict) else None,
+                    "friendly_name": _normalize_optional_text(attributes.get("friendly_name")) if isinstance(attributes, dict) else None,
+                },
+                "updated_at": _normalize_optional_text(state.get("last_updated")) if isinstance(state, dict) else None,
+            }
+        )
+    return items
+
+
+def _build_entity_control(
+    *,
+    supported_device_type: str,
+    domain: str,
+    state: str,
+    attributes: dict[str, Any],
+) -> dict[str, Any]:
+    if domain in {"sensor", "binary_sensor", "camera"}:
+        return {"kind": "none"}
+    if supported_device_type == "light" and domain == "light":
+        return {
+            "kind": "toggle",
+            "value": state not in {"off", "unknown", "unavailable"},
+            "action_on": "turn_on",
+            "action_off": "turn_off",
+        }
+    if supported_device_type == "ac" and domain == "climate":
+        hvac_modes = attributes.get("hvac_modes")
+        if isinstance(hvac_modes, list):
+            options = [
+                {
+                    "label": _friendly_state_display(str(mode)),
+                    "value": str(mode),
+                    "action": "set_hvac_mode",
+                    "params": {"hvac_mode": str(mode)},
+                }
+                for mode in hvac_modes
+                if isinstance(mode, str) and mode.strip()
+            ]
+            if options:
+                return {
+                    "kind": "action_set",
+                    "value": state,
+                    "options": options,
+                }
+        return {
+            "kind": "toggle",
+            "value": state not in {"off", "unknown", "unavailable"},
+            "action_on": "turn_on",
+            "action_off": "turn_off",
+        }
+    if supported_device_type == "curtain" and domain == "cover":
+        return {
+            "kind": "action_set",
+            "value": state,
+            "options": [
+                {"label": "打开", "value": "open", "action": "open", "params": {}},
+                {"label": "关闭", "value": "closed", "action": "close", "params": {}},
+                {"label": "停止", "value": "stopped", "action": "stop", "params": {}},
+            ],
+        }
+    if supported_device_type == "speaker" and domain == "media_player":
+        volume_level = attributes.get("volume_level")
+        if isinstance(volume_level, (int, float)):
+            return {
+                "kind": "range",
+                "value": int(round(float(volume_level) * 100)),
+                "min_value": 0,
+                "max_value": 100,
+                "step": 5,
+                "unit": "%",
+                "action": "set_volume",
+            }
+        return {
+            "kind": "toggle",
+            "value": state not in {"off", "unknown", "unavailable"},
+            "action_on": "turn_on",
+            "action_off": "turn_off",
+        }
+    if supported_device_type == "lock" and domain == "lock":
+        return {
+            "kind": "action_set",
+            "value": state,
+            "options": [
+                {"label": "上锁", "value": "locked", "action": "lock", "params": {}},
+                {"label": "解锁", "value": "unlocked", "action": "unlock", "params": {}},
+            ],
+        }
+    return {"kind": "none"}
+
+
+def _resolve_entity_name(*, entry: dict, state: dict | None) -> str:
+    for value in (
+        entry.get("name"),
+        entry.get("original_name"),
+    ):
+        normalized = _normalize_optional_text(value)
+        if normalized:
+            return normalized
+    if isinstance(state, dict):
+        attributes = state.get("attributes")
+        if isinstance(attributes, dict):
+            friendly_name = _normalize_optional_text(attributes.get("friendly_name"))
+            if friendly_name:
+                return friendly_name
+    return str(entry.get("entity_id"))
+
+
+def _friendly_state_display(value: str) -> str:
+    mapping = {
+        "on": "开启",
+        "off": "关闭",
+        "open": "打开",
+        "closed": "关闭",
+        "locked": "已上锁",
+        "unlocked": "未上锁",
+        "playing": "播放中",
+        "paused": "已暂停",
+        "idle": "空闲",
+        "cool": "制冷",
+        "heat": "制热",
+        "auto": "自动",
+        "dry": "除湿",
+        "fan_only": "送风",
+        "unavailable": "离线",
+        "unknown": "未知",
+    }
+    return mapping.get(value, value)
 
 
 def _plugin_error_result(*, plugin_id: str, reason: str) -> dict[str, Any]:
