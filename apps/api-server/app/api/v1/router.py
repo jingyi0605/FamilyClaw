@@ -24,6 +24,7 @@ from app.api.v1.endpoints.memories import router as memories_router
 from app.api.v1.endpoints.reminders import router as reminders_router
 from app.api.v1.endpoints.reminders import run_router as reminder_runs_router
 from app.api.v1.endpoints.realtime import router as realtime_router
+from app.api.v1.endpoints.plugin_marketplace import router as plugin_marketplace_router
 from app.api.v1.endpoints.plugin_jobs import router as plugin_jobs_router
 from app.api.v1.endpoints.regions import router as regions_router
 from app.api.v1.endpoints.rooms import router as rooms_router
@@ -58,6 +59,7 @@ router.include_router(memories_router)
 router.include_router(reminders_router)
 router.include_router(reminder_runs_router)
 router.include_router(realtime_router)
+router.include_router(plugin_marketplace_router)
 router.include_router(plugin_jobs_router)
 router.include_router(regions_router)
 router.include_router(rooms_router)

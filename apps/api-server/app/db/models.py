@@ -31,7 +31,7 @@ from app.modules.conversation.models import (
 from app.modules.device.models import Device, DeviceBinding, DeviceEntityFavorite
 from app.modules.family_qa.models import QaQueryLog
 from app.modules.household.models import Household
-from app.modules.integration.models import IntegrationInstance
+from app.modules.integration.models import IntegrationDiscovery, IntegrationInstance
 from app.modules.member.models import Member, MemberPreference
 from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember, MemoryCardRevision
 from app.modules.permission.models import MemberPermission
@@ -46,6 +46,12 @@ from app.modules.plugin.models import (
     PluginMount,
     PluginRawRecord,
     PluginRun,
+)
+from app.modules.plugin_marketplace.models import (
+    PluginMarketplaceEntrySnapshot,
+    PluginMarketplaceInstallTask,
+    PluginMarketplaceInstance,
+    PluginMarketplaceSource,
 )
 from app.modules.presence.models import MemberPresenceState, PresenceEvent
 from app.modules.reminder.models import ReminderAckEvent, ReminderDeliveryAttempt, ReminderRun, ReminderTask
@@ -100,6 +106,10 @@ __all__ = [
     "PluginJobAttempt",
     "PluginJobNotification",
     "PluginJobResponse",
+    "PluginMarketplaceEntrySnapshot",
+    "PluginMarketplaceInstallTask",
+    "PluginMarketplaceInstance",
+    "PluginMarketplaceSource",
     "PluginMount",
     "PluginRun",
     "MemberPreference",
@@ -112,6 +122,7 @@ __all__ = [
     "PresenceEvent",
     "QaQueryLog",
     "IntegrationInstance",
+    "IntegrationDiscovery",
     "ReminderAckEvent",
     "ReminderDeliveryAttempt",
     "ReminderRun",

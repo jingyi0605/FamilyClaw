@@ -994,7 +994,7 @@ function PluginsPageContent() {
             <div className="plugin-marketplace-modal__header-actions">
               <button
                 type="button"
-                className="btn btn--outline btn--sm"
+                className="btn btn--outline btn--sm plugin-marketplace-modal__action-btn"
                 onClick={() => void handleRefreshMarketplace()}
                 disabled={marketRefreshing}
               >
@@ -1003,7 +1003,7 @@ function PluginsPageContent() {
               </button>
               <button
                 type="button"
-                className="btn btn--outline btn--sm"
+                className="btn btn--primary btn--sm plugin-marketplace-modal__action-btn"
                 onClick={() => setSourceManagerOpen(true)}
               >
                 <Settings2 size={14} />

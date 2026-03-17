@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     plugin_job_default_timeout_seconds: int = 60
     plugin_job_running_stale_after_seconds: int = 120
     plugin_config_secret_seed: str = "familyclaw-dev-plugin-config-seed"
+    plugin_marketplace_official_repo_url: str = "https://github.com/familyclaw/plugin-marketplace"
+    plugin_marketplace_official_branch: str = "main"
+    plugin_marketplace_official_entry_root: str = "plugins"
+    plugin_marketplace_github_token: str | None = None
+    plugin_marketplace_install_root: str = str((BASE_DIR / "data" / "plugin-marketplace").resolve())
     scheduler_worker_enabled: bool = True
     scheduler_worker_poll_interval_seconds: float = 1.0
     scheduler_worker_batch_size: int = 100

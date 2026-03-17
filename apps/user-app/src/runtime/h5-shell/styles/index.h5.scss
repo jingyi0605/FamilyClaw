@@ -2016,6 +2016,19 @@ input, select, textarea {
 }
 
 .member-modal-overlay {
+  /* SettingsDialog 使用 portal 挂到 body，按钮变量必须在弹窗上下文重新声明 */
+  --btn-gap: 8px;
+  --btn-padding: 10px 20px;
+  --btn-padding-xs: 4px 8px;
+  --btn-padding-sm: 6px 14px;
+  --btn-padding-md: 10px 20px;
+  --btn-padding-lg: 12px 28px;
+  --btn-radius: var(--radius-lg);
+  --btn-shadow: var(--shadow-sm);
+  --btn-shadow-hover: var(--shadow-md);
+  --btn-font-weight: 600;
+  --btn-min-width: 80px;
+  --btn-min-width-primary: 100px;
   position: fixed;
   inset: 0;
   z-index: 40;
@@ -11516,6 +11529,44 @@ body::before {
   overflow-y: auto;
 }
 
+.plugin-marketplace-source-modal {
+  width: min(980px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+}
+
+.plugin-marketplace-modal__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.plugin-marketplace-modal__header-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.plugin-marketplace-modal__action-btn {
+  min-width: var(--btn-min-width);
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.plugin-marketplace-modal__action-btn.btn--primary {
+  min-width: var(--btn-min-width-primary);
+}
+
+.plugin-marketplace-modal__action-btn.btn--outline {
+  background: color-mix(in srgb, var(--bg-card) 82%, var(--brand-primary-light));
+  border-color: color-mix(in srgb, var(--brand-primary) 18%, var(--border));
+}
+
+.plugin-marketplace-modal__action-btn.btn--outline:hover:not(:disabled) {
+  box-shadow: var(--shadow-sm);
+}
+
 /* 市场分区标题 */
 .marketplace-section {
   display: flex;
@@ -11677,9 +11728,20 @@ body::before {
     margin: var(--spacing-xs);
   }
 
+  .plugin-marketplace-source-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 32px);
+    margin: var(--spacing-xs);
+  }
+
   .plugin-marketplace-modal__body {
     padding: var(--spacing-md);
     max-height: calc(100vh - 120px);
+  }
+
+  .plugin-marketplace-modal__header-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   /* 列表视图在移动端隐藏部分列 */
