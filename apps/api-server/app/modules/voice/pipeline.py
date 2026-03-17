@@ -25,7 +25,8 @@ from app.modules.voice.registry import (
 )
 from app.modules.voice.router import VoiceRoutingResult, voice_router
 from app.modules.voice.runtime_client import voice_runtime_client
-from app.modules.voiceprint.service import mark_voiceprint_enrollment_failed, process_voiceprint_enrollment_sample
+from app.modules.voiceprint.async_service import async_process_voiceprint_enrollment_sample
+from app.modules.voiceprint.service import mark_voiceprint_enrollment_failed
 
 
 class VoicePipelineService:
@@ -171,6 +172,10 @@ class VoicePipelineService:
                 ]
             terminal = voice_terminal_registry.get(event.terminal_id)
             if terminal is None:
+                voice_runtime_client.discard_session(
+                    session_id=session.runtime_session_id or session.session_id,
+                    terminal_id=event.terminal_id,
+                )
                 voice_session_registry.mark_failed(session_id=session.session_id, error_code="terminal_not_found")
                 return [
                     self._build_error(
@@ -188,6 +193,10 @@ class VoicePipelineService:
             )
 
         if event.type == "session.cancel":
+            voice_runtime_client.discard_session(
+                session_id=event.session_id or "",
+                terminal_id=event.terminal_id,
+            )
             voice_session_registry.cancel(session_id=event.session_id or "", inbound_seq=event.seq)
             return []
 
@@ -225,6 +234,7 @@ class VoicePipelineService:
         ]
 
     def handle_terminal_disconnect(self, *, terminal_id: str) -> None:
+        voice_runtime_client.discard_terminal_sessions(terminal_id=terminal_id)
         voice_terminal_registry.mark_offline(terminal_id=terminal_id)
 
     async def _handle_committed_audio(
@@ -301,7 +311,7 @@ class VoicePipelineService:
         session = voice_session_registry.get(session.session_id) or session
 
         if session.session_purpose == "voiceprint_enrollment":
-            return self._handle_voiceprint_enrollment_commit(
+            return await self._handle_voiceprint_enrollment_commit(
                 db,
                 session=session,
                 transcript_text=transcript_text,
@@ -429,7 +439,7 @@ class VoicePipelineService:
             return []
         return self._build_route_feedback(session=session, text=bridge_result.response_text)
 
-    def _handle_voiceprint_enrollment_commit(
+    async def _handle_voiceprint_enrollment_commit(
         self,
         db: Session,
         *,
@@ -459,8 +469,7 @@ class VoicePipelineService:
             return []
 
         try:
-            result = process_voiceprint_enrollment_sample(
-                db,
+            result = await async_process_voiceprint_enrollment_sample(
                 enrollment_id=enrollment_id,
                 transcript_text=transcript_text,
                 artifact_id=session.audio_artifact_id,
@@ -471,9 +480,7 @@ class VoicePipelineService:
                 sample_width=session.audio_sample_width,
                 duration_ms=session.audio_duration_ms,
             )
-            db.commit()
         except Exception as exc:
-            db.rollback()
             detail = getattr(exc, "detail", str(exc))
             self._persist_voiceprint_enrollment_failure(
                 db,

@@ -2,6 +2,8 @@
 
 状态：Draft
 
+> 迁移说明：运行时拓扑与本地启动方式以 `005.3.2` 为准。当前只保留 `api-server` 内嵌 runtime 这条正式路径；独立 `voice-runtime` 已移除。
+
 ## 简介
 
 当前小爱音响已经能把语音送进 FamilyClaw 主链，但“谁在说话”这件事还没有正式能力。现有身份判断更多是上下文猜测：
@@ -26,7 +28,7 @@
 
 ## 术语表
 
-- **System**：FamilyClaw 整体语音系统，包含 `open-xiaoai-gateway`、`voice-runtime` 和 `api-server`
+- **System**：FamilyClaw 整体语音系统，包含 `open-xiaoai-gateway`、`api-server`，以及 `api-server` 内部的 runtime backend（当前只保留 `embedded / disabled`）
 - **声纹建档**：把某个成员的录音样本送入声纹提供方或本地适配器，生成可用于后续识别的声纹档案
 - **录音样本**：一次建档或补样时保存下来的原始音频源文件，至少可恢复为 `.pcm` 或 `.wav`
 - **声纹档案**：某个家庭成员当前生效的声纹信息，可能是 provider 返回的 profile id、模板或 embedding
@@ -165,7 +167,7 @@
 
 ### 非功能需求 2：可靠性
 
-1. WHEN gateway、voice-runtime 或声纹 provider 任一环节短暂失败 THEN System SHALL 提供明确失败状态和重试入口，而不是留下脏状态。
+1. WHEN gateway、runtime backend 或声纹 provider 任一环节短暂失败 THEN System SHALL 提供明确失败状态和重试入口，而不是留下脏状态。
 2. WHEN 重复提交同一个建档任务或同一段样本 THEN System SHALL 有幂等或去重策略，避免重复建档。
 
 ### 非功能需求 3：可维护性

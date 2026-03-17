@@ -2,6 +2,8 @@
 
 状态：Draft
 
+> 迁移说明：自 `005.3.2` 收口后，默认运行时拓扑已经变成 `gateway -> api-server(embedded runtime) -> voice_pipeline`。独立 `voice-runtime` 已从仓库移除；本文若出现该名字，只表示历史实现背景，不再代表现有运行路径。
+
 ## 1. 概述
 
 ### 1.1 目标
@@ -10,7 +12,7 @@
 - 把“小爱音响录音样本如何进入系统并保存”这件事做成正式链路
 - 把“成员声纹档案如何生成、更新、停用”这件事做成正式对象和流程
 - 把“对话前先做声纹识别，再决定成员身份”这件事接到现有语音主链前面
-- 保持 `gateway -> voice-runtime -> api-server voice_pipeline` 这条正式主链继续可用
+- 保持 `gateway -> api-server voice_pipeline` 这条正式主链继续可用
 
 ### 1.2 覆盖需求
 
@@ -27,7 +29,7 @@
 
 ### 1.3 技术约束
 
-- backend 指 `api-server + voice-runtime`
+- backend 指 `api-server` 主进程，以及它背后的 runtime backend（当前只保留 `embedded / disabled`）
 - gateway 只负责录音采集、会话打标和转发，不做声纹算法
 - 数据库结构变更必须通过 Alembic migration 完成
 - 声纹 provider 必须经过统一适配层，不能把第三方 SDK 逻辑直接塞进语音主链
@@ -54,8 +56,8 @@
 ```mermaid
 flowchart LR
     Speaker["小爱音响 + open-xiaoai Rust client"] --> Gateway["open-xiaoai-gateway"]
-    Gateway --> Runtime["voice-runtime"]
     Gateway --> Api["api-server realtime voice"]
+    Api --> Runtime["runtime backend (embedded default)"]
     Runtime --> Artifact["录音样本文件(.wav/.pcm)"]
     Api --> Voiceprint["voiceprint 模块"]
     Voiceprint --> Provider["声纹 provider / 本地 ONNX 适配层"]
@@ -65,7 +67,7 @@ flowchart LR
 
 一句话：
 
-> gateway 把音频送进来，voice-runtime 负责把音频变成可用样本，api-server 负责建档、识别和身份回填。
+> gateway 把音频送进来，由 api-server 内嵌 runtime 把音频变成可用样本，api-server 再继续负责建档、识别和身份回填。
 
 ### 2.2 先测后做的两阶段结构
 
@@ -77,7 +79,7 @@ flowchart LR
 
 第二阶段才做正式实现：
 
-1. 补 `voice-runtime` 的正式落盘
+1. 补 runtime backend 的正式落盘，默认走 `embedded`
 2. 补 `voiceprint` 模块
 3. 把识别前置到 LLM 之前
 
@@ -88,7 +90,7 @@ flowchart LR
 | 模块 | 职责 | 输入 | 输出 |
 | --- | --- | --- | --- |
 | `open-xiaoai-gateway` | 采集录音、识别当前会话用途、转发音频与提交事件 | 终端录音流、终端文本、后端绑定信息 | `session.start / audio.append / audio.commit` |
-| `voice-runtime` | 缓存音频块、落地样本文件、返回音频产物元数据 | 音频分片流 | `.wav/.pcm` 样本文件、音频元数据 |
+| `runtime backend` | 缓存音频块、落地样本文件、返回音频产物元数据；当前由 `api-server embedded runtime` 提供 | 音频分片流 | `.wav/.pcm` 样本文件、音频元数据 |
 | `voiceprint` 模块 | 管理建档任务、样本、声纹档案和识别调用 | 样本文件、成员、终端、provider 配置 | 建档结果、识别结果 |
 | `voice.identity_service` | 合并声纹结果与现有上下文身份推断 | 声纹结果、上下文快照、文本 | 最终身份结果 |
 | `voice_pipeline / router / conversation` | 使用最终身份继续快慢路径处理 | 转写文本、身份结果 | 设备控制或 LLM 对话 |
@@ -101,7 +103,7 @@ flowchart LR
 2. 后端把该任务暴露给对应终端绑定信息，gateway 知道当前终端存在待采样任务。
 3. 目标成员通过该小爱音响完成多轮采样，第一版默认按 `3` 轮处理。
 4. gateway 把这次语音会话标记为 `voiceprint_enrollment`，继续上传音频分片。
-5. `voice-runtime` 在 commit 时把本次音频落成可解析源文件，并返回样本元数据。
+5. runtime backend 在 commit 时把本次音频落成可解析源文件，并返回样本元数据。
 6. `api-server` 校验文本、时长、格式、任务状态。
 7. `voiceprint` 模块调用本地适配器或 provider 生成 embedding，并聚合多轮样本。
 8. 系统保存样本记录、档案版本和任务状态。
@@ -110,7 +112,7 @@ flowchart LR
 
 1. 用户通过小爱音响发起普通会话。
 2. gateway 按 `005 / 005.2` 现有规则决定这次是否进入 FamilyClaw 主链。
-3. 进入主链后，音频分片照常进入 `voice-runtime`，commit 后拿到转写文本和音频产物元数据。
+3. 进入主链后，音频分片照常进入 `api-server` 内嵌 runtime。commit 后拿到转写文本和音频产物元数据。
 4. `api-server` 在 `voice_pipeline` 进入后续路由前先执行声纹识别。
 5. 若声纹匹配成功，则把成员身份写入最终身份结果。
 6. 若声纹匹配失败，则回退到现有 `identity_service` 的上下文推断。
@@ -203,11 +205,11 @@ gateway 明确不做：
 - 不在网关里保存正式声纹档案
 - 不在网关里做最终身份决策
 
-### 4.2 voice-runtime 改动
+### 4.2 runtime backend 改动
 
 覆盖需求：2、4、5、6、7
 
-当前 `voice-runtime` 只是在内存里攒 `audio_chunks`。这次要补成正式音频产物链路：
+当前 runtime backend 需要承担正式音频产物链路。默认实现已经迁到 `api-server embedded runtime`：
 
 - 会话 append 继续缓存音频块
 - commit 时把音频块落为可解析样本文件，默认输出标准 `.wav`
@@ -225,7 +227,7 @@ gateway 明确不做：
 
 - 第一版优先落 `.wav`
 - 如有需要可同时保留原始 `.pcm`
-- 不在 `voice-runtime` 内直接决定成员身份
+- 不在 runtime backend 内直接决定成员身份
 
 ### 4.3 api-server 新增 `voiceprint` 模块
 
@@ -465,7 +467,7 @@ gateway 明确不做：
 ### 8.2 实现阶段单元测试
 
 - gateway 会话用途识别和建档任务打标
-- voice-runtime 音频落地为 `.wav`
+- embedded runtime 音频落地为 `.wav`
 - 声纹 provider 适配层成功、失败、超时
 - 身份服务合并声纹结果与上下文结果
 

@@ -9,7 +9,7 @@
 - 把当前独立 `voice-runtime` 的短生命周期运行时逻辑内嵌到 `api-server`
 - 保持 `005.3` 现有建档、识别、对话前身份解析与降级语义不变
 - 明确主事件循环、线程池阻塞任务和数据库 Session 的边界
-- 保留 `remote` 兼容模式，迁移过程中可回滚
+- 删除独立 `voice-runtime` 目录和远程分支，彻底收口到 `embedded / disabled`
 
 ### 1.2 覆盖需求
 
@@ -17,7 +17,7 @@
 - `requirements.md` 需求 2：内嵌音频缓存与音频产物落盘
 - `requirements.md` 需求 3：阻塞任务下沉
 - `requirements.md` 需求 4：业务语义保持不变
-- `requirements.md` 需求 5：迁移可观测与可回滚
+- `requirements.md` 需求 5：迁移可观测与可收口
 - `requirements.md` 需求 6：迁移完成后回写 `005.3`
 
 ### 1.3 技术约束
@@ -26,7 +26,7 @@
 - 事件循环边界：遵守 `001.6` 和 `app.core.blocking`
 - 现有声纹 provider：继续使用 `sherpa-onnx + weSpeaker/ResNet34`
 - 数据库迁移：本方案不要求新增表结构，优先复用现有 `voice_session_registry` 与 `voiceprint` 数据表
-- 向后兼容：不破坏现有 `remote` 模式，不破坏现有 `voice_runtime_client` 调用点
+- 向后兼容：不破坏现有 `voice_runtime_client` 调用点，不破坏现有 `disabled` 降级语义
 
 ## 2. 架构
 
@@ -40,7 +40,7 @@
 
 2. **Runtime 抽象层**
    - `voice_runtime_client` 继续作为上层唯一入口
-   - 内部根据配置选择 `embedded / remote / disabled`
+   - 内部根据配置选择 `embedded / disabled`
 
 3. **Embedded Runtime 层**
    - 管会话音频缓存
@@ -102,7 +102,6 @@
 覆盖需求：1、2、3、4、5
 
 - `VoiceRuntimeBackend`：统一 backend 协议，定义 `start_session / append_audio / finalize_session`
-- `RemoteVoiceRuntimeBackend`：保留当前 HTTP 远程实现
 - `EmbeddedVoiceRuntimeBackend`：新增本地实现
 - `EmbeddedAudioSessionStore`：新增短生命周期音频缓存
 - `VoiceprintAsyncFacade`：新增异步包装层，负责调用 blocking helper
@@ -132,7 +131,7 @@
 
 | 字段 | 类型 | 必填 | 说明 | 约束 |
 | --- | --- | --- | --- | --- |
-| `voice_runtime_mode` | `str` | 是 | 当前 runtime 模式 | `embedded / remote / disabled` |
+| `voice_runtime_mode` | `str` | 是 | 当前 runtime 模式 | `embedded / disabled` |
 | `voice_runtime_artifacts_root` | `str` | 否 | 内嵌 runtime 落盘目录 | mode=`embedded` 时有效 |
 | `voice_runtime_timeout_ms` | `int` | 否 | runtime 超时 | `>=100` |
 
@@ -148,9 +147,7 @@
 - 输出：`VoiceRuntimeStartResult`
 - 校验：
   - `embedded` 模式下创建本地缓存会话
-  - `remote` 模式下继续发 HTTP
 - 错误：
-  - 模式未配置
   - codec 不支持
   - backend 创建失败
 
@@ -175,7 +172,7 @@
 - 输入：会话、终端、`debug_transcript`
 - 输出：`VoiceRuntimeTranscriptResult`
 - 校验：
-  - `embedded` 模式下必须返回和当前 remote 模式等价的 transcript/artifact 结构
+  - `embedded` 模式下必须返回稳定的 transcript/artifact 结构
   - `disabled` 模式下保留当前 debug transcript 兜底语义
 - 错误：
   - 音频帧无效
@@ -294,7 +291,6 @@
 ### 7.3 端到端测试
 
 - 单启动 `api-server` 时跑通本地声纹建档与普通对话识别
-- 切回 `remote` 模式时保持现有链路可用
 - 慢声纹任务不拖死其他 HTTP / WebSocket 请求
 
 ### 7.4 验证映射
@@ -305,7 +301,7 @@
 | `requirements.md` 需求 2 | `design.md` 2.3、4.1 | pipeline 集成测试、artifact 断言 |
 | `requirements.md` 需求 3 | `design.md` 2.3、3.3、6.2 | blocking helper 测试、并发回归测试 |
 | `requirements.md` 需求 4 | `design.md` 2.3、6.1 | voice pipeline / identity / enrollment 回归测试 |
-| `requirements.md` 需求 5 | `design.md` 5、6.3 | 日志检查、配置回滚测试 |
+| `requirements.md` 需求 5 | `design.md` 5、6.3 | 日志检查、目录与配置收口检查 |
 | `requirements.md` 需求 6 | `design.md` 8.2 | 文档回写检查 |
 
 ## 8. 风险与待确认项
@@ -314,10 +310,8 @@
 
 - 如果直接把同步 provider 调用塞回 async 主链，会重现 `001.6` 里明令禁止的阻塞问题。
 - 如果把大块音频字节直接塞进 `VoiceSessionState`，会让业务状态和运行时缓存缠死。
-- 如果迁移时删除 `remote` 兼容模式太早，排障时会失去回退通道。
+- 如果删除独立 `voice-runtime` 后，文档和测试没同步回写，后面的人会继续按旧拓扑排障。
 
 ### 8.2 待确认项
 
-- 首轮是否保留独立 `apps/voice-runtime` 目录作为共享代码来源，还是在迁移完成后只保留兼容壳
-- `embedded` 模式下的默认 `artifacts_root` 是落在 `apps/api-server/data/artifacts` 还是复用现有 voice-runtime 目录结构
 - 本轮是否需要补一个轻量 health/diagnostics 接口暴露当前 runtime mode 与缓存统计

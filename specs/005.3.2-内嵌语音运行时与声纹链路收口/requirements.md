@@ -20,8 +20,7 @@
 ## 术语表
 
 - **Embedded Runtime**：内嵌在 `api-server` 里的本地语音运行时实现，负责短生命周期音频缓存、落盘和 commit 结果生成。
-- **Remote Runtime**：当前通过 HTTP 调用独立 `voice-runtime` 服务的实现。
-- **Runtime Backend**：`voice_runtime_client` 背后具体使用的实现，可以是 `embedded`、`remote` 或 `disabled`。
+- **Runtime Backend**：`voice_runtime_client` 背后具体使用的实现，当前只允许 `embedded` 或 `disabled`。
 - **Audio Artifact**：commit 后生成的音频产物，包括 `.wav` 文件路径、采样率、声道、位宽、时长和 `sha256`。
 - **Blocking Helper**：`app.core.blocking` 里的统一阻塞调用封装，用来把同步 I/O 或 CPU 任务下沉到线程池。
 
@@ -32,7 +31,7 @@
 - 为 `api-server` 增加内嵌 runtime 模式，并作为本地默认方案
 - 在 `api-server` 内部缓存会话音频分片，并在 commit 时生成音频产物
 - 把声纹建档和声纹识别里的同步重活改成通过 blocking helper 下沉执行
-- 保留远程 runtime 兼容模式，允许旧环境继续工作
+- 删除独立 `voice-runtime` 代码、启动脚本和配置模板
 - 更新本地启动、配置模板和文档，明确默认不再依赖额外 `voice-runtime` 进程
 - 在迁移完成后回写 `005.3` 相关文档
 
@@ -41,19 +40,18 @@
 - 更换声纹 provider、模型或阈值策略
 - 改造前端声纹管理页面
 - 引入新的队列系统、缓存系统或独立 worker 服务
-- 在本轮彻底删除远程 runtime 代码
 
 ## 需求
 
 ### 需求 1：提供可切换的 runtime 模式
 
-**用户故事：** 作为开发者，我希望 `api-server` 能明确配置当前使用 `embedded`、`remote` 还是 `disabled` 模式，这样本地、测试和兼容环境都能按同一套入口启动。
+**用户故事：** 作为开发者，我希望 `api-server` 能明确配置当前使用 `embedded` 还是 `disabled` 模式，这样本地和测试环境都按同一套入口启动，也不会再误走已经废弃的远程分支。
 
 #### 验收标准
 
 1. WHEN `FAMILYCLAW_VOICE_RUNTIME_MODE=embedded` THEN System SHALL 在 `api-server` 内使用本地 runtime 实现，不再发出到独立 `voice-runtime` 的 HTTP 请求。
-2. WHEN `FAMILYCLAW_VOICE_RUNTIME_MODE=remote` THEN System SHALL 保持现有 HTTP 调用行为，并继续读取 `voice_runtime_base_url` 与 `voice_runtime_api_key`。
-3. WHEN `FAMILYCLAW_VOICE_RUNTIME_MODE=disabled` THEN System SHALL 保持当前禁用语义，普通语音链路按现有降级规则继续处理。
+2. WHEN `FAMILYCLAW_VOICE_RUNTIME_MODE=disabled` THEN System SHALL 保持当前禁用语义，普通语音链路按现有降级规则继续处理。
+3. WHEN 配置中仍残留 `remote`、`voice_runtime_base_url` 或 `voice_runtime_api_key` 旧值 THEN System SHALL 不再把它们当成有效运行路径。
 
 ### 需求 2：在 api-server 内部完成音频缓存与音频产物落盘
 
@@ -85,15 +83,15 @@
 2. WHEN `voiceprint_enrollment` 会话提交音频 THEN System SHALL 继续走当前建档主链，并保持对 `voiceprint_artifact_missing`、`voice_transcript_empty`、provider 失败等错误的现有处理语义。
 3. WHEN 声纹识别不可用或低置信度 THEN System SHALL 继续按 `005.3` 里现有的上下文兜底和公开对话策略处理，而不是新增新的用户可见错误路径。
 
-### 需求 5：迁移过程必须可回滚、可观测
+### 需求 5：迁移过程必须可观测、可收口
 
-**用户故事：** 作为运维或开发者，我希望这次迁移不是一锤子买卖，而是能开关、能对比、能排查。
+**用户故事：** 作为运维或开发者，我希望这次迁移完成后仓库里不再保留半套旧 runtime 壳子，同时日志和测试还能明确告诉我当前到底是不是内嵌模式。
 
 #### 验收标准
 
-1. WHEN 使用 `embedded` 或 `remote` 模式时 THEN System SHALL 在日志或健康信息里明确暴露当前 runtime mode。
+1. WHEN 使用 `embedded` 模式时 THEN System SHALL 在日志或健康信息里明确暴露当前 runtime mode。
 2. WHEN 内嵌 runtime 处理失败 THEN System SHALL 保留足够日志定位到会话、终端、模式、阻塞任务标签和异常摘要。
-3. WHEN 迁移后发现环境不适配 THEN System SHALL 可以通过配置切回 `remote` 模式，而不需要重新改代码。
+3. WHEN 迁移完成 THEN System SHALL 删除独立 `voice-runtime` 目录、启动脚本和远程配置模板，避免仓库继续保留失效回退入口。
 
 ### 需求 6：迁移完成后同步更新 005.3 文档
 
@@ -125,6 +123,6 @@
 ## 成功定义
 
 - 本地开发默认只启动 `api-server` 即可跑通 `005.3` 声纹主链
-- `embedded` 与 `remote` 两种模式对上层业务行为保持一致
+- `embedded` 模式对上层业务行为保持稳定，`disabled` 模式保留现有降级语义
 - 迁移后新增回归测试能证明 HTTP / WebSocket 不会被同步声纹计算拖死
 - `005.3` 文档在迁移完成后不再保留过时的独立 runtime 默认前提

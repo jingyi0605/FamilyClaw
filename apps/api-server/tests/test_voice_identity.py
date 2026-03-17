@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.modules.context.schemas import (
     ContextOverviewActiveMember,
@@ -33,8 +33,9 @@ class VoiceIdentityTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.voice.identity_service.identify_household_member_by_voiceprint",
-            return_value=VoiceprintIdentificationRead(
+            "app.modules.voice.identity_service.async_identify_household_member_by_voiceprint",
+            new=AsyncMock(
+                return_value=VoiceprintIdentificationRead(
                 provider="sherpa_onnx_wespeaker_resnet34",
                 status="matched",
                 threshold=0.75,
@@ -50,6 +51,7 @@ class VoiceIdentityTests(unittest.TestCase):
                         score=0.93,
                     )
                 ],
+                )
             ),
         ):
             result = asyncio.run(
@@ -112,13 +114,15 @@ class VoiceIdentityTests(unittest.TestCase):
         overview = _build_overview()
 
         with patch(
-            "app.modules.voice.identity_service.identify_household_member_by_voiceprint",
-            return_value=VoiceprintIdentificationRead(
+            "app.modules.voice.identity_service.async_identify_household_member_by_voiceprint",
+            new=AsyncMock(
+                return_value=VoiceprintIdentificationRead(
                 provider="sherpa_onnx_wespeaker_resnet34",
                 status="unavailable",
                 threshold=0.75,
                 reason="provider mocked unavailable",
                 candidate_count=2,
+                )
             ),
         ):
             result = asyncio.run(

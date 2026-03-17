@@ -6,7 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect, status
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.modules.voice.discovery_registry import get_voice_terminal_binding
+from app.modules.voice.binding_service import get_voice_terminal_binding
 from app.modules.voice.pipeline import voice_pipeline_service
 from app.modules.voice.protocol import VoiceCommandEvent, VoiceGatewayEvent
 from app.modules.voice.registry import voice_gateway_connection_registry, voice_terminal_registry

@@ -1,8 +1,13 @@
 import asyncio
+import base64
+import tempfile
 import unittest
-from unittest.mock import AsyncMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 from app.core.config import get_settings
+from app.modules.voice.embedded_runtime_store import embedded_audio_session_store
+from app.modules.voice.runtime_backends import EmbeddedVoiceRuntimeBackend
 from app.modules.voice.registry import VoiceSessionState, VoiceTerminalState
 from app.modules.voice.runtime_client import voice_runtime_client
 
@@ -10,58 +15,25 @@ from app.modules.voice.runtime_client import voice_runtime_client
 class VoiceRuntimeClientTests(unittest.TestCase):
     def setUp(self) -> None:
         voice_runtime_client.set_handler(None)
+        embedded_audio_session_store.reset()
         get_settings.cache_clear()
 
     def tearDown(self) -> None:
+        embedded_audio_session_store.reset()
         get_settings.cache_clear()
 
-    def test_start_session_uses_http_runtime_when_enabled(self) -> None:
-        with patch("app.modules.voice.runtime_client.settings.voice_runtime_enabled", True), patch(
-            "app.modules.voice.runtime_client.settings.voice_runtime_base_url",
-            "http://voice-runtime.local",
-        ), patch(
-            "app.modules.voice.runtime_client.voice_runtime_client._post_json",
-            new=AsyncMock(return_value={"runtime_status": "session_started", "runtime_session_id": "runtime-1"}),
-        ) as post_mock:
-            result = asyncio.run(
-                voice_runtime_client.start_session(
-                    session=_build_session(),
-                    terminal=_build_terminal(),
-                    sample_rate=16000,
-                    codec="pcm_s16le",
-                    channels=1,
-                )
-            )
+    def test_runtime_mode_selects_embedded_backend(self) -> None:
+        with patch("app.modules.voice.runtime_client.settings.voice_runtime_mode", "embedded"):
+            backend = voice_runtime_client.get_backend()
 
-        self.assertTrue(result.ok)
-        self.assertEqual("runtime-1", result.runtime_session_id)
-        post_mock.assert_awaited_once()
-        payload = post_mock.await_args.args[1]
-        self.assertEqual("conversation", payload["session_purpose"])
-        self.assertIsNone(payload["enrollment_id"])
+        self.assertIsInstance(backend, EmbeddedVoiceRuntimeBackend)
+        self.assertEqual("embedded", voice_runtime_client.get_runtime_mode())
 
-    def test_finalize_session_commits_http_runtime_and_parses_audio_artifact(self) -> None:
-        with patch("app.modules.voice.runtime_client.settings.voice_runtime_enabled", True), patch(
-            "app.modules.voice.runtime_client.settings.voice_runtime_base_url",
-            "http://voice-runtime.local",
-        ), patch(
-            "app.modules.voice.runtime_client.voice_runtime_client._post_json",
-            new=AsyncMock(
-                return_value={
-                    "ok": True,
-                    "runtime_status": "transcribed",
-                    "runtime_session_id": "runtime-1",
-                    "transcript_text": "打开客厅灯",
-                    "audio_artifact_id": "artifact-1",
-                    "audio_file_path": "C:/tmp/artifact-1.wav",
-                    "sample_rate": 16000,
-                    "channels": 1,
-                    "sample_width": 2,
-                    "duration_ms": 1200,
-                    "audio_sha256": "abc123",
-                }
-            ),
-        ) as post_mock:
+    def test_runtime_mode_defaults_to_embedded(self) -> None:
+        self.assertEqual("embedded", voice_runtime_client.get_runtime_mode())
+
+    def test_finalize_session_keeps_disabled_degrade_semantics(self) -> None:
+        with patch("app.modules.voice.runtime_client.settings.voice_runtime_mode", "disabled"):
             result = asyncio.run(
                 voice_runtime_client.finalize_session(
                     session=_build_session(runtime_session_id="runtime-1"),
@@ -71,14 +43,60 @@ class VoiceRuntimeClientTests(unittest.TestCase):
             )
 
         self.assertTrue(result.ok)
+        self.assertTrue(result.degraded)
+        self.assertEqual("debug_transcript", result.runtime_status)
         self.assertEqual("打开客厅灯", result.transcript_text)
-        self.assertEqual("runtime-1", result.runtime_session_id)
-        self.assertIsNotNone(result.audio_artifact)
-        assert result.audio_artifact is not None
-        self.assertEqual("artifact-1", result.audio_artifact.artifact_id)
-        self.assertEqual("abc123", result.audio_artifact.sha256)
-        post_mock.assert_awaited_once()
-        self.assertIn("X-Debug-Transcript-B64", post_mock.await_args.kwargs["extra_headers"])
+
+    def test_embedded_finalize_persists_audio_artifact(self) -> None:
+        pcm_bytes = b"\x00\x00" * 1600
+        chunk_base64 = base64.b64encode(pcm_bytes).decode("ascii")
+        with tempfile.TemporaryDirectory() as tempdir, patch(
+            "app.modules.voice.runtime_client.settings.voice_runtime_mode",
+            "embedded",
+        ), patch(
+            "app.modules.voice.embedded_runtime.settings.voice_runtime_artifacts_root",
+            tempdir,
+        ):
+            start_result = asyncio.run(
+                voice_runtime_client.start_session(
+                    session=_build_session(),
+                    terminal=_build_terminal(),
+                    sample_rate=16000,
+                    codec="pcm_s16le",
+                    channels=1,
+                )
+            )
+            append_result = asyncio.run(
+                voice_runtime_client.append_audio(
+                    session=_build_session(runtime_session_id=start_result.runtime_session_id),
+                    terminal=_build_terminal(),
+                    chunk_base64=chunk_base64,
+                    chunk_bytes=len(pcm_bytes),
+                    codec="pcm_s16le",
+                    sample_rate=16000,
+                )
+            )
+            result = asyncio.run(
+                voice_runtime_client.finalize_session(
+                    session=_build_session(runtime_session_id=start_result.runtime_session_id),
+                    terminal=_build_terminal(),
+                    debug_transcript="打开客厅灯",
+                )
+            )
+
+            self.assertTrue(start_result.ok)
+            self.assertTrue(append_result.ok)
+            self.assertTrue(result.ok)
+            self.assertFalse(result.degraded)
+            self.assertEqual("打开客厅灯", result.transcript_text)
+            self.assertIsNotNone(result.audio_artifact)
+            assert result.audio_artifact is not None
+            artifact_path = Path(result.audio_artifact.file_path)
+            self.assertTrue(artifact_path.is_file())
+            self.assertEqual(16000, result.audio_artifact.sample_rate)
+            self.assertEqual(1, result.audio_artifact.channels)
+            self.assertEqual(2, result.audio_artifact.sample_width)
+            self.assertGreater(result.audio_artifact.duration_ms, 0)
 
 
 def _build_session(*, runtime_session_id: str | None = None) -> VoiceSessionState:

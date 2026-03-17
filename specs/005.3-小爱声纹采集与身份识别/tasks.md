@@ -2,6 +2,8 @@
 
 # 浠诲姟娓呭崟 - 灏忕埍澹扮汗閲囬泦涓庤韩浠借瘑鍒紙浜鸿瘽鐗堬級
 
+> 迁移说明：自 `005.3.2` 完成后，本文件里涉及 `voice-runtime` 的任务描述应理解为“runtime backend 能力”。当前这部分能力已经完全收回 `api-server` 内嵌 runtime；独立 `voice-runtime` 已移除，不再是任何正式启动前提。
+
 鐘舵€侊細Draft
 
 ## 杩欎唤鏂囨。鏄共浠€涔堢殑
@@ -160,13 +162,13 @@
   - 寮€濮嬪墠鍏堢湅锛?
     - `requirements.md` 闇€姹?2銆侀渶姹?5銆侀渶姹?7
     - `design.md` 4.2銆?.5.3銆?.3
-    - `apps/voice-runtime/voice_runtime/service.py`
-    - `apps/voice-runtime/voice_runtime/app.py`
+    - `apps/api-server/app/modules/voice/embedded_runtime.py`
+    - `apps/api-server/app/modules/voice/runtime_client.py`
   - 涓昏鏀瑰摢閲岋細
-    - `apps/voice-runtime/voice_runtime/service.py`
-    - `apps/voice-runtime/voice_runtime/schemas.py`
-    - `apps/voice-runtime/voice_runtime/app.py`
-    - `apps/voice-runtime/tests/test_app.py`
+    - `apps/api-server/app/modules/voice/embedded_runtime.py`
+    - `apps/api-server/app/modules/voice/runtime_types.py`
+    - `apps/api-server/app/modules/voice/runtime_client.py`
+    - `apps/api-server/tests/test_voice_runtime_client.py`
   - 杩欎竴鍏堜笉鍋氫粈涔堬細鍏堜笉鍦?runtime 閲屽仛鎴愬憳璇嗗埆锛屼篃涓嶆妸 provider 璋冪敤濉炶繘 runtime
   - 鎬庝箞绠楀畬鎴愶細
     1. commit 杩斿洖閲岃兘鎷垮埌闊抽浜х墿鍏冩暟鎹€?
@@ -408,7 +410,7 @@
     - `design.md` 8.2銆?.3銆?.4
   - 涓昏鏀瑰摢閲岋細
     - `apps/open-xiaoai-gateway/tests/`
-    - `apps/voice-runtime/tests/`
+    - `apps/api-server/tests/`
     - `apps/api-server/tests/`
   - 杩欎竴鍏堜笉鍋氫粈涔堬細鍏堜笉鍋氬疄鏈洪暱鏃堕棿 soak test 鑷姩鍖?
   - 鎬庝箞绠楀畬鎴愶細

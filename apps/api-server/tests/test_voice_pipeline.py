@@ -1,5 +1,8 @@
 import asyncio
+import base64
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from app.modules.context.schemas import (
@@ -10,6 +13,7 @@ from app.modules.context.schemas import (
     ContextOverviewRoomOccupancy,
 )
 from app.modules.voice.conversation_bridge import VoiceConversationBridgeResult
+from app.modules.voice.embedded_runtime_store import embedded_audio_session_store
 from app.modules.voice.fast_action_service import VoiceRouteDecision
 from app.modules.voice.identity_service import VoiceIdentityResolution
 from app.modules.voice.pipeline import voice_pipeline_service
@@ -25,6 +29,7 @@ from app.modules.voice.runtime_client import (
     VoiceRuntimeAppendResult,
     VoiceRuntimeStartResult,
     VoiceRuntimeTranscriptResult,
+    voice_runtime_client,
 )
 from app.modules.voiceprint.service import VoiceprintIdentificationCandidateRead, VoiceprintIdentificationRead
 
@@ -34,6 +39,7 @@ class VoicePipelineTests(unittest.TestCase):
         voice_gateway_connection_registry.reset()
         voice_terminal_registry.reset()
         voice_session_registry.reset()
+        embedded_audio_session_store.reset()
         voice_terminal_registry.upsert_online(
             terminal_id="terminal-1",
             household_id="household-1",
@@ -57,7 +63,29 @@ class VoicePipelineTests(unittest.TestCase):
             voiceprint_enrollment_id=None,
             inbound_seq=1,
         )
+        session = voice_session_registry.get("session-1")
+        terminal = voice_terminal_registry.get("terminal-1")
+        assert session is not None
+        assert terminal is not None
+        runtime_start = asyncio.run(
+            voice_runtime_client.start_session(
+                session=session,
+                terminal=terminal,
+                sample_rate=16000,
+                codec="pcm_s16le",
+                channels=1,
+            )
+        )
+        voice_session_registry.update_runtime_state(
+            session_id="session-1",
+            runtime_status=runtime_start.runtime_status,
+            runtime_session_id=runtime_start.runtime_session_id,
+            runtime_error_detail=runtime_start.detail,
+        )
         voice_session_registry.mark_ready(session_id="session-1")
+
+    def tearDown(self) -> None:
+        embedded_audio_session_store.reset()
 
     def test_audio_commit_routes_fast_action_and_returns_playback_command(self) -> None:
         event = VoiceGatewayEvent.model_validate(
@@ -283,24 +311,26 @@ class VoicePipelineTests(unittest.TestCase):
             "app.modules.voice.router.get_context_overview",
             return_value=_build_context_overview(active_member_id="member-2"),
         ), patch(
-            "app.modules.voice.identity_service.identify_household_member_by_voiceprint",
-            side_effect=lambda *args, **kwargs: order.append("voiceprint")
-            or VoiceprintIdentificationRead(
-                provider="sherpa_onnx_wespeaker_resnet34",
-                status="matched",
-                threshold=0.75,
-                reason="声纹识别命中妈妈。",
-                profile_id="profile-1",
-                member_id="member-1",
-                score=0.92,
-                candidate_count=1,
-                candidates=[
-                    VoiceprintIdentificationCandidateRead(
-                        member_id="member-1",
-                        profile_id="profile-1",
-                        score=0.92,
-                    )
-                ],
+            "app.modules.voice.identity_service.async_identify_household_member_by_voiceprint",
+            new=AsyncMock(
+                side_effect=lambda *args, **kwargs: order.append("voiceprint")
+                or VoiceprintIdentificationRead(
+                    provider="sherpa_onnx_wespeaker_resnet34",
+                    status="matched",
+                    threshold=0.75,
+                    reason="声纹识别命中妈妈。",
+                    profile_id="profile-1",
+                    member_id="member-1",
+                    score=0.92,
+                    candidate_count=1,
+                    candidates=[
+                        VoiceprintIdentificationCandidateRead(
+                            member_id="member-1",
+                            profile_id="profile-1",
+                            score=0.92,
+                        )
+                    ],
+                )
             ),
         ), patch(
             "app.modules.voice.router.voice_fast_action_service.resolve",
@@ -371,13 +401,15 @@ class VoicePipelineTests(unittest.TestCase):
             "app.modules.voice.router.get_context_overview",
             return_value=_build_context_overview(active_member_id="member-2"),
         ), patch(
-            "app.modules.voice.identity_service.identify_household_member_by_voiceprint",
-            return_value=VoiceprintIdentificationRead(
+            "app.modules.voice.identity_service.async_identify_household_member_by_voiceprint",
+            new=AsyncMock(
+                return_value=VoiceprintIdentificationRead(
                 provider="sherpa_onnx_wespeaker_resnet34",
                 status="unavailable",
                 threshold=0.75,
                 reason="provider mocked unavailable",
                 candidate_count=2,
+                )
             ),
         ), patch(
             "app.modules.voice.router.voice_fast_action_service.resolve",
@@ -611,6 +643,113 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertEqual("voice_runtime_unavailable", commands[0].payload.error_code)
         session = voice_session_registry.get("session-1")
         self.assertEqual("failed", session.status)
+
+    def test_embedded_mode_commit_produces_artifact_and_routes_fast_action(self) -> None:
+        voice_session_registry.reset()
+        pcm_bytes = b"\x00\x00" * 1600
+        chunk_base64 = base64.b64encode(pcm_bytes).decode("ascii")
+        start_event = VoiceGatewayEvent.model_validate(
+            {
+                "type": "session.start",
+                "terminal_id": "terminal-1",
+                "session_id": "session-embedded-1",
+                "seq": 1,
+                "payload": {
+                    "household_id": "household-1",
+                    "room_id": "room-1",
+                    "sample_rate": 16000,
+                    "codec": "pcm_s16le",
+                    "channels": 1,
+                },
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+        append_event = VoiceGatewayEvent.model_validate(
+            {
+                "type": "audio.append",
+                "terminal_id": "terminal-1",
+                "session_id": "session-embedded-1",
+                "seq": 2,
+                "payload": {
+                    "chunk_base64": chunk_base64,
+                    "chunk_bytes": len(pcm_bytes),
+                    "codec": "pcm_s16le",
+                    "sample_rate": 16000,
+                },
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+        commit_event = VoiceGatewayEvent.model_validate(
+            {
+                "type": "audio.commit",
+                "terminal_id": "terminal-1",
+                "session_id": "session-embedded-1",
+                "seq": 3,
+                "payload": {"duration_ms": 1200, "debug_transcript": "打开客厅灯"},
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+
+        async def fake_route(*args, **kwargs):
+            session = kwargs["session"]
+            self.assertEqual("打开客厅灯", session.transcript_text)
+            self.assertIsNotNone(session.audio_artifact_id)
+            self.assertIsNotNone(session.audio_file_path)
+            assert session.audio_file_path is not None
+            self.assertTrue(Path(session.audio_file_path).is_file())
+            return VoiceRoutingResult(
+                decision=VoiceRouteDecision(
+                    route_type="device_action",
+                    route_target="device-1:turn_on",
+                    reason="命中设备",
+                    response_text="好的，已处理设备：客厅灯。",
+                ),
+                identity=VoiceIdentityResolution(
+                    status="resolved",
+                    primary_member_id="member-1",
+                    primary_member_name="妈妈",
+                    primary_member_role="adult",
+                    confidence=0.82,
+                    inferred_room_id="room-1",
+                    inferred_room_name="客厅",
+                    reason="终端房间和活跃成员一致。",
+                ),
+            )
+
+        with tempfile.TemporaryDirectory() as tempdir, patch(
+            "app.modules.voice.runtime_client.settings.voice_runtime_mode",
+            "embedded",
+        ), patch(
+            "app.modules.voice.embedded_runtime.settings.voice_runtime_artifacts_root",
+            tempdir,
+        ), patch(
+            "app.modules.voice.pipeline.voice_router.route",
+            new=AsyncMock(side_effect=fake_route),
+        ), patch(
+            "app.modules.voice.pipeline.voice_fast_action_service.execute",
+            new=AsyncMock(
+                return_value=VoiceRouteDecision(
+                    route_type="device_action",
+                    route_target="device-1:turn_on",
+                    reason="执行完成",
+                    response_text="好的，已处理设备：客厅灯。",
+                )
+            ),
+        ):
+            start_commands = asyncio.run(voice_pipeline_service.handle_inbound_event(_FakeDbSession(), start_event))
+            append_commands = asyncio.run(voice_pipeline_service.handle_inbound_event(_FakeDbSession(), append_event))
+            commit_commands = asyncio.run(voice_pipeline_service.handle_inbound_event(_FakeDbSession(), commit_event))
+
+        self.assertEqual(["session.ready"], [item.type for item in start_commands])
+        self.assertEqual([], append_commands)
+        self.assertEqual(["play.start"], [item.type for item in commit_commands])
+        session = voice_session_registry.get("session-embedded-1")
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual("打开客厅灯", session.transcript_text)
+        self.assertIsNotNone(session.audio_artifact_id)
+        self.assertEqual("fast_action", session.lane)
+        self.assertEqual("device_action", session.route_type)
 
 
 class _FakeDbSession:

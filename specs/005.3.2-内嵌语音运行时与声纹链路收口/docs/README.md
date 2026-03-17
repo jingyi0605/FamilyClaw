@@ -5,8 +5,8 @@
 建议后续优先补这几类文档：
 
 - `20260317-迁移验收清单.md`
-  - 记录 `embedded / remote / disabled` 三种模式怎么验
   - 记录本地默认只启动 `api-server` 的验证步骤
+  - 记录 `embedded / disabled` 两种模式的验收口径
 
 - `20260317-阻塞边界回归记录.md`
   - 记录哪些音频落盘和声纹调用已经下沉到 blocking helper

@@ -1,12 +1,13 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_URL = "postgresql+psycopg://familyclaw:change-me@127.0.0.1:5432/familyclaw"
+VoiceRuntimeMode = Literal["embedded", "disabled"]
 
 
 class AiProviderRuntimeConfig(BaseModel):
@@ -73,10 +74,10 @@ class Settings(BaseSettings):
     channel_polling_worker_poll_interval_seconds: float = 3.0
     channel_polling_worker_batch_size: int = 20
     voice_gateway_token: str = "dev-voice-gateway-token"
-    voice_runtime_enabled: bool = False
-    voice_runtime_base_url: str | None = None
+    voice_runtime_mode: VoiceRuntimeMode = "embedded"
     voice_runtime_timeout_ms: int = 10000
-    voice_runtime_api_key: str | None = None
+    voice_runtime_artifacts_root: str = str((BASE_DIR / "data" / "voice-runtime-artifacts").resolve())
+    voice_runtime_default_commit_transcript: str = "打开客厅灯"
     voiceprint_provider_enabled: bool = True
     voiceprint_provider_code: str = "sherpa_onnx_wespeaker_resnet34"
     voiceprint_model_path: str = str(
@@ -134,6 +135,12 @@ class Settings(BaseSettings):
             secret_ref_prefix=self.ai_secret_ref_prefix,
             provider_configs=self.ai_provider_configs,
         )
+
+    @property
+    def resolved_voice_runtime_mode(self) -> VoiceRuntimeMode:
+        """运行时模式已收口为 embedded / disabled，两者之外不再保留兼容分支。"""
+
+        return self.voice_runtime_mode
 
 
 @lru_cache

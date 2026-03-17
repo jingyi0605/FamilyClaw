@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.modules.context.schemas import ContextOverviewMemberState, ContextOverviewRead
 from app.modules.context.service import get_context_overview
 from app.modules.voice.registry import VoiceSessionState, VoiceTerminalState
-from app.modules.voiceprint.service import VoiceprintIdentificationRead, identify_household_member_by_voiceprint
+from app.modules.voiceprint.async_service import async_identify_household_member_by_voiceprint
+from app.modules.voiceprint.service import VoiceprintIdentificationRead
 
 VoiceIdentityStatus = Literal["resolved", "anonymous", "conflict", "degraded"]
 
@@ -82,8 +83,7 @@ class VoiceIdentityService:
         active_member_id = overview.active_member.member_id if overview.active_member is not None else None
         terminal_room_id = session.room_id or terminal.room_id
         voiceprint_hint = self._build_voiceprint_hint(
-            identify_household_member_by_voiceprint(
-                db,
+            await async_identify_household_member_by_voiceprint(
                 household_id=household_id,
                 artifact_path=audio_artifact_path,
             )

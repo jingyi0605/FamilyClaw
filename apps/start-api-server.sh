@@ -155,7 +155,23 @@ ensure_database() {
   alembic upgrade head
 }
 
+voice_runtime_mode() {
+  python - <<'PY'
+from app.core.config import settings
+
+print(settings.resolved_voice_runtime_mode)
+PY
+}
+
 start_server() {
+  local runtime_mode
+  runtime_mode="$(voice_runtime_mode)"
+  log "语音 runtime 模式: ${runtime_mode}"
+  if [[ "${runtime_mode}" == "embedded" ]]; then
+    log "当前为本地默认模式，只需启动 api-server"
+  else
+    log "当前为禁用模式，语音 runtime 将按现有降级语义处理"
+  fi
   log "启动开发服务器 http://${HOST}:${PORT}，开启热重载"
   exec uvicorn app.main:app --host "${HOST}" --port "${PORT}" --reload --reload-dir "${RELOAD_DIR}" "$@"
 }
