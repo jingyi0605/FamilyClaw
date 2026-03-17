@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Taro from '@tarojs/taro';
+import { useAuthContext } from '../../runtime';
 import { Card, ToggleSwitch } from '../family/base';
 import {
   getDeviceEnabledBadgeTone,
@@ -8,14 +9,29 @@ import {
   getDeviceRuntimeBadgeTone,
   normalizeDeviceDisplayStatus,
 } from './deviceStatusDisplay';
-import { settingsApi } from '../settings/settingsApi';
+import { ApiError, settingsApi } from '../settings/settingsApi';
+import { SpeakerVoiceprintTab } from '../settings/components/SpeakerVoiceprintTab';
+import { VoiceprintEnrollmentWizard } from '../settings/components/VoiceprintEnrollmentWizard';
+import {
+  createVoiceprintWaitingWizardState,
+  createVoiceprintWizardState,
+  getNextWizardStateFromEnrollment,
+  type VoiceprintWizardState,
+} from '../settings/components/speakerVoiceprintHelpers';
 import type {
   DeviceEntity,
   DeviceEntityControl,
   DeviceEntityListRead,
   DeviceActionExecuteRequest,
   DeviceActionLogListRead,
+  DeviceDetailPluginTabRead,
+  DeviceDetailViewRead,
+  HouseholdVoiceprintSummaryRead,
+  PluginConfigFormRead,
+  PluginManifestConfigField,
+  PluginManifestFieldUiSchema,
   Room,
+  VoiceprintEnrollmentRead,
 } from '../settings/settingsTypes';
 
 export type DevicePageLookup = (
@@ -24,6 +40,7 @@ export type DevicePageLookup = (
 ) => string;
 
 type EntityView = 'favorites' | 'all';
+type DeviceDetailTabKey = 'controls' | `builtin:${string}` | `plugin:${string}:${string}`;
 
 type Props = {
   open: boolean;
@@ -55,6 +72,99 @@ const EMPTY_DEVICE_EDIT_DRAFT: DeviceEditDraft = {
   roomId: '',
   enabled: false,
 };
+
+type DevicePluginTabDraft = {
+  values: Record<string, unknown>;
+  fieldErrors: Record<string, string>;
+  error: string;
+  saving: boolean;
+};
+
+function getPluginTabDraftKey(pluginId: string, tabKey: string) {
+  return `${pluginId}:${tabKey}`;
+}
+
+function buildPluginTabDraft(form: PluginConfigFormRead): DevicePluginTabDraft {
+  return {
+    values: { ...form.view.values },
+    fieldErrors: { ...form.view.field_errors },
+    error: '',
+    saving: false,
+  };
+}
+
+function normalizePluginSubmitValue(field: PluginManifestConfigField, value: unknown): unknown {
+  if (field.type === 'boolean') {
+    return value === true;
+  }
+  if (field.type === 'integer') {
+    if (typeof value === 'number') return Math.trunc(value);
+    if (typeof value === 'string' && value.trim()) return Number.parseInt(value.trim(), 10);
+    return value;
+  }
+  if (field.type === 'number') {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string' && value.trim()) return Number(value.trim());
+    return value;
+  }
+  if (field.type === 'string' || field.type === 'text' || field.type === 'secret' || field.type === 'enum') {
+    return typeof value === 'string' ? value.trim() : value;
+  }
+  return value;
+}
+
+function isPluginFieldVisible(
+  fieldKey: string,
+  values: Record<string, unknown>,
+  widgets: Record<string, PluginManifestFieldUiSchema> | undefined,
+) {
+  const rules = widgets?.[fieldKey]?.visible_when ?? [];
+  if (rules.length === 0) {
+    return true;
+  }
+  return rules.every((rule) => {
+    const currentValue = values[rule.field];
+    if (rule.operator === 'truthy') {
+      return Boolean(currentValue);
+    }
+    if (rule.operator === 'equals') {
+      return currentValue === rule.value;
+    }
+    if (rule.operator === 'not_equals') {
+      return currentValue !== rule.value;
+    }
+    if (rule.operator === 'in') {
+      return Array.isArray(rule.value) && rule.value.includes(currentValue);
+    }
+    return true;
+  });
+}
+
+function extractPluginErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof ApiError) {
+    const payload = error.payload as { detail?: unknown } | undefined;
+    const detail = payload?.detail;
+    if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+      const detailRecord = detail as Record<string, unknown>;
+      const message = typeof detailRecord.detail === 'string' ? detailRecord.detail : null;
+      const fieldErrors = detailRecord.field_errors && typeof detailRecord.field_errors === 'object'
+        ? (detailRecord.field_errors as Record<string, string>)
+        : null;
+      return {
+        message: message || error.message || fallback,
+        fieldErrors: fieldErrors ?? {},
+      };
+    }
+    return {
+      message: error.message || fallback,
+      fieldErrors: {},
+    };
+  }
+  return {
+    message: error instanceof Error ? error.message : fallback,
+    fieldErrors: {},
+  };
+}
 
 function getLogResultBadge(result: string): 'success' | 'danger' | 'warning' | 'secondary' {
   if (result === 'success') {
@@ -112,7 +222,11 @@ export function HouseholdDeviceDetailDialog({
   onReload,
   onDeleted,
 }: Props) {
+  const { actor } = useAuthContext();
   const [entityView, setEntityView] = useState<EntityView>('favorites');
+  const [activeDetailTab, setActiveDetailTab] = useState<DeviceDetailTabKey>('controls');
+  const [detailView, setDetailView] = useState<DeviceDetailViewRead | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [entityResponse, setEntityResponse] = useState<DeviceEntityListRead | null>(null);
   const [deviceLogs, setDeviceLogs] = useState<DeviceActionLogListRead | null>(null);
   const [rangeDrafts, setRangeDrafts] = useState<Record<string, number>>({});
@@ -128,13 +242,54 @@ export function HouseholdDeviceDetailDialog({
   const [loadedEditSourceKey, setLoadedEditSourceKey] = useState<string | null>(null);
   const [actionSubmitting, setActionSubmitting] = useState<Record<string, boolean>>({});
   const [logsModalOpen, setLogsModalOpen] = useState(false);
+  const [voiceprintSummary, setVoiceprintSummary] = useState<HouseholdVoiceprintSummaryRead | null>(null);
+  const [voiceprintLoading, setVoiceprintLoading] = useState(false);
+  const [voiceprintError, setVoiceprintError] = useState('');
+  const [voiceprintSwitchSaving, setVoiceprintSwitchSaving] = useState(false);
+  const [voiceprintWizard, setVoiceprintWizard] = useState<VoiceprintWizardState | null>(null);
+  const [voiceprintEnrollment, setVoiceprintEnrollment] = useState<VoiceprintEnrollmentRead | null>(null);
+  const [voiceprintBusy, setVoiceprintBusy] = useState(false);
+  const [pluginTabDrafts, setPluginTabDrafts] = useState<Record<string, DevicePluginTabDraft>>({});
 
-  const selectedDevice = entityResponse?.device ?? null;
+  const selectedDevice = detailView?.device ?? entityResponse?.device ?? null;
   const selectedEntities = entityResponse?.items ?? [];
   const selectedDeviceStatus = selectedDevice?.status ?? fallbackStatus;
   const selectedDeviceName = selectedDevice?.name ?? deviceName;
   const selectedDeviceDisabled = normalizeDeviceDisplayStatus(selectedDeviceStatus) === 'disabled';
   const selectedDeviceControllable = selectedDevice?.controllable ?? fallbackControllable;
+  const canManageVoiceprint = actor?.member_role === 'admin';
+  const detailTabs = useMemo(() => {
+    const items: Array<{
+      key: DeviceDetailTabKey;
+      label: string;
+      description?: string | null;
+      pluginTab?: DeviceDetailPluginTabRead;
+    }> = [
+      {
+        key: 'controls',
+        label: page('settings.integrations.deviceDetail.tabs.controls'),
+      },
+    ];
+    if (detailView?.builtin_tabs.some((tab) => tab.key === 'voiceprint')) {
+      items.push({
+        key: 'builtin:voiceprint',
+        label: page('settings.integrations.deviceDetail.tabs.voiceprint'),
+      });
+    }
+    for (const tab of detailView?.plugin_tabs ?? []) {
+      items.push({
+        key: `plugin:${tab.plugin_id}:${tab.tab_key}`,
+        label: tab.title,
+        description: tab.description,
+        pluginTab: tab,
+      });
+    }
+    return items;
+  }, [detailView?.builtin_tabs, detailView?.plugin_tabs, page]);
+  const activePluginTab = useMemo(
+    () => detailTabs.find((item) => item.key === activeDetailTab)?.pluginTab ?? null,
+    [activeDetailTab, detailTabs],
+  );
   const sourceDraft = useMemo<DeviceEditDraft>(() => ({
     name: selectedDevice?.name ?? deviceName,
     roomId: selectedDevice?.room_id ?? fallbackRoomId ?? '',
@@ -154,6 +309,8 @@ export function HouseholdDeviceDetailDialog({
 
   useEffect(() => {
     if (!open || !deviceId) {
+      setActiveDetailTab('controls');
+      setDetailView(null);
       setEntityView('favorites');
       setEntityResponse(null);
       setDeviceLogs(null);
@@ -162,8 +319,14 @@ export function HouseholdDeviceDetailDialog({
       setEditDraft(EMPTY_DEVICE_EDIT_DRAFT);
       setEditError('');
       setLoadedEditSourceKey(null);
+      setVoiceprintSummary(null);
+      setVoiceprintError('');
+      setVoiceprintWizard(null);
+      setVoiceprintEnrollment(null);
+      setPluginTabDrafts({});
       return;
     }
+    setActiveDetailTab('controls');
     setEntityView('favorites');
     setDeviceLogs(null);
     setEditModalOpen(false);
@@ -188,8 +351,29 @@ export function HouseholdDeviceDetailDialog({
     if (!open || !deviceId) {
       return;
     }
+    void loadDeviceDetail(deviceId);
+  }, [deviceId, open]);
+
+  useEffect(() => {
+    if (!open || !deviceId) {
+      return;
+    }
     void loadDeviceEntities(deviceId, entityView);
   }, [deviceId, entityView, open]);
+
+  useEffect(() => {
+    if (!open || !deviceId || !detailView?.capabilities.supports_voiceprint) {
+      return;
+    }
+    void loadVoiceprintSummary(deviceId);
+  }, [detailView?.capabilities.supports_voiceprint, deviceId, open]);
+
+  useEffect(() => {
+    const activeKeys = new Set(detailTabs.map((item) => item.key));
+    if (!activeKeys.has(activeDetailTab)) {
+      setActiveDetailTab('controls');
+    }
+  }, [activeDetailTab, detailTabs]);
 
   useEffect(() => {
     if (!open || !currentHouseholdId) {
@@ -228,6 +412,81 @@ export function HouseholdDeviceDetailDialog({
     };
   }, [currentHouseholdId, onError, open, page]);
 
+  useEffect(() => {
+    if (!voiceprintWizard || voiceprintWizard.step !== 'waiting' || !voiceprintWizard.enrollmentId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const enrollment = await settingsApi.getVoiceprintEnrollment(voiceprintWizard.enrollmentId!);
+        if (cancelled) {
+          return;
+        }
+        setVoiceprintEnrollment(enrollment);
+        setVoiceprintWizard((current) => (
+          current ? getNextWizardStateFromEnrollment(current, enrollment) : current
+        ));
+        if (enrollment.status === 'completed' || enrollment.status === 'failed' || enrollment.status === 'cancelled') {
+          void (deviceId ? loadVoiceprintSummary(deviceId) : Promise.resolve());
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setVoiceprintWizard((current) => current ? {
+          ...current,
+          step: 'failed',
+          error: error instanceof Error ? error.message : page('settings.integrations.error.loadVoiceprintEnrollmentFailed'),
+        } : current);
+      }
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [deviceId, page, voiceprintWizard]);
+
+  useEffect(() => {
+    if (!open || !voiceprintWizard || voiceprintWizard.step !== 'waiting' || !voiceprintWizard.enrollmentId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = setInterval(() => {
+      void settingsApi.getVoiceprintEnrollment(voiceprintWizard.enrollmentId!)
+        .then((enrollment) => {
+          if (cancelled) {
+            return;
+          }
+          setVoiceprintEnrollment(enrollment);
+          setVoiceprintWizard((current) => current ? getNextWizardStateFromEnrollment(current, enrollment) : current);
+          if (enrollment.status === 'completed' || enrollment.status === 'failed' || enrollment.status === 'cancelled') {
+            if (deviceId) {
+              void loadVoiceprintSummary(deviceId);
+            }
+          }
+        })
+        .catch((error) => {
+          if (cancelled) {
+            return;
+          }
+          setVoiceprintWizard((current) => current ? {
+            ...current,
+            step: 'failed',
+            error: error instanceof Error ? error.message : page('settings.integrations.error.loadVoiceprintEnrollmentFailed'),
+          } : current);
+        });
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [deviceId, open, page, voiceprintWizard]);
+
   async function loadDeviceEntities(currentDeviceId: string, view: EntityView) {
     setEntitiesLoading(true);
     try {
@@ -250,6 +509,26 @@ export function HouseholdDeviceDetailDialog({
     }
   }
 
+  async function loadDeviceDetail(currentDeviceId: string) {
+    setDetailLoading(true);
+    try {
+      const response = await settingsApi.getDeviceDetailView(currentDeviceId);
+      setDetailView(response);
+      setPluginTabDrafts((current) => {
+        const next = { ...current };
+        for (const tab of response.plugin_tabs) {
+          const draftKey = getPluginTabDraftKey(tab.plugin_id, tab.tab_key);
+          next[draftKey] = buildPluginTabDraft(tab.config_form);
+        }
+        return next;
+      });
+    } catch (error) {
+      onError(error instanceof Error ? error.message : page('settings.integrations.error.loadDeviceDetailFailed'));
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
   async function loadDeviceLogs(currentDeviceId: string) {
     setLogsLoading(true);
     try {
@@ -262,6 +541,23 @@ export function HouseholdDeviceDetailDialog({
       onError(error instanceof Error ? error.message : page('settings.integrations.error.loadDeviceLogsFailed'));
     } finally {
       setLogsLoading(false);
+    }
+  }
+
+  async function loadVoiceprintSummary(currentDeviceId: string) {
+    if (!currentHouseholdId) {
+      return;
+    }
+    setVoiceprintLoading(true);
+    try {
+      const response = await settingsApi.getHouseholdVoiceprintSummary(currentHouseholdId, currentDeviceId);
+      setVoiceprintSummary(response);
+      setVoiceprintError('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : page('settings.integrations.error.loadVoiceprintFailed');
+      setVoiceprintError(message);
+    } finally {
+      setVoiceprintLoading(false);
     }
   }
 
@@ -301,7 +597,11 @@ export function HouseholdDeviceDetailDialog({
     if (!deviceId) {
       return;
     }
+    await loadDeviceDetail(deviceId);
     await loadDeviceEntities(deviceId, entityView);
+    if (detailView?.capabilities.supports_voiceprint) {
+      await loadVoiceprintSummary(deviceId);
+    }
     if (logsModalOpen) {
       await loadDeviceLogs(deviceId);
     }
@@ -466,6 +766,294 @@ export function HouseholdDeviceDetailDialog({
     }
   }
 
+  function updatePluginDraft(tab: DeviceDetailPluginTabRead, updater: (current: DevicePluginTabDraft) => DevicePluginTabDraft) {
+    const draftKey = getPluginTabDraftKey(tab.plugin_id, tab.tab_key);
+    setPluginTabDrafts((current) => ({
+      ...current,
+      [draftKey]: updater(current[draftKey] ?? buildPluginTabDraft(tab.config_form)),
+    }));
+  }
+
+  async function handleSavePluginTab(tab: DeviceDetailPluginTabRead) {
+    if (!currentHouseholdId || !deviceId) {
+      return;
+    }
+    const draftKey = getPluginTabDraftKey(tab.plugin_id, tab.tab_key);
+    const draft = pluginTabDrafts[draftKey] ?? buildPluginTabDraft(tab.config_form);
+    const fieldMap = new Map(tab.config_form.config_spec.config_schema.fields.map((field) => [field.key, field]));
+    const values = Object.fromEntries(
+      Object.entries(draft.values).map(([key, value]) => {
+        const field = fieldMap.get(key);
+        return [key, field ? normalizePluginSubmitValue(field, value) : value];
+      }),
+    );
+
+    updatePluginDraft(tab, (current) => ({ ...current, saving: true, error: '' }));
+    try {
+      const response = await settingsApi.saveHouseholdPluginConfigForm(currentHouseholdId, tab.plugin_id, {
+        scope_type: tab.config_form.view.scope_type,
+        scope_key: deviceId,
+        values,
+        clear_secret_fields: [],
+      });
+      setDetailView((current) => current ? {
+        ...current,
+        device: {
+          ...current.device,
+          voice_auto_takeover_enabled: Boolean(response.view.values.voice_auto_takeover_enabled ?? current.device.voice_auto_takeover_enabled),
+          voice_takeover_prefixes: typeof response.view.values.voice_takeover_prefixes === 'string'
+            ? response.view.values.voice_takeover_prefixes
+              .split(/\r?\n|,/)
+              .map((item) => item.trim())
+              .filter(Boolean)
+            : current.device.voice_takeover_prefixes,
+        },
+        plugin_tabs: current.plugin_tabs.map((item) => (
+          item.plugin_id === tab.plugin_id && item.tab_key === tab.tab_key
+            ? { ...item, config_form: response }
+            : item
+        )),
+      } : current);
+      updatePluginDraft(tab, () => buildPluginTabDraft(response));
+      onStatus(page('settings.integrations.status.pluginDeviceConfigSaved', { name: tab.title }));
+      await onReload();
+    } catch (error) {
+      const resolved = extractPluginErrorMessage(error, page('settings.integrations.error.savePluginDeviceConfigFailed'));
+      updatePluginDraft(tab, (current) => ({
+        ...current,
+        saving: false,
+        error: resolved.message,
+        fieldErrors: resolved.fieldErrors,
+      }));
+      onError(resolved.message);
+      return;
+    }
+    updatePluginDraft(tab, (current) => ({ ...current, saving: false }));
+  }
+
+  async function handleToggleVoiceprintEnabled(nextValue: boolean) {
+    if (!deviceId) {
+      return;
+    }
+    setVoiceprintSwitchSaving(true);
+    try {
+      await settingsApi.updateDevice(deviceId, {
+        voiceprint_identity_enabled: nextValue,
+      });
+      await refreshCurrentDevice();
+      onStatus(page('settings.integrations.status.voiceprintUpdated', { name: selectedDeviceName }));
+    } catch (error) {
+      onError(error instanceof Error ? error.message : page('settings.integrations.error.updateVoiceprintFailed'));
+    } finally {
+      setVoiceprintSwitchSaving(false);
+    }
+  }
+
+  function handleOpenVoiceprintCreate(memberId?: string) {
+    setVoiceprintEnrollment(null);
+    setVoiceprintWizard(createVoiceprintWizardState('create', memberId ?? null));
+  }
+
+  function handleOpenVoiceprintUpdate(memberId: string) {
+    setVoiceprintEnrollment(null);
+    setVoiceprintWizard(createVoiceprintWizardState('update', memberId));
+  }
+
+  async function handleResumeVoiceprintEnrollment(enrollmentId: string, memberId: string) {
+    setVoiceprintBusy(true);
+    try {
+      const enrollment = await settingsApi.getVoiceprintEnrollment(enrollmentId);
+      setVoiceprintEnrollment(enrollment);
+      setVoiceprintWizard(getNextWizardStateFromEnrollment(
+        createVoiceprintWaitingWizardState(memberId, enrollmentId, enrollment.sample_count > 0 ? 'update' : 'create'),
+        enrollment,
+      ));
+    } catch (error) {
+      onError(error instanceof Error ? error.message : page('settings.integrations.error.loadVoiceprintEnrollmentFailed'));
+    } finally {
+      setVoiceprintBusy(false);
+    }
+  }
+
+  async function handleStartVoiceprintEnrollment() {
+    if (!currentHouseholdId || !deviceId || !voiceprintWizard?.memberId) {
+      return;
+    }
+    setVoiceprintBusy(true);
+    setVoiceprintWizard((current) => current ? { ...current, step: 'creating', error: '' } : current);
+    try {
+      const enrollment = await settingsApi.createVoiceprintEnrollment({
+        household_id: currentHouseholdId,
+        member_id: voiceprintWizard.memberId,
+        terminal_id: deviceId,
+      });
+      setVoiceprintEnrollment(enrollment);
+      setVoiceprintWizard((current) => current ? getNextWizardStateFromEnrollment(current, enrollment) : current);
+      await loadVoiceprintSummary(deviceId);
+    } catch (error) {
+      setVoiceprintWizard((current) => current ? {
+        ...current,
+        step: 'failed',
+        error: error instanceof Error ? error.message : page('settings.integrations.error.createVoiceprintEnrollmentFailed'),
+      } : current);
+    } finally {
+      setVoiceprintBusy(false);
+    }
+  }
+
+  function renderPluginField(
+    tab: DeviceDetailPluginTabRead,
+    field: PluginManifestConfigField,
+    widget?: PluginManifestFieldUiSchema,
+  ) {
+    const draftKey = getPluginTabDraftKey(tab.plugin_id, tab.tab_key);
+    const draft = pluginTabDrafts[draftKey] ?? buildPluginTabDraft(tab.config_form);
+    const value = draft.values[field.key];
+    const fieldError = draft.fieldErrors[field.key];
+
+    if (!isPluginFieldVisible(field.key, draft.values, tab.config_form.config_spec.ui_schema.widgets)) {
+      return null;
+    }
+
+    if (field.type === 'boolean') {
+      return (
+        <div key={field.key} className="integration-device-detail__toggle-card">
+          <ToggleSwitch
+            checked={value === true}
+            label={field.label}
+            description={widget?.help_text ?? field.description ?? ''}
+            disabled={draft.saving}
+            onChange={(nextValue) => updatePluginDraft(tab, (current) => ({
+              ...current,
+              values: { ...current.values, [field.key]: nextValue },
+              fieldErrors: { ...current.fieldErrors, [field.key]: '' },
+            }))}
+          />
+          {fieldError ? <div className="form-error">{fieldError}</div> : null}
+        </div>
+      );
+    }
+
+    if (field.type === 'enum') {
+      return (
+        <div key={field.key} className="form-group">
+          <label>{field.label}</label>
+          <select
+            className="form-select"
+            value={typeof value === 'string' ? value : ''}
+            disabled={draft.saving}
+            onChange={(event) => updatePluginDraft(tab, (current) => ({
+              ...current,
+              values: { ...current.values, [field.key]: event.currentTarget.value },
+              fieldErrors: { ...current.fieldErrors, [field.key]: '' },
+            }))}
+          >
+            <option value="">{page('settings.integrations.pluginConfig.selectPlaceholder')}</option>
+            {(field.enum_options ?? []).map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+          {fieldError ? <div className="form-error">{fieldError}</div> : null}
+        </div>
+      );
+    }
+
+    if (field.type === 'text') {
+      return (
+        <div key={field.key} className="form-group">
+          <label>{field.label}</label>
+          <textarea
+            className="form-input"
+            value={typeof value === 'string' ? value : ''}
+            placeholder={widget?.placeholder ?? undefined}
+            disabled={draft.saving}
+            onChange={(event) => updatePluginDraft(tab, (current) => ({
+              ...current,
+              values: { ...current.values, [field.key]: event.currentTarget.value },
+              fieldErrors: { ...current.fieldErrors, [field.key]: '' },
+            }))}
+          />
+          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+          {fieldError ? <div className="form-error">{fieldError}</div> : null}
+        </div>
+      );
+    }
+
+    return (
+      <div key={field.key} className="form-group">
+        <label>{field.label}</label>
+        <input
+          className="form-input"
+          type={field.type === 'secret' ? 'password' : (field.type === 'integer' || field.type === 'number' ? 'number' : 'text')}
+          value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
+          placeholder={widget?.placeholder ?? undefined}
+          disabled={draft.saving}
+          onChange={(event) => updatePluginDraft(tab, (current) => ({
+            ...current,
+            values: { ...current.values, [field.key]: event.currentTarget.value },
+            fieldErrors: { ...current.fieldErrors, [field.key]: '' },
+          }))}
+        />
+        <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+        {fieldError ? <div className="form-error">{fieldError}</div> : null}
+      </div>
+    );
+  }
+
+  function renderPluginTab(tab: DeviceDetailPluginTabRead) {
+    const draftKey = getPluginTabDraftKey(tab.plugin_id, tab.tab_key);
+    const draft = pluginTabDrafts[draftKey] ?? buildPluginTabDraft(tab.config_form);
+    const fieldMap = new Map(tab.config_form.config_spec.config_schema.fields.map((field) => [field.key, field]));
+    const orderedKeys = tab.config_form.config_spec.ui_schema.field_order?.filter((key) => fieldMap.has(key))
+      ?? tab.config_form.config_spec.config_schema.fields.map((field) => field.key);
+
+    return (
+      <div className="speaker-device-detail-dialog__panel">
+        <div className="speaker-device-detail-dialog__panel-header">
+          <h4>{tab.title}</h4>
+          <p>{tab.description || tab.config_form.config_spec.description || page('settings.integrations.pluginConfig.desc')}</p>
+        </div>
+        <div className="settings-form">
+          {draft.error ? <div className="form-error">{draft.error}</div> : null}
+          {tab.config_form.config_spec.ui_schema.sections.length > 0
+            ? tab.config_form.config_spec.ui_schema.sections.map((section) => (
+              <div key={section.id} className="integration-device-detail__plugin-section">
+                <h4>{section.title}</h4>
+                {section.description ? <p className="integration-status__detail">{section.description}</p> : null}
+                {section.fields.map((fieldKey) => {
+                  const field = fieldMap.get(fieldKey);
+                  if (!field) {
+                    return null;
+                  }
+                  return renderPluginField(tab, field, tab.config_form.config_spec.ui_schema.widgets?.[field.key]);
+                })}
+              </div>
+            ))
+            : orderedKeys.map((fieldKey) => {
+              const field = fieldMap.get(fieldKey);
+              if (!field) {
+                return null;
+              }
+              return renderPluginField(tab, field, tab.config_form.config_spec.ui_schema.widgets?.[field.key]);
+            })}
+          <div className="member-modal__actions">
+            <button
+              className="btn btn--primary btn--sm"
+              type="button"
+              onClick={() => void handleSavePluginTab(tab)}
+              disabled={draft.saving}
+            >
+              {draft.saving
+                ? page('settings.integrations.action.saving')
+                : (tab.config_form.config_spec.ui_schema.submit_text || page('settings.integrations.action.savePluginDeviceConfig'))}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderEntityControls(entity: DeviceEntity) {
     const actionDisabled = selectedDeviceDisabled || entity.read_only || entity.control.disabled;
     if (entity.read_only || entity.control.kind === 'none') {
@@ -622,6 +1210,117 @@ export function HouseholdDeviceDetailDialog({
     </>
   );
 
+  const controlsPanel = (
+    <>
+      <div className="integration-device-detail__tabs">
+        <button
+          className={entityView === 'favorites' ? 'integration-device-detail__tab integration-device-detail__tab--active' : 'integration-device-detail__tab'}
+          type="button"
+          onClick={() => setEntityView('favorites')}
+        >
+          {page('settings.integrations.deviceDetail.tabs.favorites')}
+        </button>
+        <button
+          className={entityView === 'all' ? 'integration-device-detail__tab integration-device-detail__tab--active' : 'integration-device-detail__tab'}
+          type="button"
+          onClick={() => setEntityView('all')}
+        >
+          {page('settings.integrations.deviceDetail.tabs.all')}
+        </button>
+      </div>
+
+      {entitiesLoading ? (
+        <Card>
+          <div className="integration-status__detail">{page('settings.integrations.deviceDetail.loadingEntities')}</div>
+        </Card>
+      ) : selectedEntities.length === 0 && entityView === 'favorites' ? (
+        <Card>
+          <div className="settings-empty-state integration-device-detail__empty">
+            <h3>{page('settings.integrations.deviceDetail.favoritesEmptyTitle')}</h3>
+            <p>{page('settings.integrations.deviceDetail.favoritesEmptyDesc')}</p>
+            <button className="btn btn--outline btn--sm" type="button" onClick={() => setEntityView('all')}>
+              {page('settings.integrations.action.goToAllEntities')}
+            </button>
+          </div>
+        </Card>
+      ) : selectedEntities.length === 0 ? (
+        <Card>
+          <div className="settings-empty-state integration-device-detail__empty">
+            <h3>{page('settings.integrations.deviceDetail.allEntitiesEmptyTitle')}</h3>
+            <p>{page('settings.integrations.deviceDetail.allEntitiesEmptyDesc')}</p>
+          </div>
+        </Card>
+      ) : (
+        <div className="integration-entity-list">
+          {selectedEntities.map((entity) => (
+            <Card key={entity.entity_id} className="integration-entity-card">
+              <div className="integration-entity__header">
+                <div className="integration-entity__summary">
+                  <div className="integration-entity__title-row">
+                    <strong>{entity.name}</strong>
+                    <span className="badge badge--secondary">{entity.domain}</span>
+                  </div>
+                  <div className="integration-status__detail">
+                    {page('settings.integrations.deviceDetail.entityState', { state: entity.state_display })}
+                    {entity.unit ? ` ${entity.unit}` : ''}
+                  </div>
+                </div>
+                <button
+                  className={entity.favorite ? 'btn btn--outline btn--sm integration-entity__favorite integration-entity__favorite--active' : 'btn btn--outline btn--sm integration-entity__favorite'}
+                  type="button"
+                  onClick={() => void handleFavoriteToggle(entity)}
+                  disabled={actionSubmitting[`favorite:${entity.entity_id}`]}
+                >
+                  {entity.favorite
+                    ? page('settings.integrations.action.unfavorite')
+                    : page('settings.integrations.action.favorite')}
+                </button>
+              </div>
+              {entity.control.disabled_reason ? (
+                <div className="integration-entity__readonly">{entity.control.disabled_reason}</div>
+              ) : null}
+              {renderEntityControls(entity)}
+            </Card>
+          ))}
+        </div>
+      )}
+    </>
+  );
+
+  const voiceprintPanel = detailView?.capabilities.supports_voiceprint ? (
+    <SpeakerVoiceprintTab
+      device={selectedDevice ?? {
+        id: deviceId,
+        household_id: currentHouseholdId ?? '',
+        room_id: fallbackRoomId,
+        name: selectedDeviceName,
+        device_type: 'speaker',
+        vendor: 'xiaomi',
+        status: selectedDeviceStatus,
+        controllable: selectedDeviceControllable,
+        voice_auto_takeover_enabled: false,
+        voiceprint_identity_enabled: false,
+        voice_takeover_prefixes: [],
+        created_at: '',
+        updated_at: '',
+      }}
+      canManage={canManageVoiceprint}
+      summary={voiceprintSummary}
+      loading={voiceprintLoading}
+      error={voiceprintError}
+      switchSaving={voiceprintSwitchSaving}
+      onRetry={() => {
+        if (deviceId) {
+          void loadVoiceprintSummary(deviceId);
+        }
+      }}
+      onToggleVoiceprintEnabled={(nextValue) => void handleToggleVoiceprintEnabled(nextValue)}
+      onStartEnrollment={(memberId) => handleOpenVoiceprintCreate(memberId)}
+      onUpdateVoiceprint={(memberId) => handleOpenVoiceprintUpdate(memberId)}
+      onResumeEnrollment={(enrollmentId, memberId) => void handleResumeVoiceprintEnrollment(enrollmentId, memberId)}
+    />
+  ) : null;
+
   const dialogContent = (
     <>
       <div className="member-modal-overlay" onClick={onClose}>
@@ -635,6 +1334,19 @@ export function HouseholdDeviceDetailDialog({
               <button className="btn btn--outline btn--sm" type="button" onClick={onClose}>
                 {page('settings.integrations.action.close')}
               </button>
+            </div>
+
+            <div className="integration-device-detail__tabs integration-device-detail__tabs--primary">
+              {detailTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  className={activeDetailTab === tab.key ? 'integration-device-detail__tab integration-device-detail__tab--active' : 'integration-device-detail__tab'}
+                  type="button"
+                  onClick={() => setActiveDetailTab(tab.key)}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
             <div className="integration-device-detail__header">
@@ -684,77 +1396,23 @@ export function HouseholdDeviceDetailDialog({
               </div>
             ) : null}
 
-            <div className="integration-device-detail__tabs">
-              <button
-                className={entityView === 'favorites' ? 'integration-device-detail__tab integration-device-detail__tab--active' : 'integration-device-detail__tab'}
-                type="button"
-                onClick={() => setEntityView('favorites')}
-              >
-                {page('settings.integrations.deviceDetail.tabs.favorites')}
-              </button>
-              <button
-                className={entityView === 'all' ? 'integration-device-detail__tab integration-device-detail__tab--active' : 'integration-device-detail__tab'}
-                type="button"
-                onClick={() => setEntityView('all')}
-              >
-                {page('settings.integrations.deviceDetail.tabs.all')}
-              </button>
-            </div>
-
-            {entitiesLoading ? (
+            {detailLoading ? (
               <Card>
-                <div className="integration-status__detail">{page('settings.integrations.deviceDetail.loadingEntities')}</div>
+                <div className="integration-status__detail">{page('settings.integrations.deviceDetail.loadingDetail')}</div>
               </Card>
-            ) : selectedEntities.length === 0 && entityView === 'favorites' ? (
-              <Card>
-                <div className="settings-empty-state integration-device-detail__empty">
-                  <h3>{page('settings.integrations.deviceDetail.favoritesEmptyTitle')}</h3>
-                  <p>{page('settings.integrations.deviceDetail.favoritesEmptyDesc')}</p>
-                  <button className="btn btn--outline btn--sm" type="button" onClick={() => setEntityView('all')}>
-                    {page('settings.integrations.action.goToAllEntities')}
-                  </button>
-                </div>
-              </Card>
-            ) : selectedEntities.length === 0 ? (
-              <Card>
-                <div className="settings-empty-state integration-device-detail__empty">
-                  <h3>{page('settings.integrations.deviceDetail.allEntitiesEmptyTitle')}</h3>
-                  <p>{page('settings.integrations.deviceDetail.allEntitiesEmptyDesc')}</p>
-                </div>
-              </Card>
+            ) : activeDetailTab === 'controls' ? (
+              controlsPanel
+            ) : activeDetailTab === 'builtin:voiceprint' ? (
+              voiceprintPanel
+            ) : activePluginTab ? (
+              renderPluginTab(activePluginTab)
             ) : (
-              <div className="integration-entity-list">
-                {selectedEntities.map((entity) => (
-                  <Card key={entity.entity_id} className="integration-entity-card">
-                    <div className="integration-entity__header">
-                      <div>
-                        <div className="integration-entity__title-row">
-                          <strong>{entity.name}</strong>
-                          <span className="badge badge--secondary">{entity.domain}</span>
-                        </div>
-                        <div className="integration-status__detail">
-                          {page('settings.integrations.deviceDetail.entityState', { state: entity.state_display })}
-                          {entity.unit ? ` · ${entity.unit}` : ''}
-                        </div>
-                      </div>
-                      <button
-                        className={entity.favorite ? 'btn btn--outline btn--sm integration-entity__favorite integration-entity__favorite--active' : 'btn btn--outline btn--sm integration-entity__favorite'}
-                        type="button"
-                        onClick={() => void handleFavoriteToggle(entity)}
-                        disabled={actionSubmitting[`favorite:${entity.entity_id}`]}
-                      >
-                        {entity.favorite
-                          ? page('settings.integrations.action.unfavorite')
-                          : page('settings.integrations.action.favorite')}
-                      </button>
-                    </div>
-                    {entity.control.disabled_reason ? (
-                      <div className="integration-entity__readonly">{entity.control.disabled_reason}</div>
-                    ) : null}
-                    {renderEntityControls(entity)}
-                  </Card>
-                ))}
-              </div>
+              <Card>
+                <div className="settings-empty-state integration-device-detail__empty">
+                  <h3>{page('settings.integrations.deviceDetail.emptyTabTitle')}</h3>
+                  <p>{page('settings.integrations.deviceDetail.emptyTabDesc')}</p>
+                </div>
+              </Card>
             )}
           </div>
         </div>
@@ -792,6 +1450,48 @@ export function HouseholdDeviceDetailDialog({
             </div>
           </div>
         </div>
+      ) : null}
+
+      {voiceprintWizard && voiceprintSummary ? (
+        <VoiceprintEnrollmentWizard
+          wizard={voiceprintWizard}
+          members={voiceprintSummary.members}
+          deviceName={selectedDeviceName}
+          enrollment={voiceprintEnrollment}
+          busy={voiceprintBusy}
+          onClose={() => {
+            if (voiceprintWizard.step === 'waiting') {
+              return;
+            }
+            setVoiceprintWizard(null);
+            setVoiceprintEnrollment(null);
+          }}
+          onBack={() => setVoiceprintWizard((current) => (
+            current
+              ? {
+                ...current,
+                step: 'select_member',
+                enrollmentId: null,
+                error: '',
+              }
+              : current
+          ))}
+          onSelectMember={(memberId) => setVoiceprintWizard((current) => (
+            current
+              ? {
+                ...current,
+                memberId,
+                lockedMemberId: current.lockedMemberId ?? memberId,
+              }
+              : current
+          ))}
+          onContinue={() => setVoiceprintWizard((current) => (
+            current && current.memberId
+              ? { ...current, step: 'confirm', lockedMemberId: current.lockedMemberId ?? current.memberId }
+              : current
+          ))}
+          onStart={() => void handleStartVoiceprintEnrollment()}
+        />
       ) : null}
 
       {logsModalOpen ? (
