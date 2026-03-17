@@ -18,6 +18,12 @@ from app.modules.plugin.schemas import (
     PluginConfigState,
     PluginMountCreate,
     PluginStateUpdateRequest,
+    PluginVersionGovernanceRead,
+)
+from app.modules.plugin.versioning import (
+    MarketplaceVersionFact,
+    resolve_host_compatibility,
+    resolve_marketplace_version_governance,
 )
 from app.modules.plugin.service import (
     PluginManifestValidationError,
@@ -52,6 +58,9 @@ from app.modules.plugin_marketplace.schemas import (
     MarketplaceManifest,
     MarketplaceRepositoryMetricAvailability,
     MarketplaceRepositoryMetrics,
+    PluginVersionOperationRequest,
+    PluginVersionOperationResultRead,
+    PluginVersionOperationType,
     MarketplaceSourceCreateRequest,
     MarketplaceSourceRead,
     MarketplaceSourceSyncResultRead,
@@ -199,6 +208,103 @@ def _to_instance_read(row: PluginMarketplaceInstance) -> MarketplaceInstanceRead
     )
 
 
+def _load_marketplace_entry_from_snapshot(snapshot: PluginMarketplaceEntrySnapshot) -> MarketplaceEntry:
+    raw_entry = _load_json_or_default(snapshot.raw_entry_json, fallback={})
+    if not isinstance(raw_entry, dict):
+        raise PluginMarketplaceServiceError(
+            "市场条目原始数据损坏，不能继续解析。",
+            error_code="marketplace_entry_invalid",
+            status_code=409,
+        )
+    return MarketplaceEntry.model_validate(raw_entry)
+
+
+def _build_marketplace_version_facts(entry: MarketplaceEntry) -> list[MarketplaceVersionFact]:
+    return [
+        MarketplaceVersionFact(version=item.version, min_app_version=item.min_app_version)
+        for item in entry.versions
+    ]
+
+
+def _load_declared_version_from_manifest(manifest_path: str | None) -> str | None:
+    if manifest_path is None:
+        return None
+    try:
+        manifest = load_plugin_manifest(manifest_path)
+    except (PluginManifestValidationError, FileNotFoundError, OSError):
+        return None
+    return manifest.version
+
+
+def _resolve_marketplace_version_governance_from_rows(
+    *,
+    snapshot: PluginMarketplaceEntrySnapshot,
+    instance: PluginMarketplaceInstance | None,
+    declared_version: str | None = None,
+) -> PluginVersionGovernanceRead:
+    entry = _load_marketplace_entry_from_snapshot(snapshot)
+    resolved_declared_version = declared_version
+    if resolved_declared_version is None and instance is not None:
+        resolved_declared_version = _load_declared_version_from_manifest(instance.manifest_path)
+    return resolve_marketplace_version_governance(
+        host_version=settings.app_version,
+        declared_version=resolved_declared_version,
+        installed_version=instance.installed_version if instance is not None else None,
+        latest_version=entry.latest_version,
+        versions=_build_marketplace_version_facts(entry),
+    )
+
+
+def resolve_marketplace_instance_version_governance(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    declared_version: str | None = None,
+) -> PluginVersionGovernanceRead:
+    instance = repository.get_marketplace_instance_for_plugin(db, household_id=household_id, plugin_id=plugin_id)
+    if instance is None:
+        raise PluginMarketplaceServiceError(
+            "插件市场实例不存在，不能计算版本治理状态。",
+            error_code="marketplace_instance_not_found",
+            field="plugin_id",
+            status_code=404,
+        )
+    snapshot = _require_snapshot(db, source_id=instance.source_id, plugin_id=plugin_id)
+    return _resolve_marketplace_version_governance_from_rows(
+        snapshot=snapshot,
+        instance=instance,
+        declared_version=declared_version,
+    )
+
+
+def get_marketplace_version_governance(
+    db: Session,
+    *,
+    source_id: str,
+    plugin_id: str,
+    household_id: str | None = None,
+) -> PluginVersionGovernanceRead:
+    snapshot = _require_snapshot(db, source_id=source_id, plugin_id=plugin_id)
+    if snapshot.sync_status != "ready":
+        raise PluginMarketplaceServiceError(
+            "这个插件市场条目当前不可用，不能计算版本治理状态。",
+            error_code="marketplace_entry_invalid",
+            status_code=409,
+        )
+    instance = None
+    if household_id is not None:
+        instance = repository.get_marketplace_instance_for_plugin(db, household_id=household_id, plugin_id=plugin_id)
+        if instance is not None and instance.source_id != source_id:
+            raise PluginMarketplaceServiceError(
+                "当前家庭安装的插件来源和市场来源不一致。",
+                error_code="plugin_source_mismatch",
+                field="source_id",
+                status_code=409,
+            )
+    return _resolve_marketplace_version_governance_from_rows(snapshot=snapshot, instance=instance)
+
+
 def _build_repository_metrics(
     *,
     repo_url: str,
@@ -319,6 +425,7 @@ def _to_catalog_item(
     source: PluginMarketplaceSource,
     snapshot: PluginMarketplaceEntrySnapshot,
     install_state: MarketplaceInstallStateRead,
+    version_governance: PluginVersionGovernanceRead | None = None,
 ) -> MarketplaceCatalogItemRead:
     categories = _load_json_or_default(snapshot.categories_json, fallback=[])
     permissions = _load_json_or_default(snapshot.permissions_json, fallback=[])
@@ -341,6 +448,7 @@ def _to_catalog_item(
         repository_metrics=MarketplaceRepositoryMetrics.model_validate(metrics) if isinstance(metrics, dict) else None,
         source_name=source.name,
         install_state=install_state,
+        version_governance=version_governance,
     )
 
 
@@ -684,11 +792,23 @@ def list_marketplace_catalog(
     items: list[MarketplaceCatalogItemRead] = []
     for source_id, source in sources.items():
         for snapshot in repository.list_marketplace_entry_snapshots(db, source_id=source_id, sync_status="ready"):
+            version_governance = None
+            if household_id is not None:
+                try:
+                    version_governance = get_marketplace_version_governance(
+                        db,
+                        source_id=source_id,
+                        plugin_id=snapshot.plugin_id,
+                        household_id=household_id,
+                    )
+                except (PluginMarketplaceServiceError, PluginManifestValidationError, ValueError):
+                    version_governance = None
             items.append(
                 _to_catalog_item(
                     source=source,
                     snapshot=snapshot,
                     install_state=_resolve_install_state(db, household_id=household_id, plugin_id=snapshot.plugin_id),
+                    version_governance=version_governance,
                 )
             )
 
@@ -721,12 +841,21 @@ def get_marketplace_entry_detail(
 
     raw_entry = _load_json_or_default(snapshot.raw_entry_json, fallback={})
     entry = MarketplaceEntry.model_validate(raw_entry)
+    version_governance = None
+    if household_id is not None:
+        version_governance = get_marketplace_version_governance(
+            db,
+            source_id=source_id,
+            plugin_id=plugin_id,
+            household_id=household_id,
+        )
     return MarketplaceEntryDetailRead(
         source=_to_source_read(source),
         plugin=_to_catalog_item(
             source=source,
             snapshot=snapshot,
             install_state=_resolve_install_state(db, household_id=household_id, plugin_id=plugin_id),
+            version_governance=version_governance,
         ),
         manifest_path=snapshot.manifest_path,
         publisher=entry.publisher,
@@ -866,6 +995,33 @@ def _validate_manifest_consistency(
             error_code="manifest_mismatch",
             status_code=409,
         )
+
+
+def _require_version_compatible(
+    *,
+    version: str,
+    min_app_version: str | None,
+) -> None:
+    compatibility = resolve_host_compatibility(
+        host_version=settings.app_version,
+        min_app_version=min_app_version,
+        target_version=version,
+    )
+    if compatibility.status == "compatible":
+        return
+    if compatibility.status == "host_too_old":
+        raise PluginMarketplaceServiceError(
+            compatibility.blocked_reason or "目标版本与当前宿主版本不兼容。",
+            error_code="plugin_version_incompatible",
+            field="target_version",
+            status_code=409,
+        )
+    raise PluginMarketplaceServiceError(
+        compatibility.blocked_reason or "目标版本缺少兼容性信息，当前不能安全安装。",
+        error_code="plugin_version_governance_unavailable",
+        field="target_version",
+        status_code=409,
+    )
     if sorted(manifest.permissions) != sorted(entry.permissions):
         raise PluginMarketplaceServiceError(
             "manifest.json 里的权限声明和市场条目不一致。",
@@ -936,7 +1092,19 @@ def create_marketplace_install_task(
 
     raw_entry = _load_json_or_default(snapshot.raw_entry_json, fallback={})
     entry = MarketplaceEntry.model_validate(raw_entry)
-    version_entry = entry.resolve_version(payload.version)
+    try:
+        version_entry = entry.resolve_version(payload.version)
+    except ValueError as exc:
+        raise PluginMarketplaceServiceError(
+            f"目标版本 {payload.version or entry.latest_version} 不在市场条目里。",
+            error_code="plugin_version_not_found",
+            field="version",
+            status_code=409,
+        ) from exc
+    _require_version_compatible(
+        version=version_entry.version,
+        min_app_version=version_entry.min_app_version,
+    )
     now = utc_now_iso()
     task = PluginMarketplaceInstallTask(
         id=new_uuid(),
@@ -1085,7 +1253,6 @@ def create_marketplace_install_task(
         _mark_install_failed(task=task, stage=task.install_status, exc=exc)
         if existing_instance is not None:
             existing_instance.install_status = "install_failed"
-            existing_instance.enabled = False
             existing_instance.updated_at = utc_now_iso()
         db.flush()
         raise PluginMarketplaceServiceError(
@@ -1099,6 +1266,171 @@ def _get_plugin_mount_row(db: Session, *, household_id: str, plugin_id: str) -> 
     from app.modules.plugin import repository as plugin_repository
 
     return plugin_repository.get_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
+
+
+def _snapshot_instance_runtime_state(instance: PluginMarketplaceInstance) -> dict[str, Any]:
+    return {
+        "source_id": instance.source_id,
+        "installed_version": instance.installed_version,
+        "install_status": instance.install_status,
+        "enabled": instance.enabled,
+        "config_status": instance.config_status,
+        "source_repo": instance.source_repo,
+        "market_repo": instance.market_repo,
+        "plugin_root": instance.plugin_root,
+        "manifest_path": instance.manifest_path,
+        "python_path": instance.python_path,
+        "working_dir": instance.working_dir,
+        "installed_at": instance.installed_at,
+        "updated_at": instance.updated_at,
+    }
+
+
+def _snapshot_mount_runtime_state(mount: PluginMount) -> dict[str, Any]:
+    return {
+        "source_type": mount.source_type,
+        "manifest_path": mount.manifest_path,
+        "plugin_root": mount.plugin_root,
+        "python_path": mount.python_path,
+        "working_dir": mount.working_dir,
+        "enabled": mount.enabled,
+        "updated_at": mount.updated_at,
+    }
+
+
+def _restore_runtime_state(target: Any, snapshot: dict[str, Any]) -> None:
+    for field_name, value in snapshot.items():
+        setattr(target, field_name, value)
+
+
+def _switch_marketplace_instance_version(
+    db: Session,
+    *,
+    instance: PluginMarketplaceInstance,
+    entry: MarketplaceEntry,
+    source: PluginMarketplaceSource,
+    target_version_entry,
+    operation: PluginVersionOperationType,
+    client: GitHubMarketplaceClient | None = None,
+) -> PluginVersionOperationResultRead:
+    previous_version = instance.installed_version
+    if previous_version == target_version_entry.version:
+        governance = resolve_marketplace_instance_version_governance(
+            db,
+            household_id=instance.household_id,
+            plugin_id=instance.plugin_id,
+            declared_version=_load_declared_version_from_manifest(instance.manifest_path),
+        )
+        return PluginVersionOperationResultRead(
+            instance=_to_instance_read(instance),
+            governance=governance,
+            previous_version=previous_version,
+            target_version=target_version_entry.version,
+            state_changed=False,
+            state_change_reason=None,
+        )
+
+    mount = _get_plugin_mount_row(db, household_id=instance.household_id, plugin_id=instance.plugin_id)
+    if mount is None:
+        raise PluginMarketplaceServiceError(
+            "插件挂载记录不存在，不能切换版本。",
+            error_code="plugin_mount_not_found",
+            status_code=409,
+        )
+
+    previous_instance_state = _snapshot_instance_runtime_state(instance)
+    previous_mount_state = _snapshot_mount_runtime_state(mount)
+    previous_enabled = instance.enabled
+    previous_config_status = instance.config_status
+    target_root: Path | None = None
+    target_manifest_path: Path | None = None
+    marketplace_client = _get_client(client)
+
+    try:
+        content = marketplace_client.download_binary(target_version_entry.artifact_url)
+        with tempfile.TemporaryDirectory(prefix="plugin-marketplace-version-switch-") as temp_dir:
+            extracted_root = Path(temp_dir).resolve()
+            _extract_archive_bytes(content=content, destination=extracted_root)
+            package_root = _resolve_extracted_package_root(extracted_root=extracted_root, install_spec=entry.install)
+            manifest_path = _resolve_child_path(package_root, entry.manifest_path, field_name="manifest_path")
+            _validate_manifest_consistency(
+                manifest_path=manifest_path,
+                entry=entry,
+                installed_version=target_version_entry.version,
+            )
+
+            install_root = _get_install_root()
+            target_root = install_root / instance.household_id / instance.plugin_id / target_version_entry.version
+            if target_root.exists():
+                shutil.rmtree(target_root)
+            target_root.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(package_root, target_root)
+
+        target_manifest_path = _resolve_child_path(target_root, entry.manifest_path, field_name="manifest_path")
+        instance.source_id = source.source_id
+        instance.installed_version = target_version_entry.version
+        instance.install_status = "installed"
+        instance.enabled = previous_enabled
+        instance.source_repo = entry.source_repo
+        instance.market_repo = source.repo_url
+        instance.plugin_root = str(target_root)
+        instance.manifest_path = str(target_manifest_path)
+        instance.python_path = sys.executable
+        instance.working_dir = str(target_root)
+        instance.installed_at = utc_now_iso()
+        instance.updated_at = utc_now_iso()
+
+        mount.source_type = source.trusted_level
+        mount.manifest_path = str(target_manifest_path)
+        mount.plugin_root = str(target_root)
+        mount.python_path = sys.executable
+        mount.working_dir = str(target_root)
+        mount.enabled = previous_enabled
+        mount.updated_at = utc_now_iso()
+
+        refresh_marketplace_plugin_instance_config_status(
+            db,
+            household_id=instance.household_id,
+            plugin_id=instance.plugin_id,
+        )
+
+        state_changed = instance.config_status != previous_config_status
+        state_change_reason = None
+        if instance.config_status != "configured":
+            if previous_enabled:
+                instance.enabled = False
+                mount.enabled = False
+                state_changed = True
+            state_change_reason = (
+                f"{'升级' if operation == 'upgrade' else '回滚'}后配置状态变为 {instance.config_status}，"
+                "当前已阻止继续执行，请先重新确认配置。"
+            )
+
+        governance = resolve_marketplace_instance_version_governance(
+            db,
+            household_id=instance.household_id,
+            plugin_id=instance.plugin_id,
+            declared_version=target_version_entry.version,
+        )
+        db.flush()
+        return PluginVersionOperationResultRead(
+            instance=_to_instance_read(instance),
+            governance=governance,
+            previous_version=previous_version,
+            target_version=target_version_entry.version,
+            state_changed=state_changed,
+            state_change_reason=state_change_reason,
+        )
+    except (GitHubMarketplaceClientError, PluginMarketplaceServiceError, PluginManifestValidationError, PluginServiceError) as exc:
+        _restore_runtime_state(instance, previous_instance_state)
+        _restore_runtime_state(mount, previous_mount_state)
+        db.flush()
+        raise PluginMarketplaceServiceError(
+            getattr(exc, "detail", None) or "插件版本切换失败。",
+            error_code=getattr(exc, "error_code", None) or "plugin_version_switch_failed",
+            field=getattr(exc, "field", None),
+            status_code=getattr(exc, "status_code", 409),
+        ) from exc
 
 
 def get_marketplace_instance(
@@ -1124,6 +1456,69 @@ def get_marketplace_instance_for_household_plugin(
     plugin_id: str,
 ) -> PluginMarketplaceInstance | None:
     return repository.get_marketplace_instance_for_plugin(db, household_id=household_id, plugin_id=plugin_id)
+
+
+def operate_marketplace_instance_version(
+    db: Session,
+    *,
+    instance_id: str,
+    payload: PluginVersionOperationRequest,
+    client: GitHubMarketplaceClient | None = None,
+) -> PluginVersionOperationResultRead:
+    instance = repository.get_marketplace_instance(db, instance_id)
+    if instance is None:
+        raise PluginMarketplaceServiceError(
+            "插件市场实例不存在。",
+            error_code="marketplace_instance_not_found",
+            field="instance_id",
+            status_code=404,
+        )
+    if instance.household_id != payload.household_id or instance.plugin_id != payload.plugin_id:
+        raise PluginMarketplaceServiceError(
+            "版本切换请求和当前插件实例不匹配。",
+            error_code="plugin_source_mismatch",
+            status_code=409,
+        )
+    if instance.source_id != payload.source_id:
+        raise PluginMarketplaceServiceError(
+            "当前插件实例来源和目标市场来源不一致。",
+            error_code="plugin_source_mismatch",
+            field="source_id",
+            status_code=409,
+        )
+    if instance.install_status != "installed":
+        raise PluginMarketplaceServiceError(
+            "插件还没有安装完成，不能切换版本。",
+            error_code="plugin_marketplace_not_installed",
+            status_code=409,
+        )
+
+    source = _require_source(db, source_id=payload.source_id)
+    snapshot = _require_snapshot(db, source_id=payload.source_id, plugin_id=payload.plugin_id)
+    entry = _load_marketplace_entry_from_snapshot(snapshot)
+    try:
+        target_version_entry = entry.resolve_version(payload.target_version)
+    except ValueError as exc:
+        raise PluginMarketplaceServiceError(
+            f"目标版本 {payload.target_version} 不在市场条目里。",
+            error_code="plugin_version_not_found",
+            field="target_version",
+            status_code=409,
+        ) from exc
+
+    _require_version_compatible(
+        version=target_version_entry.version,
+        min_app_version=target_version_entry.min_app_version,
+    )
+    return _switch_marketplace_instance_version(
+        db,
+        instance=instance,
+        entry=entry,
+        source=source,
+        target_version_entry=target_version_entry,
+        operation=payload.operation,
+        client=client,
+    )
 
 
 def resolve_marketplace_plugin_config_status(

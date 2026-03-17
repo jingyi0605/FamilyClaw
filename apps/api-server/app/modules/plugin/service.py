@@ -29,7 +29,12 @@ from . import repository
 from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun, PluginStateOverride
 from app.modules.plugin.runner_errors import PLUGIN_EXECUTION_FAILED, PluginRunnerError
 from app.modules.plugin.schemas import PluginManifest
-from app.modules.plugin.schemas import PluginRegistryItem, PluginRegistrySnapshot, PluginRegistryStateEntry
+from app.modules.plugin.schemas import (
+    PluginRegistryItem,
+    PluginRegistrySnapshot,
+    PluginRegistryStateEntry,
+    PluginVersionGovernanceRead,
+)
 from app.modules.plugin.schemas import (
     PluginExecutionBackend,
     PluginExecutionRequest,
@@ -51,6 +56,7 @@ from app.modules.plugin.schemas import (
 )
 from app.modules.plugin.job_service import create_plugin_job
 from app.modules.plugin.theme_registry import THEME_REGISTRY_SOURCE_PATH, list_theme_catalog
+from app.modules.plugin.versioning import resolve_non_market_version_governance
 
 
 BUILTIN_PLUGIN_ROOT = BASE_DIR / "app" / "plugins" / "builtin"
@@ -289,18 +295,20 @@ def _build_registry_item_from_manifest(
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
 ) -> PluginRegistryItem:
-    installed_version = manifest.version
+    version_governance_source = "builtin" if source_type == "builtin" else "manual"
+    version_governance = resolve_non_market_version_governance(
+        source_type=version_governance_source,
+        declared_version=manifest.version,
+        installed_version=manifest.version,
+    )
     return PluginRegistryItem.model_validate(
         {
             "id": manifest.id,
             "name": manifest.name,
             "version": manifest.version,
-            "installed_version": installed_version,
+            "installed_version": version_governance.installed_version,
             "compatibility": manifest.compatibility,
-            "update_state": _resolve_plugin_update_state(
-                version=manifest.version,
-                installed_version=installed_version,
-            ),
+            "update_state": version_governance.update_state,
             "types": manifest.types,
             "permissions": manifest.permissions,
             "risk_level": manifest.risk_level,
@@ -319,20 +327,9 @@ def _build_registry_item_from_manifest(
             "source_type": source_type,
             "execution_backend": execution_backend,
             "runner_config": runner_config.model_dump(mode="json") if runner_config is not None else None,
+            "version_governance": version_governance.model_dump(mode="json"),
         }
     )
-
-
-def _resolve_plugin_update_state(*, version: str, installed_version: str | None) -> str | None:
-    normalized_version = version.strip()
-    normalized_installed_version = (installed_version or "").strip()
-    if not normalized_version:
-        return None
-    if not normalized_installed_version:
-        return "unknown"
-    if normalized_installed_version != normalized_version:
-        return "update_available"
-    return "up_to_date"
 
 
 def list_registered_plugins(
@@ -390,12 +387,16 @@ def _apply_marketplace_registry_state(
     instance_id: str,
     install_status: str,
     config_status: str,
+    governance: PluginVersionGovernanceRead,
 ) -> PluginRegistryItem:
     return item.model_copy(
         update={
+            "installed_version": governance.installed_version,
+            "update_state": governance.update_state,
             "install_status": install_status,
             "config_status": config_status,
             "marketplace_instance_id": instance_id,
+            "version_governance": governance,
         }
     )
 
@@ -536,7 +537,10 @@ def list_registered_plugins_for_household(
     root_dir: str | Path | None = None,
     state_file: str | Path | None = None,
 ) -> PluginRegistrySnapshot:
-    from app.modules.plugin_marketplace.service import get_marketplace_instance_for_household_plugin
+    from app.modules.plugin_marketplace.service import (
+        get_marketplace_instance_for_household_plugin,
+        resolve_marketplace_instance_version_governance,
+    )
 
     builtin_snapshot = list_registered_plugins(root_dir=root_dir, state_file=state_file)
     builtin_by_id = {item.id: item for item in builtin_snapshot.items}
@@ -570,6 +574,12 @@ def list_registered_plugins_for_household(
             plugin_id=manifest.id,
         )
         if marketplace_instance is not None:
+            governance = resolve_marketplace_instance_version_governance(
+                db,
+                household_id=household_id,
+                plugin_id=manifest.id,
+                declared_version=manifest.version,
+            )
             mounted_items.append(
                 _apply_marketplace_registry_state(
                     mounted_item.model_copy(
@@ -586,6 +596,7 @@ def list_registered_plugins_for_household(
                     instance_id=marketplace_instance.id,
                     install_status=marketplace_instance.install_status,
                     config_status=marketplace_instance.config_status,
+                    governance=governance,
                 )
             )
             continue

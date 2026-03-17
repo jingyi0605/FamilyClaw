@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.modules.plugin.schemas import PluginConfigState
+from app.modules.plugin.schemas import PluginConfigState, PluginVersionGovernanceRead
 
 
 MarketplaceTrustedLevel = Literal["official", "third_party"]
@@ -22,6 +22,7 @@ MarketplaceInstallStatus = Literal[
     "uninstalled",
 ]
 MarketplaceArtifactType = Literal["release_asset", "source_archive"]
+PluginVersionOperationType = Literal["upgrade", "rollback"]
 
 
 def _normalize_text(value: str, *, field_name: str) -> str:
@@ -289,6 +290,7 @@ class MarketplaceCatalogItemRead(BaseModel):
     repository_metrics: MarketplaceRepositoryMetrics | None = None
     source_name: str
     install_state: MarketplaceInstallStateRead = Field(default_factory=MarketplaceInstallStateRead)
+    version_governance: PluginVersionGovernanceRead | None = None
 
 
 class MarketplaceCatalogListRead(BaseModel):
@@ -340,6 +342,28 @@ class MarketplaceInstallTaskRead(BaseModel):
     updated_at: str
     started_at: str | None = None
     finished_at: str | None = None
+
+
+class PluginVersionOperationRequest(BaseModel):
+    household_id: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+    plugin_id: str = Field(min_length=1, max_length=64)
+    target_version: str = Field(min_length=1, max_length=50)
+    operation: PluginVersionOperationType
+
+    @field_validator("household_id", "source_id", "plugin_id", "target_version")
+    @classmethod
+    def validate_operation_text(cls, value: str) -> str:
+        return _normalize_text(value, field_name="version_operation")
+
+
+class PluginVersionOperationResultRead(BaseModel):
+    instance: MarketplaceInstanceRead
+    governance: PluginVersionGovernanceRead
+    previous_version: str
+    target_version: str
+    state_changed: bool
+    state_change_reason: str | None = None
 
 
 class MarketplaceInstanceRead(BaseModel):

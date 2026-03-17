@@ -30,6 +30,7 @@ import type {
   IntegrationPageViewModel,
   IntegrationResourceListRead,
   MarketplaceCatalogListRead,
+  MarketplaceEntryDetailRead,
   MarketplaceInstallTaskCreateRequest,
   MarketplaceInstallTaskRead,
   MarketplaceInstanceRead,
@@ -45,6 +46,9 @@ import type {
   PluginRegistryItem,
   PluginRegistrySnapshot,
   PluginStateUpdateRequest,
+  PluginVersionGovernanceRead,
+  PluginVersionOperationRequest,
+  PluginVersionOperationResultRead,
   VoiceprintEnrollmentRead,
 } from './settingsTypes';
 
@@ -528,6 +532,24 @@ export const settingsApi = {
     }
     return request<MarketplaceCatalogListRead>(`/plugin-marketplace/catalog${query.toString() ? `?${query.toString()}` : ''}`);
   },
+  getMarketplaceEntryDetail(sourceId: string, pluginId: string, householdId?: string) {
+    const query = new URLSearchParams();
+    if (householdId) {
+      query.set('household_id', householdId);
+    }
+    return request<MarketplaceEntryDetailRead>(
+      `/plugin-marketplace/catalog/${encodeURIComponent(sourceId)}/${encodeURIComponent(pluginId)}${query.toString() ? `?${query.toString()}` : ''}`,
+    );
+  },
+  getMarketplaceVersionGovernance(sourceId: string, pluginId: string, householdId?: string) {
+    const query = new URLSearchParams();
+    if (householdId) {
+      query.set('household_id', householdId);
+    }
+    return request<PluginVersionGovernanceRead>(
+      `/plugin-marketplace/catalog/${encodeURIComponent(sourceId)}/${encodeURIComponent(pluginId)}/version-governance${query.toString() ? `?${query.toString()}` : ''}`,
+    );
+  },
   createMarketplaceInstallTask(payload: MarketplaceInstallTaskCreateRequest) {
     return request<MarketplaceInstallTaskRead>('/plugin-marketplace/install-tasks', {
       method: 'POST',
@@ -539,6 +561,15 @@ export const settingsApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+  operateMarketplaceInstanceVersion(instanceId: string, payload: PluginVersionOperationRequest) {
+    return request<PluginVersionOperationResultRead>(
+      `/plugin-marketplace/instances/${encodeURIComponent(instanceId)}/version-operations`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
   },
   listPluginJobs(
     householdId: string,

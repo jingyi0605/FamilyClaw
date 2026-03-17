@@ -9,7 +9,15 @@ import { SettingsPageShell } from '../settings/SettingsPageShell';
 import { PluginDetailDrawer } from '../settings/components/PluginDetailDrawer';
 import { SettingsDialog } from '../settings/components/SettingsSharedBlocks';
 import { ApiError, settingsApi } from '../settings/settingsApi';
-import type { MarketplaceCatalogItemRead, MarketplaceInstallStateRead, MarketplaceSourceRead, PluginManifestType, PluginRegistryItem } from '../settings/settingsTypes';
+import type {
+  MarketplaceCatalogItemRead,
+  MarketplaceInstallStateRead,
+  MarketplaceSourceRead,
+  PluginManifestType,
+  PluginRegistryItem,
+  PluginVersionOperationResultRead,
+  PluginVersionOperationType,
+} from '../settings/settingsTypes';
 
 type ViewMode = 'card' | 'list';
 
@@ -187,6 +195,50 @@ function formatMarketplaceInstallState(
     return { label: getPageMessage(locale, 'plugins.marketplace.installState.installing'), tone: 'warning' };
   }
   return { label: getPageMessage(locale, 'plugins.marketplace.installState.notInstalled'), tone: 'secondary' };
+}
+
+function formatVersionValue(value: string | null | undefined, locale: string | undefined) {
+  if (!value) {
+    return getPageMessage(locale, 'settings.plugin.versionValue.unknown');
+  }
+  return `v${value}`;
+}
+
+function formatVersionUpdateState(
+  state: string | null | undefined,
+  locale: string | undefined,
+): { label: string; tone: 'success' | 'warning' | 'danger' | 'secondary' } {
+  switch (state) {
+    case 'up_to_date':
+      return { label: getPageMessage(locale, 'settings.plugin.versionState.upToDate'), tone: 'success' };
+    case 'upgrade_available':
+    case 'update_available':
+      return { label: getPageMessage(locale, 'settings.plugin.versionState.upgradeAvailable'), tone: 'warning' };
+    case 'upgrade_blocked':
+      return { label: getPageMessage(locale, 'settings.plugin.versionState.upgradeBlocked'), tone: 'danger' };
+    case 'installed_newer_than_market':
+      return { label: getPageMessage(locale, 'settings.plugin.versionState.installedNewerThanMarket'), tone: 'warning' };
+    case 'not_market_managed':
+      return { label: getPageMessage(locale, 'settings.plugin.versionState.notMarketManaged'), tone: 'secondary' };
+    case 'unknown':
+    default:
+      return { label: getPageMessage(locale, 'settings.plugin.versionState.unknown'), tone: 'secondary' };
+  }
+}
+
+function formatVersionCompatibilityStatus(
+  status: string | null | undefined,
+  locale: string | undefined,
+): { label: string; tone: 'success' | 'warning' | 'danger' | 'secondary' } {
+  switch (status) {
+    case 'compatible':
+      return { label: getPageMessage(locale, 'settings.plugin.compatibilityState.compatible'), tone: 'success' };
+    case 'host_too_old':
+      return { label: getPageMessage(locale, 'settings.plugin.compatibilityState.hostTooOld'), tone: 'danger' };
+    case 'unknown':
+    default:
+      return { label: getPageMessage(locale, 'settings.plugin.compatibilityState.unknown'), tone: 'secondary' };
+  }
 }
 
 function formatMarketplaceMetric(value: number | null | undefined, locale: string | undefined) {
@@ -473,6 +525,11 @@ function PluginsPageContent() {
     if (!currentHouseholdId) {
       return;
     }
+    const targetVersion = item.version_governance?.latest_compatible_version;
+    if (!targetVersion) {
+      setMarketError(item.version_governance?.blocked_reason || page('plugins.marketplace.status.noCompatibleVersion'));
+      return;
+    }
     const installKey = `${item.source_id}:${item.plugin_id}`;
     setInstallingKey(installKey);
     setMarketError('');
@@ -482,10 +539,10 @@ function PluginsPageContent() {
         household_id: currentHouseholdId,
         source_id: item.source_id,
         plugin_id: item.plugin_id,
-        version: item.latest_version,
+        version: targetVersion,
       });
       await Promise.all([reloadInstalledPlugins(), reloadMarketplace()]);
-      setMarketStatus(page('plugins.marketplace.status.installed'));
+      setMarketStatus(page('plugins.marketplace.status.installed', { version: targetVersion }));
     } catch (installError) {
       setMarketError(installError instanceof ApiError ? installError.message : page('plugins.operationFailed'));
     } finally {
@@ -513,6 +570,48 @@ function PluginsPageContent() {
     }
   }
 
+  async function handleOperateMarketplaceVersion(
+    item: MarketplaceCatalogItemRead,
+    operation: PluginVersionOperationType,
+    targetVersion: string,
+  ): Promise<PluginVersionOperationResultRead> {
+    if (!currentHouseholdId || !item.install_state.instance_id) {
+      throw new Error('marketplace_instance_missing');
+    }
+
+    setMarketplaceBusyInstanceId(item.install_state.instance_id);
+    setMarketError('');
+    setMarketStatus('');
+
+    try {
+      const result = await settingsApi.operateMarketplaceInstanceVersion(item.install_state.instance_id, {
+        household_id: currentHouseholdId,
+        source_id: item.source_id,
+        plugin_id: item.plugin_id,
+        target_version: targetVersion,
+        operation,
+      });
+      await Promise.all([reloadInstalledPlugins(), reloadMarketplace()]);
+      const statusKey = operation === 'upgrade'
+        ? 'plugins.marketplace.status.upgraded'
+        : 'plugins.marketplace.status.rolledBack';
+      const message = result.state_change_reason
+        ? page('plugins.marketplace.status.versionChangedWithState', {
+            message: page(statusKey, { version: result.target_version }),
+            reason: result.state_change_reason,
+          })
+        : page(statusKey, { version: result.target_version });
+      setMarketStatus(message);
+      return result;
+    } catch (operationError) {
+      const message = operationError instanceof ApiError ? operationError.message : page('plugins.operationFailed');
+      setMarketError(message);
+      throw operationError;
+    } finally {
+      setMarketplaceBusyInstanceId(null);
+    }
+  }
+
   const pluginStats = useMemo(() => {
     const enabled = filteredPlugins.filter(plugin => plugin.enabled).length;
     const total = filteredPlugins.length;
@@ -522,6 +621,29 @@ function PluginsPageContent() {
   const installedPluginMap = useMemo(() => {
     return new Map(plugins.map(plugin => [plugin.id, plugin]));
   }, [plugins]);
+
+  const detailMarketplaceItem = useMemo(() => {
+    if (!detailPlugin) {
+      return null;
+    }
+    if (detailPlugin.marketplace_instance_id) {
+      const matchedByInstance = marketCatalog.find(item => item.install_state.instance_id === detailPlugin.marketplace_instance_id);
+      if (matchedByInstance) {
+        return matchedByInstance;
+      }
+    }
+    return marketCatalog.find(item => item.plugin_id === detailPlugin.id && Boolean(item.install_state.instance_id)) ?? null;
+  }, [detailPlugin, marketCatalog]);
+
+  useEffect(() => {
+    if (!detailPlugin) {
+      return;
+    }
+    const latestPlugin = plugins.find(item => item.id === detailPlugin.id);
+    if (latestPlugin && latestPlugin !== detailPlugin) {
+      setDetailPlugin(latestPlugin);
+    }
+  }, [detailPlugin, plugins]);
 
   function renderMarketplaceCatalogContent() {
     return (
@@ -552,13 +674,27 @@ function PluginsPageContent() {
                 locale,
               );
               const installInfo = formatMarketplaceInstallState(item.install_state, locale);
+              const governance = item.version_governance;
+              const updateInfo = formatVersionUpdateState(governance?.update_state, locale);
+              const compatibilityInfo = formatVersionCompatibilityStatus(governance?.compatibility_status, locale);
               const installKey = `${item.source_id}:${item.plugin_id}`;
               const isInstalling = installingKey === installKey;
               const isBusyInstance = marketplaceBusyInstanceId === item.install_state.instance_id;
               const installedPlugin = installedPluginMap.get(item.plugin_id) ?? null;
+              const preferredInstallVersion = governance?.latest_compatible_version ?? null;
+              const canInstall = Boolean(preferredInstallVersion);
+              const quickUpgradeVersion = governance?.latest_compatible_version ?? null;
+              const governanceInstalledVersion = governance?.installed_version ?? null;
               const canEnable =
                 item.install_state.instance_id &&
                 (item.install_state.enabled || item.install_state.config_status === 'configured');
+              const canQuickUpgrade = Boolean(
+                item.install_state.instance_id
+                && quickUpgradeVersion
+                && governanceInstalledVersion
+                && quickUpgradeVersion !== governanceInstalledVersion
+                && governance?.update_state === 'upgrade_available',
+              );
               const toggleLabel = item.install_state.enabled
                 ? page('plugins.marketplace.action.disable')
                 : page('plugins.marketplace.action.enable');
@@ -571,11 +707,10 @@ function PluginsPageContent() {
                         <span>{item.name}</span>
                         <span className={`badge badge--${trustedInfo.tone}`}>{trustedInfo.label}</span>
                         <span className={`badge badge--${installInfo.tone}`}>{installInfo.label}</span>
+                        <span className={`badge badge--${updateInfo.tone}`}>{updateInfo.label}</span>
                       </div>
                       <div className="marketplace-card__meta">
                         <span>{item.plugin_id}</span>
-                        <span>·</span>
-                        <span>v{item.latest_version}</span>
                         <span>·</span>
                         <span>{item.source_name}</span>
                       </div>
@@ -601,6 +736,28 @@ function PluginsPageContent() {
                     {item.permissions.slice(0, 2).map(permission => (
                       <span key={permission} className="badge badge--info">{permission}</span>
                     ))}
+                    <span className={`badge badge--${compatibilityInfo.tone}`}>{compatibilityInfo.label}</span>
+                  </div>
+
+                  <div className="plugin-detail-entrypoints">
+                    <div className="plugin-detail-entrypoint-item">
+                      <span className="plugin-detail-entrypoint-key">{page('settings.plugin.section.installedVersion')}</span>
+                      <span className="plugin-detail-entrypoint-value">
+                        {formatVersionValue(governance?.installed_version ?? item.install_state.installed_version, locale)}
+                      </span>
+                    </div>
+                    <div className="plugin-detail-entrypoint-item">
+                      <span className="plugin-detail-entrypoint-key">{page('settings.plugin.section.latestVersion')}</span>
+                      <span className="plugin-detail-entrypoint-value">{formatVersionValue(governance?.latest_version ?? item.latest_version, locale)}</span>
+                    </div>
+                    <div className="plugin-detail-entrypoint-item">
+                      <span className="plugin-detail-entrypoint-key">{page('settings.plugin.section.latestCompatibleVersion')}</span>
+                      <span className="plugin-detail-entrypoint-value">{formatVersionValue(governance?.latest_compatible_version, locale)}</span>
+                    </div>
+                    <div className="plugin-detail-entrypoint-item">
+                      <span className="plugin-detail-entrypoint-key">{page('settings.plugin.section.updateState')}</span>
+                      <span className="plugin-detail-entrypoint-value">{updateInfo.label}</span>
+                    </div>
                   </div>
 
                   <div className="marketplace-card__actions">
@@ -608,10 +765,25 @@ function PluginsPageContent() {
                       <button
                         className="btn btn--primary btn--sm"
                         onClick={() => void handleInstallMarketplacePlugin(item)}
-                        disabled={isInstalling}
+                        disabled={isInstalling || !canInstall}
                       >
                         <Download size={14} />
-                        {isInstalling ? page('plugins.marketplace.action.installing') : page('plugins.marketplace.action.install')}
+                        {isInstalling
+                          ? page('plugins.marketplace.action.installing')
+                          : page('plugins.marketplace.action.installVersion', { version: preferredInstallVersion ?? page('settings.plugin.versionValue.unknown') })}
+                      </button>
+                    ) : null}
+
+                    {canQuickUpgrade && quickUpgradeVersion ? (
+                      <button
+                        className="btn btn--primary btn--sm"
+                        onClick={() => void handleOperateMarketplaceVersion(item, 'upgrade', quickUpgradeVersion)}
+                        disabled={isBusyInstance}
+                      >
+                        <RefreshCw size={14} className={isBusyInstance ? 'animate-spin' : undefined} />
+                        {isBusyInstance
+                          ? page('plugins.marketplace.action.updating')
+                          : page('plugins.marketplace.action.upgradeVersion', { version: quickUpgradeVersion })}
                       </button>
                     ) : null}
 
@@ -634,6 +806,9 @@ function PluginsPageContent() {
                     ) : null}
                   </div>
 
+                  {governance?.blocked_reason ? (
+                    <div className="marketplace-card__hint">{governance.blocked_reason}</div>
+                  ) : null}
                   {!item.repository_metrics?.availability.views_count ? (
                     <div className="marketplace-card__hint">{page('plugins.marketplace.viewsHint')}</div>
                   ) : null}
@@ -1046,6 +1221,7 @@ function PluginsPageContent() {
 
         <PluginDetailDrawer
           plugin={detailPlugin}
+          marketplaceItem={detailMarketplaceItem}
           householdId={currentHouseholdId}
           isOpen={drawerOpen}
           onClose={closePluginDetail}
@@ -1054,6 +1230,7 @@ function PluginsPageContent() {
             void handleTogglePlugin(plugin);
             closePluginDetail();
           }}
+          onOperateMarketplaceVersion={handleOperateMarketplaceVersion}
           isToggling={togglingPluginId === detailPlugin?.id}
         />
       </div>

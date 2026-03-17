@@ -21,6 +21,16 @@ PluginManifestType = Literal[
 ]
 RiskLevel = Literal["low", "medium", "high"]
 PluginSourceType = Literal["builtin", "official", "third_party"]
+PluginVersionGovernanceSourceType = Literal["builtin", "marketplace", "manual"]
+PluginVersionCompatibilityStatus = Literal["compatible", "host_too_old", "unknown"]
+PluginVersionUpdateState = Literal[
+    "up_to_date",
+    "upgrade_available",
+    "upgrade_blocked",
+    "installed_newer_than_market",
+    "not_market_managed",
+    "unknown",
+]
 PluginExecutionBackend = Literal["in_process", "subprocess_runner"]
 PluginJobStatus = Literal[
     "queued",
@@ -1025,6 +1035,17 @@ class PluginRunnerConfig(BaseModel):
     stderr_limit_bytes: int = Field(default=65536, ge=1024, le=1048576)
 
 
+class PluginVersionGovernanceRead(BaseModel):
+    source_type: PluginVersionGovernanceSourceType
+    installed_version: str | None = None
+    declared_version: str | None = None
+    latest_version: str | None = None
+    latest_compatible_version: str | None = None
+    compatibility_status: PluginVersionCompatibilityStatus
+    update_state: PluginVersionUpdateState
+    blocked_reason: str | None = None
+
+
 class PluginRegistryItem(BaseModel):
     id: str
     name: str
@@ -1053,6 +1074,7 @@ class PluginRegistryItem(BaseModel):
     install_status: str | None = None
     config_status: PluginConfigState | None = None
     marketplace_instance_id: str | None = None
+    version_governance: PluginVersionGovernanceRead | None = None
 
 
 class PluginRegistrySnapshot(BaseModel):

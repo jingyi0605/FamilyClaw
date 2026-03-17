@@ -3,12 +3,17 @@ import { useI18n } from '../../../runtime';
 import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { ApiError, settingsApi } from '../settingsApi';
 import type {
+  MarketplaceCatalogItemRead,
+  MarketplaceVersionEntry,
   PluginJobListItemRead,
   PluginJobListRead,
   PluginManifestType,
   PluginRegistryItem,
   PluginRiskLevel,
   PluginSourceType,
+  PluginVersionGovernanceRead,
+  PluginVersionOperationResultRead,
+  PluginVersionOperationType,
 } from '../settingsTypes';
 
 function resolveDateLocale(locale: string | undefined) {
@@ -104,13 +109,39 @@ function formatUpdateState(state: string | null | undefined, locale: string | un
   switch (state) {
     case 'up_to_date':
       return getPageMessage(locale, 'settings.plugin.versionState.upToDate');
+    case 'upgrade_available':
     case 'update_available':
-      return getPageMessage(locale, 'settings.plugin.versionState.updateAvailable');
+      return getPageMessage(locale, 'settings.plugin.versionState.upgradeAvailable');
+    case 'upgrade_blocked':
+      return getPageMessage(locale, 'settings.plugin.versionState.upgradeBlocked');
+    case 'installed_newer_than_market':
+      return getPageMessage(locale, 'settings.plugin.versionState.installedNewerThanMarket');
+    case 'not_market_managed':
+      return getPageMessage(locale, 'settings.plugin.versionState.notMarketManaged');
     case 'unknown':
       return getPageMessage(locale, 'settings.plugin.versionState.unknown');
     default:
       return state ?? getPageMessage(locale, 'settings.plugin.versionState.unknown');
   }
+}
+
+function formatCompatibilityStatus(state: string | null | undefined, locale: string | undefined) {
+  switch (state) {
+    case 'compatible':
+      return getPageMessage(locale, 'settings.plugin.compatibilityState.compatible');
+    case 'host_too_old':
+      return getPageMessage(locale, 'settings.plugin.compatibilityState.hostTooOld');
+    case 'unknown':
+    default:
+      return getPageMessage(locale, 'settings.plugin.compatibilityState.unknown');
+  }
+}
+
+function formatVersionValue(value: string | null | undefined, locale: string | undefined) {
+  if (!value) {
+    return getPageMessage(locale, 'settings.plugin.versionValue.unknown');
+  }
+  return `v${value}`;
 }
 
 function buildCompatibilityEntries(
@@ -144,20 +175,44 @@ function buildCompatibilityEntries(
 
 export function PluginDetailDrawer(props: {
   plugin: PluginRegistryItem | null;
+  marketplaceItem: MarketplaceCatalogItemRead | null;
   householdId: string | null;
   isOpen: boolean;
   onClose: () => void;
   isEnabled: boolean;
   onToggle: (plugin: PluginRegistryItem) => void;
+  onOperateMarketplaceVersion: (
+    item: MarketplaceCatalogItemRead,
+    operation: PluginVersionOperationType,
+    targetVersion: string,
+  ) => Promise<PluginVersionOperationResultRead>;
   isToggling: boolean;
 }) {
-  const { plugin, householdId, isOpen, onClose, isEnabled, onToggle, isToggling } = props;
+  const {
+    plugin,
+    marketplaceItem,
+    householdId,
+    isOpen,
+    onClose,
+    isEnabled,
+    onToggle,
+    onOperateMarketplaceVersion,
+    isToggling,
+  } = props;
   const { locale } = useI18n();
   const [jobs, setJobs] = useState<PluginJobListItemRead[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState('');
+  const [versionTargets, setVersionTargets] = useState<MarketplaceVersionEntry[]>([]);
+  const [versionGovernance, setVersionGovernance] = useState<PluginVersionGovernanceRead | null>(null);
+  const [versionLoading, setVersionLoading] = useState(false);
+  const [versionError, setVersionError] = useState('');
+  const [versionStatus, setVersionStatus] = useState('');
+  const [selectedTargetVersion, setSelectedTargetVersion] = useState('');
+  const [operatingVersion, setOperatingVersion] = useState<PluginVersionOperationType | null>(null);
   const copy = useMemo(() => ({
     jobsLoadFailed: getPageMessage(locale, 'settings.plugin.jobs.loadFailed'),
+    versionLoadFailed: getPageMessage(locale, 'settings.plugin.versionSwitch.loadFailed'),
     enabled: getPageMessage(locale, 'settings.plugin.enabled'),
     disabled: getPageMessage(locale, 'settings.plugin.disabled'),
     thirdPartyTitle: getPageMessage(locale, 'settings.plugin.thirdPartyTitle'),
@@ -171,7 +226,12 @@ export function PluginDetailDrawer(props: {
     basics: getPageMessage(locale, 'settings.plugin.section.basics'),
     version: getPageMessage(locale, 'settings.plugin.section.version'),
     installedVersion: getPageMessage(locale, 'settings.plugin.section.installedVersion'),
+    latestVersion: getPageMessage(locale, 'settings.plugin.section.latestVersion'),
+    latestCompatibleVersion: getPageMessage(locale, 'settings.plugin.section.latestCompatibleVersion'),
     updateState: getPageMessage(locale, 'settings.plugin.section.updateState'),
+    compatibilityState: getPageMessage(locale, 'settings.plugin.section.compatibilityState'),
+    blockedReason: getPageMessage(locale, 'settings.plugin.section.blockedReason'),
+    versionGovernance: getPageMessage(locale, 'settings.plugin.section.versionGovernance'),
     compatibility: getPageMessage(locale, 'settings.plugin.section.compatibility'),
     noCompatibility: getPageMessage(locale, 'settings.plugin.section.noCompatibility'),
     type: getPageMessage(locale, 'settings.plugin.section.type'),
@@ -189,6 +249,14 @@ export function PluginDetailDrawer(props: {
     processing: getPageMessage(locale, 'settings.plugin.processing'),
     disable: getPageMessage(locale, 'settings.plugin.disable'),
     enable: getPageMessage(locale, 'settings.plugin.enable'),
+    targetVersion: getPageMessage(locale, 'settings.plugin.versionSwitch.targetVersion'),
+    targetVersionPlaceholder: getPageMessage(locale, 'settings.plugin.versionSwitch.targetVersionPlaceholder'),
+    loadingVersionInfo: getPageMessage(locale, 'settings.plugin.versionSwitch.loading'),
+    noVersionTargets: getPageMessage(locale, 'settings.plugin.versionSwitch.noTargets'),
+    upgrade: getPageMessage(locale, 'plugins.marketplace.action.upgrade'),
+    rollback: getPageMessage(locale, 'plugins.marketplace.action.rollback'),
+    upgradeProcessing: getPageMessage(locale, 'plugins.marketplace.action.upgrading'),
+    rollbackProcessing: getPageMessage(locale, 'plugins.marketplace.action.rollingBack'),
   }), [locale]);
 
   useEffect(() => {
@@ -230,6 +298,77 @@ export function PluginDetailDrawer(props: {
     };
   }, [copy.jobsLoadFailed, householdId, isOpen, plugin]);
 
+  useEffect(() => {
+    if (!plugin || !isOpen) {
+      setVersionTargets([]);
+      setVersionGovernance(null);
+      setVersionLoading(false);
+      setVersionError('');
+      setVersionStatus('');
+      setSelectedTargetVersion('');
+      setOperatingVersion(null);
+      return;
+    }
+
+    setVersionGovernance(marketplaceItem?.version_governance ?? plugin.version_governance ?? null);
+    setVersionStatus('');
+    setVersionError('');
+    setSelectedTargetVersion('');
+
+    if (!householdId || !marketplaceItem) {
+      setVersionTargets([]);
+      setVersionLoading(false);
+      return;
+    }
+
+    const activeMarketplaceItem = marketplaceItem;
+    const activePlugin = plugin;
+    const activeHouseholdId = householdId;
+    let cancelled = false;
+
+    async function loadVersionInfo() {
+      setVersionLoading(true);
+      const [detailResult, governanceResult] = await Promise.allSettled([
+        settingsApi.getMarketplaceEntryDetail(activeMarketplaceItem.source_id, activeMarketplaceItem.plugin_id, activeHouseholdId),
+        settingsApi.getMarketplaceVersionGovernance(activeMarketplaceItem.source_id, activeMarketplaceItem.plugin_id, activeHouseholdId),
+      ]);
+
+      if (cancelled) {
+        return;
+      }
+
+      let hasError = false;
+
+      if (detailResult.status === 'fulfilled') {
+        setVersionTargets(detailResult.value.versions);
+      } else {
+        setVersionTargets([]);
+        hasError = true;
+      }
+
+      if (governanceResult.status === 'fulfilled') {
+        setVersionGovernance(governanceResult.value);
+      } else {
+        setVersionGovernance(activeMarketplaceItem.version_governance ?? activePlugin.version_governance ?? null);
+        hasError = true;
+      }
+
+      setVersionError(hasError ? copy.versionLoadFailed : '');
+      setVersionLoading(false);
+    }
+
+    void loadVersionInfo();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    copy.versionLoadFailed,
+    householdId,
+    isOpen,
+    marketplaceItem,
+    plugin,
+  ]);
+
   if (!isOpen || !plugin) {
     return null;
   }
@@ -239,6 +378,41 @@ export function PluginDetailDrawer(props: {
   const latestFailedJob = jobs.find((item) => item.job.status === 'failed');
   const latestWaitingJob = jobs.find((item) => item.job.status === 'waiting_response');
   const compatibilityEntries = buildCompatibilityEntries(plugin.compatibility);
+  const effectiveGovernance = versionGovernance ?? marketplaceItem?.version_governance ?? plugin.version_governance ?? null;
+  const installedVersion = effectiveGovernance?.installed_version ?? plugin.installed_version ?? plugin.version;
+  const selectableTargets = versionTargets.filter(item => item.version !== installedVersion);
+  const canOperateMarketplaceVersion = Boolean(
+    marketplaceItem?.install_state.instance_id
+    && selectedTargetVersion
+    && selectedTargetVersion !== installedVersion,
+  );
+
+  async function handleMarketplaceVersionOperation(operation: PluginVersionOperationType) {
+    if (!marketplaceItem || !selectedTargetVersion) {
+      return;
+    }
+    setOperatingVersion(operation);
+    setVersionError('');
+    setVersionStatus('');
+    try {
+      const result = await onOperateMarketplaceVersion(marketplaceItem, operation, selectedTargetVersion);
+      setVersionGovernance(result.governance);
+      const statusKey = operation === 'upgrade'
+        ? 'plugins.marketplace.status.upgraded'
+        : 'plugins.marketplace.status.rolledBack';
+      const message = result.state_change_reason
+        ? getPageMessage(locale, 'plugins.marketplace.status.versionChangedWithState', {
+            message: getPageMessage(locale, statusKey, { version: result.target_version }),
+            reason: result.state_change_reason,
+          })
+        : getPageMessage(locale, statusKey, { version: result.target_version });
+      setVersionStatus(message);
+    } catch (error) {
+      setVersionError(error instanceof ApiError ? error.message : copy.versionLoadFailed);
+    } finally {
+      setOperatingVersion(null);
+    }
+  }
 
   return (
     <div className="task-form-overlay" onClick={onClose}>
@@ -313,11 +487,99 @@ export function PluginDetailDrawer(props: {
             <div className="plugin-detail-grid">
               <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">ID</span><span className="plugin-detail-grid__value">{plugin.id}</span></div>
               <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.version}</span><span className="plugin-detail-grid__value">v{plugin.version}</span></div>
-              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.installedVersion}</span><span className="plugin-detail-grid__value">{plugin.installed_version ? `v${plugin.installed_version}` : '-'}</span></div>
-              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.updateState}</span><span className="plugin-detail-grid__value">{formatUpdateState(plugin.update_state, locale)}</span></div>
+              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.installedVersion}</span><span className="plugin-detail-grid__value">{formatVersionValue(installedVersion, locale)}</span></div>
+              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.updateState}</span><span className="plugin-detail-grid__value">{formatUpdateState(effectiveGovernance?.update_state ?? plugin.update_state, locale)}</span></div>
               <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.type}</span><span className="plugin-detail-grid__value">{plugin.types.map((type) => formatPluginType(type, locale)).join(' / ')}</span></div>
               <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.source}</span><span className={`plugin-detail-grid__value plugin-detail-grid__value--${sourceInfo.tone}`}>{sourceInfo.label}</span></div>
             </div>
+          </div>
+
+          <div className="plugin-detail-section">
+            <h3>{copy.versionGovernance}</h3>
+            {versionError ? <div className="settings-note settings-note--error">{versionError}</div> : null}
+            {versionStatus ? <div className="settings-note settings-note--success">{versionStatus}</div> : null}
+            {effectiveGovernance ? (
+              <>
+                <div className="plugin-detail-grid">
+                  <div className="plugin-detail-grid__item">
+                    <span className="plugin-detail-grid__label">{copy.installedVersion}</span>
+                    <span className="plugin-detail-grid__value">{formatVersionValue(effectiveGovernance.installed_version, locale)}</span>
+                  </div>
+                  <div className="plugin-detail-grid__item">
+                    <span className="plugin-detail-grid__label">{copy.latestVersion}</span>
+                    <span className="plugin-detail-grid__value">{formatVersionValue(effectiveGovernance.latest_version, locale)}</span>
+                  </div>
+                  <div className="plugin-detail-grid__item">
+                    <span className="plugin-detail-grid__label">{copy.latestCompatibleVersion}</span>
+                    <span className="plugin-detail-grid__value">{formatVersionValue(effectiveGovernance.latest_compatible_version, locale)}</span>
+                  </div>
+                  <div className="plugin-detail-grid__item">
+                    <span className="plugin-detail-grid__label">{copy.updateState}</span>
+                    <span className="plugin-detail-grid__value">{formatUpdateState(effectiveGovernance.update_state, locale)}</span>
+                  </div>
+                  <div className="plugin-detail-grid__item">
+                    <span className="plugin-detail-grid__label">{copy.compatibilityState}</span>
+                    <span className="plugin-detail-grid__value">{formatCompatibilityStatus(effectiveGovernance.compatibility_status, locale)}</span>
+                  </div>
+                  <div className="plugin-detail-grid__item">
+                    <span className="plugin-detail-grid__label">{copy.blockedReason}</span>
+                    <span className="plugin-detail-grid__value">{effectiveGovernance.blocked_reason || getPageMessage(locale, 'settings.plugin.versionValue.unknown')}</span>
+                  </div>
+                </div>
+
+                {marketplaceItem?.install_state.instance_id ? (
+                  <div className="plugin-detail-entrypoints">
+                    <div className="plugin-detail-entrypoint-item">
+                      <span className="plugin-detail-entrypoint-key">{copy.targetVersion}</span>
+                      <span className="plugin-detail-entrypoint-value">
+                        <select
+                          className="marketplace-source-form__input"
+                          value={selectedTargetVersion}
+                          onChange={(event) => setSelectedTargetVersion(event.target.value)}
+                          disabled={versionLoading || operatingVersion !== null}
+                        >
+                          <option value="">{copy.targetVersionPlaceholder}</option>
+                          {selectableTargets.map((item) => (
+                            <option key={item.version} value={item.version}>
+                              {item.version}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+
+                {versionLoading ? (
+                  <div className="plugin-detail-loading settings-loading-copy settings-loading-copy--center">{copy.loadingVersionInfo}</div>
+                ) : null}
+                {!versionLoading && marketplaceItem?.install_state.instance_id && selectableTargets.length === 0 ? (
+                  <div className="plugin-detail-empty">{copy.noVersionTargets}</div>
+                ) : null}
+                {marketplaceItem?.install_state.instance_id ? (
+                  <div className="marketplace-card__actions">
+                    <button
+                      className="btn btn--primary btn--sm"
+                      type="button"
+                      onClick={() => void handleMarketplaceVersionOperation('upgrade')}
+                      disabled={!canOperateMarketplaceVersion || operatingVersion !== null}
+                    >
+                      {operatingVersion === 'upgrade' ? copy.upgradeProcessing : copy.upgrade}
+                    </button>
+                    <button
+                      className="btn btn--outline btn--sm"
+                      type="button"
+                      onClick={() => void handleMarketplaceVersionOperation('rollback')}
+                      disabled={!canOperateMarketplaceVersion || operatingVersion !== null}
+                    >
+                      {operatingVersion === 'rollback' ? copy.rollbackProcessing : copy.rollback}
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <p className="plugin-detail-empty">{getPageMessage(locale, 'settings.plugin.versionSwitch.unavailable')}</p>
+            )}
           </div>
 
           <div className="plugin-detail-section">

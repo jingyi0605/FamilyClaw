@@ -418,6 +418,16 @@ export type ChannelAccountStatusRead = {
 
 export type PluginSourceType = 'builtin' | 'official' | 'third_party';
 export type PluginRiskLevel = 'low' | 'medium' | 'high';
+export type PluginVersionGovernanceSourceType = 'builtin' | 'marketplace' | 'manual';
+export type PluginVersionCompatibilityStatus = 'compatible' | 'host_too_old' | 'unknown';
+export type PluginVersionUpdateState =
+  | 'up_to_date'
+  | 'upgrade_available'
+  | 'upgrade_blocked'
+  | 'installed_newer_than_market'
+  | 'not_market_managed'
+  | 'unknown';
+export type PluginVersionOperationType = 'upgrade' | 'rollback';
 export type PluginManifestType =
   | 'connector'
   | 'memory-ingestor'
@@ -511,6 +521,17 @@ export type PluginConfigFormRead = {
   plugin_id: string;
   config_spec: PluginManifestConfigSpec;
   view: PluginConfigView;
+};
+
+export type PluginVersionGovernanceRead = {
+  source_type: PluginVersionGovernanceSourceType;
+  installed_version: string | null;
+  declared_version: string | null;
+  latest_version: string | null;
+  latest_compatible_version: string | null;
+  compatibility_status: PluginVersionCompatibilityStatus;
+  update_state: PluginVersionUpdateState;
+  blocked_reason: string | null;
 };
 
 export type PluginRegistryItem = {
@@ -609,6 +630,7 @@ export type PluginRegistryItem = {
   install_status?: string | null;
   config_status?: PluginConfigState | null;
   marketplace_instance_id?: string | null;
+  version_governance?: PluginVersionGovernanceRead | null;
 };
 
 export type PluginRegistrySnapshot = {
@@ -991,6 +1013,32 @@ export type MarketplaceInstallStateRead = {
   installed_version: string | null;
 };
 
+export type MarketplaceVersionEntry = {
+  version: string;
+  git_ref: string;
+  artifact_type: 'release_asset' | 'source_archive';
+  artifact_url: string;
+  checksum: string | null;
+  published_at: string | null;
+  min_app_version: string | null;
+};
+
+export type MarketplacePublisher = {
+  name: string;
+  url: string | null;
+};
+
+export type MarketplaceMaintainer = {
+  name: string;
+  url: string | null;
+};
+
+export type MarketplaceEntryInstallSpec = {
+  package_root: string | null;
+  requirements_path: string;
+  readme_path: string;
+};
+
 export type MarketplaceCatalogItemRead = {
   source_id: string;
   plugin_id: string;
@@ -1008,10 +1056,22 @@ export type MarketplaceCatalogItemRead = {
   repository_metrics: MarketplaceRepositoryMetrics | null;
   source_name: string;
   install_state: MarketplaceInstallStateRead;
+  version_governance: PluginVersionGovernanceRead | null;
 };
 
 export type MarketplaceCatalogListRead = {
   items: MarketplaceCatalogItemRead[];
+};
+
+export type MarketplaceEntryDetailRead = {
+  source: MarketplaceSourceRead;
+  plugin: MarketplaceCatalogItemRead;
+  manifest_path: string;
+  publisher: MarketplacePublisher;
+  versions: MarketplaceVersionEntry[];
+  install: MarketplaceEntryInstallSpec;
+  maintainers: MarketplaceMaintainer[];
+  raw_entry: Record<string, unknown>;
 };
 
 export type MarketplaceInstallTaskRead = {
@@ -1043,6 +1103,14 @@ export type MarketplaceInstallTaskCreateRequest = {
   version?: string | null;
 };
 
+export type PluginVersionOperationRequest = {
+  household_id: string;
+  source_id: string;
+  plugin_id: string;
+  target_version: string;
+  operation: PluginVersionOperationType;
+};
+
 export type MarketplaceInstanceRead = {
   instance_id: string;
   household_id: string;
@@ -1061,4 +1129,13 @@ export type MarketplaceInstanceRead = {
   installed_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type PluginVersionOperationResultRead = {
+  instance: MarketplaceInstanceRead;
+  governance: PluginVersionGovernanceRead;
+  previous_version: string;
+  target_version: string;
+  state_changed: boolean;
+  state_change_reason: string | null;
 };
