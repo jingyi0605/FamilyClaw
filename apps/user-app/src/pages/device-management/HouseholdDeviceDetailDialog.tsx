@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Taro from '@tarojs/taro';
 import { Card } from '../family/base';
+import {
+  getDeviceEnabledBadgeTone,
+  getDeviceEnabledState,
+  getDeviceRuntimeBadgeTone,
+  normalizeDeviceDisplayStatus,
+} from './deviceStatusDisplay';
 import { settingsApi } from '../settings/settingsApi';
 import type {
   DeviceEntity,
@@ -34,22 +41,6 @@ type Props = {
 };
 
 const DEVICE_LOG_PAGE_SIZE = 20;
-
-function getDeviceStatusBadge(status: string): 'success' | 'warning' | 'inactive' | 'danger' | 'secondary' {
-  if (status === 'active') {
-    return 'success';
-  }
-  if (status === 'offline') {
-    return 'warning';
-  }
-  if (status === 'disabled') {
-    return 'danger';
-  }
-  if (status === 'inactive') {
-    return 'inactive';
-  }
-  return 'secondary';
-}
 
 function getLogResultBadge(result: string): 'success' | 'danger' | 'warning' | 'secondary' {
   if (result === 'success') {
@@ -120,7 +111,7 @@ export function HouseholdDeviceDetailDialog({
   const selectedEntities = entityResponse?.items ?? [];
   const selectedDeviceStatus = selectedDevice?.status ?? fallbackStatus;
   const selectedDeviceName = selectedDevice?.name ?? deviceName;
-  const selectedDeviceDisabled = selectedDeviceStatus === 'disabled';
+  const selectedDeviceDisabled = normalizeDeviceDisplayStatus(selectedDeviceStatus) === 'disabled';
   const selectedDeviceControllable = selectedDevice?.controllable ?? fallbackControllable;
 
   useEffect(() => {
@@ -181,16 +172,22 @@ export function HouseholdDeviceDetailDialog({
   }
 
   function formatDeviceStatus(statusValue: string) {
-    if (statusValue === 'active') {
-      return page('settings.integrations.deviceStatus.active');
+    switch (normalizeDeviceDisplayStatus(statusValue)) {
+      case 'active':
+        return page('settings.integrations.deviceRuntime.active');
+      case 'offline':
+        return page('settings.integrations.deviceRuntime.offline');
+      case 'disabled':
+        return page('settings.integrations.deviceRuntime.disabled');
+      default:
+        return page('settings.integrations.deviceRuntime.inactive');
     }
-    if (statusValue === 'offline') {
-      return page('settings.integrations.deviceStatus.offline');
-    }
-    if (statusValue === 'disabled') {
-      return page('settings.integrations.deviceStatus.disabled');
-    }
-    return page('settings.integrations.deviceStatus.inactive');
+  }
+
+  function formatDeviceEnabledStatus(statusValue: string) {
+    return getDeviceEnabledState(statusValue) === 'disabled'
+      ? page('settings.integrations.deviceEnabled.disabled')
+      : page('settings.integrations.deviceEnabled.enabled');
   }
 
   function formatLogResult(resultValue: string) {
@@ -411,7 +408,7 @@ export function HouseholdDeviceDetailDialog({
     return null;
   }
 
-  return (
+  const dialogContent = (
     <>
       <div className="member-modal-overlay" onClick={onClose}>
         <div className="member-modal integration-device-detail-modal" onClick={(event) => event.stopPropagation()}>
@@ -429,9 +426,14 @@ export function HouseholdDeviceDetailDialog({
             <div className="integration-device-detail__header">
               <div>
                 <div className="integration-device-detail__title-row">
-                  <span className={`badge badge--${getDeviceStatusBadge(selectedDeviceStatus)}`}>
-                    {formatDeviceStatus(selectedDeviceStatus)}
+                  <span className={`badge badge--${getDeviceEnabledBadgeTone(selectedDeviceStatus)}`}>
+                    {formatDeviceEnabledStatus(selectedDeviceStatus)}
                   </span>
+                  {!selectedDeviceDisabled ? (
+                    <span className={`badge badge--${getDeviceRuntimeBadgeTone(selectedDeviceStatus)}`}>
+                      {formatDeviceStatus(selectedDeviceStatus)}
+                    </span>
+                  ) : null}
                   <span className={`badge badge--${selectedDeviceDisabled ? 'danger' : (selectedDeviceControllable ? 'success' : 'secondary')}`}>
                     {selectedDeviceControllable
                       ? page('settings.integrations.deviceDetail.controllable')
@@ -587,4 +589,10 @@ export function HouseholdDeviceDetailDialog({
       ) : null}
     </>
   );
+
+  if (typeof document === 'undefined') {
+    return dialogContent;
+  }
+
+  return createPortal(dialogContent, document.body);
 }

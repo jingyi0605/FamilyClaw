@@ -7,6 +7,12 @@ import { getLocaleDefinition, type LocaleDefinition } from '@familyclaw/user-cor
 import { DEFAULT_REGION_COUNTRY, DEFAULT_REGION_PROVIDER, RegionSelector, type RegionSelectionFormValue } from './RegionSelector';
 import { PageHeader, Card, Section } from './base';
 import { HouseholdDeviceDetailDialog, type DevicePageLookup } from '../device-management/HouseholdDeviceDetailDialog';
+import {
+  getDeviceEnabledBadgeTone,
+  getDeviceEnabledState,
+  getDeviceRuntimeBadgeTone,
+  normalizeDeviceDisplayStatus,
+} from '../device-management/deviceStatusDisplay';
 import { useHouseholdContext, useI18n } from '../../runtime';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { api } from './api';
@@ -131,28 +137,22 @@ function formatDeviceType(deviceType: Device['device_type'], locale: string | un
 }
 
 function formatDeviceStatus(status: Device['status'], locale: string | undefined) {
-  switch (status) {
-    case 'active': return getFamilyMessage(locale, 'family.devices.status.active');
-    case 'offline': return getFamilyMessage(locale, 'family.devices.status.offline');
-    case 'disabled': return getFamilyMessage(locale, 'family.devices.status.disabled');
-    default: return getFamilyMessage(locale, 'family.devices.status.inactive');
+  switch (normalizeDeviceDisplayStatus(status)) {
+    case 'active': return getFamilyMessage(locale, 'family.devices.runtime.active');
+    case 'offline': return getFamilyMessage(locale, 'family.devices.runtime.offline');
+    case 'disabled': return getFamilyMessage(locale, 'family.devices.runtime.disabled');
+    default: return getFamilyMessage(locale, 'family.devices.runtime.inactive');
   }
 }
 
 function getDeviceStatusBadge(status: Device['status']): 'success' | 'warning' | 'inactive' | 'danger' | 'secondary' {
-  if (status === 'active') {
-    return 'success';
-  }
-  if (status === 'offline') {
-    return 'warning';
-  }
-  if (status === 'disabled') {
-    return 'danger';
-  }
-  if (status === 'inactive') {
-    return 'inactive';
-  }
-  return 'secondary';
+  return getDeviceRuntimeBadgeTone(status);
+}
+
+function formatDeviceEnabledStatus(status: Device['status'], locale: string | undefined) {
+  return getDeviceEnabledState(status) === 'disabled'
+    ? getFamilyMessage(locale, 'family.devices.enabled.disabled')
+    : getFamilyMessage(locale, 'family.devices.enabled.enabled');
 }
 
 function getMemberStatus(memberId: string, overview: ContextOverviewRead | null) {
@@ -1207,12 +1207,17 @@ export function FamilyDevices() {
                   <h3 className="family-device-card__name">{device.name}</h3>
                   <p className="family-device-card__room">{roomNameMap[device.room_id ?? ''] ?? copy.noRoom}</p>
                 </div>
-                <span className={`badge badge--${getDeviceStatusBadge(device.status)}`}>
-                  {formatDeviceStatus(device.status, locale)}
+                <span className={`badge badge--${getDeviceEnabledBadgeTone(device.status)}`}>
+                  {formatDeviceEnabledStatus(device.status, locale)}
                 </span>
               </div>
               <div className="family-device-card__tags">
                 <span className="badge badge--secondary">{formatDeviceType(device.device_type, locale)}</span>
+                {getDeviceEnabledState(device.status) === 'enabled' ? (
+                  <span className={`badge badge--${getDeviceStatusBadge(device.status)}`}>
+                    {formatDeviceStatus(device.status, locale)}
+                  </span>
+                ) : null}
                 <span className={`badge badge--${device.controllable ? 'success' : 'secondary'}`}>
                   {device.controllable ? copy.controllable : copy.readOnly}
                 </span>

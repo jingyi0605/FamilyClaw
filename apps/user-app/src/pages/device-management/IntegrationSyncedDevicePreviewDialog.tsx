@@ -1,4 +1,10 @@
 import { Card } from '../family/base';
+import {
+  getDeviceEnabledBadgeTone,
+  getDeviceEnabledState,
+  getDeviceRuntimeBadgeTone,
+  normalizeDeviceDisplayStatus,
+} from './deviceStatusDisplay';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import type { IntegrationResource } from '../settings/settingsTypes';
 
@@ -15,33 +21,23 @@ type Props = {
   onClose: () => void;
 };
 
-function getDeviceStatusBadge(status: string): 'success' | 'warning' | 'inactive' | 'danger' | 'secondary' {
-  if (status === 'active') {
-    return 'success';
-  }
-  if (status === 'offline') {
-    return 'warning';
-  }
-  if (status === 'disabled') {
-    return 'danger';
-  }
-  if (status === 'inactive') {
-    return 'inactive';
-  }
-  return 'secondary';
+function formatDeviceEnabledStatus(statusValue: string, page: PageLookup) {
+  return getDeviceEnabledState(statusValue) === 'disabled'
+    ? page('settings.integrations.deviceEnabled.disabled')
+    : page('settings.integrations.deviceEnabled.enabled');
 }
 
-function formatDeviceStatus(statusValue: string, page: PageLookup) {
-  if (statusValue === 'active') {
-    return page('settings.integrations.deviceStatus.active');
+function formatDeviceRuntimeStatus(statusValue: string, page: PageLookup) {
+  switch (normalizeDeviceDisplayStatus(statusValue)) {
+    case 'active':
+      return page('settings.integrations.deviceRuntime.active');
+    case 'offline':
+      return page('settings.integrations.deviceRuntime.offline');
+    case 'disabled':
+      return page('settings.integrations.deviceRuntime.disabled');
+    default:
+      return page('settings.integrations.deviceRuntime.inactive');
   }
-  if (statusValue === 'offline') {
-    return page('settings.integrations.deviceStatus.offline');
-  }
-  if (statusValue === 'disabled') {
-    return page('settings.integrations.deviceStatus.disabled');
-  }
-  return page('settings.integrations.deviceStatus.inactive');
 }
 
 export function IntegrationSyncedDevicePreviewDialog({
@@ -85,11 +81,19 @@ export function IntegrationSyncedDevicePreviewDialog({
                   <span className="device-card__name">{device.name}</span>
                   <span className="device-card__room">{device.room_name || page('settings.integrations.instance.noRoom')}</span>
                 </div>
-                <span className={`badge badge--${getDeviceStatusBadge(device.status)}`}>
-                  {formatDeviceStatus(device.status, page)}
+                <span className={`badge badge--${getDeviceEnabledBadgeTone(device.status)}`}>
+                  {formatDeviceEnabledStatus(device.status, page)}
                 </span>
               </div>
-              <div className="integration-status__detail">{device.category || device.plugin_id}</div>
+              <div className="integration-status__detail">
+                {getDeviceEnabledState(device.status) === 'enabled' ? (
+                  <span className={`badge badge--${getDeviceRuntimeBadgeTone(device.status)}`}>
+                    {formatDeviceRuntimeStatus(device.status, page)}
+                  </span>
+                ) : null}
+                {getDeviceEnabledState(device.status) === 'enabled' ? ' / ' : ''}
+                {device.category || device.plugin_id}
+              </div>
             </Card>
           ))}
         </div>

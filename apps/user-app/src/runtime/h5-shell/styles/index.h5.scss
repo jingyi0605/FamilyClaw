@@ -90,6 +90,21 @@ input, select, textarea {
   --page-content-max-width: 1920px;
   position: relative;
   isolation: isolate;
+
+  /* 全局按钮变量 - 使用 px 避免 Taro rem 转换 */
+  --btn-gap: 8px;
+  --btn-padding: 10px 20px;
+  --btn-padding-xs: 4px 8px;
+  --btn-padding-sm: 6px 14px;
+  --btn-padding-md: 10px 20px;
+  --btn-padding-lg: 12px 28px;
+  --btn-radius: var(--radius-lg);
+  --btn-shadow: var(--shadow-sm);
+  --btn-shadow-hover: var(--shadow-md);
+  --btn-font-weight: 600;
+  --btn-min-width: 80px;
+  --btn-min-width-primary: 100px;
+
   background:
     radial-gradient(circle at top right, color-mix(in srgb, var(--brand-primary-light) 60%, transparent), transparent 30%),
     radial-gradient(circle at 12% 18%, color-mix(in srgb, var(--color-info-light) 48%, transparent), transparent 24%),
@@ -1384,7 +1399,7 @@ input, select, textarea {
   align-items: center;
   justify-content: center;
   gap: var(--btn-gap);
-  padding: var(--btn-padding-md);
+  padding: var(--btn-padding);
   border: 1px solid transparent;
   border-radius: var(--btn-radius);
   background: transparent;
@@ -1598,6 +1613,7 @@ input, select, textarea {
 
   /* 按钮尺寸 - 使用 px 避免 Taro rem 转换 */
   --btn-gap: 8px;
+  --btn-padding: 10px 20px;  /* 默认值，等同于 --btn-padding-md */
   --btn-padding-xs: 4px 8px;
   --btn-padding-sm: 6px 14px;
   --btn-padding-md: 10px 20px;
@@ -1870,6 +1886,7 @@ input, select, textarea {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--spacing-sm);
+  flex-wrap: wrap;
 }
 
 .family-device-card__name-block {
@@ -2384,9 +2401,9 @@ input, select, textarea {
   --list-gap: var(--spacing-sm);
   --list-item-padding: var(--spacing-xs) 0;
 
-  /* 按钮尺寸 */
-  --btn-gap: var(--spacing-sm);
-  --btn-padding: var(--spacing-sm) var(--spacing-lg);
+  /* 按钮尺寸 - 使用 px 避免 Taro rem 转换 */
+  --btn-gap: 8px;
+  --btn-padding: 10px 20px;
   --btn-icon-size: var(--icon-box-md);
 
   /* 标签/徽章 */
@@ -9257,9 +9274,9 @@ body::before {
   --list-gap: var(--spacing-sm);
   --list-item-padding: var(--spacing-xs) 0;
 
-  /* 按钮尺寸 */
-  --btn-gap: var(--spacing-sm);
-  --btn-padding: var(--spacing-sm) var(--spacing-lg);
+  /* 按钮尺寸 - 使用 px 避免 Taro rem 转换 */
+  --btn-gap: 8px;
+  --btn-padding: 10px 20px;
   --btn-icon-size: var(--icon-box-md);
 
   /* 标签/徽章 */

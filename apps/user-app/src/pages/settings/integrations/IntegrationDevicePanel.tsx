@@ -1,4 +1,10 @@
 import { useMemo, useState } from 'react';
+import {
+  getDeviceEnabledBadgeTone,
+  getDeviceEnabledState,
+  getDeviceRuntimeBadgeTone,
+  normalizeDeviceDisplayStatus,
+} from '../../device-management/deviceStatusDisplay';
 import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { HouseholdDeviceDetailDialog, type DevicePageLookup } from '../../device-management/HouseholdDeviceDetailDialog';
 import { Card } from '../../family/base';
@@ -32,22 +38,6 @@ function getResourceDeviceId(resource: IntegrationResource): string | null {
   return null;
 }
 
-function getDeviceStatusBadge(status: string): 'success' | 'warning' | 'inactive' | 'danger' | 'secondary' {
-  if (status === 'active') {
-    return 'success';
-  }
-  if (status === 'offline') {
-    return 'warning';
-  }
-  if (status === 'disabled') {
-    return 'danger';
-  }
-  if (status === 'inactive') {
-    return 'inactive';
-  }
-  return 'secondary';
-}
-
 export function IntegrationDevicePanel({
   currentHouseholdId,
   page,
@@ -65,17 +55,23 @@ export function IntegrationDevicePanel({
     [selectedDeviceId, selectedDevices],
   );
 
-  function formatDeviceStatus(statusValue: string) {
-    if (statusValue === 'active') {
-      return page('settings.integrations.deviceStatus.active');
+  function formatDeviceEnabledStatus(statusValue: string) {
+    return getDeviceEnabledState(statusValue) === 'disabled'
+      ? page('settings.integrations.deviceEnabled.disabled')
+      : page('settings.integrations.deviceEnabled.enabled');
+  }
+
+  function formatDeviceRuntimeStatus(statusValue: string) {
+    switch (normalizeDeviceDisplayStatus(statusValue)) {
+      case 'active':
+        return page('settings.integrations.deviceRuntime.active');
+      case 'offline':
+        return page('settings.integrations.deviceRuntime.offline');
+      case 'disabled':
+        return page('settings.integrations.deviceRuntime.disabled');
+      default:
+        return page('settings.integrations.deviceRuntime.inactive');
     }
-    if (statusValue === 'offline') {
-      return page('settings.integrations.deviceStatus.offline');
-    }
-    if (statusValue === 'disabled') {
-      return page('settings.integrations.deviceStatus.disabled');
-    }
-    return page('settings.integrations.deviceStatus.inactive');
   }
 
   function openDeviceDetail(deviceId: string | null) {
@@ -130,11 +126,19 @@ export function IntegrationDevicePanel({
                     <span className="device-card__name">{device.name}</span>
                     <span className="device-card__room">{device.room_name || page('settings.integrations.instance.noRoom')}</span>
                   </div>
-                  <span className={`badge badge--${getDeviceStatusBadge(device.status)}`}>
-                    {formatDeviceStatus(device.status)}
+                  <span className={`badge badge--${getDeviceEnabledBadgeTone(device.status)}`}>
+                    {formatDeviceEnabledStatus(device.status)}
                   </span>
                 </div>
-                <div className="integration-status__detail">{device.category || selectedInstance.plugin_id}</div>
+                <div className="integration-status__detail">
+                  {getDeviceEnabledState(device.status) === 'enabled' ? (
+                    <span className={`badge badge--${getDeviceRuntimeBadgeTone(device.status)}`}>
+                      {formatDeviceRuntimeStatus(device.status)}
+                    </span>
+                  ) : null}
+                  {getDeviceEnabledState(device.status) === 'enabled' ? ' / ' : ''}
+                  {device.category || selectedInstance.plugin_id}
+                </div>
               </button>
             </Card>
           );
