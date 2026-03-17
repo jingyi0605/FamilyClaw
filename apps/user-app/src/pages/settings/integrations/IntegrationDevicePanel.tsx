@@ -153,6 +153,7 @@ export function IntegrationDevicePanel({
         page={detailPageLookup}
         fallbackStatus={selectedDeviceStatus}
         fallbackControllable={false}
+        fallbackRoomId={selectedDeviceResource?.room_id ?? null}
         onClose={closeDeviceDetail}
         onStatus={onStatus}
         onError={onError}

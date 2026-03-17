@@ -29,6 +29,13 @@ import type {
   IntegrationInstanceListRead,
   IntegrationPageViewModel,
   IntegrationResourceListRead,
+  MarketplaceCatalogListRead,
+  MarketplaceInstallTaskCreateRequest,
+  MarketplaceInstallTaskRead,
+  MarketplaceInstanceRead,
+  MarketplaceSourceCreateRequest,
+  MarketplaceSourceRead,
+  MarketplaceSourceSyncResultRead,
   HouseholdVoiceprintSummaryRead,
   PluginConfigFormRead,
   MemberChannelBindingCreate,
@@ -201,7 +208,7 @@ export const settingsApi = {
     deviceId: string,
     payload: Partial<{
       name: string;
-      status: 'active' | 'offline' | 'inactive';
+      status: 'active' | 'offline' | 'inactive' | 'disabled';
       room_id: string | null;
       controllable: boolean;
       voice_auto_takeover_enabled: boolean;
@@ -343,7 +350,7 @@ export const settingsApi = {
     if (params.status) query.set('status', params.status);
     return request<IntegrationResourceListRead>(`/integrations/resources?${query.toString()}`);
   },
-  async getIntegrationPageView(householdId: string) {
+  async getLegacyIntegrationPageView(householdId: string) {
     // 当前设置页只用到目录、实例和已同步设备，直接走稳定的独立接口，
     // 避免被后端聚合视图里尚未落库的 discoveries 表拖死。
     const [catalog, instances, resources] = await Promise.all([
@@ -363,6 +370,11 @@ export const settingsApi = {
         helper: [],
       },
     };
+  },
+  getIntegrationPageView(householdId: string) {
+    return request<IntegrationPageViewModel>(
+      `/integrations/page-view?household_id=${encodeURIComponent(householdId)}`,
+    );
   },
   createIntegrationInstance(payload: IntegrationInstanceCreateRequest) {
     return request<IntegrationInstance>('/integrations/instances', {
@@ -494,6 +506,39 @@ export const settingsApi = {
         body: JSON.stringify(payload),
       },
     );
+  },
+  listMarketplaceSources() {
+    return request<MarketplaceSourceRead[]>('/plugin-marketplace/sources');
+  },
+  createMarketplaceSource(payload: MarketplaceSourceCreateRequest) {
+    return request<MarketplaceSourceRead>('/plugin-marketplace/sources', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  syncMarketplaceSource(sourceId: string) {
+    return request<MarketplaceSourceSyncResultRead>(`/plugin-marketplace/sources/${encodeURIComponent(sourceId)}/sync`, {
+      method: 'POST',
+    });
+  },
+  listMarketplaceCatalog(householdId?: string) {
+    const query = new URLSearchParams();
+    if (householdId) {
+      query.set('household_id', householdId);
+    }
+    return request<MarketplaceCatalogListRead>(`/plugin-marketplace/catalog${query.toString() ? `?${query.toString()}` : ''}`);
+  },
+  createMarketplaceInstallTask(payload: MarketplaceInstallTaskCreateRequest) {
+    return request<MarketplaceInstallTaskRead>('/plugin-marketplace/install-tasks', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  setMarketplaceInstanceEnabled(instanceId: string, payload: PluginStateUpdateRequest) {
+    return request<MarketplaceInstanceRead>(`/plugin-marketplace/instances/${encodeURIComponent(instanceId)}/enable`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   },
   listPluginJobs(
     householdId: string,

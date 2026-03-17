@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Taro from '@tarojs/taro';
-import { Card } from '../family/base';
+import { Card, ToggleSwitch } from '../family/base';
 import {
   getDeviceEnabledBadgeTone,
   getDeviceEnabledState,
@@ -15,6 +15,7 @@ import type {
   DeviceEntityListRead,
   DeviceActionExecuteRequest,
   DeviceActionLogListRead,
+  Room,
 } from '../settings/settingsTypes';
 
 export type DevicePageLookup = (
@@ -33,6 +34,7 @@ type Props = {
   page: DevicePageLookup;
   fallbackStatus?: 'active' | 'offline' | 'inactive' | 'disabled';
   fallbackControllable?: boolean;
+  fallbackRoomId?: string | null;
   onClose: () => void;
   onStatus: (message: string) => void;
   onError: (message: string) => void;
@@ -41,6 +43,18 @@ type Props = {
 };
 
 const DEVICE_LOG_PAGE_SIZE = 20;
+
+type DeviceEditDraft = {
+  name: string;
+  roomId: string;
+  enabled: boolean;
+};
+
+const EMPTY_DEVICE_EDIT_DRAFT: DeviceEditDraft = {
+  name: '',
+  roomId: '',
+  enabled: false,
+};
 
 function getLogResultBadge(result: string): 'success' | 'danger' | 'warning' | 'secondary' {
   if (result === 'success') {
@@ -91,6 +105,7 @@ export function HouseholdDeviceDetailDialog({
   page,
   fallbackStatus = 'inactive',
   fallbackControllable = false,
+  fallbackRoomId = null,
   onClose,
   onStatus,
   onError,
@@ -101,9 +116,15 @@ export function HouseholdDeviceDetailDialog({
   const [entityResponse, setEntityResponse] = useState<DeviceEntityListRead | null>(null);
   const [deviceLogs, setDeviceLogs] = useState<DeviceActionLogListRead | null>(null);
   const [rangeDrafts, setRangeDrafts] = useState<Record<string, number>>({});
+  const [rooms, setRooms] = useState<Room[]>([]);
   const [entitiesLoading, setEntitiesLoading] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editDraft, setEditDraft] = useState<DeviceEditDraft>(EMPTY_DEVICE_EDIT_DRAFT);
+  const [editError, setEditError] = useState('');
+  const [loadedEditSourceKey, setLoadedEditSourceKey] = useState<string | null>(null);
   const [actionSubmitting, setActionSubmitting] = useState<Record<string, boolean>>({});
   const [logsModalOpen, setLogsModalOpen] = useState(false);
 
@@ -113,6 +134,22 @@ export function HouseholdDeviceDetailDialog({
   const selectedDeviceName = selectedDevice?.name ?? deviceName;
   const selectedDeviceDisabled = normalizeDeviceDisplayStatus(selectedDeviceStatus) === 'disabled';
   const selectedDeviceControllable = selectedDevice?.controllable ?? fallbackControllable;
+  const sourceDraft = useMemo<DeviceEditDraft>(() => ({
+    name: selectedDevice?.name ?? deviceName,
+    roomId: selectedDevice?.room_id ?? fallbackRoomId ?? '',
+    enabled: getDeviceEnabledState(selectedDeviceStatus) === 'enabled',
+  }), [deviceName, fallbackRoomId, selectedDevice?.name, selectedDevice?.room_id, selectedDeviceStatus]);
+  const sourceDraftKey = useMemo(
+    () => JSON.stringify(sourceDraft),
+    [sourceDraft],
+  );
+  const sortedRooms = useMemo(
+    () => [...rooms].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')),
+    [rooms],
+  );
+  const isEditDirty = editDraft.name.trim() !== sourceDraft.name.trim()
+    || editDraft.roomId !== sourceDraft.roomId
+    || editDraft.enabled !== sourceDraft.enabled;
 
   useEffect(() => {
     if (!open || !deviceId) {
@@ -120,6 +157,9 @@ export function HouseholdDeviceDetailDialog({
       setEntityResponse(null);
       setDeviceLogs(null);
       setLogsModalOpen(false);
+      setEditDraft(EMPTY_DEVICE_EDIT_DRAFT);
+      setEditError('');
+      setLoadedEditSourceKey(null);
       return;
     }
     setEntityView('favorites');
@@ -131,8 +171,59 @@ export function HouseholdDeviceDetailDialog({
     if (!open || !deviceId) {
       return;
     }
+    if (loadedEditSourceKey === sourceDraftKey && !editError) {
+      return;
+    }
+    if (loadedEditSourceKey === null || !isEditDirty) {
+      setEditDraft(sourceDraft);
+      setEditError('');
+      setLoadedEditSourceKey(sourceDraftKey);
+    }
+  }, [deviceId, editError, isEditDirty, loadedEditSourceKey, open, sourceDraft, sourceDraftKey]);
+
+  useEffect(() => {
+    if (!open || !deviceId) {
+      return;
+    }
     void loadDeviceEntities(deviceId, entityView);
   }, [deviceId, entityView, open]);
+
+  useEffect(() => {
+    if (!open || !currentHouseholdId) {
+      setRooms([]);
+      setRoomsLoading(false);
+      return;
+    }
+
+    const householdId = currentHouseholdId;
+    let cancelled = false;
+
+    async function loadRooms() {
+      setRoomsLoading(true);
+      try {
+        const response = await settingsApi.listRooms(householdId);
+        if (cancelled) {
+          return;
+        }
+        setRooms(response.items);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        onError(error instanceof Error ? error.message : page('settings.integrations.error.loadRoomsFailed'));
+      } finally {
+        if (!cancelled) {
+          setRoomsLoading(false);
+        }
+      }
+    }
+
+    void loadRooms();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentHouseholdId, onError, open, page]);
 
   async function loadDeviceEntities(currentDeviceId: string, view: EntityView) {
     setEntitiesLoading(true);
@@ -259,31 +350,6 @@ export function HouseholdDeviceDetailDialog({
     }
   }
 
-  async function handleDisableDevice() {
-    if (!deviceId) {
-      return;
-    }
-    const confirmResult = await Taro.showModal({
-      title: page('settings.integrations.deviceDetail.disableTitle'),
-      content: page('settings.integrations.deviceDetail.disableConfirm', { name: selectedDeviceName }),
-      confirmText: page('settings.integrations.action.disableDevice'),
-      cancelText: page('settings.integrations.action.cancel'),
-    });
-    if (!confirmResult.confirm) {
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await settingsApi.disableDevice(deviceId);
-      onStatus(page('settings.integrations.status.deviceDisabled', { name: selectedDeviceName }));
-      await refreshCurrentDevice();
-    } catch (error) {
-      onError(error instanceof Error ? error.message : page('settings.integrations.error.disableDeviceFailed'));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   async function handleDeleteDevice() {
     if (!deviceId) {
       return;
@@ -298,7 +364,7 @@ export function HouseholdDeviceDetailDialog({
     if (!confirmResult.confirm) {
       return;
     }
-    setSubmitting(true);
+    setDeleteSubmitting(true);
     try {
       await settingsApi.deleteDevice(deviceId);
       onStatus(page('settings.integrations.status.deviceDeleted', { name: selectedDeviceName }));
@@ -308,7 +374,7 @@ export function HouseholdDeviceDetailDialog({
     } catch (error) {
       onError(error instanceof Error ? error.message : page('settings.integrations.error.deleteDeviceFailed'));
     } finally {
-      setSubmitting(false);
+      setDeleteSubmitting(false);
     }
   }
 
@@ -318,6 +384,66 @@ export function HouseholdDeviceDetailDialog({
     }
     setLogsModalOpen(true);
     await loadDeviceLogs(deviceId);
+  }
+
+  async function handleSaveDevice() {
+    if (!deviceId) {
+      return;
+    }
+
+    const trimmedName = editDraft.name.trim();
+    if (!trimmedName) {
+      setEditError(page('settings.integrations.deviceDetail.aliasRequired'));
+      return;
+    }
+
+    const payload: Parameters<typeof settingsApi.updateDevice>[1] = {};
+    if (trimmedName !== sourceDraft.name.trim()) {
+      payload.name = trimmedName;
+    }
+
+    const nextRoomId = editDraft.roomId || null;
+    const currentRoomId = sourceDraft.roomId || null;
+    if (nextRoomId !== currentRoomId) {
+      payload.room_id = nextRoomId;
+    }
+
+    if (editDraft.enabled !== sourceDraft.enabled) {
+      payload.status = editDraft.enabled ? 'inactive' : 'disabled';
+    }
+
+    if (Object.keys(payload).length === 0) {
+      setEditError('');
+      return;
+    }
+
+    setEditSubmitting(true);
+    setEditError('');
+    try {
+      const updatedDevice = await settingsApi.updateDevice(deviceId, payload);
+      setEntityResponse((current) => current ? {
+        ...current,
+        device: updatedDevice,
+      } : current);
+      setEditDraft({
+        name: updatedDevice.name,
+        roomId: updatedDevice.room_id ?? '',
+        enabled: getDeviceEnabledState(updatedDevice.status) === 'enabled',
+      });
+      setLoadedEditSourceKey(JSON.stringify({
+        name: updatedDevice.name,
+        roomId: updatedDevice.room_id ?? '',
+        enabled: getDeviceEnabledState(updatedDevice.status) === 'enabled',
+      }));
+      onStatus(page('settings.integrations.status.deviceUpdated', { name: updatedDevice.name }));
+      await refreshCurrentDevice();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : page('settings.integrations.error.updateDeviceFailed');
+      setEditError(message);
+      onError(message);
+    } finally {
+      setEditSubmitting(false);
+    }
   }
 
   function renderEntityControls(entity: DeviceEntity) {
@@ -366,10 +492,13 @@ export function HouseholdDeviceDetailDialog({
             step={entity.control.step ?? 1}
             value={draftValue}
             disabled={actionDisabled}
-            onChange={(event) => setRangeDrafts((current) => ({
-              ...current,
-              [entity.entity_id]: Number(event.currentTarget.value),
-            }))}
+            onChange={(event) => {
+              const nextValue = Number(event.currentTarget.value);
+              setRangeDrafts((current) => ({
+                ...current,
+                [entity.entity_id]: nextValue,
+              }));
+            }}
           />
           <button
             className="btn btn--outline btn--sm"
@@ -446,18 +575,10 @@ export function HouseholdDeviceDetailDialog({
                   {page('settings.integrations.action.viewLogs')}
                 </button>
                 <button
-                  className="btn btn--outline btn--sm"
-                  type="button"
-                  onClick={() => void handleDisableDevice()}
-                  disabled={submitting || selectedDeviceDisabled}
-                >
-                  {page('settings.integrations.action.disableDevice')}
-                </button>
-                <button
                   className="btn btn--outline btn--sm btn--danger"
                   type="button"
                   onClick={() => void handleDeleteDevice()}
-                  disabled={submitting}
+                  disabled={deleteSubmitting || editSubmitting}
                 >
                   {page('settings.integrations.action.deleteDevice')}
                 </button>
@@ -469,6 +590,85 @@ export function HouseholdDeviceDetailDialog({
                 {page('settings.integrations.deviceDetail.deviceDisabledHint')}
               </div>
             ) : null}
+
+            <Card className="integration-device-detail__edit-card">
+              <div className="integration-device-detail__edit-header">
+                <div>
+                  <h4>{page('settings.integrations.deviceDetail.editTitle')}</h4>
+                  <p>{page('settings.integrations.deviceDetail.editDesc')}</p>
+                </div>
+                <button
+                  className="btn btn--outline btn--sm"
+                  type="button"
+                  onClick={() => void handleSaveDevice()}
+                  disabled={!isEditDirty || editSubmitting || deleteSubmitting}
+                >
+                  {editSubmitting
+                    ? page('settings.integrations.action.saving')
+                    : page('settings.integrations.action.saveDevice')}
+                </button>
+              </div>
+              {editError ? <div className="form-error">{editError}</div> : null}
+              <div className="settings-form integration-device-detail__edit-form">
+                <div className="form-group">
+                  <label htmlFor="integration-device-alias">{page('settings.integrations.deviceDetail.aliasLabel')}</label>
+                  <input
+                    id="integration-device-alias"
+                    className="form-input"
+                    type="text"
+                    value={editDraft.name}
+                    placeholder={page('settings.integrations.deviceDetail.aliasPlaceholder')}
+                    disabled={editSubmitting || deleteSubmitting}
+                    onChange={(event) => {
+                      const nextName = event.currentTarget.value;
+                      setEditError('');
+                      setEditDraft((current) => ({ ...current, name: nextName }));
+                    }}
+                  />
+                  <div className="form-help">{page('settings.integrations.deviceDetail.aliasHelp')}</div>
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="integration-device-room">{page('settings.integrations.deviceDetail.roomLabel')}</label>
+                  <select
+                    id="integration-device-room"
+                    className="form-select"
+                    value={editDraft.roomId}
+                    disabled={editSubmitting || deleteSubmitting || roomsLoading}
+                    onChange={(event) => {
+                      const nextRoomId = event.currentTarget.value;
+                      setEditError('');
+                      setEditDraft((current) => ({ ...current, roomId: nextRoomId }));
+                    }}
+                  >
+                    <option value="">{page('settings.integrations.deviceDetail.roomUnassigned')}</option>
+                    {sortedRooms.map((room) => (
+                      <option key={room.id} value={room.id}>{room.name}</option>
+                    ))}
+                  </select>
+                  <div className="form-help">
+                    {roomsLoading
+                      ? page('settings.integrations.deviceDetail.roomLoading')
+                      : page('settings.integrations.deviceDetail.roomHelp')}
+                  </div>
+                </div>
+
+                <div className="integration-device-detail__toggle-card">
+                  <ToggleSwitch
+                    checked={editDraft.enabled}
+                    label={page('settings.integrations.deviceDetail.enabledLabel')}
+                    description={editDraft.enabled
+                      ? page('settings.integrations.deviceDetail.enabledDescEnabled')
+                      : page('settings.integrations.deviceDetail.enabledDescDisabled')}
+                    disabled={editSubmitting || deleteSubmitting}
+                    onChange={(value) => {
+                      setEditError('');
+                      setEditDraft((current) => ({ ...current, enabled: value }));
+                    }}
+                  />
+                </div>
+              </div>
+            </Card>
 
             <div className="integration-device-detail__tabs">
               <button

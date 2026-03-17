@@ -1236,6 +1236,7 @@ export function FamilyDevices() {
         page={detailPageLookup}
         fallbackStatus={selectedDevice?.status}
         fallbackControllable={selectedDevice?.controllable}
+        fallbackRoomId={selectedDevice?.room_id ?? null}
         onClose={() => setSelectedDevice(null)}
         onStatus={(message) => {
           setStatus(message);
