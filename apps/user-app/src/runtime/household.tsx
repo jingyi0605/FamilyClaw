@@ -4,9 +4,11 @@ import {
   buildLocaleDefinitions,
   persistHouseholdId,
   resolveSupportedLocale,
+  type BootstrapSnapshot,
   type Household,
   type PluginLocale,
 } from '@familyclaw/user-core';
+import { useAuthContext } from './auth';
 import { coreApiClient, loadUserAppBootstrap, appStorage } from './core';
 
 type HouseholdContextValue = {
@@ -22,9 +24,42 @@ type HouseholdContextValue = {
   refreshCurrentHousehold: (householdId?: string) => Promise<void>;
 };
 
+type HouseholdBootstrapState = {
+  currentHouseholdId: string;
+  currentHousehold: Household | null;
+  households: Household[];
+  locales: PluginLocale[];
+  locale: string;
+};
+
 const HouseholdContext = createContext<HouseholdContextValue | null>(null);
 
+function createEmptyHouseholdState(): HouseholdBootstrapState {
+  return {
+    currentHouseholdId: '',
+    currentHousehold: null,
+    households: [],
+    locales: [],
+    locale: DEFAULT_LOCALE_ID,
+  };
+}
+
+function createHouseholdStateFromBootstrap(snapshot: BootstrapSnapshot): HouseholdBootstrapState {
+  return {
+    currentHouseholdId: snapshot.currentHousehold?.id ?? '',
+    currentHousehold: snapshot.currentHousehold,
+    households: snapshot.households,
+    locales: snapshot.locales,
+    locale: resolveSupportedLocale(
+      snapshot.currentHousehold?.locale,
+      buildLocaleDefinitions(snapshot.locales),
+      DEFAULT_LOCALE_ID,
+    ),
+  };
+}
+
 export function HouseholdProvider(props: { children: ReactNode }) {
+  const { actor, authLoading } = useAuthContext();
   const [currentHouseholdId, setCurrentHouseholdIdState] = useState('');
   const [households, setHouseholds] = useState<Household[]>([]);
   const [currentHousehold, setCurrentHousehold] = useState<Household | null>(null);
@@ -32,6 +67,14 @@ export function HouseholdProvider(props: { children: ReactNode }) {
   const [locale, setLocale] = useState(DEFAULT_LOCALE_ID);
   const [householdsLoading, setHouseholdsLoading] = useState(true);
   const [householdsError, setHouseholdsError] = useState('');
+
+  function applyHouseholdState(nextState: HouseholdBootstrapState) {
+    setCurrentHouseholdIdState(nextState.currentHouseholdId);
+    setCurrentHousehold(nextState.currentHousehold);
+    setHouseholds(nextState.households);
+    setLocales(nextState.locales);
+    setLocale(nextState.locale);
+  }
 
   async function loadLocales(householdId: string, householdLocale?: string | null) {
     if (!householdId) {
@@ -90,10 +133,7 @@ export function HouseholdProvider(props: { children: ReactNode }) {
         setLocale(DEFAULT_LOCALE_ID);
       }
     } catch (error) {
-      setHouseholds([]);
-      setCurrentHousehold(null);
-      setLocales([]);
-      setLocale(DEFAULT_LOCALE_ID);
+      applyHouseholdState(createEmptyHouseholdState());
       setHouseholdsError(error instanceof Error ? error.message : '加载家庭列表失败');
     } finally {
       setHouseholdsLoading(false);
@@ -123,6 +163,24 @@ export function HouseholdProvider(props: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    if (authLoading) {
+      setHouseholdsLoading(true);
+      setHouseholdsError('');
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (!actor?.authenticated) {
+      applyHouseholdState(createEmptyHouseholdState());
+      setHouseholdsError('');
+      setHouseholdsLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setHouseholdsLoading(true);
     setHouseholdsError('');
 
@@ -132,14 +190,11 @@ export function HouseholdProvider(props: { children: ReactNode }) {
           return;
         }
 
-        setHouseholds(snapshot.households);
-        setCurrentHousehold(snapshot.currentHousehold);
-        setCurrentHouseholdIdState(snapshot.currentHousehold?.id ?? '');
-        setLocales(snapshot.locales);
-        setLocale(resolveSupportedLocale(snapshot.currentHousehold?.locale, buildLocaleDefinitions(snapshot.locales), DEFAULT_LOCALE_ID));
+        applyHouseholdState(createHouseholdStateFromBootstrap(snapshot));
       })
       .catch(error => {
         if (!cancelled) {
+          applyHouseholdState(createEmptyHouseholdState());
           setHouseholdsError(error instanceof Error ? error.message : '家庭上下文初始化失败');
         }
       })
@@ -152,7 +207,7 @@ export function HouseholdProvider(props: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [actor?.account_id, actor?.authenticated, actor?.household_id, authLoading]);
 
   const value = useMemo<HouseholdContextValue>(() => ({
     currentHouseholdId,
