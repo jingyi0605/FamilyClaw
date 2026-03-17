@@ -1504,4 +1504,6 @@ export const PAGE_MESSAGES_ZH_CN = {
   'setup.butler.error.rateLimited': 'AI 服务请求过于频繁，请稍后再试。',
   'setup.butler.error.streamNotSupported': '当前 AI 服务不支持流式对话，请更换模型或供应商。',
   'setup.butler.error.providerFailed': 'AI 服务请求失败，请检查供应商配置。',
+  'settings.plugin.type.themePack': '主题包',
+  'settings.plugin.type.aiProvider': 'AI 提供器',
 } as const;

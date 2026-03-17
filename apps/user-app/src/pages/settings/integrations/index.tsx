@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import Taro from '@tarojs/taro';
+import { Home, Check, Plug } from 'lucide-react';
 import { GuardedPage, useHouseholdContext, useI18n } from '../../../runtime';
 import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, Section } from '../../family/base';
+import { IntegrationSyncedDevicePreviewDialog } from '../../device-management/IntegrationSyncedDevicePreviewDialog';
 import { SettingsPageShell } from '../SettingsPageShell';
-import { IntegrationDevicePanel } from './IntegrationDevicePanel';
 import { ApiError, settingsApi } from '../settingsApi';
+import {
+  buildSyncAllImpactSummary,
+  filterIntegrationDeviceCandidates,
+  getCandidateDomainOptions,
+  getCandidateEntityDomain,
+  getCandidateRoomOptions,
+  type IntegrationDeviceCandidate,
+  type SyncAllImpactSummary,
+} from './integrationSyncHelpers';
 import type {
   IntegrationActionResult,
   IntegrationCatalogItem,
@@ -15,20 +25,14 @@ import type {
   PluginManifestFieldUiSchema,
 } from '../settingsTypes';
 
-type IntegrationDeviceCandidate = {
-  external_device_id: string;
-  name: string;
-  room_name: string | null;
-  entity_count: number;
-  already_synced: boolean;
-};
-
 type CreateDraft = {
   displayName: string;
   values: Record<string, unknown>;
   secrets: Record<string, string>;
   fieldErrors: Record<string, string>;
 };
+
+type SyncAllConfirmStep = 'first' | 'second' | null;
 
 function getActionOutputItems<T>(result: IntegrationActionResult): T[] {
   const items = result.output.items;
@@ -104,6 +108,13 @@ function SettingsIntegrationsContent() {
   const [catalogModalOpen, setCatalogModalOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [deviceModalOpen, setDeviceModalOpen] = useState(false);
+  const [syncedPreviewOpen, setSyncedPreviewOpen] = useState(false);
+  const [syncAllConfirmStep, setSyncAllConfirmStep] = useState<SyncAllConfirmStep>(null);
+  const [syncAllImpactSummary, setSyncAllImpactSummary] = useState<SyncAllImpactSummary | null>(null);
+  const [syncAllLoading, setSyncAllLoading] = useState(false);
+  const [candidateKeyword, setCandidateKeyword] = useState('');
+  const [candidateRoomFilter, setCandidateRoomFilter] = useState('all');
+  const [candidateDomainFilter, setCandidateDomainFilter] = useState('all');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState('');
@@ -154,6 +165,19 @@ function SettingsIntegrationsContent() {
     () => deviceResources.filter((item) => item.integration_instance_id === selectedInstanceId),
     [deviceResources, selectedInstanceId],
   );
+  const candidateRoomOptions = useMemo(() => getCandidateRoomOptions(deviceCandidates), [deviceCandidates]);
+  const candidateDomainOptions = useMemo(() => getCandidateDomainOptions(deviceCandidates), [deviceCandidates]);
+  const filteredDeviceCandidates = useMemo(() => filterIntegrationDeviceCandidates(deviceCandidates, {
+    keyword: candidateKeyword,
+    room: candidateRoomFilter,
+    domain: candidateDomainFilter,
+  }), [candidateDomainFilter, candidateKeyword, candidateRoomFilter, deviceCandidates]);
+
+  useEffect(() => {
+    setSyncedPreviewOpen(false);
+    setSyncAllConfirmStep(null);
+    setSyncAllImpactSummary(null);
+  }, [selectedInstanceId]);
 
   function formatStatus(instance: IntegrationInstance) {
     if (instance.status === 'degraded') {
@@ -343,6 +367,29 @@ function SettingsIntegrationsContent() {
     }
   }
 
+  async function handleOpenSyncAllConfirm() {
+    if (!selectedInstance) {
+      return;
+    }
+    setSyncAllLoading(true);
+    try {
+      const result = await settingsApi.executeIntegrationInstanceAction(selectedInstance.id, {
+        action: 'sync',
+        payload: {
+          sync_scope: 'device_candidates',
+        },
+      });
+      const candidates = getActionOutputItems<IntegrationDeviceCandidate>(result);
+      setSyncAllImpactSummary(buildSyncAllImpactSummary(candidates));
+      setSyncAllConfirmStep('first');
+      setError('');
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.loadHaDevicesFailed'));
+    } finally {
+      setSyncAllLoading(false);
+    }
+  }
+
   async function handleSyncAll() {
     if (!selectedInstance) {
       return;
@@ -360,6 +407,8 @@ function SettingsIntegrationsContent() {
       setStatus(page('settings.integrations.status.deviceSyncFinished', {
         count: (summary?.created_devices ?? 0) + (summary?.updated_devices ?? 0),
       }));
+      setSyncAllConfirmStep(null);
+      setSyncAllImpactSummary(null);
       await reload(currentHouseholdId ?? '', selectedInstance.id);
     } catch (syncError) {
       setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.actionFailed'));
@@ -382,6 +431,9 @@ function SettingsIntegrationsContent() {
       });
       setDeviceCandidates(getActionOutputItems<IntegrationDeviceCandidate>(result));
       setSelectedDeviceIds([]);
+      setCandidateKeyword('');
+      setCandidateRoomFilter('all');
+      setCandidateDomainFilter('all');
       setDeviceModalOpen(true);
     } catch (syncError) {
       setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.loadHaDevicesFailed'));
@@ -433,7 +485,7 @@ function SettingsIntegrationsContent() {
               <div className="settings-empty-state">
                 <h3>{page('settings.integrations.empty.title')}</h3>
                 <p>{page('settings.integrations.empty.desc')}</p>
-                <button className="btn btn--outline btn--sm" type="button" onClick={() => setCatalogModalOpen(true)}>
+                <button className="btn btn--primary btn--sm" type="button" onClick={() => setCatalogModalOpen(true)}>
                   {page('settings.integrations.action.addByInstance')}
                 </button>
               </div>
@@ -479,10 +531,10 @@ function SettingsIntegrationsContent() {
                     </div>
                     <div className="device-card__actions">
                       <button
-                        className="btn btn--outline btn--sm"
+                        className="btn btn--primary btn--sm"
                         type="button"
-                        onClick={() => void handleSyncAll()}
-                        disabled={submitting || selectedInstance.config_state !== 'configured'}
+                        onClick={() => void handleOpenSyncAllConfirm()}
+                        disabled={submitting || syncAllLoading || selectedInstance.config_state !== 'configured'}
                       >
                         {page('settings.integrations.action.syncAllEntities')}
                       </button>
@@ -494,6 +546,13 @@ function SettingsIntegrationsContent() {
                       >
                         {page('settings.integrations.action.syncSelectedEntities')}
                       </button>
+                      <button
+                        className="btn btn--outline btn--sm"
+                        type="button"
+                        onClick={() => setSyncedPreviewOpen(true)}
+                      >
+                        {page('settings.integrations.action.viewSyncedDevices')}
+                      </button>
                     </div>
                   </div>
                   <div className="integration-status__detail">
@@ -504,51 +563,124 @@ function SettingsIntegrationsContent() {
                   {selectedInstance.last_error?.message ? (
                     <div className="integration-status__detail">{selectedInstance.last_error.message}</div>
                   ) : null}
-
-                  <IntegrationDevicePanel
-                    currentHouseholdId={currentHouseholdId}
-                    page={page}
-                    selectedInstance={selectedInstance}
-                    selectedDevices={selectedDevices}
-                    onStatus={setStatus}
-                    onError={setError}
-                    onReload={async () => {
-                      if (!currentHouseholdId) {
-                        return;
-                      }
-                      await reload(currentHouseholdId, selectedInstance.id);
-                    }}
-                  />
+                  <div className="integration-status__detail">
+                    {page('settings.integrations.preview.manageHint')}
+                  </div>
                 </Card>
               ) : null}
             </>
           )}
         </Section>
 
+        <IntegrationSyncedDevicePreviewDialog
+          open={syncedPreviewOpen}
+          instanceName={selectedInstance?.display_name ?? ''}
+          devices={selectedDevices}
+          page={page}
+          onClose={() => setSyncedPreviewOpen(false)}
+        />
+
+        {syncAllConfirmStep ? (
+          <div className="member-modal-overlay" onClick={() => setSyncAllConfirmStep(null)}>
+            <div className="member-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="member-modal__header">
+                <div>
+                  <h3>{page('settings.integrations.syncAll.confirm.title')}</h3>
+                  <p>
+                    {syncAllConfirmStep === 'first'
+                      ? page('settings.integrations.syncAll.confirm.firstDesc')
+                      : page('settings.integrations.syncAll.confirm.secondDesc')}
+                  </p>
+                </div>
+              </div>
+              {syncAllImpactSummary ? (
+                <Card>
+                  <div className="integration-status__detail">
+                    {page('settings.integrations.syncAll.confirm.impact', {
+                      total: syncAllImpactSummary.total,
+                      synced: syncAllImpactSummary.alreadySynced,
+                      newCount: syncAllImpactSummary.newCount,
+                    })}
+                  </div>
+                </Card>
+              ) : null}
+              <div className="member-modal__actions">
+                <button
+                  className="btn btn--outline btn--sm"
+                  type="button"
+                  onClick={() => setSyncAllConfirmStep(null)}
+                  disabled={submitting}
+                >
+                  {page('settings.integrations.action.cancel')}
+                </button>
+                {syncAllConfirmStep === 'first' ? (
+                  <button
+                    className="btn btn--primary btn--sm"
+                    type="button"
+                    onClick={() => setSyncAllConfirmStep('second')}
+                  >
+                    {page('settings.integrations.syncAll.confirm.firstAction')}
+                  </button>
+                ) : (
+                  <button
+                    className="btn btn--primary btn--sm"
+                    type="button"
+                    onClick={() => void handleSyncAll()}
+                    disabled={submitting}
+                  >
+                    {page('settings.integrations.syncAll.confirm.secondAction')}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {catalogModalOpen ? (
           <div className="member-modal-overlay" onClick={() => setCatalogModalOpen(false)}>
-            <div className="member-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="member-modal integration-catalog-modal" onClick={(event) => event.stopPropagation()}>
               <div className="member-modal__header">
                 <div>
                   <h3>{page('settings.integrations.modal.catalog.title')}</h3>
                   <p>{page('settings.integrations.modal.catalog.desc')}</p>
                 </div>
               </div>
-              <div className="settings-card-grid">
+              <div className="integration-catalog-grid">
                 {catalog.map((item) => (
-                  <Card key={item.plugin_id} className="integration-card">
-                    <div className="integration-card__header">
-                      <strong>{item.name}</strong>
-                      <span className={`badge badge--${item.config_schema_available ? 'success' : 'secondary'}`}>
-                        {item.config_schema_available
-                          ? page('settings.integrations.modal.catalog.supported')
-                          : page('settings.integrations.modal.catalog.pending')}
-                      </span>
+                    <div key={item.plugin_id} className="integration-catalog-card">
+                      <div className="integration-catalog-card__icon">
+                      {item.plugin_id.includes('home_assistant') || item.plugin_id.includes('open_xiaoai') ? (
+                        <Home size={24} />
+                      ) : (
+                        <Plug size={24} />
+                      )}
                     </div>
-                    <div className="integration-status__detail">{item.description || item.plugin_id}</div>
-                    <div className="device-card__actions">
+                    <div className="integration-catalog-card__body">
+                      <div className="integration-catalog-card__header">
+                        <h4 className="integration-catalog-card__title">{item.name}</h4>
+                        <span className={`badge badge--${item.config_schema_available ? 'success' : 'secondary'} integration-catalog-card__badge`}>
+                          {item.config_schema_available
+                            ? page('settings.integrations.modal.catalog.supported')
+                            : page('settings.integrations.modal.catalog.pending')}
+                        </span>
+                      </div>
+                      <p className="integration-catalog-card__desc">{item.description || item.plugin_id}</p>
+                      {item.config_schema_available ? (
+                        <div className="integration-catalog-card__features">
+                          <span className="integration-catalog-card__feature">
+                            <Check size={12} />
+                            {page('settings.integrations.modal.catalog.feature.sync')}
+                          </span>
+                          <span className="integration-catalog-card__feature">
+                            <Check size={12} />
+                            {page('settings.integrations.modal.catalog.feature.control')}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="integration-catalog-card__actions">
                       <button
-                        className="btn btn--outline btn--sm"
+                        className="btn btn--primary btn--sm"
                         type="button"
                         disabled={!item.config_schema_available}
                         onClick={() => openCreateModal(item)}
@@ -556,7 +688,7 @@ function SettingsIntegrationsContent() {
                         {page('settings.integrations.modal.catalog.choose')}
                       </button>
                     </div>
-                  </Card>
+                  </div>
                 ))}
               </div>
             </div>
@@ -606,7 +738,7 @@ function SettingsIntegrationsContent() {
                   <button className="btn btn--outline btn--sm" type="button" onClick={closeCreateModal} disabled={submitting}>
                     {page('settings.integrations.action.cancel')}
                   </button>
-                  <button className="btn btn--outline btn--sm" type="submit" disabled={submitting}>
+                  <button className="btn btn--primary btn--sm" type="submit" disabled={submitting}>
                     {submitting ? page('settings.integrations.action.saving') : page('settings.integrations.modal.create.submit')}
                   </button>
                 </div>
@@ -624,40 +756,92 @@ function SettingsIntegrationsContent() {
                   <p>{page('settings.integrations.modal.devices.desc')}</p>
                 </div>
               </div>
+              <div className="integration-status__detail">
+                {page('settings.integrations.modal.devices.selectedCount', {
+                  selected: selectedDeviceIds.length,
+                  total: deviceCandidates.length,
+                })}
+              </div>
+              <div className="integration-status__detail">
+                {page('settings.integrations.modal.devices.domainFilterHint')}
+              </div>
+              <div className="family-device-filters">
+                <label className="family-device-filters__item">
+                  <span className="family-device-filters__label">{page('settings.integrations.modal.devices.roomFilter')}</span>
+                  <select
+                    className="form-select"
+                    value={candidateRoomFilter}
+                    onChange={(event) => setCandidateRoomFilter(event.target.value)}
+                  >
+                    <option value="all">{page('settings.integrations.modal.devices.roomFilterAll')}</option>
+                    {candidateRoomOptions.map((roomName) => (
+                      <option key={roomName} value={roomName}>{roomName}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="family-device-filters__item">
+                  <span className="family-device-filters__label">{page('settings.integrations.modal.devices.domainFilter')}</span>
+                  <select
+                    className="form-select"
+                    value={candidateDomainFilter}
+                    onChange={(event) => setCandidateDomainFilter(event.target.value)}
+                  >
+                    <option value="all">{page('settings.integrations.modal.devices.domainFilterAll')}</option>
+                    {candidateDomainOptions.map((domain) => (
+                      <option key={domain} value={domain}>{domain}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="family-device-filters__item">
+                  <span className="family-device-filters__label">{page('settings.integrations.modal.devices.searchLabel')}</span>
+                  <input
+                    className="form-input"
+                    value={candidateKeyword}
+                    onChange={(event) => setCandidateKeyword(event.target.value)}
+                    placeholder={page('settings.integrations.modal.devices.searchPlaceholder')}
+                  />
+                </label>
+              </div>
               <div className="ha-device-modal__list">
                 {deviceCandidates.length === 0 ? (
                   <div className="integration-status__detail">{page('settings.integrations.modal.devices.empty')}</div>
-                ) : deviceCandidates.map((candidate) => (
-                  <label key={candidate.external_device_id} className="ha-device-option">
-                    <input
-                      type="checkbox"
-                      checked={selectedDeviceIds.includes(candidate.external_device_id)}
-                      onChange={() => setSelectedDeviceIds((current) => current.includes(candidate.external_device_id)
-                        ? current.filter((item) => item !== candidate.external_device_id)
-                        : [...current, candidate.external_device_id])}
-                      disabled={submitting}
-                    />
-                    <div className="ha-device-option__body">
-                      <div className="ha-device-option__title-row">
-                        <strong>{candidate.name}</strong>
-                        <span className={`badge badge--${candidate.already_synced ? 'secondary' : 'success'}`}>
-                          {candidate.already_synced
-                            ? page('settings.integrations.modal.devices.importedBefore')
-                            : page('settings.integrations.modal.devices.newDevice')}
-                        </span>
+                ) : filteredDeviceCandidates.length === 0 ? (
+                  <div className="integration-status__detail">{page('settings.integrations.modal.devices.noFilterResult')}</div>
+                ) : filteredDeviceCandidates.map((candidate) => {
+                  const entityDomain = getCandidateEntityDomain(candidate);
+                  return (
+                    <label key={candidate.external_device_id} className="ha-device-option">
+                      <input
+                        type="checkbox"
+                        checked={selectedDeviceIds.includes(candidate.external_device_id)}
+                        onChange={() => setSelectedDeviceIds((current) => current.includes(candidate.external_device_id)
+                          ? current.filter((item) => item !== candidate.external_device_id)
+                          : [...current, candidate.external_device_id])}
+                        disabled={submitting}
+                      />
+                      <div className="ha-device-option__body">
+                        <div className="ha-device-option__title-row">
+                          <strong>{candidate.name}</strong>
+                          <span className={`badge badge--${candidate.already_synced ? 'secondary' : 'success'}`}>
+                            {candidate.already_synced
+                              ? page('settings.integrations.modal.devices.importedBefore')
+                              : page('settings.integrations.modal.devices.newDevice')}
+                          </span>
+                        </div>
+                        <div className="integration-status__detail">
+                          {candidate.room_name || page('settings.integrations.instance.noRoom')} · {page('settings.integrations.modal.devices.entityCount', { count: candidate.entity_count })}
+                          {entityDomain ? ` · ${entityDomain}` : ''}
+                        </div>
                       </div>
-                      <div className="integration-status__detail">
-                        {candidate.room_name || page('settings.integrations.instance.noRoom')} · {page('settings.integrations.modal.devices.entityCount', { count: candidate.entity_count })}
-                      </div>
-                    </div>
-                  </label>
-                ))}
+                    </label>
+                  );
+                })}
               </div>
               <div className="member-modal__actions">
                 <button className="btn btn--outline btn--sm" type="button" onClick={() => setDeviceModalOpen(false)} disabled={submitting}>
                   {page('settings.integrations.action.cancel')}
                 </button>
-                <button className="btn btn--outline btn--sm" type="button" onClick={() => void handleSyncSelected()} disabled={submitting || selectedDeviceIds.length === 0}>
+                <button className="btn btn--primary btn--sm" type="button" onClick={() => void handleSyncSelected()} disabled={submitting || selectedDeviceIds.length === 0}>
                   {page('settings.integrations.action.importSelectedDevices')}
                 </button>
               </div>

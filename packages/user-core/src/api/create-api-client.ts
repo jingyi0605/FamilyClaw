@@ -58,8 +58,6 @@ import {
   ReminderOverviewRead,
   Room,
   ButlerBootstrapSession,
-  VoiceDiscoveryBinding,
-  VoiceDiscoveryListResponse,
 } from '../domain/types';
 
 export type RequestClient = <T>(
@@ -567,25 +565,28 @@ export function createCoreApiClient(request: RequestClient) {
         body: JSON.stringify(payload),
       });
     },
-    listDevices(householdId: string) {
-      return request<PaginatedResponse<Device>>(`/devices?household_id=${encodeURIComponent(householdId)}&page_size=100`);
-    },
-    listVoiceTerminalDiscoveries(householdId: string) {
-      return request<VoiceDiscoveryListResponse>(
-        `/devices/voice-terminals/discoveries?household_id=${encodeURIComponent(householdId)}`,
-      );
-    },
-    claimVoiceTerminalDiscovery(
-      fingerprint: string,
-      payload: { household_id: string; room_id: string; terminal_name: string },
+    listDevices(
+      householdId: string,
+      params?: {
+        room_id?: string;
+        device_type?: Device['device_type'];
+        status?: Device['status'] | 'disabled';
+      },
     ) {
-      return request<VoiceDiscoveryBinding>(
-        `/devices/voice-terminals/discoveries/${encodeURIComponent(fingerprint)}/claim`,
-        {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        },
-      );
+      const query = new URLSearchParams({
+        household_id: householdId,
+        page_size: '100',
+      });
+      if (params?.room_id) {
+        query.set('room_id', params.room_id);
+      }
+      if (params?.device_type) {
+        query.set('device_type', params.device_type);
+      }
+      if (params?.status) {
+        query.set('status', params.status);
+      }
+      return request<PaginatedResponse<Device>>(`/devices?${query.toString()}`);
     },
     updateDevice(
       deviceId: string,

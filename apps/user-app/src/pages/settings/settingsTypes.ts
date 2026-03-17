@@ -271,32 +271,6 @@ export type HouseholdVoiceprintSummaryRead = {
   members: HouseholdVoiceprintMemberSummaryRead[];
 };
 
-export type VoiceDiscoveryTerminal = {
-  fingerprint: string;
-  model: string;
-  sn: string;
-  runtime_version: string;
-  capabilities: string[];
-  discovered_at: string;
-  last_seen_at: string;
-  connection_status: 'online' | 'offline' | 'unknown';
-  remote_addr: string | null;
-};
-
-export type VoiceDiscoveryListResponse = {
-  household_id: string;
-  items: VoiceDiscoveryTerminal[];
-};
-
-export type VoiceDiscoveryBinding = {
-  household_id: string;
-  terminal_id: string;
-  room_id: string | null;
-  terminal_name: string;
-  voice_auto_takeover_enabled: boolean;
-  voice_takeover_prefixes: string[];
-};
-
 export type ChannelAccountStatus = 'draft' | 'active' | 'degraded' | 'disabled';
 export type ChannelConnectionMode = 'webhook' | 'polling' | 'websocket';
 export type ChannelBindingStatus = 'active' | 'disabled';
@@ -448,7 +422,9 @@ export type PluginManifestType =
   | 'agent-skill'
   | 'channel'
   | 'locale-pack'
-  | 'region-provider';
+  | 'region-provider'
+  | 'theme-pack'
+  | 'ai-provider';
 export type PluginConfigScopeType = 'plugin' | 'channel_account';
 export type PluginConfigFieldType = 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'enum' | 'multi_enum' | 'secret' | 'json';
 export type PluginConfigWidgetType = 'input' | 'password' | 'textarea' | 'switch' | 'select' | 'multi_select' | 'json_editor';
@@ -538,6 +514,9 @@ export type PluginRegistryItem = {
   id: string;
   name: string;
   version: string;
+  installed_version?: string | null;
+  compatibility?: Record<string, unknown> | null;
+  update_state?: string | null;
   types: PluginManifestType[];
   permissions: string[];
   risk_level: PluginRiskLevel;
@@ -590,6 +569,22 @@ export type PluginRegistryItem = {
     region_provider?: {
       provider_code?: string | null;
       country_codes?: string[];
+    } | null;
+    theme_pack?: {
+      theme_id: string;
+      display_name: string;
+      description?: string | null;
+      tokens_resource: string;
+      preview?: Record<string, unknown>;
+      fallback_theme_id?: string | null;
+    } | null;
+    ai_provider?: {
+      adapter_code: string;
+      display_name: string;
+      field_schema: Array<Record<string, unknown>>;
+      supported_model_types: string[];
+      llm_workflow: string;
+      runtime_capability?: Record<string, unknown>;
     } | null;
   };
   config_specs?: PluginManifestConfigSpec[];

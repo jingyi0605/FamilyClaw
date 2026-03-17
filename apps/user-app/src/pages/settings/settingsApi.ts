@@ -39,8 +39,6 @@ import type {
   PluginRegistrySnapshot,
   PluginStateUpdateRequest,
   VoiceprintEnrollmentRead,
-  VoiceDiscoveryBinding,
-  VoiceDiscoveryListResponse,
 } from './settingsTypes';
 
 const request = createRequestClient({
@@ -199,21 +197,6 @@ export const settingsApi = {
       },
     );
   },
-  listVoiceTerminalDiscoveries(householdId: string) {
-    return request<VoiceDiscoveryListResponse>(`/devices/voice-terminals/discoveries?household_id=${encodeURIComponent(householdId)}`);
-  },
-  claimVoiceTerminalDiscovery(
-    fingerprint: string,
-    payload: { household_id: string; room_id: string; terminal_name: string },
-  ) {
-    return request<VoiceDiscoveryBinding>(
-      `/devices/voice-terminals/discoveries/${encodeURIComponent(fingerprint)}/claim`,
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      },
-    );
-  },
   updateDevice(
     deviceId: string,
     payload: Partial<{
@@ -360,8 +343,26 @@ export const settingsApi = {
     if (params.status) query.set('status', params.status);
     return request<IntegrationResourceListRead>(`/integrations/resources?${query.toString()}`);
   },
-  getIntegrationPageView(householdId: string) {
-    return request<IntegrationPageViewModel>(`/integrations/page-view?household_id=${encodeURIComponent(householdId)}`);
+  async getIntegrationPageView(householdId: string) {
+    // 当前设置页只用到目录、实例和已同步设备，直接走稳定的独立接口，
+    // 避免被后端聚合视图里尚未落库的 discoveries 表拖死。
+    const [catalog, instances, resources] = await Promise.all([
+      settingsApi.listIntegrationCatalog(householdId),
+      settingsApi.listIntegrationInstances(householdId),
+      settingsApi.listIntegrationResources(householdId, { resource_type: 'device' }),
+    ]);
+
+    return {
+      household_id: householdId,
+      catalog: catalog.items,
+      instances: instances.items,
+      discoveries: [],
+      resources: {
+        device: resources.items,
+        entity: [],
+        helper: [],
+      },
+    };
   },
   createIntegrationInstance(payload: IntegrationInstanceCreateRequest) {
     return request<IntegrationInstance>('/integrations/instances', {

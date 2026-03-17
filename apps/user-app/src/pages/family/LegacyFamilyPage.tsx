@@ -6,6 +6,7 @@ import Taro from '@tarojs/taro';
 import { getLocaleDefinition, type LocaleDefinition } from '@familyclaw/user-core';
 import { DEFAULT_REGION_COUNTRY, DEFAULT_REGION_PROVIDER, RegionSelector, type RegionSelectionFormValue } from './RegionSelector';
 import { PageHeader, Card, Section } from './base';
+import { HouseholdDeviceDetailDialog, type DevicePageLookup } from '../device-management/HouseholdDeviceDetailDialog';
 import { useHouseholdContext, useI18n } from '../../runtime';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { api } from './api';
@@ -24,6 +25,7 @@ import type {
 const familyTabs = [
   { key: 'overview' as const, hash: '#overview', labelKey: 'family.overview' as const },
   { key: 'rooms' as const, hash: '#rooms', labelKey: 'family.rooms' as const },
+  { key: 'devices' as const, hash: '#devices', labelKey: 'family.devices' as const },
   { key: 'members' as const, hash: '#members', labelKey: 'family.members' as const },
   { key: 'relationships' as const, hash: '#relationships', labelKey: 'family.relationships' as const },
 ];
@@ -114,6 +116,43 @@ function formatRole(role: Member['role'], locale: string | undefined) {
     case 'elder': return getFamilyMessage(locale, 'family.role.elder');
     case 'guest': return getFamilyMessage(locale, 'family.role.guest');
   }
+}
+
+function formatDeviceType(deviceType: Device['device_type'], locale: string | undefined) {
+  switch (deviceType) {
+    case 'light': return getFamilyMessage(locale, 'family.devices.type.light');
+    case 'ac': return getFamilyMessage(locale, 'family.devices.type.ac');
+    case 'curtain': return getFamilyMessage(locale, 'family.devices.type.curtain');
+    case 'speaker': return getFamilyMessage(locale, 'family.devices.type.speaker');
+    case 'camera': return getFamilyMessage(locale, 'family.devices.type.camera');
+    case 'sensor': return getFamilyMessage(locale, 'family.devices.type.sensor');
+    case 'lock': return getFamilyMessage(locale, 'family.devices.type.lock');
+  }
+}
+
+function formatDeviceStatus(status: Device['status'], locale: string | undefined) {
+  switch (status) {
+    case 'active': return getFamilyMessage(locale, 'family.devices.status.active');
+    case 'offline': return getFamilyMessage(locale, 'family.devices.status.offline');
+    case 'disabled': return getFamilyMessage(locale, 'family.devices.status.disabled');
+    default: return getFamilyMessage(locale, 'family.devices.status.inactive');
+  }
+}
+
+function getDeviceStatusBadge(status: Device['status']): 'success' | 'warning' | 'inactive' | 'danger' | 'secondary' {
+  if (status === 'active') {
+    return 'success';
+  }
+  if (status === 'offline') {
+    return 'warning';
+  }
+  if (status === 'disabled') {
+    return 'danger';
+  }
+  if (status === 'inactive') {
+    return 'inactive';
+  }
+  return 'secondary';
 }
 
 function getMemberStatus(memberId: string, overview: ContextOverviewRead | null) {
@@ -499,6 +538,7 @@ export function FamilyLayout() {
         <div className="family-content">
           {activeTab === 'overview' ? <FamilyOverview /> : null}
           {activeTab === 'rooms' ? <FamilyRooms /> : null}
+          {activeTab === 'devices' ? <FamilyDevices /> : null}
           {activeTab === 'members' ? <FamilyMembers /> : null}
           {activeTab === 'relationships' ? <FamilyRelationships /> : null}
         </div>
@@ -950,6 +990,259 @@ export function FamilyRooms() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+type FamilyDeviceFilterState = {
+  roomId: string;
+  deviceType: Device['device_type'] | 'all';
+  status: Device['status'] | 'all';
+};
+
+export function FamilyDevices() {
+  const { locale } = useI18n();
+  const { rooms } = useFamilyWorkspace();
+  const { currentHouseholdId } = useHouseholdContext();
+  const [filters, setFilters] = useState<FamilyDeviceFilterState>({
+    roomId: 'all',
+    deviceType: 'all',
+    status: 'all',
+  });
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  const copy = {
+    title: getFamilyMessage(locale, 'family.devices.title'),
+    desc: getFamilyMessage(locale, 'family.devices.desc'),
+    loading: getFamilyMessage(locale, 'family.devices.loading'),
+    count: (count: number) => getFamilyMessage(locale, 'family.devices.count', { count }),
+    loadFailed: getFamilyMessage(locale, 'family.devices.loadFailed'),
+    roomFilter: getFamilyMessage(locale, 'family.devices.filter.room'),
+    roomAll: getFamilyMessage(locale, 'family.devices.filter.roomAll'),
+    typeFilter: getFamilyMessage(locale, 'family.devices.filter.type'),
+    typeAll: getFamilyMessage(locale, 'family.devices.filter.typeAll'),
+    statusFilter: getFamilyMessage(locale, 'family.devices.filter.status'),
+    statusAll: getFamilyMessage(locale, 'family.devices.filter.statusAll'),
+    emptyTitle: getFamilyMessage(locale, 'family.devices.emptyTitle'),
+    emptyDesc: getFamilyMessage(locale, 'family.devices.emptyDesc'),
+    emptyFilteredDesc: getFamilyMessage(locale, 'family.devices.emptyFilteredDesc'),
+    noRoom: getFamilyMessage(locale, 'family.devices.noRoom'),
+    controllable: getFamilyMessage(locale, 'family.devices.controllable'),
+    readOnly: getFamilyMessage(locale, 'family.devices.readOnly'),
+  };
+
+  const roomNameMap = useMemo(() => (
+    rooms.reduce<Record<string, string>>((acc, room) => {
+      acc[room.id] = room.name;
+      return acc;
+    }, {})
+  ), [rooms]);
+
+  const roomOptions = useMemo(() => rooms.map(room => ({
+    value: room.id,
+    label: room.name,
+  })), [rooms]);
+
+  const deviceTypeOptions = useMemo(() => ([
+    { value: 'light' as const, label: formatDeviceType('light', locale) },
+    { value: 'ac' as const, label: formatDeviceType('ac', locale) },
+    { value: 'curtain' as const, label: formatDeviceType('curtain', locale) },
+    { value: 'speaker' as const, label: formatDeviceType('speaker', locale) },
+    { value: 'camera' as const, label: formatDeviceType('camera', locale) },
+    { value: 'sensor' as const, label: formatDeviceType('sensor', locale) },
+    { value: 'lock' as const, label: formatDeviceType('lock', locale) },
+  ]), [locale]);
+
+  const statusOptions = useMemo(() => ([
+    { value: 'active' as const, label: formatDeviceStatus('active', locale) },
+    { value: 'offline' as const, label: formatDeviceStatus('offline', locale) },
+    { value: 'inactive' as const, label: formatDeviceStatus('inactive', locale) },
+    { value: 'disabled' as const, label: formatDeviceStatus('disabled', locale) },
+  ]), [locale]);
+
+  const hasActiveFilters = filters.roomId !== 'all' || filters.deviceType !== 'all' || filters.status !== 'all';
+  const detailPageLookup: DevicePageLookup = (key, params) => getPageMessage(
+    locale,
+    key as Parameters<typeof getPageMessage>[1],
+    params,
+  );
+
+  useEffect(() => {
+    if (!currentHouseholdId) {
+      setDevices([]);
+      setError('');
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+
+    void api.listDevices(currentHouseholdId, {
+      room_id: filters.roomId === 'all' ? undefined : filters.roomId,
+      device_type: filters.deviceType === 'all' ? undefined : filters.deviceType,
+      status: filters.status === 'all' ? undefined : filters.status,
+    }).then((response) => {
+      if (cancelled) {
+        return;
+      }
+      setDevices(response.items as Device[]);
+      setSelectedDevice((current) => {
+        if (!current) {
+          return null;
+        }
+        return (response.items.find(item => item.id === current.id) as Device | undefined) ?? current;
+      });
+      setError('');
+    }).catch((loadError) => {
+      if (cancelled) {
+        return;
+      }
+      setError(loadError instanceof Error ? loadError.message : copy.loadFailed);
+      setDevices([]);
+    }).finally(() => {
+      if (!cancelled) {
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [copy.loadFailed, currentHouseholdId, filters.deviceType, filters.roomId, filters.status, reloadNonce]);
+
+  return (
+    <div className="family-devices">
+      <div className="member-page-toolbar">
+        <div>
+          <h2 className="member-page-toolbar__title">{copy.title}</h2>
+          <p className="member-page-toolbar__desc">{copy.desc}</p>
+        </div>
+        <div className="member-page-toolbar__summary">
+          {copy.count(devices.length)}
+        </div>
+      </div>
+
+      {status ? <div className="family-device-feedback family-device-feedback--success">{status}</div> : null}
+      {error ? <div className="family-device-feedback family-device-feedback--error">{error}</div> : null}
+
+      <div className="family-device-filters">
+        <label className="family-device-filters__item">
+          <span className="family-device-filters__label">{copy.roomFilter}</span>
+          <select
+            className="form-select"
+            value={filters.roomId}
+            onChange={(event) => setFilters(current => ({ ...current, roomId: event.target.value }))}
+          >
+            <option value="all">{copy.roomAll}</option>
+            {roomOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="family-device-filters__item">
+          <span className="family-device-filters__label">{copy.typeFilter}</span>
+          <select
+            className="form-select"
+            value={filters.deviceType}
+            onChange={(event) => setFilters(current => ({
+              ...current,
+              deviceType: event.target.value as FamilyDeviceFilterState['deviceType'],
+            }))}
+          >
+            <option value="all">{copy.typeAll}</option>
+            {deviceTypeOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="family-device-filters__item">
+          <span className="family-device-filters__label">{copy.statusFilter}</span>
+          <select
+            className="form-select"
+            value={filters.status}
+            onChange={(event) => setFilters(current => ({
+              ...current,
+              status: event.target.value as FamilyDeviceFilterState['status'],
+            }))}
+          >
+            <option value="all">{copy.statusAll}</option>
+            {statusOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {loading && devices.length === 0 ? (
+        <div className="family-device-feedback">{copy.loading}</div>
+      ) : null}
+
+      {!loading && devices.length === 0 ? (
+        <Card className="family-device-empty">
+          <div className="settings-empty-state">
+            <h3>{copy.emptyTitle}</h3>
+            <p>{hasActiveFilters ? copy.emptyFilteredDesc : copy.emptyDesc}</p>
+          </div>
+        </Card>
+      ) : null}
+
+      {devices.length > 0 ? (
+        <div className="family-device-grid">
+          {devices.map(device => (
+            <Card
+              key={device.id}
+              className="family-device-card"
+              onClick={() => setSelectedDevice(device)}
+            >
+              <div className="family-device-card__header">
+                <div className="family-device-card__name-block">
+                  <h3 className="family-device-card__name">{device.name}</h3>
+                  <p className="family-device-card__room">{roomNameMap[device.room_id ?? ''] ?? copy.noRoom}</p>
+                </div>
+                <span className={`badge badge--${getDeviceStatusBadge(device.status)}`}>
+                  {formatDeviceStatus(device.status, locale)}
+                </span>
+              </div>
+              <div className="family-device-card__tags">
+                <span className="badge badge--secondary">{formatDeviceType(device.device_type, locale)}</span>
+                <span className={`badge badge--${device.controllable ? 'success' : 'secondary'}`}>
+                  {device.controllable ? copy.controllable : copy.readOnly}
+                </span>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : null}
+
+      <HouseholdDeviceDetailDialog
+        open={selectedDevice !== null}
+        currentHouseholdId={currentHouseholdId}
+        deviceId={selectedDevice?.id ?? null}
+        deviceName={selectedDevice?.name ?? ''}
+        subtitle={roomNameMap[selectedDevice?.room_id ?? ''] ?? copy.noRoom}
+        page={detailPageLookup}
+        fallbackStatus={selectedDevice?.status}
+        fallbackControllable={selectedDevice?.controllable}
+        onClose={() => setSelectedDevice(null)}
+        onStatus={(message) => {
+          setStatus(message);
+          setError('');
+          setReloadNonce(current => current + 1);
+        }}
+        onError={setError}
+        onReload={async () => {
+          setReloadNonce(current => current + 1);
+        }}
+        onDeleted={() => setSelectedDevice(null)}
+      />
     </div>
   );
 }

@@ -690,6 +690,8 @@ export const PAGE_MESSAGES_EN_US = {
   'settings.plugin.type.channel': 'Channel',
   'settings.plugin.type.localePack': 'Locale Pack',
   'settings.plugin.type.regionProvider': 'Region Provider',
+  'settings.plugin.type.themePack': 'Theme Pack',
+  'settings.plugin.type.aiProvider': 'AI Provider',
   'settings.plugin.jobs.loadFailed': 'Failed to load jobs',
   'settings.plugin.enabled': 'Enabled',
   'settings.plugin.disabled': 'Disabled',
