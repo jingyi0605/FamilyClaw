@@ -251,7 +251,7 @@ export function H5LoginPage() {
       </div>
 
       <div className="login-footer">
-        <p>© 2024 FamilyClaw · {t('login.footer')}</p>
+        <p>© 2026 FamilyClaw · {t('login.footer')}</p>
       </div>
     </div>
   );
