@@ -270,6 +270,38 @@ class RealtimeWsTests(unittest.TestCase):
         self.assertEqual("failed", request_rows[0].status)
         self.assertEqual("request_conflict", request_rows[0].error_code)
 
+    def test_agent_bootstrap_stream_failure_keeps_partial_text(self) -> None:
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[{"type": "user.message", "session_id": self.session_id, "request_id": "request-partial", "payload": {"text": "I want a gentler butler"}}],
+        )
+
+        from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
+        from app.modules.agent import bootstrap_service as bootstrap_service_module
+
+        async def _fake_stream_llm(_db, **kwargs):
+            _ = kwargs
+            yield LlmStreamEvent("chunk", content="Let me note ")
+            yield LlmStreamEvent("chunk", content="that gentle direction.")
+            raise ProviderRuntimeError("timeout", "provider request timeout")
+
+        with patch.object(bootstrap_service_module, "_ensure_bootstrap_allowed", return_value=None), patch.object(
+            bootstrap_service_module,
+            "stream_llm",
+            side_effect=_fake_stream_llm,
+        ):
+            asyncio.run(self._realtime_endpoint_module.realtime_agent_bootstrap_websocket(cast(Any, websocket)))
+
+        request_rows = agent_repository.list_bootstrap_requests(self.db, session_id=self.session_id)
+        self.assertEqual("failed", request_rows[0].status)
+        self.assertEqual("provider_stream_failed", request_rows[0].error_code)
+        self.assertEqual("session.snapshot", websocket.sent_messages[-1]["type"])
+        final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
+        self.assertEqual("collecting", final_snapshot["status"])
+        self.assertTrue(any("gentle direction" in item["content"] for item in final_snapshot["messages"] if item["role"] == "assistant"))
+
     def test_conversation_successful_turn_persists_reply(self) -> None:
         websocket = _FakeWebSocket(
             household_id=self.household_id,

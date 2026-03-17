@@ -312,7 +312,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             data={"entity_id": "light.study_main"},
         )
 
-    def test_execute_device_control_reports_offline_when_home_assistant_unreachable(self) -> None:
+    def test_execute_device_control_reports_platform_unreachable_when_home_assistant_unreachable(self) -> None:
         with self.SessionLocal() as db:
             with patch(
                 "app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service",
@@ -332,7 +332,7 @@ class DeviceControlPhase2Tests(unittest.TestCase):
 
         self.assertEqual("platform_unreachable", context.exception.error_code)
         self.assertEqual(503, context.exception.status_code)
-        self.assertEqual("device is offline", context.exception.message)
+        self.assertEqual("device platform is unreachable", context.exception.message)
 
     def test_upstream_modules_do_not_directly_reference_legacy_ha_execute_functions(self) -> None:
         target_modules = (

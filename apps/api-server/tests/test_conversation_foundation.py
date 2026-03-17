@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from alembic import command
 from alembic.config import Config
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -1839,6 +1840,85 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("宸蹭负浣犲叧闂鍘呯伅銆?, result.text)
         self.assertEqual("fast_action_receipt", result.facts[0]["type"])
         execute_device_action_mock.assert_called_once()
+
+    @patch("app.modules.conversation.orchestrator.execute_device_action")
+    @patch("app.modules.conversation.orchestrator.select_conversation_lane")
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_fast_action_hides_raw_http_exception_payload(
+        self,
+        invoke_llm_mock,
+        select_lane_mock,
+        execute_device_action_mock,
+    ) -> None:
+        previous_takeover = settings.conversation_lane_takeover_enabled
+        settings.conversation_lane_takeover_enabled = True
+        try:
+            session = create_conversation_session(
+                self.db,
+                payload=ConversationSessionCreate(
+                    household_id=self.household.id,
+                    active_agent_id=self.agent.id,
+                ),
+                actor=self.actor,
+            )
+            device = Device(
+                id=new_uuid(),
+                household_id=self.household.id,
+                room_id=None,
+                name="客厅灯",
+                device_type="light",
+                vendor="ha",
+                status="active",
+                controllable=1,
+                created_at=utc_now_iso(),
+                updated_at=utc_now_iso(),
+            )
+            self.db.add(device)
+            self.db.commit()
+            invoke_llm_mock.return_value = _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="free_chat",
+                    secondary_intents=[],
+                    confidence=0.7,
+                    reason="先按普通聊天兜底。",
+                    candidate_actions=[],
+                )
+            )
+            select_lane_mock.return_value = ConversationLaneSelection(
+                lane=ConversationLane.FAST_ACTION,
+                confidence=0.9,
+                reason="命中设备控制车道。",
+                target_kind="device_action",
+                requires_clarification=False,
+                source="test",
+            )
+            execute_device_action_mock.side_effect = HTTPException(
+                status_code=503,
+                detail={
+                    "detail": "device platform is unreachable",
+                    "error_code": "platform_unreachable",
+                    "timestamp": "2026-03-17T09:30:28.435865Z",
+                },
+            )
+
+            result = run_orchestrated_turn(
+                self.db,
+                session=session,
+                message="把客厅灯打开",
+                actor=self.actor,
+                conversation_history=[],
+            )
+        finally:
+            settings.conversation_lane_takeover_enabled = previous_takeover
+
+        self.assertEqual(ConversationIntent.FAST_ACTION, result.intent)
+        self.assertEqual(
+            "我知道你想立刻控制设备，但这次执行失败了：设备平台暂时不可达，设备本身可能在线，请稍后再试。",
+            result.text,
+        )
+        self.assertNotIn("503", result.text)
+        self.assertNotIn("platform_unreachable", result.text)
+        self.assertNotIn("{", result.text)
 
     @patch("app.modules.conversation.orchestrator.select_conversation_lane")
     @patch("app.modules.conversation.orchestrator.invoke_llm")

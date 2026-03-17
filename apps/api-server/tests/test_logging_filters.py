@@ -11,16 +11,7 @@ class UvicornAccessNoiseFilterTests(unittest.TestCase):
     def test_filters_voice_discovery_report_success_log(self) -> None:
         record = self._build_access_record(
             method="POST",
-            path="/api/v1/devices/voice-terminals/discoveries/report",
-            status_code=200,
-        )
-
-        self.assertFalse(self.filter.filter(record))
-
-    def test_filters_voice_discovery_binding_success_log(self) -> None:
-        record = self._build_access_record(
-            method="GET",
-            path="/api/v1/devices/voice-terminals/discoveries/open_xiaoai%3ALX06%3A23948/C4QX00829/binding",
+            path="/api/v1/integrations/discoveries/report",
             status_code=200,
         )
 
@@ -28,21 +19,12 @@ class UvicornAccessNoiseFilterTests(unittest.TestCase):
 
     def test_keeps_voice_discovery_error_log(self) -> None:
         record = self._build_access_record(
-            method="GET",
-            path="/api/v1/devices/voice-terminals/discoveries/open_xiaoai%3ALX06%3AUNKNOWN/binding",
+            method="POST",
+            path="/api/v1/integrations/discoveries/report",
             status_code=404,
         )
 
         self.assertTrue(self.filter.filter(record))
-
-    def test_filters_voice_discovery_list_success_log(self) -> None:
-        record = self._build_access_record(
-            method="GET",
-            path="/api/v1/devices/voice-terminals/discoveries",
-            status_code=200,
-        )
-
-        self.assertFalse(self.filter.filter(record))
 
     def test_keeps_non_target_access_log(self) -> None:
         record = self._build_access_record(
