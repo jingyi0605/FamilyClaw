@@ -1108,6 +1108,7 @@ export const PAGE_MESSAGES_EN_US = {
   'plugins.view.list': 'List view',
   'plugins.filter.label': 'Filter by type:',
   'plugins.filter.all': 'All',
+  'plugins.filter.showBuiltin': 'Show built-in plugins',
   'plugins.stats.total': 'Total',
   'plugins.stats.filtered': 'Filtered',
   'plugins.loadFailed': 'Failed to load plugins',

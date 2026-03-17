@@ -1050,6 +1050,7 @@ export const PAGE_MESSAGES_ZH_CN = {
   'plugins.view.list': '列表视图',
   'plugins.filter.label': '按类型筛选：',
   'plugins.filter.all': '全部',
+  'plugins.filter.showBuiltin': '显示内置插件',
   'plugins.stats.total': '总数',
   'plugins.stats.filtered': '筛选结果',
   'plugins.loadFailed': '加载插件列表失败',

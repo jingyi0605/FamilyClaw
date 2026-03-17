@@ -11621,8 +11621,34 @@ body::before {
 /* 插件工具栏 */
 .plugins-page-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
   margin-bottom: var(--spacing-lg);
+}
+
+.plugin-builtin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-builtin-toggle__label {
+  white-space: nowrap;
+}
+
+.plugin-builtin-toggle .toggle-switch {
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.plugin-builtin-toggle .toggle-switch:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
 }
 
 .plugins-page-actions .btn {
@@ -12309,12 +12335,18 @@ body::before {
   }
 
   .plugins-page-actions {
-    justify-content: stretch;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .plugins-page-actions .btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .plugin-builtin-toggle {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .plugin-filter {

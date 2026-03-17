@@ -23,6 +23,7 @@ import type {
 type ViewMode = 'card' | 'list';
 
 const VIEW_MODE_KEY = 'plugin-view-mode';
+const SHOW_BUILTIN_PLUGINS_KEY = 'plugin-show-builtin';
 const FILTERABLE_TYPES: PluginManifestType[] = [
   'connector',
   'memory-ingestor',
@@ -77,6 +78,13 @@ function getInitialViewMode(): ViewMode {
   }
   const saved = window.localStorage.getItem(VIEW_MODE_KEY);
   return saved === 'list' ? 'list' : 'card';
+}
+
+function getInitialShowBuiltinPlugins() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return window.localStorage.getItem(SHOW_BUILTIN_PLUGINS_KEY) === 'true';
 }
 
 function formatPluginType(type: PluginManifestType, locale: string | undefined) {
@@ -315,6 +323,7 @@ function PluginsPageContent() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [togglingPluginId, setTogglingPluginId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
+  const [showBuiltinPlugins, setShowBuiltinPlugins] = useState(getInitialShowBuiltinPlugins);
   const [selectedType, setSelectedType] = useState<PluginManifestType | null>(null);
   const [marketSources, setMarketSources] = useState<MarketplaceSourceRead[]>([]);
   const [marketCatalog, setMarketCatalog] = useState<MarketplaceCatalogItemRead[]>([]);
@@ -347,12 +356,26 @@ function PluginsPageContent() {
     }
   }, []);
 
-  const filteredPlugins = useMemo(() => {
-    if (!selectedType) {
+  const handleShowBuiltinPluginsChange = useCallback((checked: boolean) => {
+    setShowBuiltinPlugins(checked);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(SHOW_BUILTIN_PLUGINS_KEY, checked ? 'true' : 'false');
+    }
+  }, []);
+
+  const sourceFilteredPlugins = useMemo(() => {
+    if (showBuiltinPlugins) {
       return plugins;
     }
-    return plugins.filter(plugin => plugin.types.includes(selectedType));
-  }, [plugins, selectedType]);
+    return plugins.filter(plugin => plugin.source_type !== 'builtin');
+  }, [plugins, showBuiltinPlugins]);
+
+  const filteredPlugins = useMemo(() => {
+    if (!selectedType) {
+      return sourceFilteredPlugins;
+    }
+    return sourceFilteredPlugins.filter(plugin => plugin.types.includes(selectedType));
+  }, [sourceFilteredPlugins, selectedType]);
 
   const handleTypeFilterChange = useCallback((type: PluginManifestType) => {
     setSelectedType(type);
@@ -1083,6 +1106,19 @@ function PluginsPageContent() {
     <SettingsPageShell activeKey="plugins">
       <div className="settings-page">
         <div className="plugins-page-actions">
+          <div className="plugin-builtin-toggle">
+            <span className="plugin-builtin-toggle__label">{page('plugins.filter.showBuiltin')}</span>
+            <button
+              type="button"
+              className={`toggle-switch toggle-switch--compact ${showBuiltinPlugins ? 'toggle-switch--on' : ''}`}
+              onClick={() => handleShowBuiltinPluginsChange(!showBuiltinPlugins)}
+              aria-checked={showBuiltinPlugins}
+              aria-label={page('plugins.filter.showBuiltin')}
+              role="switch"
+            >
+              <div className="toggle-switch__thumb" />
+            </button>
+          </div>
           <button className="btn btn--primary" onClick={() => setMarketplaceOpen(true)}>
             <Package size={16} />
             {page('plugins.marketplace.openButton')}
