@@ -88,14 +88,14 @@ export function ButlerBootstrapConversation(props: { householdId: string; source
       householdId,
       sessionId: session.session_id,
       onEvent: handleRealtimeEvent,
-      onOpen: () => { reconnectAttemptsRef.current = 0; setRealtimeReady(true); setStatus(t('setup.butler.status.connected')); },
+      onOpen: () => { reconnectAttemptsRef.current = 0; setRealtimeReady(true); },
       onClose: event => {
         if (activeSessionIdRef.current !== session.session_id) return;
         realtimeClientRef.current = null; activeSessionIdRef.current = null; setRealtimeReady(false);
         if (!event.wasClean && !createdAgent) {
           const delayMs = Math.min(1000 * (reconnectAttemptsRef.current + 1), 5000);
           reconnectAttemptsRef.current += 1;
-          setStatus(t('setup.butler.status.reconnecting', { seconds: Math.ceil(delayMs / 1000) }));
+          setStatus('');
           reconnectTimerRef.current = window.setTimeout(() => { reconnectTimerRef.current = null; void syncLatestSession(session.session_id); }, delayMs);
         }
       },
@@ -119,7 +119,7 @@ export function ButlerBootstrapConversation(props: { householdId: string; source
     try {
       const nextSession = await setupApi.restartButlerBootstrapSession(householdId);
       realtimeClientRef.current?.close(); realtimeClientRef.current = null; activeSessionIdRef.current = null;
-      setSession(nextSession); setMessages(toTranscriptMessages(nextSession)); setInput(''); setStatus(t('setup.butler.status.restarted'));
+      setSession(nextSession); setMessages(toTranscriptMessages(nextSession)); setInput('');
     } catch (restartError) { setError(restartError instanceof Error ? restartError.message : t('setup.butler.error.restartFailed')); } finally { setRestarting(false); }
   }
   function updateDraft(nextDraft: ButlerBootstrapSession['draft']) { setSession(current => current ? { ...current, draft: nextDraft } : current); }
@@ -135,7 +135,7 @@ export function ButlerBootstrapConversation(props: { householdId: string; source
     if (event.type === 'session.ready') return;
     if (event.type === 'session.snapshot') {
       const nextSession = (event.payload as { snapshot: BootstrapRealtimeSessionSnapshot }).snapshot;
-      setSession(nextSession as ButlerBootstrapSession); setMessages(toTranscriptMessages(nextSession as ButlerBootstrapSession)); setSending(Boolean(nextSession.current_request_id)); setStatus(nextSession.current_request_id ? t('setup.butler.status.restoredCurrent') : t('setup.butler.status.restoredSnapshot')); return;
+      setSession(nextSession as ButlerBootstrapSession); setMessages(toTranscriptMessages(nextSession as ButlerBootstrapSession)); setSending(Boolean(nextSession.current_request_id)); return;
     }
     if (event.type === 'user.message.accepted') { setSending(true); setSession(current => current ? { ...current, current_request_id: event.request_id ?? null } : current); return; }
     if (event.type === 'agent.chunk') {
@@ -173,7 +173,7 @@ export function ButlerBootstrapConversation(props: { householdId: string; source
     setConfirming(true); setError('');
     try {
       const created = await setupApi.confirmButlerBootstrapSession(householdId, session.session_id, { draft: session.draft, created_by: source });
-      setCreatedAgent(created); setStatus(t('setup.butler.status.created')); await onCreated?.(created);
+      setCreatedAgent(created); await onCreated?.(created);
     } catch (confirmError) { setError(confirmError instanceof Error ? confirmError.message : t('setup.butler.error.confirmFailed')); } finally { setConfirming(false); }
   }
   if (existingButlerAgent && !createdAgent) return <Card className="butler-bootstrap"><div className="butler-bootstrap__summary"><div><h3>{t('setup.butler.existsTitle')}</h3><p>{t('setup.butler.existsDesc', { name: existingButlerAgent.display_name })}</p></div></div></Card>;
@@ -182,7 +182,6 @@ export function ButlerBootstrapConversation(props: { householdId: string; source
     <div className="butler-bootstrap">
       <Card className="butler-bootstrap__hero">
         {error ? <p className="form-error">{error}</p> : null}
-        {status ? <div className="setup-form-status">{status}</div> : null}
         {loading ? <p>{t('setup.butler.loading')}</p> : null}
         {!loading && session ? (
           <div className="butler-bootstrap__chat">

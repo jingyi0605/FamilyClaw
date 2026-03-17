@@ -464,9 +464,9 @@ export default function SetupPageH5() {
         className="setup-theme-switcher"
         style={{
           display: 'flex',
-          gap: '8px',
+          gap: '6px',
           justifyContent: 'center',
-          margin: '1rem 0 2rem',
+          margin: '0 0 0.5rem',
         }}
       >
         {themeList.map(theme => (
@@ -476,13 +476,13 @@ export default function SetupPageH5() {
             onClick={() => setTheme(theme.id)}
             title={theme.label}
             style={{
-              width: '36px',
-              height: '36px',
+              width: '28px',
+              height: '28px',
               borderRadius: '50%',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '18px',
+              fontSize: '14px',
               border: themeId === theme.id
                 ? '2px solid var(--brand-primary)'
                 : '1px solid var(--border)',
@@ -535,7 +535,7 @@ export default function SetupPageH5() {
             {familyError ? <div className="form-error">{familyError}</div> : null}
             <div
               className="setup-form-actions"
-              style={{ justifyContent: 'center', marginTop: '2rem' }}
+              style={{ justifyContent: 'center', marginTop: '1rem' }}
             >
               <button
                 type="submit"
@@ -640,8 +640,8 @@ export default function SetupPageH5() {
 
             <div
               style={{
-                marginTop: '2rem',
-                padding: '1.5rem',
+                marginTop: '1rem',
+                padding: '1rem',
                 background: 'var(--bg-input)',
                 borderRadius: 'var(--radius-md)',
                 border: '1px solid var(--border-light)',
@@ -649,7 +649,7 @@ export default function SetupPageH5() {
             >
               <div
                 className="setup-wizard-header"
-                style={{ marginBottom: '1.5rem', textAlign: 'left' }}
+                style={{ marginBottom: '1rem', textAlign: 'left' }}
               >
                 <h3 style={{ fontSize: 'var(--font-size-md)' }}>{t('setup.member.accountTitle')}</h3>
                 <p style={{ fontSize: 'var(--font-size-sm)' }}>
@@ -742,7 +742,7 @@ export default function SetupPageH5() {
 
             <div
               className="setup-form-actions"
-              style={{ justifyContent: 'center', gap: '1rem', marginTop: '2rem' }}
+              style={{ justifyContent: 'center', gap: '1rem', marginTop: '1.5rem' }}
             >
               <button
                 type="button"
@@ -783,7 +783,7 @@ export default function SetupPageH5() {
               void refreshShellState(currentHouseholdId).then(advanceToNextStep);
             }}
           />
-          <div className="setup-form-actions" style={{ justifyContent: 'center', marginTop: '1.5rem' }}>
+          <div className="setup-form-actions" style={{ justifyContent: 'center', marginTop: '1rem' }}>
             <button
               type="button"
               className="btn btn--outline btn--large"
@@ -818,7 +818,7 @@ export default function SetupPageH5() {
             source="setup-wizard"
             onCreated={() => refreshShellState(currentHouseholdId).then(advanceToNextStep)}
           />
-          <div className="setup-form-actions" style={{ justifyContent: 'center', marginTop: '1.5rem' }}>
+          <div className="setup-form-actions" style={{ justifyContent: 'center', marginTop: '1rem' }}>
             <button
               type="button"
               className="btn btn--outline btn--large"
@@ -839,7 +839,7 @@ export default function SetupPageH5() {
         </div>
         <div
           className="setup-form-actions"
-          style={{ justifyContent: 'center', gap: '1rem', marginTop: '2rem' }}
+          style={{ justifyContent: 'center', gap: '1rem', marginTop: '1rem' }}
         >
           <button
             type="button"
