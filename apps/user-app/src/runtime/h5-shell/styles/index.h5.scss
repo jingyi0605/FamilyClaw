@@ -7307,7 +7307,63 @@ body::before {
 }
 
 .ai-provider-editor-form {
-  gap: var(--spacing-md);
+  gap: 16px;
+}
+
+/* 编辑器表单 - 使用固定 px 避免 Taro rem 转换 */
+.ai-provider-editor-modal .form-group {
+  gap: 6px !important;
+}
+
+.ai-provider-editor-modal .form-group label {
+  font-size: 13px !important;
+  font-weight: 500;
+}
+
+.ai-provider-editor-modal .form-input,
+.ai-provider-editor-modal .form-select {
+  padding: 8px 12px !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+  border-width: 1px !important;
+  border-radius: 6px !important;
+  height: auto !important;
+  min-height: auto !important;
+}
+
+.ai-provider-editor-modal .form-input::placeholder {
+  font-size: 14px !important;
+}
+
+.ai-provider-editor-modal .ai-editor-hint {
+  font-size: 12px !important;
+}
+
+.ai-provider-editor-modal .ai-editor-checkbox__label,
+.ai-provider-editor-modal .ai-editor-switch__label {
+  font-size: 13px !important;
+}
+
+.ai-provider-editor-modal .ai-editor-capabilities__label {
+  font-size: 13px !important;
+}
+
+.ai-provider-editor-modal .ai-editor-cap-chip {
+  font-size: 13px !important;
+  padding: 6px 12px !important;
+}
+
+/* 复选框固定尺寸 */
+.ai-provider-editor-modal input[type="checkbox"] {
+  width: 16px !important;
+  height: 16px !important;
+  margin: 0 !important;
+  flex-shrink: 0;
+}
+
+.ai-provider-editor-modal .ai-editor-workflow-badge {
+  font-size: 13px !important;
+  padding: 6px 12px !important;
 }
 
 .ai-provider-editor-card {
@@ -7544,9 +7600,9 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
   background: var(--bg-card);
   color: var(--brand-primary);
   flex-shrink: 0;
@@ -7554,15 +7610,263 @@ body::before {
 
 .ai-provider-editor-header__info h4 {
   margin: 0 0 2px 0;
-  font-size: 14px;
+  font-size: 14px !important;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .ai-provider-editor-header__info p {
   margin: 0;
-  font-size: 12px;
+  font-size: 12px !important;
   color: var(--text-secondary);
+}
+
+// 紧凑型编辑器头部标签
+.ai-provider-editor-header__tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+// 紧凑型编辑器主体
+.ai-provider-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+// 编辑器区块
+.ai-editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-editor-section--capabilities {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-light);
+}
+
+// 编辑器行（用于水平排列）
+.ai-editor-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.ai-editor-row > .form-group--compact {
+  flex: 1;
+}
+
+.ai-editor-row > .form-group--inline {
+  flex: 0 0 auto;
+  min-width: 180px;
+}
+
+// 编辑器网格（用于表单字段）
+.ai-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px 16px;
+}
+
+// 紧凑型表单组件
+.form-group--compact {
+  gap: 6px !important;
+}
+
+.form-group--compact label {
+  font-size: 13px;
+}
+
+.form-input--compact,
+.form-select--compact {
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+// 行内标签组
+.form-group--inline {
+  display: flex;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.form-group--inline label {
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+
+// 工作流徽章
+.ai-editor-workflow-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--brand-primary) 10%, var(--bg-input));
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--brand-primary);
+}
+
+// 复选框样式
+.form-group--checkbox {
+  grid-column: span 2;
+}
+
+.ai-editor-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ai-editor-checkbox:hover {
+  border-color: var(--brand-primary);
+  background: color-mix(in srgb, var(--brand-primary) 4%, var(--bg-card));
+}
+
+.ai-editor-checkbox input {
+  margin: 0;
+}
+
+.ai-editor-checkbox__label {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+// 提示文字
+.ai-editor-hint {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+// 能力选择区块
+.ai-editor-capabilities {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-editor-capabilities__label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.ai-editor-caps-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-editor-cap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 20px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ai-editor-cap-chip:hover {
+  border-color: var(--brand-primary);
+}
+
+.ai-editor-cap-chip input {
+  margin: 0;
+}
+
+.ai-editor-cap-chip input:checked + span {
+  color: var(--brand-primary);
+  font-weight: 500;
+}
+
+// 启用开关区块
+.ai-editor-enable {
+  flex-shrink: 0;
+}
+
+.ai-editor-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ai-editor-switch:hover {
+  border-color: var(--brand-primary);
+}
+
+.ai-editor-switch input {
+  margin: 0;
+}
+
+.ai-editor-switch__label {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+// 响应式适配
+@media (max-width: 600px) {
+  .ai-provider-editor-header {
+    flex-wrap: wrap;
+  }
+
+  .ai-provider-editor-header__tags {
+    width: 100%;
+    margin-left: 0;
+    margin-top: 8px;
+    justify-content: flex-start;
+  }
+
+  .ai-editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-group--checkbox {
+    grid-column: span 1;
+  }
+
+  .ai-editor-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ai-editor-row > .form-group--inline {
+    min-width: auto;
+  }
+
+  .ai-editor-section--capabilities {
+    flex-direction: column;
+    gap: 12px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -11543,13 +11847,47 @@ body::before {
 /* 市场源表单区域 */
 .marketplace-source-form {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--spacing-md);
   padding: var(--spacing-lg);
   background: color-mix(in srgb, var(--brand-primary) 5%, transparent);
   border: 1px dashed color-mix(in srgb, var(--brand-primary) 40%, transparent);
   border-radius: var(--radius-xl);
   margin-bottom: var(--spacing-md);
+}
+
+.marketplace-source-form__section {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.marketplace-source-form__section + .marketplace-source-form__section {
+  margin-top: var(--spacing-sm);
+}
+
+.marketplace-source-form__section-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.marketplace-source-form__section-hint {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.marketplace-source-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.marketplace-source-form__label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
 }
 
 .marketplace-source-form__input {
@@ -11571,6 +11909,14 @@ body::before {
 
 .marketplace-source-form__input::placeholder {
   color: var(--text-tertiary);
+}
+
+.marketplace-source-form__submit {
+  grid-column: 1 / -1;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
 }
 
 /* 市场源列表 */
@@ -11600,6 +11946,47 @@ body::before {
   box-shadow:
     0 4px 12px color-mix(in srgb, var(--brand-primary) 10%, color-mix(in srgb, var(--color-black) 5%, transparent));
   transform: translateY(-2px);
+}
+
+.marketplace-source-card__details {
+  display: grid;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+}
+
+.marketplace-source-card__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.marketplace-source-card__detail-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.marketplace-source-card__detail-value {
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.marketplace-source-card__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+.marketplace-source-card__link:hover {
+  text-decoration: underline;
 }
 
 /* 插件卡片 */
@@ -11944,6 +12331,11 @@ body::before {
   .marketplace-source-form {
     grid-template-columns: 1fr;
     padding: var(--spacing-md);
+  }
+
+  .marketplace-source-form__submit {
+    width: 100%;
+    justify-content: center;
   }
 
   .marketplace-source-card__top,

@@ -12,6 +12,7 @@ import { ApiError, settingsApi } from '../settings/settingsApi';
 import type {
   MarketplaceCatalogItemRead,
   MarketplaceInstallStateRead,
+  MarketplaceRepoProvider,
   MarketplaceSourceRead,
   PluginManifestType,
   PluginRegistryItem,
@@ -33,6 +34,32 @@ const FILTERABLE_TYPES: PluginManifestType[] = [
   'theme-pack',
   'ai-provider',
 ];
+
+const MARKETPLACE_REPO_PROVIDERS: MarketplaceRepoProvider[] = ['github', 'gitlab', 'gitee', 'gitea'];
+
+type MarketplaceSourceFormState = {
+  repo_provider: MarketplaceRepoProvider | '';
+  repo_url: string;
+  api_base_url: string;
+  branch: string;
+  entry_root: string;
+  mirror_repo_url: string;
+  mirror_repo_provider: MarketplaceRepoProvider | '';
+  mirror_api_base_url: string;
+};
+
+function createEmptyMarketplaceForm(): MarketplaceSourceFormState {
+  return {
+    repo_provider: '',
+    repo_url: '',
+    api_base_url: '',
+    branch: '',
+    entry_root: '',
+    mirror_repo_url: '',
+    mirror_repo_provider: '',
+    mirror_api_base_url: '',
+  };
+}
 
 function resolveDateLocale(locale: string | undefined) {
   if (locale?.toLowerCase().startsWith('en')) {
@@ -226,6 +253,21 @@ function formatVersionUpdateState(
   }
 }
 
+function formatMarketplaceRepoProvider(provider: MarketplaceRepoProvider, locale: string | undefined) {
+  switch (provider) {
+    case 'github':
+      return getPageMessage(locale, 'plugins.marketplace.provider.github');
+    case 'gitlab':
+      return getPageMessage(locale, 'plugins.marketplace.provider.gitlab');
+    case 'gitee':
+      return getPageMessage(locale, 'plugins.marketplace.provider.gitee');
+    case 'gitea':
+      return getPageMessage(locale, 'plugins.marketplace.provider.gitea');
+    default:
+      return provider;
+  }
+}
+
 function formatVersionCompatibilityStatus(
   status: string | null | undefined,
   locale: string | undefined,
@@ -252,6 +294,11 @@ function openExternalLink(url: string) {
   if (typeof window !== 'undefined') {
     window.open(url, '_blank', 'noopener,noreferrer');
   }
+}
+
+function normalizeOptionalText(value: string) {
+  const normalized = value.trim();
+  return normalized ? normalized : null;
 }
 
 function PluginsPageContent() {
@@ -282,11 +329,7 @@ function PluginsPageContent() {
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [sourceManagerOpen, setSourceManagerOpen] = useState(false);
   const [marketRefreshing, setMarketRefreshing] = useState(false);
-  const [marketplaceForm, setMarketplaceForm] = useState({
-    repo_url: '',
-    branch: '',
-    entry_root: '',
-  });
+  const [marketplaceForm, setMarketplaceForm] = useState<MarketplaceSourceFormState>(createEmptyMarketplaceForm);
 
   const page = useCallback(
     (key: Parameters<typeof getPageMessage>[1], params?: Parameters<typeof getPageMessage>[2]) => getPageMessage(locale, key, params),
@@ -479,12 +522,18 @@ function PluginsPageContent() {
     setSourceError('');
     setSourceStatus('');
     try {
+      const mirrorRepoUrl = normalizeOptionalText(marketplaceForm.mirror_repo_url);
       await settingsApi.createMarketplaceSource({
         repo_url: marketplaceForm.repo_url.trim(),
-        branch: marketplaceForm.branch.trim() || null,
-        entry_root: marketplaceForm.entry_root.trim() || null,
+        repo_provider: marketplaceForm.repo_provider || null,
+        api_base_url: normalizeOptionalText(marketplaceForm.api_base_url),
+        branch: normalizeOptionalText(marketplaceForm.branch),
+        entry_root: normalizeOptionalText(marketplaceForm.entry_root),
+        mirror_repo_url: mirrorRepoUrl,
+        mirror_repo_provider: mirrorRepoUrl ? (marketplaceForm.mirror_repo_provider || null) : null,
+        mirror_api_base_url: mirrorRepoUrl ? normalizeOptionalText(marketplaceForm.mirror_api_base_url) : null,
       });
-      setMarketplaceForm({ repo_url: '', branch: '', entry_root: '' });
+      setMarketplaceForm(createEmptyMarketplaceForm());
       await reloadMarketplace();
       setSourceStatus(page('plugins.marketplace.status.sourceAdded'));
     } catch (submitError) {
@@ -826,25 +875,109 @@ function PluginsPageContent() {
       <div className="plugin-marketplace-modal__body">
         <Card className="marketplace-panel">
           <div className="marketplace-source-form">
-            <input
-              className="marketplace-source-form__input"
-              value={marketplaceForm.repo_url}
-              onChange={event => setMarketplaceForm(current => ({ ...current, repo_url: event.target.value }))}
-              placeholder={page('plugins.marketplace.form.repoPlaceholder')}
-            />
-            <input
-              className="marketplace-source-form__input"
-              value={marketplaceForm.branch}
-              onChange={event => setMarketplaceForm(current => ({ ...current, branch: event.target.value }))}
-              placeholder={page('plugins.marketplace.form.branchPlaceholder')}
-            />
-            <input
-              className="marketplace-source-form__input"
-              value={marketplaceForm.entry_root}
-              onChange={event => setMarketplaceForm(current => ({ ...current, entry_root: event.target.value }))}
-              placeholder={page('plugins.marketplace.form.entryRootPlaceholder')}
-            />
-            <button className="btn btn--primary btn--sm" onClick={() => void handleMarketplaceSourceSubmit()}>
+            <div className="marketplace-source-form__section">
+              <span className="marketplace-source-form__section-title">{page('plugins.marketplace.form.primarySection')}</span>
+              <span className="marketplace-source-form__section-hint">{page('plugins.marketplace.form.primarySectionHint')}</span>
+            </div>
+
+            <label className="marketplace-source-form__field">
+              <span className="marketplace-source-form__label">{page('plugins.marketplace.form.repoProviderLabel')}</span>
+              <select
+                className="marketplace-source-form__input"
+                value={marketplaceForm.repo_provider}
+                onChange={event => setMarketplaceForm(current => ({ ...current, repo_provider: event.target.value as MarketplaceRepoProvider | '' }))}
+              >
+                <option value="">{page('plugins.marketplace.form.autoDetectProvider')}</option>
+                {MARKETPLACE_REPO_PROVIDERS.map(provider => (
+                  <option key={provider} value={provider}>
+                    {formatMarketplaceRepoProvider(provider, locale)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="marketplace-source-form__field">
+              <span className="marketplace-source-form__label">{page('plugins.marketplace.form.repoLabel')}</span>
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.repo_url}
+                onChange={event => setMarketplaceForm(current => ({ ...current, repo_url: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.repoPlaceholder')}
+              />
+            </label>
+
+            <label className="marketplace-source-form__field">
+              <span className="marketplace-source-form__label">{page('plugins.marketplace.form.apiBaseUrlLabel')}</span>
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.api_base_url}
+                onChange={event => setMarketplaceForm(current => ({ ...current, api_base_url: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.apiBaseUrlPlaceholder')}
+              />
+            </label>
+
+            <label className="marketplace-source-form__field">
+              <span className="marketplace-source-form__label">{page('plugins.marketplace.form.branchLabel')}</span>
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.branch}
+                onChange={event => setMarketplaceForm(current => ({ ...current, branch: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.branchPlaceholder')}
+              />
+            </label>
+
+            <label className="marketplace-source-form__field">
+              <span className="marketplace-source-form__label">{page('plugins.marketplace.form.entryRootLabel')}</span>
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.entry_root}
+                onChange={event => setMarketplaceForm(current => ({ ...current, entry_root: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.entryRootPlaceholder')}
+              />
+            </label>
+
+            <div className="marketplace-source-form__section">
+              <span className="marketplace-source-form__section-title">{page('plugins.marketplace.form.mirrorSection')}</span>
+              <span className="marketplace-source-form__section-hint">{page('plugins.marketplace.form.mirrorSectionHint')}</span>
+            </div>
+
+            <label className="marketplace-source-form__field">
+              <span className="marketplace-source-form__label">{page('plugins.marketplace.form.mirrorRepoLabel')}</span>
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.mirror_repo_url}
+                onChange={event => setMarketplaceForm(current => ({ ...current, mirror_repo_url: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.mirrorRepoPlaceholder')}
+              />
+            </label>
+
+            <label className="marketplace-source-form__field">
+              <span className="marketplace-source-form__label">{page('plugins.marketplace.form.mirrorProviderLabel')}</span>
+              <select
+                className="marketplace-source-form__input"
+                value={marketplaceForm.mirror_repo_provider}
+                onChange={event => setMarketplaceForm(current => ({ ...current, mirror_repo_provider: event.target.value as MarketplaceRepoProvider | '' }))}
+              >
+                <option value="">{page('plugins.marketplace.form.autoDetectProvider')}</option>
+                {MARKETPLACE_REPO_PROVIDERS.map(provider => (
+                  <option key={provider} value={provider}>
+                    {formatMarketplaceRepoProvider(provider, locale)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="marketplace-source-form__field">
+              <span className="marketplace-source-form__label">{page('plugins.marketplace.form.mirrorApiBaseUrlLabel')}</span>
+              <input
+                className="marketplace-source-form__input"
+                value={marketplaceForm.mirror_api_base_url}
+                onChange={event => setMarketplaceForm(current => ({ ...current, mirror_api_base_url: event.target.value }))}
+                placeholder={page('plugins.marketplace.form.mirrorApiBaseUrlPlaceholder')}
+              />
+            </label>
+
+            <button className="btn btn--primary btn--sm marketplace-source-form__submit" onClick={() => void handleMarketplaceSourceSubmit()}>
               <Package size={14} />
               {page('plugins.marketplace.form.add')}
             </button>
@@ -858,6 +991,10 @@ function PluginsPageContent() {
               const trustedInfo = formatMarketplaceTrustedLevel(source.trusted_level, locale);
               const syncInfo = formatMarketplaceSyncStatus(source.last_sync_status, locale);
               const isSyncing = syncingSourceId === source.source_id;
+              const repoProviderLabel = formatMarketplaceRepoProvider(source.repo_provider, locale);
+              const mirrorProviderLabel = source.mirror_repo_provider ? formatMarketplaceRepoProvider(source.mirror_repo_provider, locale) : null;
+              const isEffectiveRepoDifferent = source.effective_repo_url !== source.repo_url;
+              const mirrorRepoUrl = source.mirror_repo_url;
 
               return (
                 <div key={source.source_id} className="marketplace-source-card">
@@ -867,11 +1004,12 @@ function PluginsPageContent() {
                         <span>{source.name}</span>
                         <span className={`badge badge--${trustedInfo.tone}`}>{trustedInfo.label}</span>
                         <span className={`badge badge--${syncInfo.tone}`}>{syncInfo.label}</span>
+                        <span className="badge badge--info">{repoProviderLabel}</span>
                       </div>
                       <div className="marketplace-source-card__meta">
-                        <span>{source.repo_url}</span>
-                        {source.branch ? <><span>·</span><span>{source.branch}</span></> : null}
-                        {source.entry_root ? <><span>·</span><span>{source.entry_root}</span></> : null}
+                        {source.owner ? <span>{page('plugins.marketplace.source.ownerValue', { owner: source.owner })}</span> : null}
+                        {source.branch ? <span>{page('plugins.marketplace.source.branchValue', { branch: source.branch })}</span> : null}
+                        {source.entry_root ? <span>{page('plugins.marketplace.source.entryRootValue', { entryRoot: source.entry_root })}</span> : null}
                       </div>
                     </div>
                     <button
@@ -882,6 +1020,51 @@ function PluginsPageContent() {
                       <RefreshCw size={14} className={isSyncing ? 'animate-spin' : undefined} />
                       {isSyncing ? page('plugins.marketplace.action.syncing') : page('plugins.marketplace.action.sync')}
                     </button>
+                  </div>
+                  <div className="marketplace-source-card__details">
+                    <div className="marketplace-source-card__detail">
+                      <span className="marketplace-source-card__detail-label">{page('plugins.marketplace.source.repoLabel')}</span>
+                      <button type="button" className="marketplace-source-card__link" onClick={() => openExternalLink(source.repo_url)}>
+                        <span>{source.repo_url}</span>
+                        <ExternalLink size={14} />
+                      </button>
+                    </div>
+                    {source.api_base_url ? (
+                      <div className="marketplace-source-card__detail">
+                        <span className="marketplace-source-card__detail-label">{page('plugins.marketplace.source.apiBaseUrlLabel')}</span>
+                        <span className="marketplace-source-card__detail-value">{source.api_base_url}</span>
+                      </div>
+                    ) : null}
+                    {isEffectiveRepoDifferent ? (
+                      <div className="marketplace-source-card__detail">
+                        <span className="marketplace-source-card__detail-label">{page('plugins.marketplace.source.effectiveRepoLabel')}</span>
+                        <button type="button" className="marketplace-source-card__link" onClick={() => openExternalLink(source.effective_repo_url)}>
+                          <span>{source.effective_repo_url}</span>
+                          <ExternalLink size={14} />
+                        </button>
+                      </div>
+                    ) : null}
+                    {mirrorRepoUrl ? (
+                      <div className="marketplace-source-card__detail">
+                        <span className="marketplace-source-card__detail-label">{page('plugins.marketplace.source.mirrorRepoLabel')}</span>
+                        <button type="button" className="marketplace-source-card__link" onClick={() => openExternalLink(mirrorRepoUrl)}>
+                          <span>{mirrorRepoUrl}</span>
+                          <ExternalLink size={14} />
+                        </button>
+                      </div>
+                    ) : null}
+                    {mirrorProviderLabel ? (
+                      <div className="marketplace-source-card__detail">
+                        <span className="marketplace-source-card__detail-label">{page('plugins.marketplace.source.mirrorProviderLabel')}</span>
+                        <span className="marketplace-source-card__detail-value">{mirrorProviderLabel}</span>
+                      </div>
+                    ) : null}
+                    {source.mirror_api_base_url ? (
+                      <div className="marketplace-source-card__detail">
+                        <span className="marketplace-source-card__detail-label">{page('plugins.marketplace.source.mirrorApiBaseUrlLabel')}</span>
+                        <span className="marketplace-source-card__detail-value">{source.mirror_api_base_url}</span>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="marketplace-source-card__foot">
                     <span>{page('plugins.marketplace.lastSynced')}</span>

@@ -438,7 +438,7 @@ export type PluginManifestType =
   | 'region-provider'
   | 'theme-pack'
   | 'ai-provider';
-export type PluginConfigScopeType = 'plugin' | 'channel_account';
+export type PluginConfigScopeType = 'plugin' | 'channel_account' | 'device';
 export type PluginConfigFieldType = 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'enum' | 'multi_enum' | 'secret' | 'json';
 export type PluginConfigWidgetType = 'input' | 'password' | 'textarea' | 'switch' | 'select' | 'multi_select' | 'json_editor';
 export type PluginConfigVisibleOperator = 'equals' | 'not_equals' | 'in' | 'truthy';
@@ -562,6 +562,12 @@ export type PluginRegistryItem = {
     context_reads?: {
       household_region_context?: boolean;
     } | null;
+    device_detail_tabs?: Array<{
+      tab_key: string;
+      title: string;
+      description?: string | null;
+      config_scope_type: 'device';
+    }>;
     channel?: {
       ui?: {
         account_config_fields?: Array<{
@@ -860,6 +866,35 @@ export type DeviceEntityListRead = {
   items: DeviceEntity[];
 };
 
+export type DeviceDetailCapabilityRead = {
+  supports_voice_terminal: boolean;
+  supports_voiceprint: boolean;
+  adapter_type: string | null;
+  plugin_id: string | null;
+  vendor_code: string | null;
+  capability_tags: string[];
+};
+
+export type DeviceDetailBuiltinTabRead = {
+  key: 'voiceprint';
+};
+
+export type DeviceDetailPluginTabRead = {
+  tab_key: string;
+  title: string;
+  description: string | null;
+  plugin_id: string;
+  plugin_name: string;
+  config_form: PluginConfigFormRead;
+};
+
+export type DeviceDetailViewRead = {
+  device: Device;
+  capabilities: DeviceDetailCapabilityRead;
+  builtin_tabs: DeviceDetailBuiltinTabRead[];
+  plugin_tabs: DeviceDetailPluginTabRead[];
+};
+
 export type DeviceActionExecuteRequest = {
   household_id: string;
   device_id: string;
@@ -943,6 +978,7 @@ export type PluginJobListRead = {
 export type MarketplaceTrustedLevel = 'official' | 'third_party';
 export type MarketplaceSyncStatus = 'idle' | 'syncing' | 'success' | 'failed';
 export type MarketplaceEntrySyncStatus = 'ready' | 'invalid';
+export type MarketplaceRepoProvider = 'github' | 'gitlab' | 'gitee' | 'gitea';
 export type MarketplaceInstallStatus =
   | 'not_installed'
   | 'queued'
@@ -958,7 +994,14 @@ export type MarketplaceSourceRead = {
   source_id: string;
   market_id: string | null;
   name: string;
+  owner: string | null;
   repo_url: string;
+  repo_provider: MarketplaceRepoProvider;
+  api_base_url: string | null;
+  mirror_repo_url: string | null;
+  mirror_repo_provider: MarketplaceRepoProvider | null;
+  mirror_api_base_url: string | null;
+  effective_repo_url: string;
   branch: string;
   entry_root: string;
   trusted_level: MarketplaceTrustedLevel;
@@ -970,8 +1013,13 @@ export type MarketplaceSourceRead = {
 
 export type MarketplaceSourceCreateRequest = {
   repo_url: string;
+  repo_provider?: MarketplaceRepoProvider | null;
+  api_base_url?: string | null;
   branch?: string | null;
   entry_root?: string | null;
+  mirror_repo_url?: string | null;
+  mirror_repo_provider?: MarketplaceRepoProvider | null;
+  mirror_api_base_url?: string | null;
 };
 
 export type MarketplaceSourceSyncResultRead = {

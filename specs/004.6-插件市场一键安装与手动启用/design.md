@@ -1,4 +1,4 @@
-# 设计文档 - 基于 GitHub 仓库的插件市场、一键安装与手动启用
+# 设计文档 - 基于 Git 仓库的插件市场、一键安装与手动启用
 
 状态：Draft
 
@@ -6,25 +6,25 @@
 
 ### 1.1 目标
 
-- 把插件市场改成“基于 GitHub 仓库”的无服务器目录机制。
+- 把插件市场改成“基于 Git 仓库”的无服务器目录机制。
 - 让官方市场和第三方市场仓库可以并存。
 - 把“注册表仓库”和“插件源码仓库”两层职责拆开。
 - 保留一键安装能力，但安装成功后默认禁用，必须手动启用。
 
 ### 1.2 覆盖需求
 
-- `requirements.md` 需求 1：市场必须基于 GitHub 仓库，而不是中心化服务端
+- `requirements.md` 需求 1：市场必须基于 Git 仓库，而不是中心化服务端
 - `requirements.md` 需求 2：必须支持官方市场和第三方市场仓库并存
 - `requirements.md` 需求 3：第三方作者必须通过 PR 向市场仓库提交插件条目
 - `requirements.md` 需求 4：插件代码必须放在独立插件仓库，注册表只存元数据
-- `requirements.md` 需求 5：必须定义 GitHub 仓库式市场的文件规则
+- `requirements.md` 需求 5：必须定义 Git 仓库式市场的文件规则
 - `requirements.md` 需求 6：用户必须可以基于注册表条目一键安装插件
 - `requirements.md` 需求 7：安装成功后默认禁用，启用必须手动触发
 - `requirements.md` 需求 8：未配置完成的插件不能被误运行
 - `requirements.md` 需求 9：市场同步和安装失败必须可见、可追踪
-- `requirements.md` 需求 10：市场要展示基于 GitHub 的仓库评价信息
+- `requirements.md` 需求 10：市场要展示仓库评价信息
 - `requirements.md` 需求 11：仓库浏览量只能作为可选增强信息
-- `requirements.md` 需求 12：市场不做内嵌 GitHub Star 写回
+- `requirements.md` 需求 12：市场不做内嵌 Star 写回
 
 ### 1.3 技术约束
 
@@ -44,10 +44,10 @@
 
 1. **市场源配置层**
    - 管理官方市场仓库和用户添加的第三方市场仓库
-   - 每个市场源都是一个 GitHub 仓库配置
+   - 每个市场源都是一个 Git 仓库配置，当前支持 GitHub、GitLab、Gitee、Gitea
 
 2. **市场同步层**
-   - 从 GitHub 仓库拉取注册表文件
+   - 从兼容 API 的 Git 仓库拉取注册表文件
    - 校验仓库结构
    - 生成本地市场快照
 
@@ -56,7 +56,7 @@
    - 但不抹掉来源信息
 
 4. **评价指标同步层**
-   - 读取 GitHub 仓库公开可读指标
+   - 读取仓库公开可读指标
    - 聚合 star、fork 等评价信息
    - 对不可公开读取的指标做降级
 5. **安装执行层**
@@ -73,7 +73,7 @@
 | 模块 | 职责 | 输入 | 输出 |
 | --- | --- | --- | --- |
 | `MarketplaceSourceService` | 管理市场仓库配置 | 仓库地址、分支、路径 | 市场源记录 |
-| `MarketplaceSyncService` | 拉取并校验 GitHub 市场仓库 | 市场源配置 | 市场快照、同步错误 |
+| `MarketplaceSyncService` | 拉取并校验市场仓库 | 市场源配置 | 市场快照、同步错误 |
 | `MarketplaceCatalogService` | 聚合多个市场源的条目 | 市场快照 | 插件目录列表 |
 | `RegistryEntryValidator` | 校验注册表条目和仓库结构 | 条目文件、schema | 校验结果 |
 | `RepositoryMetricsService` | 读取仓库 star、fork 等评价指标 | 插件源码仓库地址 | 仓库指标快照 |
@@ -88,7 +88,7 @@
 
 1. 系统内置官方市场仓库源。
 2. 用户可以新增第三方市场仓库源。
-3. 同步服务按仓库地址、分支和目录读取 GitHub 内容。
+3. 同步服务按仓库地址、分支和目录读取仓库内容；如果配置了镜像，优先读镜像。
 4. 校验仓库根目录文件、注册表索引和插件条目结构。
 5. 对条目关联的插件源码仓库读取公开可读指标，如 `star`、`fork`。
 6. 生成本地市场快照。
@@ -123,16 +123,16 @@
 #### 2.3.5 评价指标读取流程
 
 1. 市场同步拿到注册表条目中的 `source_repo`。
-2. 指标服务读取对应 GitHub 仓库的公开元数据。
+2. 指标服务读取对应仓库的公开元数据。
 3. 能公开拿到的指标写入本地快照，例如 `stargazers_count`、`forks_count`。
 4. 访问量这类非公开统一指标，只有在仓库拥有者提供足够权限时才读取。
 5. 指标读取失败不阻断市场条目同步，只把指标字段标记为不可用。
 
-## 3. GitHub 仓库规则
+## 3. 仓库规则
 
 ### 3.1 市场仓库规则
 
-市场仓库是给人提 PR 和给客户端同步用的，不是拿来塞插件源码的。
+市场仓库是给人提 PR 和给客户端同步用的，不是拿来塞插件源码的。这里说的“仓库”不是只认 GitHub，当前实现认 GitHub、GitLab、Gitee、Gitea 这四类兼容 API 的提供方；如果是自建实例，必须走 GitLab 或 Gitea 兼容 API，不支持随便给一个 HTTP 文件目录。
 
 建议固定结构：
 
@@ -147,8 +147,8 @@
       screenshots/            # 可选
   schemas/
     entry.schema.json         # 可选，供人工和 CI 复用
-  .github/
-    PULL_REQUEST_TEMPLATE.md
+  docs/
+    contribution-template.md  # 可选，按托管平台习惯放 PR / MR 模板
 ```
 
 #### 3.1.1 根文件 `market.json`
@@ -162,10 +162,16 @@
 | `market_id` | string | 是 | 市场唯一标识 |
 | `name` | string | 是 | 市场展示名 |
 | `owner` | string | 是 | 市场维护方 |
-| `repo_url` | string | 是 | GitHub 仓库地址 |
+| `repo_url` | string | 是 | 主仓库地址，必须和这个市场真实声明的仓库一致 |
 | `default_branch` | string | 是 | 默认分支 |
 | `entry_root` | string | 是 | 插件条目根目录，默认 `plugins/` |
 | `trusted_level` | string | 是 | `official` / `third_party` |
+
+补充规则：
+
+1. `owner`、`default_branch`、`trusted_level` 在同步时会真正参与校验，不再是摆设字段。
+2. 如果市场源配置了镜像，镜像只负责读文件和加速同步，不允许把 `market.json.repo_url` 改写成镜像地址。
+3. 手动添加的市场源一律按 `third_party` 处理，不能伪装成 `official`。
 
 #### 3.1.2 单插件目录 `plugins/<plugin_id>/`
 
@@ -186,7 +192,7 @@
 | `plugin_id` | string | 是 | 插件唯一标识，必须与目录名一致 |
 | `name` | string | 是 | 展示名 |
 | `summary` | string | 是 | 简介 |
-| `source_repo` | string | 是 | 插件源码 GitHub 仓库地址 |
+| `source_repo` | string | 是 | 插件源码仓库地址 |
 | `manifest_path` | string | 是 | 源码仓库中 manifest 路径，默认 `manifest.json` |
 | `readme_url` | string | 是 | 插件 README 地址 |
 | `publisher` | object | 是 | 发布方摘要 |
@@ -208,10 +214,16 @@
 | `version` | string | 是 | 版本号 |
 | `git_ref` | string | 是 | tag 或 commit |
 | `artifact_type` | string | 是 | `release_asset` / `source_archive` |
-| `artifact_url` | string | 是 | GitHub release asset 或 archive 地址 |
+| `artifact_url` | string | 否 | release asset 或 archive 地址 |
 | `checksum` | string | 否 | 完整性摘要 |
 | `published_at` | string | 否 | 发布时间 |
 | `min_app_version` | string | 否 | 最低宿主版本 |
+
+补充规则：
+
+1. `artifact_type=source_archive` 时，允许不写 `artifact_url`，后端会根据 `git_ref` 和仓库提供方推导下载地址。
+2. `artifact_type=release_asset` 时，必须提供可下载的 `artifact_url`。
+3. `checksum` 目前只认 `sha256` 十六进制，允许写成 `sha256:<hex>`。
 
 #### 3.1.5 仓库评价指标 `repository_metrics`
 
@@ -219,8 +231,8 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `stargazers_count` | integer | 否 | GitHub star 数 |
-| `forks_count` | integer | 否 | GitHub fork 数 |
+| `stargazers_count` | integer | 否 | Star 数 |
+| `forks_count` | integer | 否 | Fork 数 |
 | `subscribers_count` | integer | 否 | 仓库订阅数，可选 |
 | `open_issues_count` | integer | 否 | 公开 issue 数，可选 |
 | `views_count` | integer | 否 | 仓库访问量，仅授权可读时存在 |
@@ -247,8 +259,9 @@
 
 1. `manifest.json` 必须存在，且 `id` 必须和注册表 `plugin_id` 一致。
 2. README 必须存在，至少说明插件用途、权限、风险和最小验证方式。
-3. 依赖清单必须存在，不能把依赖信息只写在注册表里。
+3. `requirements.txt` 必须存在，不能把依赖信息只写在注册表里。
 4. 安装目标必须能稳定定位到具体版本，不能只给一个会漂移的主页链接。
+5. 安装阶段会真实校验 `manifest.permissions`、README 和 `requirements.txt`，不是只在文档里说说。
 
 ### 3.3 PR 提交流程规则
 
@@ -277,7 +290,14 @@
 | --- | --- | --- | --- | --- |
 | `source_id` | string | 是 | 市场源编号 | 全局唯一 |
 | `name` | string | 是 | 展示名称 | 非空 |
-| `repo_url` | string | 是 | GitHub 仓库地址 | 必须是 GitHub URL |
+| `owner` | string | 否 | 市场维护方 | 来自 `market.json.owner` |
+| `repo_url` | string | 是 | 主仓库地址 | 必须是支持的仓库 URL |
+| `repo_provider` | string | 是 | 主仓库提供方 | `github` / `gitlab` / `gitee` / `gitea` |
+| `api_base_url` | string | 否 | 主仓库 API 根地址 | 自建实例时可填 |
+| `mirror_repo_url` | string | 否 | 镜像仓库地址 | 仅同步使用 |
+| `mirror_repo_provider` | string | 否 | 镜像仓库提供方 | 与镜像地址配套 |
+| `mirror_api_base_url` | string | 否 | 镜像 API 根地址 | 自建镜像时可填 |
+| `effective_repo_url` | string | 是 | 实际同步时读取的仓库地址 | 有镜像时等于镜像，否则等于主仓库 |
 | `branch` | string | 是 | 读取分支 | 默认仓库主分支 |
 | `entry_root` | string | 是 | 条目目录 | 默认 `plugins/` |
 | `trusted_level` | string | 是 | `official` / `third_party` | 非空 |
@@ -292,7 +312,7 @@
 | `source_id` | string | 是 | 所属市场源 | 非空 |
 | `plugin_id` | string | 是 | 插件标识 | 与目录一致 |
 | `name` | string | 是 | 展示名 | 非空 |
-| `source_repo` | string | 是 | 插件源码仓库 | GitHub URL |
+| `source_repo` | string | 是 | 插件源码仓库 | 支持的仓库 URL |
 | `latest_version` | string | 是 | 最新可安装版本 | 非空 |
 | `risk_level` | string | 是 | 风险等级 | 非空 |
 | `install` | object | 是 | 安装元数据 | 非空 |
@@ -321,25 +341,78 @@
 #### 4.3.1 查询市场源列表
 
 - 类型：HTTP
-- 路径：`GET /api/plugin-marketplace/sources`
-- 输出：市场源列表、信任级别、同步状态
+- 路径：`GET /api/v1/plugin-marketplace/sources`
+- 输入：无
+- 输出：市场源列表。每个元素至少包含下面这些字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `source_id` | string | 市场源唯一标识 |
+| `market_id` | string \| null | `market.json` 声明的市场 ID |
+| `name` | string | 市场展示名 |
+| `owner` | string \| null | 市场维护方 |
+| `repo_url` | string | 主仓库地址 |
+| `repo_provider` | string | 主仓库提供方 |
+| `api_base_url` | string \| null | 主仓库 API 根地址 |
+| `mirror_repo_url` | string \| null | 镜像仓库地址 |
+| `mirror_repo_provider` | string \| null | 镜像仓库提供方 |
+| `mirror_api_base_url` | string \| null | 镜像 API 根地址 |
+| `effective_repo_url` | string | 实际同步时读取的仓库地址 |
+| `branch` | string | 当前读取分支 |
+| `entry_root` | string | 条目根目录 |
+| `trusted_level` | string | `official` / `third_party` |
+| `enabled` | boolean | 是否启用 |
+| `last_sync_status` | string \| null | `idle` / `syncing` / `success` / `failed` |
+| `last_sync_error` | object \| null | 最近一次同步错误详情 |
+| `last_synced_at` | string \| null | 最近一次同步成功时间 |
+
 - 错误：`invalid_query`
 
 #### 4.3.2 添加第三方市场源
 
 - 类型：HTTP
-- 路径：`POST /api/plugin-marketplace/sources`
-- 输入：`repo_url`、`branch?`、`entry_root?`
-- 输出：新增市场源记录
-- 校验：必须是合法 GitHub 仓库，且结构可识别
+- 路径：`POST /api/v1/plugin-marketplace/sources`
+- 输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `repo_url` | string | 是 | 主仓库地址 |
+| `repo_provider` | string \| null | 否 | 主仓库提供方，留空则按 URL 自动识别 |
+| `api_base_url` | string \| null | 否 | 主仓库 API 根地址 |
+| `branch` | string \| null | 否 | 读取分支，留空走仓库默认分支 |
+| `entry_root` | string \| null | 否 | 条目根目录，留空走市场声明 |
+| `mirror_repo_url` | string \| null | 否 | 镜像仓库地址 |
+| `mirror_repo_provider` | string \| null | 否 | 镜像提供方，留空则按镜像 URL 自动识别 |
+| `mirror_api_base_url` | string \| null | 否 | 镜像 API 根地址 |
+
+- 输出：新增市场源记录，字段结构与 `GET /api/v1/plugin-marketplace/sources` 单项一致。
+- 校验：
+  1. `repo_url` 和 `mirror_repo_url` 都必须是支持的仓库 URL。
+  2. 只有填写了 `mirror_repo_url`，才允许再填镜像提供方或镜像 API。
+  3. 新增来源一律按 `third_party` 处理。
+  4. 市场仓库结构必须可识别，且 `market.json.repo_url` 必须继续指向主仓库，不允许写成镜像地址。
 - 错误：`invalid_market_repo`、`market_repo_conflict`、`market_repo_structure_invalid`
 
 #### 4.3.3 同步市场源
 
 - 类型：HTTP
-- 路径：`POST /api/plugin-marketplace/sources/{source_id}/sync`
+- 路径：`POST /api/v1/plugin-marketplace/sources/{source_id}/sync`
 - 输入：`source_id`
-- 输出：同步结果摘要
+- 行为：
+  1. 如果配置了镜像，优先从镜像读取市场文件。
+  2. 同步时会校验 `market.json.owner`、`market.json.default_branch`、`market.json.trusted_level`。
+  3. 条目安装元数据会校验 `versions[*].git_ref`、`versions[*].artifact_type`、`versions[*].checksum`。
+  4. 插件源码会校验 `manifest.permissions`、README、`requirements.txt`。
+- 输出：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `source` | object | 更新后的市场源对象 |
+| `total_entries` | integer | 本次扫描的条目总数 |
+| `ready_entries` | integer | 校验通过的条目数 |
+| `invalid_entries` | integer | 校验失败的条目数 |
+| `errors` | array | 条目错误列表，元素包含 `plugin_id`、`error_code`、`detail` |
+
 - 错误：`source_not_found`、`market_sync_failed`
 
 #### 4.3.4 查询聚合市场目录
@@ -355,7 +428,7 @@
 - 类型：HTTP
 - 路径：`GET /api/plugin-marketplace/catalog/{source_id}/{plugin_id}`
 - 输入：`source_id`、`plugin_id`
-- 输出：插件条目详情、来源信息、仓库评价指标、GitHub 跳转地址
+- 输出：插件条目详情、来源信息、仓库评价指标、仓库跳转地址
 - 校验：无效条目仍可查看，但必须明确标记不可安装
 - 错误：`entry_not_found`
 
@@ -439,14 +512,14 @@
 3. `enabled=true` 的前提必须是 `install_status=installed` 且 `config_status=configured`。
 4. 注册表条目不是源码事实来源，manifest 校验必须回到插件源码仓库或安装产物。
 5. 多个市场源同名插件必须保留来源，不允许静默吃掉来源信息。
-6. 评价指标缺失不等于插件质量差，只代表 GitHub 没公开给我们或当前没授权。
+6. 评价指标缺失不等于插件质量差，只代表对应仓库平台没公开给我们或当前没授权。
 
 ## 6. 错误处理
 
 ### 6.1 错误类型
 
 - `market_repo_structure_invalid`：市场仓库结构不符合规则。
-- `market_sync_failed`：拉取 GitHub 仓库失败。
+- `market_sync_failed`：拉取市场仓库失败。
 - `registry_entry_invalid`：单条注册表元数据不合法。
 - `plugin_repo_unreachable`：插件源码仓库不可访问。
 - `repository_metrics_unavailable`：仓库评价指标当前不可读取。
@@ -525,14 +598,14 @@
 
 ### 8.1 风险
 
-- GitHub 速率限制和网络波动会直接影响市场同步体验，如果不做快照缓存，市场页面会非常脆弱。
+- 仓库提供方的速率限制和网络波动会直接影响市场同步体验，如果不做快照缓存，市场页面会非常脆弱。
 - 如果条目 schema 设计得太松，第三方市场很快会变成格式垃圾场。
 - 如果前端仍只显示“已安装”，用户一定会误解插件已经可运行。
 - 如果把“浏览量”硬当成所有插件都该有的字段，第三方仓库很快就会出现大量空值和误导。
 
 ### 8.2 待确认项
 
-- 官方市场仓库最终采用哪个 GitHub 仓库地址。
+- 官方市场仓库最终采用哪个主仓库地址，是否需要默认镜像。
 - 安装目标优先支持 `release_asset` 还是也允许 `source_archive`。
 - 第三方市场仓库是否允许关闭结构校验中的部分非关键字段检查。
-- 是否在 UI 上把 `star/fork` 明确标成“GitHub 仓库指标”，避免用户误解成平台内评分。
+- 是否在 UI 上把 `star/fork` 明确标成“仓库指标”，避免用户误解成平台内评分。
