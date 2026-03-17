@@ -1515,6 +1515,7 @@ input, select, textarea {
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .badge--success {
@@ -4851,6 +4852,210 @@ input, select, textarea {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
+}
+
+/* 实例卡片网格 */
+.integration-instances-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--spacing-md);
+}
+
+/* 实例卡片 */
+.integration-instance-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-light);
+  background: var(--bg-card);
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.integration-instance-card:hover {
+  border-color: var(--brand-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.integration-instance-card--active {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 2px var(--brand-primary-light);
+}
+
+/* 添加实例卡片 */
+.integration-instance-card--adder {
+  border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  gap: var(--spacing-xs);
+}
+
+.integration-instance-card--adder:hover {
+  border-color: var(--brand-primary);
+  background: var(--brand-primary-light);
+}
+
+.integration-instance-card__adder-icon {
+  font-size: 28px;
+  font-weight: 300;
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+
+.integration-instance-card--adder:hover .integration-instance-card__adder-icon {
+  color: var(--brand-primary);
+}
+
+.integration-instance-card__adder-text {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+/* 实例卡片内容 */
+.integration-instance-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+}
+
+.integration-instance-card__name {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.integration-instance-card__plugin {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.integration-instance-card__plugin-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.integration-instance-card__plugin-name {
+  font-size: var(--font-size-xs);
+  color: var(--brand-primary);
+  font-weight: 500;
+}
+
+.integration-instance-card__meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+/* 实例详情面板 */
+.integration-detail-panel {
+  margin-top: var(--spacing-xl);
+  padding: var(--spacing-lg);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--brand-primary-light) 30%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--brand-primary) 12%, var(--border-light));
+}
+
+.integration-detail-panel__header {
+  margin-bottom: var(--spacing-md);
+}
+
+.integration-detail-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.integration-detail-panel__title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.integration-detail-panel__subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+/* 详情面板统计 */
+.integration-detail-panel__stats {
+  display: flex;
+  gap: var(--spacing-xl);
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.integration-detail-panel__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.integration-detail-panel__stat-value {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.integration-detail-panel__stat-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+/* 详情面板错误提示 */
+.integration-detail-panel__error {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+/* 详情面板操作按钮 */
+.integration-detail-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--btn-gap);
+}
+
+/* 详情面板占位提示 */
+.integration-detail-placeholder {
+  margin-top: var(--spacing-xl);
+  padding: var(--spacing-xl);
+  border-radius: var(--radius-lg);
+  background: var(--bg-input);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 768px) {
+  .integration-instances-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .integration-detail-panel__stats {
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+  }
+
+  .integration-detail-panel__actions {
+    flex-direction: column;
+  }
+
+  .integration-detail-panel__actions .btn {
+    width: 100%;
+  }
 }
 
 .integration-device-detail {

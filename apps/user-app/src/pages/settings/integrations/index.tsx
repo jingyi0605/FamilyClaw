@@ -492,82 +492,105 @@ function SettingsIntegrationsContent() {
             </Card>
           ) : (
             <>
-              <div className="settings-card-grid">
+              <div className="integration-instances-grid">
                 {instances.map((instance) => (
-                  <Card key={instance.id} className={selectedInstanceId === instance.id ? 'integration-card integration-card--active' : 'integration-card'}>
-                    <button className="integration-card__main" type="button" onClick={() => setSelectedInstanceId(instance.id)}>
-                      <div className="integration-card__header">
-                        <strong>{instance.display_name}</strong>
-                        <span className={`badge badge--${instance.status === 'degraded' ? 'warning' : 'success'}`}>
-                          {formatStatus(instance)}
-                        </span>
-                      </div>
-                      <div className="integration-status__detail">{instance.plugin_id}</div>
-                      <div className="integration-status__detail">
-                        {page('settings.integrations.instance.resourceCount', { count: instance.resource_counts.device })}
-                      </div>
-                    </button>
-                  </Card>
-                ))}
-                <Card className="integration-card integration-card--adder">
-                  <button className="integration-card__main" type="button" onClick={() => setCatalogModalOpen(true)}>
-                    <strong>{page('settings.integrations.action.addByInstance')}</strong>
-                    <div className="integration-status__detail">{page('settings.integrations.addHint')}</div>
+                  <button
+                    key={instance.id}
+                    type="button"
+                    className={`integration-instance-card ${selectedInstanceId === instance.id ? 'integration-instance-card--active' : ''}`}
+                    onClick={() => setSelectedInstanceId(instance.id)}
+                  >
+                    <div className="integration-instance-card__header">
+                      <strong className="integration-instance-card__name">{instance.display_name}</strong>
+                      <span className={`badge badge--${instance.status === 'degraded' ? 'warning' : 'success'}`}>
+                        {formatStatus(instance)}
+                      </span>
+                    </div>
+                    <div className="integration-instance-card__plugin">
+                      <span className="integration-instance-card__plugin-label">插件</span>
+                      <span className="integration-instance-card__plugin-name">{instance.plugin_id}</span>
+                    </div>
+                    <div className="integration-instance-card__meta">
+                      {page('settings.integrations.instance.resourceCount', { count: instance.resource_counts.device })}
+                    </div>
                   </button>
-                </Card>
+                ))}
+                <button
+                  type="button"
+                  className="integration-instance-card integration-instance-card--adder"
+                  onClick={() => setCatalogModalOpen(true)}
+                >
+                  <span className="integration-instance-card__adder-icon">+</span>
+                  <span className="integration-instance-card__adder-text">{page('settings.integrations.action.addByInstance')}</span>
+                </button>
               </div>
 
               {selectedInstance ? (
-                <Card className="integration-card">
-                  <div className="integration-card__header">
-                    <div>
-                      <strong>{selectedInstance.display_name}</strong>
-                      <div className="integration-status__detail">
-                        {page('settings.integrations.instance.meta', {
-                          plugin: selectedInstance.plugin_id,
-                          status: formatStatus(selectedInstance),
-                        })}
-                      </div>
+                <div className="integration-detail-panel">
+                  <div className="integration-detail-panel__header">
+                    <div className="integration-detail-panel__title-row">
+                      <h4 className="integration-detail-panel__title">{selectedInstance.display_name}</h4>
+                      <span className={`badge badge--${selectedInstance.status === 'degraded' ? 'warning' : 'success'}`}>
+                        {formatStatus(selectedInstance)}
+                      </span>
                     </div>
-                    <div className="device-card__actions">
-                      <button
-                        className="btn btn--primary btn--sm"
-                        type="button"
-                        onClick={() => void handleOpenSyncAllConfirm()}
-                        disabled={submitting || syncAllLoading || selectedInstance.config_state !== 'configured'}
-                      >
-                        {page('settings.integrations.action.syncAllEntities')}
-                      </button>
-                      <button
-                        className="btn btn--outline btn--sm"
-                        type="button"
-                        onClick={() => void handleOpenPicker()}
-                        disabled={submitting || selectedInstance.config_state !== 'configured'}
-                      >
-                        {page('settings.integrations.action.syncSelectedEntities')}
-                      </button>
-                      <button
-                        className="btn btn--outline btn--sm"
-                        type="button"
-                        onClick={() => setSyncedPreviewOpen(true)}
-                      >
-                        {page('settings.integrations.action.viewSyncedDevices')}
-                      </button>
+                    <div className="integration-detail-panel__subtitle">
+                      {page('settings.integrations.instance.pluginInfo', { plugin: selectedInstance.plugin_id })}
                     </div>
                   </div>
-                  <div className="integration-status__detail">
-                    {selectedInstance.sync_state.last_synced_at
-                      ? page('settings.integrations.instance.lastSync', { time: selectedInstance.sync_state.last_synced_at })
-                      : page('settings.integrations.instance.noSyncYet')}
+
+                  <div className="integration-detail-panel__stats">
+                    <div className="integration-detail-panel__stat">
+                      <span className="integration-detail-panel__stat-value">{selectedInstance.resource_counts.device}</span>
+                      <span className="integration-detail-panel__stat-label">{page('settings.integrations.instance.devicesLabel')}</span>
+                    </div>
+                    <div className="integration-detail-panel__stat">
+                      <span className="integration-detail-panel__stat-value">
+                        {selectedInstance.sync_state.last_synced_at
+                          ? page('settings.integrations.instance.lastSyncShort', { time: selectedInstance.sync_state.last_synced_at })
+                          : '-'}
+                      </span>
+                      <span className="integration-detail-panel__stat-label">{page('settings.integrations.instance.lastSyncLabel')}</span>
+                    </div>
                   </div>
+
                   {selectedInstance.last_error?.message ? (
-                    <div className="integration-status__detail">{selectedInstance.last_error.message}</div>
+                    <div className="integration-detail-panel__error">
+                      {selectedInstance.last_error.message}
+                    </div>
                   ) : null}
-                  <div className="integration-status__detail">
-                    {page('settings.integrations.preview.manageHint')}
+
+                  <div className="integration-detail-panel__actions">
+                    <button
+                      className="btn btn--primary btn--sm"
+                      type="button"
+                      onClick={() => void handleOpenSyncAllConfirm()}
+                      disabled={submitting || syncAllLoading || selectedInstance.config_state !== 'configured'}
+                    >
+                      {page('settings.integrations.action.syncAllEntities')}
+                    </button>
+                    <button
+                      className="btn btn--outline btn--sm"
+                      type="button"
+                      onClick={() => void handleOpenPicker()}
+                      disabled={submitting || selectedInstance.config_state !== 'configured'}
+                    >
+                      {page('settings.integrations.action.syncSelectedEntities')}
+                    </button>
+                    <button
+                      className="btn btn--outline btn--sm"
+                      type="button"
+                      onClick={() => setSyncedPreviewOpen(true)}
+                    >
+                      {page('settings.integrations.action.viewSyncedDevices')}
+                    </button>
                   </div>
-                </Card>
-              ) : null}
+                </div>
+              ) : (
+                <div className="integration-detail-placeholder">
+                  <p>{page('settings.integrations.instance.selectHint')}</p>
+                </div>
+              )}
             </>
           )}
         </Section>
