@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -18,6 +19,8 @@ from app.modules.region.providers import RegionProvider, RegionProviderExecution
 from app.modules.region.schemas import RegionNodeRead
 
 RUNNER_MODULE = "app.modules.plugin.runner_protocol"
+logger = logging.getLogger(__name__)
+_REPORTED_REGION_PROVIDER_SYNC_ISSUES: set[str] = set()
 
 
 class MountedPluginRegionProvider(RegionProvider):
@@ -155,7 +158,7 @@ class MountedPluginRegionProvider(RegionProvider):
 
 
 def sync_household_plugin_region_providers(db: Session, household_id: str) -> None:
-    from app.modules.plugin.service import list_registered_plugins_for_household
+    from app.modules.plugin.service import _load_mount_manifest_or_log, list_registered_plugins_for_household
 
     region_provider_registry.clear_scope(household_id)
     plugin_map = {
@@ -166,16 +169,39 @@ def sync_household_plugin_region_providers(db: Session, household_id: str) -> No
         plugin = plugin_map.get(mount.plugin_id)
         if plugin is None or not plugin.enabled:
             continue
-        manifest = _load_plugin_manifest(mount.manifest_path)
+        manifest = _load_mount_manifest_or_log(
+            household_id=household_id,
+            mount=mount,
+            operation="sync_household_plugin_region_providers",
+        )
+        if manifest is None:
+            continue
         spec = get_runtime_region_provider_spec(manifest)
         if spec is None:
             continue
-        for provider in build_mounted_region_providers(
-            household_id=household_id,
-            mount=mount,
-            manifest=manifest,
-            spec=spec,
-        ):
+        try:
+            providers = build_mounted_region_providers(
+                household_id=household_id,
+                mount=mount,
+                manifest=manifest,
+                spec=spec,
+            )
+        except RegionProviderExecutionError as exc:
+            _log_region_provider_sync_issue_once(
+                issue_key=(
+                    f"region-provider-build-failed:{household_id}:{mount.plugin_id}:"
+                    f"{Path(mount.manifest_path).resolve()}:{exc}"
+                ),
+                message=(
+                    "地区 provider 挂载声明无效，已跳过注册。"
+                    f" household_id={household_id}"
+                    f" plugin_id={mount.plugin_id}"
+                    f" manifest_path={mount.manifest_path}"
+                    f" error={exc}"
+                ),
+            )
+            continue
+        for provider in providers:
             region_provider_registry.register(provider, household_id=household_id)
 
 
@@ -211,10 +237,11 @@ def build_mounted_region_providers(
     ]
 
 
-def _load_plugin_manifest(manifest_path: str | Path) -> PluginManifest:
-    path = Path(manifest_path)
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return PluginManifest.model_validate(payload)
+def _log_region_provider_sync_issue_once(*, issue_key: str, message: str) -> None:
+    if issue_key in _REPORTED_REGION_PROVIDER_SYNC_ISSUES:
+        return
+    _REPORTED_REGION_PROVIDER_SYNC_ISSUES.add(issue_key)
+    logger.error(message)
 
 
 def _build_pythonpath(plugin_root: str) -> str:

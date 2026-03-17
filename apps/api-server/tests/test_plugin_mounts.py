@@ -93,6 +93,55 @@ class PluginMountTests(unittest.TestCase):
             mounted_after_delete = list_plugin_mounts(self.db, household_id=household.id)
             self.assertEqual([], mounted_after_delete)
 
+    def test_list_registered_plugins_for_household_skips_invalid_mounted_manifest_and_logs_error(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Broken Mount Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        with tempfile.TemporaryDirectory() as plugin_tempdir:
+            plugin_root = self._create_third_party_plugin(Path(plugin_tempdir), plugin_id="third-party-sync-plugin")
+
+            register_plugin_mount(
+                self.db,
+                household_id=household.id,
+                payload=PluginMountCreate(
+                    source_type="third_party",
+                    plugin_root=str(plugin_root),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_root),
+                    timeout_seconds=20,
+                ),
+            )
+            self.db.flush()
+
+            (plugin_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "third_party_sync_plugin",
+                        "name": "坏挂载插件",
+                        "version": "0.1.0",
+                        "types": ["connector"],
+                        "permissions": ["health.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {
+                            "connector": "plugin.connector.sync",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertLogs("app.modules.plugin.service", level="ERROR") as log_context:
+                snapshot = list_registered_plugins_for_household(self.db, household_id=household.id)
+
+        self.assertNotIn("third-party-sync-plugin", [item.id for item in snapshot.items])
+        self.assertIn("已跳过挂载插件", "\n".join(log_context.output))
+        self.assertIn("third_party_sync_plugin", "\n".join(log_context.output))
+
     def _create_third_party_plugin(self, root: Path, *, plugin_id: str) -> Path:
         plugin_root = root / plugin_id
         package_dir = plugin_root / "plugin"

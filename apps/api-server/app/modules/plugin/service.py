@@ -62,6 +62,7 @@ PLUGIN_NOT_VISIBLE_ERROR_CODE = "plugin_not_visible_in_household"
 PLUGIN_STATE_OVERRIDE_INVALID_ERROR_CODE = "plugin_state_override_invalid"
 PLUGIN_EFFECTIVE_STATE_UNRESOLVED_ERROR_CODE = "plugin_effective_state_unresolved"
 logger = logging.getLogger(__name__)
+_REPORTED_PLUGIN_REGISTRY_ISSUES: set[str] = set()
 
 
 @dataclass(slots=True)
@@ -123,6 +124,125 @@ class PluginExecutionError(PluginServiceError):
         status_code: int = 400,
     ) -> None:
         super().__init__(detail, error_code=error_code, field=field, status_code=status_code)
+
+
+def _log_plugin_registry_issue_once(*, issue_key: str, message: str) -> None:
+    if issue_key in _REPORTED_PLUGIN_REGISTRY_ISSUES:
+        return
+    _REPORTED_PLUGIN_REGISTRY_ISSUES.add(issue_key)
+    logger.error(message)
+
+
+def _load_mount_manifest_or_log(
+    *,
+    household_id: str,
+    mount: PluginMount,
+    operation: str,
+) -> PluginManifest | None:
+    try:
+        manifest = load_plugin_manifest(mount.manifest_path)
+    except PluginManifestValidationError as exc:
+        _log_plugin_registry_issue_once(
+            issue_key=(
+                f"mounted-manifest-invalid:{operation}:{household_id}:{mount.plugin_id}:"
+                f"{Path(mount.manifest_path).resolve()}:{exc}"
+            ),
+            message=(
+                "家庭插件 manifest 无效，已跳过当前挂载记录。"
+                f" operation={operation}"
+                f" household_id={household_id}"
+                f" plugin_id={mount.plugin_id}"
+                f" manifest_path={mount.manifest_path}"
+                f" error={exc}"
+            ),
+        )
+        return None
+    if manifest.id != mount.plugin_id:
+        _log_plugin_registry_issue_once(
+            issue_key=(
+                f"mounted-manifest-id-mismatch:{operation}:{household_id}:{mount.plugin_id}:"
+                f"{Path(mount.manifest_path).resolve()}:{manifest.id}"
+            ),
+            message=(
+                "家庭插件 manifest 与挂载记录的 plugin_id 不一致，已跳过当前挂载记录。"
+                f" operation={operation}"
+                f" household_id={household_id}"
+                f" mount_plugin_id={mount.plugin_id}"
+                f" manifest_id={manifest.id}"
+                f" manifest_path={mount.manifest_path}"
+            ),
+        )
+        return None
+    return manifest
+
+
+def _load_locale_messages_or_log(
+    *,
+    plugin: PluginRegistryItem,
+    locale_id: str,
+    resource_path: Path,
+) -> dict[str, str] | None:
+    try:
+        if not resource_path.exists() or not resource_path.is_file():
+            raise PluginManifestValidationError(f"语言资源文件不存在: {resource_path}")
+        raw_payload = json.loads(resource_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        error = PluginManifestValidationError(f"语言资源 JSON 解析失败: {resource_path}: {exc.msg}")
+        _log_plugin_registry_issue_once(
+            issue_key=f"plugin-locale-invalid:{plugin.id}:{locale_id}:{resource_path.resolve()}:{error}",
+            message=(
+                "插件语言资源无效，已跳过当前 locale。"
+                f" plugin_id={plugin.id}"
+                f" locale_id={locale_id}"
+                f" resource_path={resource_path}"
+                f" error={error}"
+            ),
+        )
+        return None
+    except PluginManifestValidationError as exc:
+        _log_plugin_registry_issue_once(
+            issue_key=f"plugin-locale-invalid:{plugin.id}:{locale_id}:{resource_path.resolve()}:{exc}",
+            message=(
+                "插件语言资源无效，已跳过当前 locale。"
+                f" plugin_id={plugin.id}"
+                f" locale_id={locale_id}"
+                f" resource_path={resource_path}"
+                f" error={exc}"
+            ),
+        )
+        return None
+
+    if not isinstance(raw_payload, dict):
+        error = PluginManifestValidationError(f"语言资源顶层必须是对象: {resource_path}")
+        _log_plugin_registry_issue_once(
+            issue_key=f"plugin-locale-invalid:{plugin.id}:{locale_id}:{resource_path.resolve()}:{error}",
+            message=(
+                "插件语言资源无效，已跳过当前 locale。"
+                f" plugin_id={plugin.id}"
+                f" locale_id={locale_id}"
+                f" resource_path={resource_path}"
+                f" error={error}"
+            ),
+        )
+        return None
+
+    messages: dict[str, str] = {}
+    for key, value in raw_payload.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            error = PluginManifestValidationError(f"语言资源必须是字符串 key-value: {resource_path}")
+            _log_plugin_registry_issue_once(
+                issue_key=f"plugin-locale-invalid:{plugin.id}:{locale_id}:{resource_path.resolve()}:{error}",
+                message=(
+                    "插件语言资源无效，已跳过当前 locale。"
+                    f" plugin_id={plugin.id}"
+                    f" locale_id={locale_id}"
+                    f" resource_path={resource_path}"
+                    f" error={error}"
+                ),
+            )
+            return None
+        messages[key] = value
+    return messages
 
 
 def load_plugin_manifest(manifest_path: str | Path) -> PluginManifest:
@@ -349,7 +469,13 @@ def _validate_region_provider_mount_conflicts(
     for mount in repository.list_plugin_mounts(db, household_id=household_id):
         if skip_plugin_id is not None and mount.plugin_id == skip_plugin_id:
             continue
-        mounted_manifest = load_plugin_manifest(mount.manifest_path)
+        mounted_manifest = _load_mount_manifest_or_log(
+            household_id=household_id,
+            mount=mount,
+            operation="validate_region_provider_mount_conflicts",
+        )
+        if mounted_manifest is None:
+            continue
         mounted_spec = get_runtime_region_provider_spec(mounted_manifest)
         if mounted_spec is None or mounted_spec.provider_code is None:
             continue
@@ -372,9 +498,25 @@ def list_registered_plugins_for_household(
 
     mounted_items: list[PluginRegistryItem] = []
     for mount in repository.list_plugin_mounts(db, household_id=household_id):
-        manifest = load_plugin_manifest(mount.manifest_path)
+        manifest = _load_mount_manifest_or_log(
+            household_id=household_id,
+            mount=mount,
+            operation="list_registered_plugins_for_household",
+        )
+        if manifest is None:
+            continue
         if manifest.id in builtin_by_id:
-            raise PluginManifestValidationError(f"第三方插件 id 与内置插件冲突: {manifest.id}")
+            _log_plugin_registry_issue_once(
+                issue_key=f"mounted-manifest-builtin-conflict:{household_id}:{mount.plugin_id}:{manifest.id}",
+                message=(
+                    "家庭插件 manifest 与内置插件 id 冲突，已跳过挂载插件。"
+                    f" household_id={household_id}"
+                    f" mount_plugin_id={mount.plugin_id}"
+                    f" manifest_id={manifest.id}"
+                    f" manifest_path={mount.manifest_path}"
+                ),
+            )
+            continue
         mounted_items.append(
             _merge_effective_plugin_state(
                 _build_registry_item_from_mount(mount, manifest),
@@ -506,7 +648,17 @@ def set_household_plugin_enabled(
 def list_plugin_mounts(db: Session, *, household_id: str) -> list[PluginMountRead]:
     from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
-    return [_to_plugin_mount_read(row) for row in repository.list_plugin_mounts(db, household_id=household_id)]
+    items: list[PluginMountRead] = []
+    for row in repository.list_plugin_mounts(db, household_id=household_id):
+        manifest = _load_mount_manifest_or_log(
+            household_id=household_id,
+            mount=row,
+            operation="list_plugin_mounts",
+        )
+        if manifest is None:
+            continue
+        items.append(_to_plugin_mount_read(row, manifest=manifest))
+    return items
 
 
 def list_registered_plugin_locales_for_household(
@@ -531,21 +683,13 @@ def list_registered_plugin_locales_for_household(
         manifest_dir = Path(plugin.manifest_path).resolve().parent
         for locale_spec in plugin.locales:
             resource_path = (manifest_dir / locale_spec.resource).resolve()
-            try:
-                if not resource_path.exists() or not resource_path.is_file():
-                    raise PluginManifestValidationError(f"语言资源文件不存在: {resource_path}")
-                raw_payload = json.loads(resource_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
-                raise PluginManifestValidationError(f"语言资源 JSON 解析失败: {resource_path}: {exc.msg}") from exc
-
-            if not isinstance(raw_payload, dict):
-                raise PluginManifestValidationError(f"语言资源顶层必须是对象: {resource_path}")
-
-            messages: dict[str, str] = {}
-            for key, value in raw_payload.items():
-                if not isinstance(key, str) or not isinstance(value, str):
-                    raise PluginManifestValidationError(f"语言资源必须是字符串 key-value: {resource_path}")
-                messages[key] = value
+            messages = _load_locale_messages_or_log(
+                plugin=plugin,
+                locale_id=locale_spec.id,
+                resource_path=resource_path,
+            )
+            if messages is None:
+                continue
 
             candidate = PluginLocaleRead(
                 plugin_id=plugin.id,
@@ -676,9 +820,28 @@ def _discover_manifest_entries(root_dir: str | Path) -> list[tuple[Path, PluginM
     manifest_entries: list[tuple[Path, PluginManifest]] = []
     seen_ids: set[str] = set()
     for manifest_path in sorted(root.glob("**/manifest.json")):
-        manifest = load_plugin_manifest(manifest_path)
+        try:
+            manifest = load_plugin_manifest(manifest_path)
+        except PluginManifestValidationError as exc:
+            _log_plugin_registry_issue_once(
+                issue_key=f"builtin-manifest-invalid:{manifest_path.resolve()}:{exc}",
+                message=(
+                    "插件 manifest 无效，已从注册表发现结果中跳过。"
+                    f" manifest_path={manifest_path}"
+                    f" error={exc}"
+                ),
+            )
+            continue
         if manifest.id in seen_ids:
-            raise PluginManifestValidationError(f"发现重复插件 id: {manifest.id}")
+            _log_plugin_registry_issue_once(
+                issue_key=f"builtin-manifest-duplicate-id:{root.resolve()}:{manifest.id}",
+                message=(
+                    "发现重复插件 id，已跳过后续 manifest。"
+                    f" plugin_id={manifest.id}"
+                    f" manifest_path={manifest_path}"
+                ),
+            )
+            continue
         seen_ids.add(manifest.id)
         manifest_entries.append((manifest_path, manifest))
     return manifest_entries

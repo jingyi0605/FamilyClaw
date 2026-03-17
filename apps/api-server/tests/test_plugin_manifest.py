@@ -533,6 +533,54 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(["locale-pack"], locale_pack.types)
         self.assertEqual("zh-TW", locale_pack.locales[0].id)
 
+    def test_list_registered_plugins_skips_invalid_manifest_and_logs_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            valid_dir = root / "valid_plugin"
+            valid_dir.mkdir(parents=True)
+            (valid_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "valid-plugin",
+                        "name": "有效插件",
+                        "version": "0.1.0",
+                        "types": ["connector"],
+                        "permissions": ["health.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"connector": "plugin.connector.sync"},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            invalid_dir = root / "invalid_plugin"
+            invalid_dir.mkdir(parents=True)
+            (invalid_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "open_xiaoai_speaker",
+                        "name": "坏插件",
+                        "version": "0.1.0",
+                        "types": ["connector"],
+                        "permissions": ["health.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"connector": "plugin.connector.sync"},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertLogs("app.modules.plugin.service", level="ERROR") as log_context:
+                snapshot = list_registered_plugins(root)
+
+        self.assertEqual(["valid-plugin"], [item.id for item in snapshot.items])
+        self.assertIn("已从注册表发现结果中跳过", "\n".join(log_context.output))
+        self.assertIn("open_xiaoai_speaker", "\n".join(log_context.output))
+
     def test_disable_and_enable_plugin_persists_state(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             state_file = Path(tempdir) / "plugin_registry_state.json"
