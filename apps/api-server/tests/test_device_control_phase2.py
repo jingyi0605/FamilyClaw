@@ -312,6 +312,45 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             data={"entity_id": "light.study_main"},
         )
 
+    def test_execute_device_control_uses_primary_entity_when_request_entity_is_missing(self) -> None:
+        with self.SessionLocal() as db:
+            device_id = self._add_device_with_binding(
+                db,
+                name="书房灯",
+                device_type="light",
+                plugin_id="homeassistant",
+                external_entity_id="sensor.study_light_power",
+                external_device_id="ha-device-study-light-primary",
+            )
+            db.flush()
+            binding = db.query(DeviceBinding).filter(DeviceBinding.device_id == device_id).one()
+            binding.capabilities = (
+                '{"state":"off","primary_entity_id":"light.study_main","entity_ids":["light.study_main","sensor.study_light_power"],'
+                '"entities":[{"entity_id":"light.study_main","name":"书房灯","domain":"light","state":"off","state_display":"关闭",'
+                '"control":{"kind":"toggle","value":false,"action_on":"turn_on","action_off":"turn_off"}}]}'
+            )
+            db.add(binding)
+            db.commit()
+
+            with patch("app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
+                result = execute_device_control(
+                    db,
+                    request=DeviceControlRequest(
+                        household_id=self.household_id,
+                        device_id=device_id,
+                        action="turn_on",
+                        params={},
+                        reason="api.integration.phase2.primary-entity-default",
+                    ),
+                )
+
+        self.assertEqual("light.study_main", result.resolved_entity_id)
+        mocked_call.assert_called_once_with(
+            domain="light",
+            service="turn_on",
+            data={"entity_id": "light.study_main"},
+        )
+
     def test_execute_device_control_reports_platform_unreachable_when_home_assistant_unreachable(self) -> None:
         with self.SessionLocal() as db:
             with patch(

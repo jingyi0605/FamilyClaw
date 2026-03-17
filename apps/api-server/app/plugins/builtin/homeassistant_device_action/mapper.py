@@ -120,19 +120,62 @@ def _resolve_entity_id(payload: DeviceControlPluginPayload) -> str:
             error_code="platform_target_not_found",
         )
 
-    entity_id = (payload.binding.external_entity_id or "").strip()
-    if entity_id:
-        return entity_id
-
     capabilities = payload.binding.capabilities or {}
-    capability_entity_id = capabilities.get("primary_entity_id")
-    if isinstance(capability_entity_id, str) and capability_entity_id.strip():
-        return capability_entity_id.strip()
+    # 老绑定里 external_entity_id 可能指向 sensor，一旦这里优先用它，聊天快控就会和设备页走出两套行为。
+    # 默认执行必须优先选择主控实体，其次再退回旧字段。
+    for candidate in (
+        _resolve_preferred_capability_entity_id(payload, capabilities),
+        payload.binding.external_entity_id,
+    ):
+        normalized = _normalize_entity_id(candidate)
+        if normalized:
+            return normalized
 
     raise HomeAssistantActionMappingError(
         "设备绑定缺少 Home Assistant entity_id",
         error_code="platform_target_not_found",
     )
+
+
+def _resolve_preferred_capability_entity_id(
+    payload: DeviceControlPluginPayload,
+    capabilities: dict[str, Any],
+) -> str | None:
+    primary_entity_id = _normalize_entity_id(capabilities.get("primary_entity_id"))
+    if primary_entity_id:
+        return primary_entity_id
+
+    expected_domain = _expected_domain_for_device_type(payload.device_snapshot.device_type)
+    raw_entities = capabilities.get("entities")
+    if not isinstance(raw_entities, list):
+        return None
+
+    fallback_entity_id: str | None = None
+    for raw_entity in raw_entities:
+        if not isinstance(raw_entity, dict):
+            continue
+        entity_id = _normalize_entity_id(raw_entity.get("entity_id"))
+        if not entity_id:
+            continue
+        if fallback_entity_id is None:
+            fallback_entity_id = entity_id
+        domain = _normalize_entity_id(raw_entity.get("domain"))
+        control = raw_entity.get("control") if isinstance(raw_entity.get("control"), dict) else {}
+        control_kind = _normalize_entity_id(control.get("kind")) or "none"
+        if expected_domain and domain == expected_domain and control_kind != "none":
+            return entity_id
+
+    return fallback_entity_id
+
+
+def _expected_domain_for_device_type(device_type: str) -> str | None:
+    return {
+        "light": "light",
+        "ac": "climate",
+        "curtain": "cover",
+        "speaker": "media_player",
+        "lock": "lock",
+    }.get(device_type)
 
 
 def _collect_binding_entity_ids(payload: DeviceControlPluginPayload) -> set[str]:
