@@ -12,10 +12,7 @@ CONVERSATION_DEBUG_LOG_FILE = LOG_DIR / "conversation-debug.log"
 MAX_LOG_BYTES = 10 * 1024 * 1024
 BACKUP_COUNT = 5
 CONVERSATION_DEBUG_LOGGER_NAME = "app.conversation.debug"
-VOICE_DISCOVERY_LIST_PATH = "/api/v1/devices/voice-terminals/discoveries"
-VOICE_DISCOVERY_REPORT_PATH = "/api/v1/devices/voice-terminals/discoveries/report"
-VOICE_DISCOVERY_BINDING_PATH_PREFIX = "/api/v1/devices/voice-terminals/discoveries/"
-VOICE_DISCOVERY_BINDING_PATH_SUFFIX = "/binding"
+VOICE_DISCOVERY_REPORT_PATH = "/api/v1/integrations/discoveries/report"
 NOISY_THIRD_PARTY_LOGGER_LEVELS = {
     "httpx": logging.WARNING,
     "httpcore": logging.WARNING,
@@ -128,11 +125,4 @@ def _extract_uvicorn_access_status_code(record: logging.LogRecord) -> int | None
 
 def _is_noisy_voice_discovery_path(path: str) -> bool:
     normalized_path = path.split("?", 1)[0]
-    if normalized_path == VOICE_DISCOVERY_LIST_PATH:
-        return True
-    if normalized_path == VOICE_DISCOVERY_REPORT_PATH:
-        return True
-    return (
-        normalized_path.startswith(VOICE_DISCOVERY_BINDING_PATH_PREFIX)
-        and normalized_path.endswith(VOICE_DISCOVERY_BINDING_PATH_SUFFIX)
-    )
+    return normalized_path == VOICE_DISCOVERY_REPORT_PATH
