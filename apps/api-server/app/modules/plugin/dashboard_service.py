@@ -282,6 +282,8 @@ def get_home_dashboard(
     return HomeDashboardRead(
         household_id=household_id,
         member_id=member_id,
+        member_name=member.name,
+        member_nickname=member.nickname,
         layout_version=layout_payload.version,
         cards=ordered_cards,
         warnings=warnings,

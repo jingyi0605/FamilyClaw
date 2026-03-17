@@ -36,8 +36,12 @@ export function EmptyStateCard({
         borderRadius: tokens.radius,
         display: 'flex',
         flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        textAlign: 'center',
         gap: tokens.gap,
         padding: tokens.padding,
+        alignSelf: 'stretch',
       }}
     >
       {icon ? <View>{icon}</View> : null}

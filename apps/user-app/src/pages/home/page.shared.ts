@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { coreApiClient, useHouseholdContext } from '../../runtime';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import type {
@@ -196,8 +196,17 @@ export function useHomeDashboardData() {
     }
   };
 
+  // 随机显示姓名或昵称，昵称为空则始终显示姓名（使用 useMemo 保持稳定）
+  const memberDisplayName = useMemo(() => {
+    if (!dashboard) return '';
+    if (!dashboard.member_nickname) return dashboard.member_name;
+    return Math.random() < 0.5 ? dashboard.member_name : dashboard.member_nickname;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashboard?.member_id]);
+
   return {
     familyName,
+    memberDisplayName,
     currentHouseholdId,
     dashboard,
     layoutItems,

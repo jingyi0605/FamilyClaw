@@ -221,6 +221,8 @@ export type HomeDashboardCardRead = {
 export type HomeDashboardRead = {
   household_id: string;
   member_id: string;
+  member_name: string;
+  member_nickname: string | null;
   layout_version: number;
   cards: HomeDashboardCardRead[];
   warnings: string[];

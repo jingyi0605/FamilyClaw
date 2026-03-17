@@ -153,16 +153,15 @@ function getCardLines(card: HomeDashboardCardRead, t: ReturnType<typeof useI18n>
 
 export default function HomePage() {
   const { t } = useI18n();
-  const { familyName, dashboard, layoutItems, loading, error } = useHomeDashboardData();
+  const { memberDisplayName, dashboard, layoutItems, loading, error } = useHomeDashboardData();
   const cardMap = buildCardMap(dashboard?.cards ?? []);
   const visibleItems = buildVisibleLayoutItems(layoutItems, cardMap);
 
   return (
     <View className="home-rn-page">
       <View className="home-rn-banner">
-        <Text className="home-rn-banner__title">{`${t('home.welcome')}，${familyName}`}</Text>
+        <Text className="home-rn-banner__title">{`${t('home.welcome')}，${memberDisplayName}`}</Text>
         <Text className="home-rn-banner__sub">{t('home.greeting')}</Text>
-        {dashboard?.warnings.length ? <Text className="home-rn-banner__error">{t('home.partialDegraded')}</Text> : null}
         {error ? <Text className="home-rn-banner__error">{error}</Text> : null}
       </View>
 

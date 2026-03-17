@@ -46,7 +46,7 @@ PluginJobNotificationType = Literal["state_changed", "failed", "waiting_response
 PluginJobNotificationChannel = Literal["websocket", "in_app"]
 PluginJobResponseAction = Literal["retry", "confirm", "cancel", "provide_input"]
 PluginJobActorType = Literal["member", "admin", "system"]
-PluginConfigScopeType = Literal["plugin", "channel_account"]
+PluginConfigScopeType = Literal["plugin", "channel_account", "device"]
 PluginConfigFieldType = Literal["string", "text", "integer", "number", "boolean", "enum", "multi_enum", "secret", "json"]
 PluginConfigWidgetType = Literal["input", "password", "textarea", "switch", "select", "multi_select", "json_editor"]
 PluginConfigVisibilityOperator = Literal["equals", "not_equals", "in", "truthy"]
@@ -291,6 +291,27 @@ class PluginManifestCapabilities(BaseModel):
     region_provider: PluginManifestRegionProviderSpec | None = None
     theme_pack: PluginManifestThemePackSpec | None = None
     ai_provider: PluginManifestAiProviderSpec | None = None
+    device_detail_tabs: list["PluginManifestDeviceDetailTabSpec"] = Field(default_factory=list)
+
+
+class PluginManifestDeviceDetailTabSpec(BaseModel):
+    tab_key: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=255)
+    config_scope_type: Literal["device"] = "device"
+
+    @field_validator("tab_key", "title", "description")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+
+PluginManifestCapabilities.model_rebuild()
 
 
 class PluginManifestDashboardCardSpec(BaseModel):
@@ -859,6 +880,7 @@ class PluginManifest(BaseModel):
         self._validate_region_provider_capability()
         self._validate_theme_pack_capability()
         self._validate_ai_provider_capability()
+        self._validate_device_detail_tabs()
         return self
 
     def _validate_channel_capability(self) -> None:
@@ -931,11 +953,27 @@ class PluginManifest(BaseModel):
         if not spec.supported_model_types:
             raise ValueError("ai-provider 插件至少要声明一个 supported_model_type")
 
+    def _validate_device_detail_tabs(self) -> None:
+        tabs = self.capabilities.device_detail_tabs
+        if not tabs:
+            return
+
+        seen: set[str] = set()
+        declared_scope_types = {item.scope_type for item in self.config_specs}
+        for tab in tabs:
+            if tab.tab_key in seen:
+                raise ValueError(f"device_detail_tabs 里不能有重复 tab_key: {tab.tab_key}")
+            seen.add(tab.tab_key)
+            if tab.config_scope_type not in declared_scope_types:
+                raise ValueError(
+                    f"device_detail_tabs.{tab.tab_key} 引用了未声明的 config scope_type: {tab.config_scope_type}"
+                )
+
     def _validate_config_specs(self) -> None:
         if not self.config_specs:
             return
 
-        allowed_scope_types = {"plugin", "channel_account"}
+        allowed_scope_types = {"plugin", "channel_account", "device"}
         for item in self.config_specs:
             if item.scope_type not in allowed_scope_types:
                 raise ValueError(f"不支持的 config scope_type: {item.scope_type}")
@@ -1244,6 +1282,8 @@ class HomeDashboardCardRead(BaseModel):
 class HomeDashboardRead(BaseModel):
     household_id: str
     member_id: str
+    member_name: str
+    member_nickname: str | None = None
     layout_version: int = Field(default=0, ge=0)
     cards: list[HomeDashboardCardRead] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

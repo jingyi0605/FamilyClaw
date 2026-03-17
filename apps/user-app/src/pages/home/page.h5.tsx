@@ -682,7 +682,7 @@ function DashboardItemControls({
 
 export default function HomePage() {
   const { t } = useI18n();
-  const { familyName, dashboard, layoutItems, loading, savingLayout, error, saveLayout } = useHomeDashboardData();
+  const { memberDisplayName, dashboard, layoutItems, loading, savingLayout, error, saveLayout } = useHomeDashboardData();
   const [editMode, setEditMode] = useState(false);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
@@ -866,9 +866,8 @@ export default function HomePage() {
       <div className="dashboard-header-bar">
         <div className="dashboard-header-bar__left">
           <span className="dashboard-header-bar__greeting">
-            {t('home.welcome')}，{familyName}
+            {t('home.welcome')}，{memberDisplayName}
           </span>
-          {dashboard?.warnings.length ? <span className="text-text-secondary">{t('home.partialDegraded')}</span> : null}
           {error ? <span className="text-text-secondary">{error}</span> : null}
         </div>
         <div className="dashboard-header-bar__right">
