@@ -1214,6 +1214,8 @@ export const PAGE_MESSAGES_ZH_CN = {
   'settings.integrations.modal.catalog.supported': '已支持',
   'settings.integrations.modal.catalog.pending': '待接入',
   'settings.integrations.modal.catalog.choose': '选择这个插件',
+  'settings.integrations.modal.catalog.feature.sync': '设备同步',
+  'settings.integrations.modal.catalog.feature.control': '统一控制',
   'settings.integrations.modal.create.title': '创建实例',
   'settings.integrations.modal.create.desc': '先给这个实例起个名字，然后填写插件提供的配置。',
   'settings.integrations.modal.create.displayName': '实例名称',
@@ -1497,4 +1499,9 @@ export const PAGE_MESSAGES_ZH_CN = {
   'settings.channelAccess.configField.wecomBot.key.label': 'Bot Key',
   'settings.channelAccess.configField.wecomBot.key.placeholder': 'Webhook key 参数',
   'settings.channelAccess.configField.wecomBot.key.help': '与 Webhook URL 二选一',
+  'setup.butler.error.authFailed': 'AI 服务认证失败，请检查 API Key 是否正确。',
+  'setup.butler.error.timeout': 'AI 服务响应超时，请稍后重试。',
+  'setup.butler.error.rateLimited': 'AI 服务请求过于频繁，请稍后再试。',
+  'setup.butler.error.streamNotSupported': '当前 AI 服务不支持流式对话，请更换模型或供应商。',
+  'setup.butler.error.providerFailed': 'AI 服务请求失败，请检查供应商配置。',
 } as const;

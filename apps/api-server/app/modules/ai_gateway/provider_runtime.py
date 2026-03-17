@@ -1259,6 +1259,8 @@ def _extract_gemini_finish_reason(response_json: dict[str, object]) -> str:
 def _map_http_status_to_error_code(status_code: int) -> str:
     if status_code == 408 or status_code == 504:
         return "timeout"
+    if status_code == 401 or status_code == 403:
+        return "auth_failed"
     if status_code == 429:
         return "rate_limited"
     if status_code == 422:

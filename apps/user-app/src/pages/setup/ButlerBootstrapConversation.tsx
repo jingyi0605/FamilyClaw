@@ -44,6 +44,14 @@ export function ButlerBootstrapConversation(props: { householdId: string; source
   const reconnectAttemptsRef = useRef(0);
   const [composerHeight, setComposerHeight] = useState(0);
 
+  function resolveRealtimeErrorMessage(errorCode?: string | null) {
+    if (errorCode === 'auth_failed') return t('setup.butler.error.authFailed');
+    if (errorCode === 'timeout') return t('setup.butler.error.timeout');
+    if (errorCode === 'rate_limited') return t('setup.butler.error.rateLimited');
+    if (errorCode === 'stream_not_supported') return t('setup.butler.error.streamNotSupported');
+    return t('setup.butler.error.providerFailed');
+  }
+
   useEffect(() => {
     setSession(null); setMessages([]); setInput(''); setLoading(false); setSending(false); setConfirming(false); setRestarting(false); setRealtimeReady(false); setError(''); setStatus(''); setCreatedAgent(null); autoStartedRef.current = null;
     if (reconnectTimerRef.current !== null) { window.clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
@@ -150,7 +158,12 @@ export function ButlerBootstrapConversation(props: { householdId: string; source
     }
     if (event.type === 'agent.state_patch') { setSession(current => current ? { ...current, draft: { ...current.draft, ...event.payload } } : current); return; }
     if (event.type === 'agent.done') { setSending(false); void syncLatestSession(session?.session_id); return; }
-    if (event.type === 'agent.error') { const payload = event.payload as { detail: string }; setSending(false); setError(payload.detail); void syncLatestSession(session?.session_id); }
+    if (event.type === 'agent.error') {
+      const payload = event.payload as { detail?: string; error_code?: string };
+      setSending(false);
+      setError(resolveRealtimeErrorMessage(payload.error_code));
+      void syncLatestSession(session?.session_id);
+    }
   }
   async function syncLatestSession(expectedSessionId?: string | null) {
     try {

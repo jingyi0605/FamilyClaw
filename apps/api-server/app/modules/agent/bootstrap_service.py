@@ -22,6 +22,7 @@ from app.modules.agent.schemas import (
     ButlerBootstrapSessionRead,
 )
 from app.modules.agent.service import create_agent
+from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
 from app.modules.ai_gateway.service import resolve_capability_route
 from app.modules.llm_task import ainvoke_llm, invoke_llm, stream_llm
 from app.modules.llm_task.output_models import ButlerBootstrapOutput
@@ -335,6 +336,7 @@ async def arun_butler_bootstrap_realtime_turn(
     )
 
     final_text = ""
+    emitted_chunks: list[str] = []
     try:
         async for event in stream_llm(
             db,
@@ -348,6 +350,7 @@ async def arun_butler_bootstrap_realtime_turn(
             conversation_history=turn_setup.transcript,
         ):
             if event.event_type == "chunk" and event.content:
+                emitted_chunks.append(event.content)
                 await _abroadcast_bootstrap_realtime_event(
                     session_factory=session_factory,
                     connection_manager=connection_manager,
@@ -392,7 +395,7 @@ async def arun_butler_bootstrap_realtime_turn(
         transcript = list(turn_setup.transcript)
         transcript.append({"role": "user", "content": message})
         transcript.append({"role": "assistant", "content": session_read.assistant_message})
-        await run_blocking_db(
+        snapshot = await run_blocking_db(
             lambda thread_db: _finish_bootstrap_realtime_turn_sync(
                 thread_db,
                 household_id=turn_setup.household_id,
@@ -416,13 +419,24 @@ async def arun_butler_bootstrap_realtime_turn(
             request_id=request_id,
             payload={},
         )
+        await _abroadcast_bootstrap_realtime_event(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+            household_id=turn_setup.household_id,
+            session_id=turn_setup.session_id,
+            event_type="session.snapshot",
+            payload={"snapshot": snapshot.model_dump(mode="json")},
+        )
     except Exception as exc:
-        await run_blocking_db(
+        partial_text = "".join(emitted_chunks).strip()
+        snapshot = await run_blocking_db(
             lambda thread_db: _fail_bootstrap_realtime_turn_sync(
                 thread_db,
                 household_id=turn_setup.household_id,
                 session_id=turn_setup.session_id,
                 request_id=request_id,
+                partial_text=partial_text,
+                error_detail=str(exc.detail) if isinstance(exc, HTTPException) else None,
                 error_code=_resolve_realtime_error_code(exc),
             ),
             session_factory=session_factory,
@@ -431,7 +445,7 @@ async def arun_butler_bootstrap_realtime_turn(
             logger=logger,
             context={"household_id": household_id, "session_id": session_id, "request_id": request_id},
         )
-        error_detail = str(exc.detail) if isinstance(exc, HTTPException) else "杩欒疆瀵硅瘽澶辫触浜嗭紝璇烽噸璇?"
+        error_detail = _render_bootstrap_realtime_error(exc)
         await _abroadcast_bootstrap_realtime_event(
             session_factory=session_factory,
             connection_manager=connection_manager,
@@ -443,6 +457,14 @@ async def arun_butler_bootstrap_realtime_turn(
                 "detail": error_detail,
                 "error_code": _resolve_realtime_error_code(exc),
             },
+        )
+        await _abroadcast_bootstrap_realtime_event(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+            household_id=turn_setup.household_id,
+            session_id=turn_setup.session_id,
+            event_type="session.snapshot",
+            payload={"snapshot": snapshot.model_dump(mode="json")},
         )
 
 
@@ -1079,7 +1101,7 @@ def _finish_bootstrap_realtime_turn_sync(
     request_id: str,
     session_read: ButlerBootstrapSessionRead,
     transcript: list[dict[str, str]],
-) -> None:
+) -> ButlerBootstrapSessionRead:
     session = repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
     if False:
         """
@@ -1102,6 +1124,7 @@ def _finish_bootstrap_realtime_turn_sync(
     request_row.assistant_message_id = assistant_message_row.id
     request_row.finished_at = utc_now_iso()
     _save_session_state(db, session=session, session_read=session_read, transcript=transcript)
+    return _to_session_read(db, session, assistant_message=session_read.assistant_message)
 
 
 def _fail_bootstrap_realtime_turn_sync(
@@ -1110,19 +1133,44 @@ def _fail_bootstrap_realtime_turn_sync(
     household_id: str,
     session_id: str,
     request_id: str,
+    partial_text: str,
+    error_detail: str | None,
     error_code: str,
-) -> None:
+) -> ButlerBootstrapSessionRead:
     session = repository.get_bootstrap_session(db, household_id=household_id, session_id=session_id)
     if session is None:
-        return
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="bootstrap session not found")
     request_row = repository.get_bootstrap_request(db, request_id=request_id)
+    assistant_message_row = None
     if request_row is not None:
         request_row.status = "failed"
         request_row.error_code = error_code
         request_row.finished_at = utc_now_iso()
+    transcript = _load_transcript(db, session)
+    if partial_text:
+        assistant_message_row = _append_bootstrap_message(
+            db,
+            session_id=session.id,
+            request_id=request_id,
+            role="assistant",
+            content=partial_text,
+        )
+        transcript.append({"role": "assistant", "content": partial_text})
+    elif error_detail:
+        assistant_message_row = _append_bootstrap_message(
+            db,
+            session_id=session.id,
+            request_id=request_id,
+            role="assistant",
+            content=error_detail,
+        )
+    if request_row is not None and assistant_message_row is not None:
+        request_row.assistant_message_id = assistant_message_row.id
     session.current_request_id = None
+    session.transcript_json = dump_json(transcript) or "[]"
     session.updated_at = utc_now_iso()
     db.flush()
+    return _to_session_read(db, session, assistant_message=partial_text or error_detail)
 
 
 def _claim_next_bootstrap_event_seq_sync(
@@ -1234,4 +1282,25 @@ def _resolve_realtime_error_code(exc: Exception) -> str:
             return "session_not_found"
         if exc.status_code == status.HTTP_400_BAD_REQUEST:
             return "invalid_event_payload"
+    if isinstance(exc, ProviderRuntimeError):
+        return exc.error_code
     return "provider_stream_failed"
+
+
+def _render_bootstrap_realtime_error(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    if isinstance(exc, ProviderRuntimeError):
+        message = str(exc).strip()
+        lowered = message.lower()
+        if exc.error_code == "auth_failed" or "invalid token" in lowered or "unauthorized" in lowered:
+            return "AI 服务认证失败，请检查 API Key 是否正确。"
+        if exc.error_code == "timeout":
+            return "AI 服务响应超时，请稍后重试。"
+        if exc.error_code == "rate_limited":
+            return "AI 服务请求过于频繁，请稍后再试。"
+        if exc.error_code == "stream_not_supported":
+            return "当前 AI 服务不支持流式对话，请更换模型或供应商。"
+        if message:
+            return message
+    return "这轮对话失败了，请重试。"
