@@ -29,6 +29,7 @@ from app.modules.ai_gateway.service import (
     upsert_capability_route,
 )
 from app.modules.audit.service import write_audit_log
+from app.modules.plugin import PluginServiceError
 
 router = APIRouter(prefix="/ai", tags=["ai-admin"])
 
@@ -88,6 +89,9 @@ def create_ai_provider_endpoint(
     except AiGatewayConfigurationError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
@@ -110,6 +114,9 @@ def update_ai_provider_endpoint(
     except AiGatewayConfigurationError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
@@ -153,6 +160,9 @@ def upsert_ai_route_endpoint(
     except AiGatewayConfigurationError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
