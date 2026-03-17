@@ -14,6 +14,7 @@ import {
   getLocalizedModelTypeLabel,
   getLocalizedWorkflowLabel,
 } from './aiProviderCatalog';
+import { getAiProviderLogo } from './AiProviderLogos';
 
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
 
@@ -53,6 +54,7 @@ export function AiProviderEditorDialog(props: {
     saving: string;
   };
   onClose: () => void;
+  onBack?: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onAdapterChange: (adapterCode: string) => void;
   onFormChange: (form: ProviderFormState) => void;
@@ -69,6 +71,7 @@ export function AiProviderEditorDialog(props: {
     status,
     copy,
     onClose,
+    onBack,
     onSubmit,
     onAdapterChange,
     onFormChange,
@@ -83,10 +86,17 @@ export function AiProviderEditorDialog(props: {
     ? [currentAdapter, ...adapters]
     : adapters;
   const localizedCapabilityOptions = getLocalizedCapabilityOptions(locale);
+  const adapterMeta = currentAdapter ? getLocalizedAdapterMeta(currentAdapter, locale) : null;
+  const Logo = currentAdapter ? getAiProviderLogo(currentAdapter.adapter_code) : null;
+
+  // 构建对话框标题：编辑模式显示"编辑xxx"，新建模式显示"添加模型"
+  const dialogTitle = editingProviderId
+    ? copy.editTitle
+    : (currentAdapter && adapterMeta ? `${copy.addTitle} - ${adapterMeta.label}` : copy.addTitle);
 
   return (
     <SettingsDialog
-      title={editingProviderId ? copy.editTitle : copy.addTitle}
+      title={dialogTitle}
       description={copy.formDescription}
       className="ai-provider-editor-modal"
       formClassName="ai-provider-editor-form"
@@ -95,6 +105,16 @@ export function AiProviderEditorDialog(props: {
       onSubmit={onSubmit}
       actions={(
         <>
+          {!editingProviderId && onBack ? (
+            <button
+              className="btn btn--outline btn--sm"
+              type="button"
+              onClick={onBack}
+              disabled={saving}
+            >
+              {locale?.startsWith('en') ? 'Back' : '返回'}
+            </button>
+          ) : null}
           <button className="btn btn--outline btn--sm" type="button" onClick={onClose} disabled={saving}>
             {copy.cancel}
           </button>
@@ -115,176 +135,153 @@ export function AiProviderEditorDialog(props: {
         </>
       )}
     >
-      {!editingProviderId ? (
-        <div className="ai-provider-plugin-picker">
-          <div className="ai-provider-plugin-picker__header">
-            <strong>{copy.chooseProviderPlugin}</strong>
-            <p>{copy.chooseProviderPluginDesc}</p>
+      {currentAdapter && adapterMeta ? (
+        <>
+          {/* 供应商信息头部 */}
+          <div className="ai-provider-editor-header">
+            {Logo ? (
+              <div className="ai-provider-editor-header__logo">
+                <Logo width={32} height={32} />
+              </div>
+            ) : null}
+            <div className="ai-provider-editor-header__info">
+              <h4>{adapterMeta.label}</h4>
+              <p>{adapterMeta.description}</p>
+            </div>
           </div>
-          <div className="ai-provider-plugin-picker__grid">
-            {adapters.map(adapter => {
-              const adapterMeta = getLocalizedAdapterMeta(adapter, locale);
-              const selected = form.adapterCode === adapter.adapter_code;
-              return (
-                <button
-                  key={adapter.adapter_code}
-                  type="button"
-                  className={`ai-provider-plugin-card ${selected ? 'ai-provider-plugin-card--selected' : ''}`}
-                  onClick={() => onAdapterChange(adapter.adapter_code)}
+
+          <Card className="ai-config-detail-card ai-provider-editor-card">
+            <div className="setup-form-grid">
+              <div className="form-group">
+                <label htmlFor={`provider-adapter-${householdId}`}>{copy.providerTypeLabel}</label>
+                <select
+                  id={`provider-adapter-${householdId}`}
+                  className="form-select"
+                  value={form.adapterCode}
+                  onChange={event => onAdapterChange(event.target.value)}
+                  disabled={Boolean(editingProviderId)}
                 >
-                  <div className="ai-provider-plugin-card__top">
-                    <strong>{adapterMeta.label}</strong>
-                    <span className="ai-pill ai-pill--primary">{adapter.plugin_name}</span>
-                  </div>
-                  <p className="ai-config-muted">{adapterMeta.description}</p>
-                  <div className="ai-config-chip-list">
-                    {(adapter.supported_model_types ?? []).map(type => (
-                      <span key={type} className="ai-pill">
-                        {getLocalizedModelTypeLabel(type, locale)}
-                      </span>
-                    ))}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
+                  <option value="">{copy.selectPlaceholder}</option>
+                  {selectAdapters.map(adapter => {
+                    const meta = getLocalizedAdapterMeta(adapter, locale);
+                    return (
+                      <option key={adapter.adapter_code} value={adapter.adapter_code}>
+                        {meta.label}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
 
-      {currentAdapter ? (
-        <Card className="ai-config-detail-card ai-provider-editor-card">
-          <div className="setup-form-grid">
-            <div className="form-group">
-              <label htmlFor={`provider-adapter-${householdId}`}>{copy.providerTypeLabel}</label>
-              <select
-                id={`provider-adapter-${householdId}`}
-                className="form-select"
-                value={form.adapterCode}
-                onChange={event => onAdapterChange(event.target.value)}
-                disabled={Boolean(editingProviderId)}
-              >
-                <option value="">{copy.selectPlaceholder}</option>
-                {selectAdapters.map(adapter => {
-                  const adapterMeta = getLocalizedAdapterMeta(adapter, locale);
-                  return (
-                    <option key={adapter.adapter_code} value={adapter.adapter_code}>
-                      {adapterMeta.label}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
+              <div className="form-group">
+                <label>{copy.llmWorkflow}</label>
+                <div className="form-help">{getLocalizedWorkflowLabel(currentAdapter.llm_workflow, locale)}</div>
+              </div>
 
-            <div className="form-group">
-              <label>{copy.llmWorkflow}</label>
-              <div className="form-help">{getLocalizedWorkflowLabel(currentAdapter.llm_workflow, locale)}</div>
-            </div>
-
-            <div className="form-group">
-              <label>{copy.supportedModelTypes}</label>
-              <div className="ai-config-chip-list">
-                {(currentAdapter.supported_model_types ?? []).map(type => (
-                  <span key={type} className="ai-pill">
-                    {getLocalizedModelTypeLabel(type, locale)}
-                  </span>
-                ))}
+              <div className="form-group">
+                <label>{copy.supportedModelTypes}</label>
+                <div className="ai-config-chip-list">
+                  {(currentAdapter.supported_model_types ?? []).map(type => (
+                    <span key={type} className="ai-pill">
+                      {getLocalizedModelTypeLabel(type, locale)}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
 
-          <p className="ai-config-muted">{getLocalizedAdapterMeta(currentAdapter, locale).description}</p>
+            <div className="setup-form-grid">
+              {currentAdapter.field_schema.map(field => {
+                const localizedField = getLocalizedField(field, locale);
+                const fieldValue = readFieldValue(form, field.key);
+                const inputId = `${householdId}-${field.key}`;
 
-          <div className="setup-form-grid">
-            {currentAdapter.field_schema.map(field => {
-              const localizedField = getLocalizedField(field, locale);
-              const fieldValue = readFieldValue(form, field.key);
-              const inputId = `${householdId}-${field.key}`;
+                if (localizedField.field_type === 'boolean') {
+                  return (
+                    <div key={field.key} className="form-group">
+                      <label className="setup-choice" htmlFor={inputId}>
+                        <input
+                          id={inputId}
+                          type="checkbox"
+                          checked={fieldValue === 'true'}
+                          onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.checked ? 'true' : 'false'))}
+                        />
+                        <span>{localizedField.label}</span>
+                      </label>
+                      {localizedField.help_text ? <p className="ai-config-muted">{localizedField.help_text}</p> : null}
+                    </div>
+                  );
+                }
 
-              if (localizedField.field_type === 'boolean') {
                 return (
                   <div key={field.key} className="form-group">
-                    <label className="setup-choice" htmlFor={inputId}>
+                    <label htmlFor={inputId}>{localizedField.label}</label>
+                    {localizedField.field_type === 'select' ? (
+                      <select
+                        id={inputId}
+                        className="form-select"
+                        value={fieldValue}
+                        onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
+                      >
+                        <option value="">{copy.selectPlaceholder}</option>
+                        {localizedField.options.map(option => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
                       <input
                         id={inputId}
-                        type="checkbox"
-                        checked={fieldValue === 'true'}
-                        onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.checked ? 'true' : 'false'))}
+                        className="form-input"
+                        type={localizedField.field_type === 'number' ? 'number' : 'text'}
+                        value={fieldValue}
+                        onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
+                        placeholder={localizedField.placeholder ?? undefined}
+                        disabled={Boolean(editingProviderId && field.key === 'provider_code')}
                       />
-                      <span>{localizedField.label}</span>
-                    </label>
+                    )}
                     {localizedField.help_text ? <p className="ai-config-muted">{localizedField.help_text}</p> : null}
                   </div>
                 );
-              }
+              })}
 
-              return (
-                <div key={field.key} className="form-group">
-                  <label htmlFor={inputId}>{localizedField.label}</label>
-                  {localizedField.field_type === 'select' ? (
-                    <select
-                      id={inputId}
-                      className="form-select"
-                      value={fieldValue}
-                      onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
-                    >
-                      <option value="">{copy.selectPlaceholder}</option>
-                      {localizedField.options.map(option => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      id={inputId}
-                      className="form-input"
-                      type={localizedField.field_type === 'number' ? 'number' : 'text'}
-                      value={fieldValue}
-                      onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
-                      placeholder={localizedField.placeholder ?? undefined}
-                      disabled={Boolean(editingProviderId && field.key === 'provider_code')}
-                    />
-                  )}
-                  {localizedField.help_text ? <p className="ai-config-muted">{localizedField.help_text}</p> : null}
+              <div className="form-group">
+                <label>{copy.capabilityCheckboxLabel}</label>
+                <div className="setup-choice-group">
+                  {localizedCapabilityOptions.map(item => (
+                    <label key={item.value} className="setup-choice">
+                      <input
+                        type="checkbox"
+                        checked={form.supportedCapabilities.includes(item.value)}
+                        onChange={() => {
+                          onFormChange({
+                            ...form,
+                            supportedCapabilities: form.supportedCapabilities.includes(item.value)
+                              ? form.supportedCapabilities.filter(capability => capability !== item.value)
+                              : [...form.supportedCapabilities, item.value],
+                          });
+                        }}
+                      />
+                      <span>{item.label}</span>
+                    </label>
+                  ))}
                 </div>
-              );
-            })}
+              </div>
 
-            <div className="form-group">
-              <label>{copy.capabilityCheckboxLabel}</label>
-              <div className="setup-choice-group">
-                {localizedCapabilityOptions.map(item => (
-                  <label key={item.value} className="setup-choice">
-                    <input
-                      type="checkbox"
-                      checked={form.supportedCapabilities.includes(item.value)}
-                      onChange={() => {
-                        onFormChange({
-                          ...form,
-                          supportedCapabilities: form.supportedCapabilities.includes(item.value)
-                            ? form.supportedCapabilities.filter(capability => capability !== item.value)
-                            : [...form.supportedCapabilities, item.value],
-                        });
-                      }}
-                    />
-                    <span>{item.label}</span>
-                  </label>
-                ))}
+              <div className="form-group">
+                <label className="setup-choice">
+                  <input
+                    type="checkbox"
+                    checked={form.enabled}
+                    onChange={event => onFormChange({ ...form, enabled: event.target.checked })}
+                  />
+                  <span>{copy.enableAfterSave}</span>
+                </label>
               </div>
             </div>
-
-            <div className="form-group">
-              <label className="setup-choice">
-                <input
-                  type="checkbox"
-                  checked={form.enabled}
-                  onChange={event => onFormChange({ ...form, enabled: event.target.checked })}
-                />
-                <span>{copy.enableAfterSave}</span>
-              </label>
-            </div>
-          </div>
-        </Card>
+          </Card>
+        </>
       ) : null}
 
       {status ? <div className="setup-form-status">{status}</div> : null}

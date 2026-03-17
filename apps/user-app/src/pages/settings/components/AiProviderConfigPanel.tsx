@@ -19,6 +19,7 @@ import type {
 } from '../settingsTypes';
 import { AiProviderDetailDialog } from './AiProviderDetailDialog';
 import { AiProviderEditorDialog } from './AiProviderEditorDialog';
+import { AiProviderSelectDialog } from './AiProviderSelectDialog';
 import { SettingsEmptyState, SettingsPanelCard } from './SettingsSharedBlocks';
 import { getLocalizedAdapterMeta } from './aiProviderCatalog';
 
@@ -96,6 +97,7 @@ export function AiProviderConfigPanel(props: {
   const [providers, setProviders] = useState<AiProviderProfile[]>([]);
   const [routes, setRoutes] = useState<AiCapabilityRoute[]>([]);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [selectOpen, setSelectOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [detailProviderId, setDetailProviderId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -269,7 +271,21 @@ export function AiProviderConfigPanel(props: {
     setEditingProviderId(null);
     setForm(buildProviderFormState());
     setError('');
+    setSelectOpen(true);
+  }
+
+  function selectAdapter(adapterCode: string) {
+    const adapter = adapterMap.get(adapterCode) ?? null;
+    if (adapter) {
+      setForm(buildProviderFormState(adapter));
+    }
+    setSelectOpen(false);
     setEditorOpen(true);
+  }
+
+  function goBackToSelect() {
+    setEditorOpen(false);
+    setSelectOpen(true);
   }
 
   function startEdit(provider: AiProviderProfile) {
@@ -480,9 +496,20 @@ export function AiProviderConfigPanel(props: {
         status=""
         copy={copy}
         onClose={closeEditor}
+        onBack={!editingProviderId ? goBackToSelect : undefined}
         onSubmit={handleSubmit}
         onAdapterChange={handleAdapterChange}
         onFormChange={setForm}
+      />
+
+      <AiProviderSelectDialog
+        locale={locale}
+        open={selectOpen}
+        adapters={[...registryAdapterMap.values(), ...adapters].filter(
+          (item, index, self) => self.findIndex(i => i.adapter_code === item.adapter_code) === index
+        )}
+        onSelect={selectAdapter}
+        onClose={() => setSelectOpen(false)}
       />
     </div>
   );

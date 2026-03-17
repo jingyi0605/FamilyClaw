@@ -5859,6 +5859,27 @@ input, select, textarea {
   gap: 4px;
 }
 
+.speaker-voiceprint-wizard__prompt-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border: 1px solid rgba(214, 124, 36, 0.28);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(255, 244, 219, 0.96), rgba(255, 249, 235, 0.88));
+}
+
+.speaker-voiceprint-wizard__prompt-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.speaker-voiceprint-wizard__prompt-text {
+  font-size: var(--font-size-lg);
+  line-height: 1.6;
+}
+
 .speaker-voiceprint-wizard__label {
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);
@@ -5869,6 +5890,16 @@ input, select, textarea {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.speaker-voiceprint-wizard__guide-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
 }
 
 /* ============================================================
@@ -7283,37 +7314,38 @@ body::before {
   border: 1px solid color-mix(in srgb, var(--brand-primary) 12%, var(--border-default));
 }
 
+// 供应商选择器 - 使用固定 px 避免 Taro 转换
 .ai-provider-plugin-picker {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: 10px;
 }
 
 .ai-provider-plugin-picker__header {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 4px;
 }
 
 .ai-provider-plugin-picker__header p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
 }
 
 .ai-provider-plugin-picker__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 0.625rem;
+  gap: 10px;
 }
 
 .ai-provider-plugin-card {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 8px;
   width: 100%;
-  padding: 0.75rem;
-  border-radius: 0.75rem;
+  padding: 12px;
+  border-radius: 12px;
   border: 1px solid var(--border-light);
   background: var(--bg-card);
   text-align: left;
@@ -7335,16 +7367,103 @@ body::before {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 0.5rem;
+  gap: 8px;
 }
 
 .ai-provider-plugin-card__top strong {
-  font-size: var(--font-size-sm);
+  font-size: 14px;
   line-height: 1.3;
 }
 
 .ai-provider-plugin-card .ai-config-muted {
-  font-size: var(--font-size-xs);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+}
+
+.ai-provider-plugin-card .ai-config-chip-list {
+  gap: 6px;
+}
+
+.ai-provider-plugin-card .ai-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+// AI供应商选择对话框 - 使用固定 px 避免 Taro 转换
+.ai-provider-select-modal {
+  width: min(860px, 92vw);
+}
+
+.ai-provider-select-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+  max-height: 65vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.ai-provider-select-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+  width: 100%;
+}
+
+.ai-provider-select-card:hover {
+  border-color: var(--brand-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  background: var(--bg-card-hover);
+  transform: translateY(-2px);
+}
+
+.ai-provider-select-card__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--brand-primary) 8%, var(--bg-input));
+  flex-shrink: 0;
+  overflow: hidden;
+  color: var(--brand-primary);
+}
+
+.ai-provider-select-card__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ai-provider-select-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 4px 0;
+}
+
+.ai-provider-select-card__desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0 0 8px 0;
   line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -7352,13 +7471,119 @@ body::before {
   overflow: hidden;
 }
 
-.ai-provider-plugin-card .ai-config-chip-list {
-  gap: 0.375rem;
+.ai-provider-select-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
 }
 
-.ai-provider-plugin-card .ai-pill {
+.ai-provider-select-card__tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
   font-size: 10px;
-  padding: 0.125rem 0.5rem;
+  font-weight: 500;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--brand-primary) 10%, transparent);
+  color: var(--brand-primary);
+}
+
+.ai-provider-select-card__arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--brand-primary) 12%, transparent);
+  color: var(--brand-primary);
+  flex-shrink: 0;
+  font-size: 18px;
+  font-weight: 300;
+}
+
+.ai-provider-select-card:hover .ai-provider-select-card__arrow {
+  background: var(--brand-primary);
+  color: white;
+}
+
+.ai-provider-select-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border-light);
+  color: var(--text-tertiary);
+}
+
+.ai-provider-select-footer__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-provider-select-footer__text {
+  font-size: 12px;
+}
+
+// 编辑器头部供应商信息
+.ai-provider-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: color-mix(in srgb, var(--brand-primary) 6%, var(--bg-card));
+  border-radius: 10px;
+}
+
+.ai-provider-editor-header__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--brand-primary);
+  flex-shrink: 0;
+}
+
+.ai-provider-editor-header__info h4 {
+  margin: 0 0 2px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ai-provider-editor-header__info p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 480px) {
+  .ai-provider-select-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-provider-select-card__logo {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+@media (min-width: 800px) {
+  .ai-provider-select-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .ai-provider-select-modal {
+    width: min(960px, 92vw);
+  }
 }
 
 @media (max-width: 1100px) {
