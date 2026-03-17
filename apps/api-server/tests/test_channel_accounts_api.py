@@ -96,7 +96,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
             json={
                 "plugin_id": "channel-telegram",
                 "account_code": "telegram-main",
-                "display_name": "Telegram 涓昏处鍙?,
+                "display_name": "Telegram 主账号",
                 "connection_mode": "polling",
                 "config": {
                     "bot_token": "telegram-token-001",
@@ -234,7 +234,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
             json={
                 "plugin_id": "channel-dingtalk",
                 "account_code": "dingtalk-main",
-                "display_name": "閽夐拤涓昏处鍙?,
+                "display_name": "钉钉主账号",
                 "connection_mode": "polling",
                 "config": {
                     "app_key": "ding-app-key",
@@ -243,8 +243,8 @@ class ChannelAccountsApiTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(400, response.status_code)
-        self.assertEqual("channel plugin is disabled for current household", response.json()["detail"])
+        self.assertEqual(409, response.status_code)
+        self.assertEqual("plugin_disabled", response.json()["detail"]["error_code"])
 
     def test_probe_channel_account_rejects_disabled_channel_plugin(self) -> None:
         create_response = self.client.post(
@@ -252,7 +252,7 @@ class ChannelAccountsApiTests(unittest.TestCase):
             json={
                 "plugin_id": "channel-telegram",
                 "account_code": "telegram-main",
-                "display_name": "Telegram 涓昏处鍙?,
+                "display_name": "Telegram 主账号",
                 "connection_mode": "polling",
                 "config": {
                     "bot_token": "telegram-token-001",
@@ -275,16 +275,16 @@ class ChannelAccountsApiTests(unittest.TestCase):
         probe_response = self.client.post(
             f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts/{account_id}/probe"
         )
-        self.assertEqual(400, probe_response.status_code)
-        self.assertEqual("channel plugin is disabled for current household", probe_response.json()["detail"])
+        self.assertEqual(409, probe_response.status_code)
+        self.assertEqual("plugin_disabled", probe_response.json()["detail"]["error_code"])
 
-    def test_update_channel_account_rejects_disabled_channel_plugin(self) -> None:
+    def test_update_channel_account_allows_configuring_disabled_channel_plugin(self) -> None:
         create_response = self.client.post(
             f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts",
             json={
                 "plugin_id": "channel-telegram",
                 "account_code": "telegram-main",
-                "display_name": "Telegram 涓昏处鍙?,
+                "display_name": "Telegram 主账号",
                 "connection_mode": "polling",
                 "config": {
                     "bot_token": "telegram-token-001",
@@ -308,8 +308,8 @@ class ChannelAccountsApiTests(unittest.TestCase):
             f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts/{account_id}",
             json={"status": "active"},
         )
-        self.assertEqual(404, update_response.status_code)
-        self.assertEqual("channel plugin is disabled for current household", update_response.json()["detail"])
+        self.assertEqual(200, update_response.status_code)
+        self.assertEqual("active", update_response.json()["status"])
 
 
 if __name__ == "__main__":

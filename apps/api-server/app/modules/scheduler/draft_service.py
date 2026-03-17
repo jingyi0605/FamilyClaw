@@ -383,6 +383,8 @@ def _resolve_plugin_target(db: Session, *, household_id: str, text: str) -> str 
         return None
     normalized = text.lower()
     for item in registry.items:
+        if not item.enabled:
+            continue
         if item.id.lower() in normalized or item.name.lower() in normalized:
             return item.id
     return None

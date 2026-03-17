@@ -141,7 +141,7 @@ class IntegrationDiscoveryItemRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    household_id: str
+    household_id: str | None = None
     plugin_id: str
     integration_instance_id: str | None = None
     discovery_type: str

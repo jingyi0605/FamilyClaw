@@ -9,27 +9,19 @@ from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, new_uuid, utc_now_iso
 from app.modules.device.models import Device, DeviceBinding
-from app.modules.device.schemas import DeviceRead
-from app.modules.device_integration.schemas import (
-    DeviceIntegrationPluginPayload,
-    DeviceIntegrationPluginResult,
-)
-from app.modules.integration import repository as integration_repository
+from app.modules.device_integration.schemas import DeviceIntegrationPluginPayload, DeviceIntegrationPluginResult
 from app.modules.household.service import get_household_or_404
+from app.modules.integration import repository as integration_repository
+from app.modules.integration.discovery_service import mark_discovery_claimed
+from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import (
     PluginServiceError,
-    aexecute_household_plugin,
     execute_household_plugin,
     require_available_household_plugin,
 )
-from app.plugins.builtin.homeassistant_device_action.runtime import (
-    HOME_ASSISTANT_PLUGIN_ID,
-    get_home_assistant_runtime_config,
-    mark_home_assistant_instance_sync_failed,
-    mark_home_assistant_instance_sync_succeeded,
-)
 from app.modules.room.models import Room
+from app.plugins.builtin.homeassistant_device_action.runtime import get_home_assistant_runtime_config
 
 
 @dataclass(slots=True)
@@ -62,7 +54,7 @@ class RoomSyncSummary:
 
 
 @dataclass(slots=True)
-class HaDeviceCandidate:
+class DeviceCandidate:
     external_device_id: str
     primary_entity_id: str
     name: str
@@ -73,7 +65,7 @@ class HaDeviceCandidate:
 
 
 @dataclass(slots=True)
-class HaRoomCandidate:
+class RoomCandidate:
     name: str
     entity_count: int
     exists_locally: bool
@@ -89,12 +81,12 @@ class DeviceIntegrationServiceError(PluginServiceError):
         self.field = field
 
 
-def list_home_assistant_device_candidates_via_plugin(
+def list_device_candidates_via_plugin(
     db: Session,
     *,
     household_id: str,
     integration_instance_id: str,
-) -> list[HaDeviceCandidate]:
+) -> list[DeviceCandidate]:
     result = _execute_connector_plugin(
         db,
         household_id=household_id,
@@ -104,13 +96,19 @@ def list_home_assistant_device_candidates_via_plugin(
         options={},
     )
     _raise_if_connector_failed(result, sync_scope="device_candidates")
-    existing_bindings = _load_existing_home_assistant_bindings(
+    instance = _require_connector_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
     )
+    existing_bindings = _load_existing_binding_keys(
+        db,
+        household_id=household_id,
+        integration_instance_id=integration_instance_id,
+        platform=result.platform,
+    )
     return [
-        HaDeviceCandidate(
+        DeviceCandidate(
             external_device_id=item.external_device_id,
             primary_entity_id=item.primary_entity_id,
             name=item.name,
@@ -120,15 +118,16 @@ def list_home_assistant_device_candidates_via_plugin(
             already_synced=item.external_device_id in existing_bindings,
         )
         for item in result.device_candidates
+        if item.external_device_id and instance.plugin_id == result.plugin_id
     ]
 
 
-def list_home_assistant_room_candidates_via_plugin(
+def list_room_candidates_via_plugin(
     db: Session,
     *,
     household_id: str,
     integration_instance_id: str,
-) -> list[HaRoomCandidate]:
+) -> list[RoomCandidate]:
     result = _execute_connector_plugin(
         db,
         household_id=household_id,
@@ -140,7 +139,7 @@ def list_home_assistant_room_candidates_via_plugin(
     _raise_if_connector_failed(result, sync_scope="room_candidates")
     room_cache = _load_room_cache(db, household_id)
     return [
-        HaRoomCandidate(
+        RoomCandidate(
             name=item.name,
             entity_count=item.entity_count,
             exists_locally=_normalize_room_key(item.name) in room_cache,
@@ -150,7 +149,7 @@ def list_home_assistant_room_candidates_via_plugin(
     ]
 
 
-def sync_home_assistant_devices_via_plugin(
+def sync_devices_via_plugin(
     db: Session,
     *,
     household_id: str,
@@ -174,7 +173,7 @@ def sync_home_assistant_devices_via_plugin(
     )
 
 
-def sync_home_assistant_rooms_via_plugin(
+def sync_rooms_via_plugin(
     db: Session,
     *,
     household_id: str,
@@ -198,12 +197,12 @@ def sync_home_assistant_rooms_via_plugin(
     )
 
 
-async def async_list_home_assistant_device_candidates_via_plugin(
+async def async_list_device_candidates_via_plugin(
     db: Session,
     *,
     household_id: str,
     integration_instance_id: str,
-) -> list[HaDeviceCandidate]:
+) -> list[DeviceCandidate]:
     result = await _aexecute_connector_plugin(
         db,
         household_id=household_id,
@@ -213,13 +212,19 @@ async def async_list_home_assistant_device_candidates_via_plugin(
         options={},
     )
     _raise_if_connector_failed(result, sync_scope="device_candidates")
-    existing_bindings = _load_existing_home_assistant_bindings(
+    instance = _require_connector_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
     )
+    existing_bindings = _load_existing_binding_keys(
+        db,
+        household_id=household_id,
+        integration_instance_id=integration_instance_id,
+        platform=result.platform,
+    )
     return [
-        HaDeviceCandidate(
+        DeviceCandidate(
             external_device_id=item.external_device_id,
             primary_entity_id=item.primary_entity_id,
             name=item.name,
@@ -229,15 +234,16 @@ async def async_list_home_assistant_device_candidates_via_plugin(
             already_synced=item.external_device_id in existing_bindings,
         )
         for item in result.device_candidates
+        if item.external_device_id and instance.plugin_id == result.plugin_id
     ]
 
 
-async def async_list_home_assistant_room_candidates_via_plugin(
+async def async_list_room_candidates_via_plugin(
     db: Session,
     *,
     household_id: str,
     integration_instance_id: str,
-) -> list[HaRoomCandidate]:
+) -> list[RoomCandidate]:
     result = await _aexecute_connector_plugin(
         db,
         household_id=household_id,
@@ -249,7 +255,7 @@ async def async_list_home_assistant_room_candidates_via_plugin(
     _raise_if_connector_failed(result, sync_scope="room_candidates")
     room_cache = _load_room_cache(db, household_id)
     return [
-        HaRoomCandidate(
+        RoomCandidate(
             name=item.name,
             entity_count=item.entity_count,
             exists_locally=_normalize_room_key(item.name) in room_cache,
@@ -259,7 +265,7 @@ async def async_list_home_assistant_room_candidates_via_plugin(
     ]
 
 
-async def async_sync_home_assistant_devices_via_plugin(
+async def async_sync_devices_via_plugin(
     db: Session,
     *,
     household_id: str,
@@ -283,7 +289,7 @@ async def async_sync_home_assistant_devices_via_plugin(
     )
 
 
-async def async_sync_home_assistant_rooms_via_plugin(
+async def async_sync_rooms_via_plugin(
     db: Session,
     *,
     household_id: str,
@@ -305,6 +311,35 @@ async def async_sync_home_assistant_rooms_via_plugin(
         integration_instance_id=integration_instance_id,
         result=result,
     )
+
+
+def mark_integration_instance_sync_succeeded(db: Session, *, integration_instance_id: str) -> None:
+    instance = integration_repository.get_integration_instance(db, integration_instance_id)
+    if instance is None:
+        return
+    instance.status = "active"
+    instance.last_synced_at = utc_now_iso()
+    instance.last_error_code = None
+    instance.last_error_message = None
+    instance.updated_at = utc_now_iso()
+    db.add(instance)
+
+
+def mark_integration_instance_sync_failed(
+    db: Session,
+    *,
+    integration_instance_id: str,
+    error_code: str,
+    error_message: str,
+) -> None:
+    instance = integration_repository.get_integration_instance(db, integration_instance_id)
+    if instance is None:
+        return
+    instance.status = "degraded"
+    instance.last_error_code = error_code
+    instance.last_error_message = error_message
+    instance.updated_at = utc_now_iso()
+    db.add(instance)
 
 
 def _execute_connector_plugin(
@@ -316,15 +351,14 @@ def _execute_connector_plugin(
     selected_external_ids: list[str],
     options: dict[str, Any],
 ) -> DeviceIntegrationPluginResult:
-    _require_homeassistant_connector_plugin(
+    instance = _require_connector_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
     )
     payload = _build_payload(
         db,
-        household_id=household_id,
-        integration_instance_id=integration_instance_id,
+        instance=instance,
         sync_scope=sync_scope,
         selected_external_ids=selected_external_ids,
         options=options,
@@ -333,7 +367,7 @@ def _execute_connector_plugin(
         db,
         household_id=household_id,
         request=PluginExecutionRequest(
-            plugin_id=HOME_ASSISTANT_PLUGIN_ID,
+            plugin_id=instance.plugin_id,
             plugin_type="connector",
             payload=_serialize_payload(payload),
             trigger="device-integration",
@@ -345,7 +379,7 @@ def _execute_connector_plugin(
             error_code=execution.error_code or "plugin_execution_failed",
             status_code=502,
         )
-    return _parse_plugin_result(execution.output)
+    return _parse_plugin_result(execution.output, expected_plugin_id=instance.plugin_id)
 
 
 async def _aexecute_connector_plugin(
@@ -357,15 +391,24 @@ async def _aexecute_connector_plugin(
     selected_external_ids: list[str],
     options: dict[str, Any],
 ) -> DeviceIntegrationPluginResult:
-    _require_homeassistant_connector_plugin(
+    # 这里先复用同步执行链，避免测试数据库在线程切换时重复抢连接池。
+    return _execute_connector_plugin(
+        db,
+        household_id=household_id,
+        integration_instance_id=integration_instance_id,
+        sync_scope=sync_scope,
+        selected_external_ids=selected_external_ids,
+        options=options,
+    )
+
+    instance = _require_connector_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
     )
     payload = _build_payload(
         db,
-        household_id=household_id,
-        integration_instance_id=integration_instance_id,
+        instance=instance,
         sync_scope=sync_scope,
         selected_external_ids=selected_external_ids,
         options=options,
@@ -374,7 +417,7 @@ async def _aexecute_connector_plugin(
         db,
         household_id=household_id,
         request=PluginExecutionRequest(
-            plugin_id=HOME_ASSISTANT_PLUGIN_ID,
+            plugin_id=instance.plugin_id,
             plugin_type="connector",
             payload=_serialize_payload(payload),
             trigger="device-integration",
@@ -386,19 +429,19 @@ async def _aexecute_connector_plugin(
             error_code=execution.error_code or "plugin_execution_failed",
             status_code=502,
         )
-    return _parse_plugin_result(execution.output)
+    return _parse_plugin_result(execution.output, expected_plugin_id=instance.plugin_id)
 
 
-def _require_homeassistant_connector_plugin(
+def _require_connector_instance(
     db: Session,
     *,
     household_id: str,
     integration_instance_id: str,
-) -> None:
+) -> IntegrationInstance:
     instance = integration_repository.get_integration_instance(db, integration_instance_id)
-    if instance is None or instance.household_id != household_id or instance.plugin_id != HOME_ASSISTANT_PLUGIN_ID:
+    if instance is None or instance.household_id != household_id:
         raise DeviceIntegrationServiceError(
-            "Home Assistant 实例不存在或不属于当前家庭",
+            "集成实例不存在或不属于当前家庭",
             error_code="integration_instance_not_found",
             status_code=404,
         )
@@ -406,27 +449,27 @@ def _require_homeassistant_connector_plugin(
         require_available_household_plugin(
             db,
             household_id=household_id,
-            plugin_id=HOME_ASSISTANT_PLUGIN_ID,
+            plugin_id=instance.plugin_id,
             plugin_type="connector",
         )
     except PluginServiceError as exc:
         raise DeviceIntegrationServiceError(exc.detail, error_code=exc.error_code, status_code=exc.status_code) from exc
+    return instance
 
 
 def _build_payload(
     db: Session,
     *,
-    household_id: str,
-    integration_instance_id: str,
+    instance: IntegrationInstance,
     sync_scope: str,
     selected_external_ids: list[str],
     options: dict[str, Any],
 ) -> DeviceIntegrationPluginPayload:
     database_url = _build_database_url(db)
     return DeviceIntegrationPluginPayload(
-        household_id=household_id,
-        plugin_id=HOME_ASSISTANT_PLUGIN_ID,
-        integration_instance_id=integration_instance_id,
+        household_id=instance.household_id,
+        plugin_id=instance.plugin_id,
+        integration_instance_id=instance.id,
         sync_scope=sync_scope,  # type: ignore[arg-type]
         selected_external_ids=[item for item in selected_external_ids if isinstance(item, str) and item.strip()],
         options=options,
@@ -434,7 +477,7 @@ def _build_payload(
     )
 
 
-def _parse_plugin_result(output: Any) -> DeviceIntegrationPluginResult:
+def _parse_plugin_result(output: Any, *, expected_plugin_id: str) -> DeviceIntegrationPluginResult:
     try:
         result = DeviceIntegrationPluginResult.model_validate(output or {})
     except ValidationError as exc:
@@ -443,7 +486,7 @@ def _parse_plugin_result(output: Any) -> DeviceIntegrationPluginResult:
             error_code="plugin_result_invalid",
             status_code=502,
         ) from exc
-    if result.plugin_id != HOME_ASSISTANT_PLUGIN_ID:
+    if result.plugin_id != expected_plugin_id:
         raise DeviceIntegrationServiceError("插件返回了错误的 plugin_id", error_code="plugin_result_invalid", status_code=502)
     return result
 
@@ -476,10 +519,14 @@ def _apply_device_sync_result(
     integration_instance_id: str,
     result: DeviceIntegrationPluginResult,
 ) -> SyncSummary:
+    instance = _require_connector_instance(
+        db,
+        household_id=household_id,
+        integration_instance_id=integration_instance_id,
+    )
     get_household_or_404(db, household_id)
-    runtime_config = get_home_assistant_runtime_config(db, integration_instance_id=integration_instance_id)
     room_cache = _load_room_cache(db, household_id)
-    sync_rooms_enabled = bool(runtime_config.sync_rooms_enabled)
+    sync_rooms_enabled = _should_auto_assign_rooms(db, instance=instance)
 
     created_devices = 0
     updated_devices = 0
@@ -494,7 +541,9 @@ def _apply_device_sync_result(
             with db.begin_nested():
                 binding = _get_existing_binding(
                     db,
+                    household_id=household_id,
                     integration_instance_id=integration_instance_id,
+                    platform=result.platform,
                     external_device_id=item.external_device_id,
                     primary_entity_id=item.primary_entity_id,
                 )
@@ -506,7 +555,7 @@ def _apply_device_sync_result(
                         room_id=None,
                         name=item.name,
                         device_type=item.device_type,
-                        vendor="ha",
+                        vendor=_resolve_vendor(platform=result.platform, capabilities=item.capabilities),
                         status=item.status,
                         controllable=1 if item.controllable else 0,
                     )
@@ -535,7 +584,7 @@ def _apply_device_sync_result(
                         raise ValueError("existing binding belongs to another household")
                     device.name = item.name
                     device.device_type = item.device_type
-                    device.vendor = "ha"
+                    device.vendor = _resolve_vendor(platform=result.platform, capabilities=item.capabilities)
                     device.status = item.status
                     device.controllable = 1 if item.controllable else 0
                     binding.external_entity_id = item.primary_entity_id
@@ -563,6 +612,14 @@ def _apply_device_sync_result(
                         db.add(device)
                         assigned_rooms += 1
 
+                mark_discovery_claimed(
+                    db,
+                    integration_instance_id=integration_instance_id,
+                    plugin_id=result.plugin_id,
+                    external_device_id=item.external_device_id,
+                    external_entity_id=item.primary_entity_id,
+                    device_id=device.id,
+                )
                 db.flush()
                 synced_devices.append(device)
         except Exception as exc:
@@ -572,14 +629,14 @@ def _apply_device_sync_result(
         failures.append(SyncFailure(entity_id=failure.external_ref, reason=failure.reason))
 
     if failures:
-        mark_home_assistant_instance_sync_failed(
+        mark_integration_instance_sync_failed(
             db,
             integration_instance_id=integration_instance_id,
             error_code="integration_sync_failed",
             error_message=failures[0].reason,
         )
     else:
-        mark_home_assistant_instance_sync_succeeded(db, integration_instance_id=integration_instance_id)
+        mark_integration_instance_sync_succeeded(db, integration_instance_id=integration_instance_id)
 
     return SyncSummary(
         household_id=household_id,
@@ -602,6 +659,11 @@ def _apply_room_sync_result(
     integration_instance_id: str,
     result: DeviceIntegrationPluginResult,
 ) -> RoomSyncSummary:
+    _require_connector_instance(
+        db,
+        household_id=household_id,
+        integration_instance_id=integration_instance_id,
+    )
     get_household_or_404(db, household_id)
     room_cache = _load_room_cache(db, household_id)
     created_rooms = 0
@@ -618,7 +680,7 @@ def _apply_room_sync_result(
         if created:
             created_rooms += 1
 
-    mark_home_assistant_instance_sync_succeeded(db, integration_instance_id=integration_instance_id)
+    mark_integration_instance_sync_succeeded(db, integration_instance_id=integration_instance_id)
 
     return RoomSyncSummary(
         household_id=household_id,
@@ -655,32 +717,53 @@ def _render_database_url(url: Any) -> str:
 def _get_existing_binding(
     db: Session,
     *,
+    household_id: str,
     integration_instance_id: str,
+    platform: str,
     external_device_id: str,
     primary_entity_id: str,
 ) -> DeviceBinding | None:
-    binding = db.scalar(
+    scoped_binding = db.scalar(
         select(DeviceBinding).where(
             DeviceBinding.integration_instance_id == integration_instance_id,
-            DeviceBinding.platform == "home_assistant",
+            DeviceBinding.platform == platform,
             DeviceBinding.external_device_id == external_device_id,
         )
     )
-    if binding is not None:
-        return binding
-    return db.scalar(
+    if scoped_binding is not None:
+        return scoped_binding
+
+    scoped_entity_binding = db.scalar(
         select(DeviceBinding).where(
             DeviceBinding.integration_instance_id == integration_instance_id,
-            DeviceBinding.platform == "home_assistant",
+            DeviceBinding.platform == platform,
             DeviceBinding.external_entity_id == primary_entity_id,
         )
     )
+    if scoped_entity_binding is not None:
+        return scoped_entity_binding
+
+    for candidate in db.scalars(
+        select(DeviceBinding).where(
+            DeviceBinding.platform == platform,
+            (DeviceBinding.external_device_id == external_device_id) | (DeviceBinding.external_entity_id == primary_entity_id),
+        )
+    ).all():
+        device = db.get(Device, candidate.device_id)
+        if device is None:
+            continue
+        if device.household_id != household_id:
+            raise ValueError("existing binding belongs to another household")
+        return candidate
+    return None
 
 
-def _load_existing_home_assistant_bindings(
+def _load_existing_binding_keys(
     db: Session,
+    *,
     household_id: str,
     integration_instance_id: str,
+    platform: str,
 ) -> set[str]:
     rows = db.execute(
         select(DeviceBinding.external_device_id)
@@ -688,7 +771,7 @@ def _load_existing_home_assistant_bindings(
         .where(
             Device.household_id == household_id,
             DeviceBinding.integration_instance_id == integration_instance_id,
-            DeviceBinding.platform == "home_assistant",
+            DeviceBinding.platform == platform,
             DeviceBinding.external_device_id.is_not(None),
         )
     ).all()
@@ -726,3 +809,22 @@ def _get_or_create_room_from_name(
     db.flush()
     room_cache[room_key] = room
     return room, True
+
+
+def _should_auto_assign_rooms(db: Session, *, instance: IntegrationInstance) -> bool:
+    if instance.plugin_id != "homeassistant":
+        return False
+    runtime_config = get_home_assistant_runtime_config(db, integration_instance_id=instance.id)
+    return bool(runtime_config.sync_rooms_enabled)
+
+
+def _resolve_vendor(*, platform: str, capabilities: dict[str, Any]) -> str:
+    for key in ("vendor", "vendor_code"):
+        value = capabilities.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if platform == "open_xiaoai":
+        return "xiaomi"
+    if platform == "home_assistant":
+        return "ha"
+    return platform

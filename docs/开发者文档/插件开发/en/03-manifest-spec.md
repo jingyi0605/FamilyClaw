@@ -3,12 +3,13 @@
 ## Document Metadata
 
 - Purpose: explain which `manifest.json` fields are formal entry points, which rules are stable, and which changing details should be referenced instead of copied.
-- Current version: v1.4
+- Current version: v1.5
 - Related documents: `docs/开发者文档/插件开发/en/00-how-to-use-and-maintain-these-docs.md`, `docs/开发者文档/插件开发/en/11-plugin-configuration-integration.md`, `specs/004.2.3-插件配置协议与动态表单/docs/README.md`, `apps/api-server/app/modules/plugin/schemas.py`
 - Change log:
   - `2026-03-13`: created the first manifest specification.
   - `2026-03-14`: added `locale-pack`, region-context, and `schedule_templates` rules.
   - `2026-03-16`: added `channel`, `region-provider`, the formal configuration protocol entry, and the new “stable rules + referenced facts” structure.
+  - `2026-03-17`: added `theme-pack`, `ai-provider`, version-governance boundaries, and the unified enable/disable rule reference.
 
 This document keeps only stable rules. It does not copy large tables that will change often.
 
@@ -17,6 +18,22 @@ For exact field shapes, current runnable examples, and API payloads, read these 
 - `apps/api-server/app/modules/plugin/schemas.py`
 - `specs/004.2.3-插件配置协议与动态表单/docs/20260316-manifest-示例.md`
 - `specs/004.2.3-插件配置协议与动态表单/docs/20260316-api-示例.md`
+
+## 0. 2026-03-17 latest boundary
+
+Read this document through the `004.5` lens now. Do not keep treating themes and AI providers as if they were outside the formal plugin type system.
+
+Three facts matter first:
+
+1. The formal plugin type set is now 9 types, not the older 7.
+2. Plugin availability is unified around `enabled` and `disabled_reason`.
+3. Version fields now have a minimum split between declared fields and derived registry fields:
+   - `manifest.json` declares `version` and `compatibility`
+   - the unified registry output derives `installed_version` and `update_state`
+
+For unified enable/disable behavior, read:
+
+- `docs/开发设计规范/20260317-插件启用禁用统一规则.md`
 
 ## 1. Boundary First
 
@@ -85,6 +102,16 @@ If the plugin needs formal configuration, add `config_specs`. If it needs househ
 - Rule: cannot be empty after trimming spaces
 - Recommendation: use semver such as `0.1.0`
 
+`version` is the declared plugin version. It is not a shortcut for “the version currently installed on this device.”
+
+In the current minimum version-governance model:
+
+- `version`: what the plugin declares
+- `installed_version`: what the unified registry reports as installed
+- `update_state`: the derived update status from the unified registry output
+
+Do not write `installed_version` or `update_state` back into `manifest.json`.
+
 ### `types`
 
 - Required
@@ -100,6 +127,8 @@ The types that are already part of the formal system are:
 - `locale-pack`
 - `channel`
 - `region-provider`
+- `theme-pack`
+- `ai-provider`
 
 Do not keep writing “only 4 types” or “only 5 types”. That is already outdated.
 
@@ -108,6 +137,8 @@ Keep the boundary clear:
 - `locale-pack` registers language resources and does not run in workers
 - `channel` handles communication-platform inbound and outbound flows
 - `region-provider` is a formal region-directory extension, not a renamed sync plugin
+- `theme-pack` registers theme resources and theme metadata, and is not an executable plugin type
+- `ai-provider` registers AI provider capabilities and configuration metadata, and is not a generic action plugin
 
 ### `permissions`
 

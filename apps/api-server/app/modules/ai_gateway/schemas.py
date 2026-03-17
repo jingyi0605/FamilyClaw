@@ -102,6 +102,9 @@ class AiProviderProfileUpdate(BaseModel):
 
 class AiProviderProfileRead(AiProviderProfileBase):
     id: str
+    plugin_id: str | None = None
+    plugin_enabled: bool | None = None
+    plugin_disabled_reason: str | None = None
     updated_at: str
 
 
@@ -189,6 +192,8 @@ class AiInvocationPlan(BaseModel):
     fallback_providers: list[AiProviderCandidate] = Field(default_factory=list)
     template_fallback_enabled: bool = False
     blocked_reason: str | None = None
+    blocked_error_code: str | None = None
+    blocked_plugin_id: str | None = None
 
 
 class AiPreparedPayload(BaseModel):

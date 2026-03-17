@@ -19,6 +19,7 @@ from app.modules.ai_gateway.schemas import (
     AiTransportType,
     AiProviderProfileUpdate,
 )
+from app.modules.plugin.schemas import PluginRegistryItem
 from sqlalchemy.orm import Session
 
 
@@ -33,20 +34,46 @@ class AiGatewayNotFoundError(LookupError):
 def list_provider_profiles(
     db: Session,
     *,
+    household_id: str | None = None,
     enabled: bool | None = None,
     capability: AiCapability | None = None,
 ) -> list[AiProviderProfileRead]:
     rows = repository.list_provider_profiles(db, enabled=enabled)
-    profiles = [_to_provider_profile_read(row) for row in rows]
+    plugin_map = _build_household_ai_provider_plugin_map(db, household_id=household_id) if household_id is not None else {}
+    profiles = [_to_provider_profile_read(row, plugin=_resolve_profile_plugin(row, plugin_map=plugin_map)) for row in rows]
     if capability is None:
         return profiles
     return [profile for profile in profiles if capability in profile.supported_capabilities]
 
 
-def create_provider_profile(db: Session, payload: AiProviderProfileCreate) -> AiProviderProfileRead:
+def list_provider_adapters_for_household(
+    db: Session,
+    *,
+    household_id: str,
+) -> list["AiProviderAdapterRead"]:
+    from app.modules.ai_gateway.provider_config_service import list_provider_adapters_from_plugins
+
+    plugin_map = _build_household_ai_provider_plugin_map(db, household_id=household_id)
+    plugins = [plugin for plugin in plugin_map.values() if plugin.enabled]
+    return list_provider_adapters_from_plugins(plugins)
+
+
+def create_provider_profile(
+    db: Session,
+    payload: AiProviderProfileCreate,
+    *,
+    household_id: str | None = None,
+) -> AiProviderProfileRead:
     existing = repository.get_provider_profile_by_code(db, payload.provider_code)
     if existing is not None:
         raise AiGatewayConfigurationError("provider_code 已存在")
+
+    if household_id is not None:
+        _require_available_household_ai_provider_plugin(
+            db,
+            household_id=household_id,
+            adapter_code=_extract_adapter_code(payload.extra_config),
+        )
 
     normalized_extra_config = _normalize_provider_extra_config(
         payload.extra_config,
@@ -73,19 +100,34 @@ def create_provider_profile(db: Session, payload: AiProviderProfileCreate) -> Ai
     )
     repository.add_provider_profile(db, row)
     db.flush()
-    return _to_provider_profile_read(row)
+    plugin = _resolve_profile_plugin(
+        row,
+        plugin_map=_build_household_ai_provider_plugin_map(db, household_id=household_id) if household_id is not None else {},
+    )
+    return _to_provider_profile_read(row, plugin=plugin)
 
 
 def update_provider_profile(
     db: Session,
     provider_profile_id: str,
     payload: AiProviderProfileUpdate,
+    *,
+    household_id: str | None = None,
 ) -> AiProviderProfileRead:
     row = repository.get_provider_profile(db, provider_profile_id)
     if row is None:
         raise AiGatewayNotFoundError("provider profile 不存在")
 
     data = payload.model_dump(exclude_unset=True)
+    next_extra_config = cast(dict[str, object], load_json(row.extra_config_json) or {})
+    if "extra_config" in data:
+        next_extra_config = cast(dict[str, object], data["extra_config"])
+    if household_id is not None:
+        _require_available_household_ai_provider_plugin(
+            db,
+            household_id=household_id,
+            adapter_code=_extract_adapter_code(next_extra_config),
+        )
     if "display_name" in data:
         row.display_name = data["display_name"]
     if "transport_type" in data:
@@ -120,7 +162,11 @@ def update_provider_profile(
 
     row.updated_at = utc_now_iso()
     db.flush()
-    return _to_provider_profile_read(row)
+    plugin = _resolve_profile_plugin(
+        row,
+        plugin_map=_build_household_ai_provider_plugin_map(db, household_id=household_id) if household_id is not None else {},
+    )
+    return _to_provider_profile_read(row, plugin=plugin)
 
 
 def delete_provider_profile(
@@ -278,6 +324,12 @@ def _validate_capability_route(db: Session, payload: AiCapabilityRouteUpsert) ->
         provider_row = provider_map[provider_id]
         if not provider_row.enabled:
             raise AiGatewayConfigurationError("能力路由不能绑定已禁用的供应商档案")
+        if payload.household_id is not None:
+            _require_available_household_ai_provider_plugin(
+                db,
+                household_id=payload.household_id,
+                adapter_code=_extract_adapter_code(load_json(provider_row.extra_config_json) or {}),
+            )
 
         supported_capabilities = load_json(provider_row.supported_capabilities_json) or []
         if payload.capability not in supported_capabilities:
@@ -345,12 +397,19 @@ def _should_disable_thinking_by_default(
     return is_qwen3_thinking or is_qwen35_thinking or is_deepseek_r1
 
 
-def _to_provider_profile_read(row: AiProviderProfile) -> AiProviderProfileRead:
+def _to_provider_profile_read(
+    row: AiProviderProfile,
+    *,
+    plugin: PluginRegistryItem | None = None,
+) -> AiProviderProfileRead:
     transport_type: AiTransportType = cast(AiTransportType, row.transport_type)
     api_family: AiApiFamily = cast(AiApiFamily, row.api_family)
     privacy_level: AiPrivacyLevel = cast(AiPrivacyLevel, row.privacy_level)
     return AiProviderProfileRead(
         id=row.id,
+        plugin_id=plugin.id if plugin is not None else None,
+        plugin_enabled=plugin.enabled if plugin is not None else None,
+        plugin_disabled_reason=plugin.disabled_reason if plugin is not None else None,
         provider_code=row.provider_code,
         display_name=row.display_name,
         transport_type=transport_type,
@@ -365,6 +424,83 @@ def _to_provider_profile_read(row: AiProviderProfile) -> AiProviderProfileRead:
         cost_policy=load_json(row.cost_policy_json) or {},
         extra_config=load_json(row.extra_config_json) or {},
         updated_at=row.updated_at,
+    )
+
+
+def _normalize_adapter_code(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def _extract_adapter_code(extra_config: dict[str, object] | None) -> str | None:
+    if not isinstance(extra_config, dict):
+        return None
+    return _normalize_adapter_code(extra_config.get("adapter_code"))
+
+
+def _build_household_ai_provider_plugin_map(
+    db: Session,
+    *,
+    household_id: str,
+) -> dict[str, PluginRegistryItem]:
+    from app.modules.plugin import list_registered_plugins_for_household
+
+    snapshot = list_registered_plugins_for_household(db, household_id=household_id)
+    plugin_map: dict[str, PluginRegistryItem] = {}
+    for item in snapshot.items:
+        capability = item.capabilities.ai_provider
+        if "ai-provider" not in item.types or capability is None:
+            continue
+        plugin_map[capability.adapter_code] = item
+    return plugin_map
+
+
+def get_household_ai_provider_plugin_for_profile(
+    db: Session,
+    *,
+    household_id: str,
+    provider_profile: AiProviderProfile,
+) -> PluginRegistryItem | None:
+    return _resolve_profile_plugin(
+        provider_profile,
+        plugin_map=_build_household_ai_provider_plugin_map(db, household_id=household_id),
+    )
+
+
+def _resolve_profile_plugin(
+    row: AiProviderProfile,
+    *,
+    plugin_map: dict[str, PluginRegistryItem],
+) -> PluginRegistryItem | None:
+    adapter_code = _extract_adapter_code(load_json(row.extra_config_json) or {})
+    if adapter_code is None:
+        return None
+    return plugin_map.get(adapter_code)
+
+
+def _require_available_household_ai_provider_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    adapter_code: str | None,
+) -> PluginRegistryItem:
+    if adapter_code is None:
+        raise AiGatewayConfigurationError("AI 供应商档案缺少 adapter_code，无法关联插件状态")
+
+    plugin_map = _build_household_ai_provider_plugin_map(db, household_id=household_id)
+    plugin = plugin_map.get(adapter_code)
+    if plugin is None:
+        raise AiGatewayConfigurationError(f"当前家庭看不到 AI 供应商插件 {adapter_code}")
+
+    from app.modules.plugin import require_available_household_plugin
+
+    return require_available_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin.id,
+        plugin_type="ai-provider",
     )
 
 

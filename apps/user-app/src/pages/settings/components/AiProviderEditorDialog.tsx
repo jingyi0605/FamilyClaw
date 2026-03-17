@@ -30,6 +30,7 @@ export function AiProviderEditorDialog(props: {
   locale: string | undefined;
   open: boolean;
   adapters: AiProviderAdapter[];
+  resolvedAdapter: AiProviderAdapter | null;
   form: ProviderFormState;
   editingProviderId: string | null;
   saving: boolean;
@@ -61,6 +62,7 @@ export function AiProviderEditorDialog(props: {
     locale,
     open,
     adapters,
+    resolvedAdapter,
     form,
     editingProviderId,
     saving,
@@ -76,7 +78,10 @@ export function AiProviderEditorDialog(props: {
     return null;
   }
 
-  const currentAdapter = adapters.find(item => item.adapter_code === form.adapterCode) ?? null;
+  const currentAdapter = resolvedAdapter ?? adapters.find(item => item.adapter_code === form.adapterCode) ?? null;
+  const selectAdapters = currentAdapter && !adapters.some(item => item.adapter_code === currentAdapter.adapter_code)
+    ? [currentAdapter, ...adapters]
+    : adapters;
   const localizedCapabilityOptions = getLocalizedCapabilityOptions(locale);
 
   return (
@@ -159,7 +164,7 @@ export function AiProviderEditorDialog(props: {
                 disabled={Boolean(editingProviderId)}
               >
                 <option value="">{copy.selectPlaceholder}</option>
-                {adapters.map(adapter => {
+                {selectAdapters.map(adapter => {
                   const adapterMeta = getLocalizedAdapterMeta(adapter, locale);
                   return (
                     <option key={adapter.adapter_code} value={adapter.adapter_code}>

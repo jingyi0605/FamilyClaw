@@ -3,12 +3,13 @@
 ## Document Metadata
 
 - Purpose: give first-time FamilyClaw plugin developers a clean starting point so they can understand the boundary, supported plugin types, and minimum development flow.
-- Current version: v1.2
+- Current version: v1.3
 - Related documents: `docs/开发者文档/插件开发/en/02-plugin-dev-environment-and-local-debug.md`, `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/04-plugin-directory-structure.md`, `specs/004.3-插件开发规范与注册表/design.md`
 - Change log:
   - `2026-03-13`: created the first development guide.
   - `2026-03-13`: renamed by reading order and added document metadata.
   - `2026-03-16`: added current formal plugin types and the formal configuration entry.
+  - `2026-03-17`: added `theme-pack`, `ai-provider`, and synced the enable/disable plus version-governance boundaries.
 
 This guide answers the first questions a third-party plugin developer will ask:
 
@@ -17,6 +18,20 @@ This guide answers the first questions a third-party plugin developer will ask:
 3. How do I know I did not go off the rails?
 
 If this is your first time working on this project, read this first, then move on to the detailed `manifest`, integration, and registry docs.
+
+## 0. Read the latest boundary first
+
+The formal plugin type set is now 9 types. Do not keep reading old material as if there were only 7, and do not invent a tenth type.
+
+Two more boundaries matter now:
+
+- `theme-pack` and `ai-provider` are part of the general plugin system
+- plugin enable/disable rules and the minimum version-governance boundary were unified in `004.5`
+
+Read these first:
+
+- `docs/开发设计规范/20260317-插件启用禁用统一规则.md`
+- `specs/004.5-插件能力统一接入与版本治理/docs/20260317-插件版本治理现状与最小能力说明.md`
 
 ## 1. Scope First
 
@@ -44,7 +59,7 @@ If your plan depends on any of those, stop. That is not what this Spec is solvin
 
 ## 2. Supported Plugin Types
 
-The manifest now supports more than the original 4 types, but do not invent an eighth one.
+The manifest now supports more than the older 7 types, but do not invent a tenth one.
 
 ### `connector`
 
@@ -88,11 +103,23 @@ The manifest now supports more than the original 4 types, but do not invent an e
 - Typical case: add providers outside mainland China
 - Boundary: it currently runs through a controlled provider contract and runner path, not direct main-process imports
 
+### `theme-pack`
+
+- Purpose: declare installable themes with unified plugin status and version metadata
+- Typical case: provide a new visual theme for a household
+- Boundary: it is a formal plugin type, but not an executable worker-driven plugin
+
+### `ai-provider`
+
+- Purpose: declare AI provider capabilities, supported model types, and configuration metadata
+- Typical case: integrate ChatGPT, Claude, or Gemini style providers
+- Boundary: it is a formal plugin type, but not a generic action plugin; new use and execution still go through unified availability checks
+
 ## 3. Minimum Development Flow
 
 Do it in this order. Do not start with fancy extras.
 
-1. Confirm which of the 4 supported types your plugin belongs to.
+1. Confirm which of the 9 supported types your plugin belongs to.
 2. Create a dedicated plugin directory and start with `manifest.json`.
 3. Declare entrypoints, permissions, risk level, and triggers in the `manifest`.
 4. Add the code files so each entrypoint resolves to a real Python module path.
@@ -179,6 +206,7 @@ These are not suggestions. They come directly from the current codebase:
 - The unified Agent entry currently allows only `connector` and `agent-skill`
 - `action` plugins must pass permission checks first
 - `risk_level=high` action plugins go through manual confirmation instead of direct execution
+- `theme-pack` and `ai-provider` are formal plugin types, but neither one is a direct execution plugin
 - `manifest.json` `id` values may contain only lowercase letters, digits, and hyphens
 - `entrypoints` must use the `module_path.function_name` format
 - external entries now return task-oriented fields like `job_id`, `job_status`, and `queued` instead of promising a synchronous final result

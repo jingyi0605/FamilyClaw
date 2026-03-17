@@ -37,6 +37,7 @@ from app.modules.channel.status_service import (
     list_channel_inbound_event_status_records,
     probe_channel_account,
 )
+from app.modules.plugin.service import PluginServiceError
 
 
 router = APIRouter(prefix="/ai-config", tags=["ai-config"])
@@ -77,6 +78,9 @@ def create_channel_account_endpoint(
     except ChannelAccountServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
@@ -113,6 +117,9 @@ def update_channel_account_endpoint(
     except ChannelAccountServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
@@ -178,6 +185,9 @@ def probe_channel_account_endpoint(
     except (ChannelAccountServiceError, ChannelStatusServiceError) as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
 
 @router.get("/{household_id}/channel-accounts/{account_id}/status", response_model=ChannelAccountStatusRead)
@@ -192,6 +202,8 @@ def get_channel_account_status_endpoint(
         return get_channel_account_status(db, household_id=household_id, account_id=account_id)
     except (ChannelAccountServiceError, ChannelStatusServiceError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
 
 @router.get("/{household_id}/channel-deliveries", response_model=list[ChannelDeliveryRead])

@@ -13,6 +13,30 @@
 
 This directory stores the English plugin developer documentation.
 
+## 2026-03-17 Current boundary
+
+The formal plugin type set is now 9 types:
+
+- `connector`
+- `memory-ingestor`
+- `action`
+- `agent-skill`
+- `channel`
+- `locale-pack`
+- `region-provider`
+- `theme-pack`
+- `ai-provider`
+
+`theme-pack` and `ai-provider` are no longer side systems. They now belong to the same general plugin system.
+
+If you are changing plugin enable/disable rules, read:
+
+- `docs/开发设计规范/20260317-插件启用禁用统一规则.md`
+
+If you are changing version-governance boundaries, read:
+
+- `specs/004.5-插件能力统一接入与版本治理/docs/20260317-插件版本治理现状与最小能力说明.md`
+
 These docs are now organized around the target third-party model: same-container subprocess runners.
 
 Keep one boundary in mind:

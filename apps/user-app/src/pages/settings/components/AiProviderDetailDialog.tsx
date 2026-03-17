@@ -1,5 +1,5 @@
 import { SettingsDialog } from './SettingsSharedBlocks';
-import type { AiProviderAdapter, AiCapabilityRoute, AiProviderProfile, AiProviderField } from '../settingsTypes';
+import type { AiProviderAdapter, AiCapabilityRoute, AiProviderProfile, AiProviderField, PluginRegistryItem } from '../settingsTypes';
 import { getProviderAdapterCode, getProviderModelName } from '../../setup/setupAiConfig';
 import {
   getLocalizedAdapterMeta,
@@ -8,6 +8,7 @@ import {
   getLocalizedModelTypeLabel,
   getLocalizedWorkflowLabel,
 } from './aiProviderCatalog';
+import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 
 function maskSecret(value: string | null | undefined) {
   if (!value) {
@@ -51,17 +52,36 @@ function readSummaryValue(provider: AiProviderProfile, field: AiProviderField) {
   }
 }
 
+function formatPluginUpdateState(state: string | null | undefined, locale: string | undefined) {
+  switch (state) {
+    case 'up_to_date':
+      return getPageMessage(locale, 'settings.plugin.versionState.upToDate');
+    case 'update_available':
+      return getPageMessage(locale, 'settings.plugin.versionState.updateAvailable');
+    case 'unknown':
+      return getPageMessage(locale, 'settings.plugin.versionState.unknown');
+    default:
+      return state ?? '--';
+  }
+}
+
 export function AiProviderDetailDialog(props: {
   open: boolean;
   provider: AiProviderProfile | null;
   adapter: AiProviderAdapter | null;
+  plugin: PluginRegistryItem | null;
   routes: AiCapabilityRoute[];
   locale: string | undefined;
   copy: {
     enabled: string;
     disabled: string;
+    pluginDisabled: string;
+    pluginDisabledTitle: string;
+    pluginDisabledFallback: string;
     modelNameEmpty: string;
     pluginLabel: string;
+    pluginVersionLabel: string;
+    pluginUpdateStateLabel: string;
     llmWorkflow: string;
     updatedAtLabel: string;
     summarySupportTitle: string;
@@ -74,7 +94,7 @@ export function AiProviderDetailDialog(props: {
   onClose: () => void;
   onEdit: () => void;
 }) {
-  const { open, provider, adapter, routes, locale, copy, onClose, onEdit } = props;
+  const { open, provider, adapter, plugin, routes, locale, copy, onClose, onEdit } = props;
 
   if (!open || !provider) {
     return null;
@@ -106,9 +126,16 @@ export function AiProviderDetailDialog(props: {
       title={provider.display_name}
       description={adapterMeta?.description ?? ''}
       headerExtra={(
-        <span className={`ai-pill ${provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>
-          {provider.enabled ? copy.enabled : copy.disabled}
-        </span>
+        <div className="ai-config-chip-list">
+          <span className={`ai-pill ${provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>
+            {provider.enabled ? copy.enabled : copy.disabled}
+          </span>
+          {provider.plugin_enabled === false ? (
+            <span className="ai-pill ai-pill--warning">
+              {copy.pluginDisabled}
+            </span>
+          ) : null}
+        </div>
       )}
       className="ai-provider-detail-modal"
       onClose={onClose}
@@ -123,6 +150,14 @@ export function AiProviderDetailDialog(props: {
         </>
       )}
     >
+      {provider.plugin_enabled === false ? (
+        <div className="settings-note settings-note--warning">
+          <strong>{copy.pluginDisabledTitle}</strong>
+          {' '}
+          {provider.plugin_disabled_reason || copy.pluginDisabledFallback}
+        </div>
+      ) : null}
+
       <div className="ai-detail-modal__hero">
         <div className="ai-detail-modal__avatar">AI</div>
         <div className="ai-detail-modal__info">
@@ -134,7 +169,15 @@ export function AiProviderDetailDialog(props: {
       <div className="ai-detail-modal__grid">
         <div className="ai-detail-modal__stat">
           <span>{copy.pluginLabel}</span>
-          <strong>{adapter?.plugin_name ?? '--'}</strong>
+          <strong>{adapter?.plugin_name ?? plugin?.name ?? '--'}</strong>
+        </div>
+        <div className="ai-detail-modal__stat">
+          <span>{copy.pluginVersionLabel}</span>
+          <strong>{plugin ? `v${plugin.installed_version ?? plugin.version}` : '--'}</strong>
+        </div>
+        <div className="ai-detail-modal__stat">
+          <span>{copy.pluginUpdateStateLabel}</span>
+          <strong>{formatPluginUpdateState(plugin?.update_state, locale)}</strong>
         </div>
         <div className="ai-detail-modal__stat">
           <span>{copy.llmWorkflow}</span>

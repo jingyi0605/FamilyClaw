@@ -29,7 +29,12 @@ from .schemas import (
     PluginDashboardCardSnapshotUpsert,
     PluginManifestDashboardCardSpec,
 )
-from .service import PluginServiceError, get_household_plugin, list_registered_plugins_for_household
+from .service import (
+    PluginServiceError,
+    get_household_plugin,
+    list_registered_plugins_for_household,
+    require_available_household_plugin,
+)
 
 PLUGIN_DASHBOARD_CARD_NOT_DECLARED_ERROR_CODE = "plugin_dashboard_card_not_declared"
 PLUGIN_DASHBOARD_CARD_PAYLOAD_INVALID_ERROR_CODE = "plugin_dashboard_card_payload_invalid"
@@ -67,14 +72,11 @@ def upsert_plugin_dashboard_card_snapshot(
     payload: PluginDashboardCardSnapshotUpsert,
 ) -> PluginDashboardCardSnapshotRead:
     get_household_or_404(db, household_id)
-    plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
-    if not plugin.enabled:
-        raise PluginServiceError(
-            f"插件 {plugin_id} 当前不可用，不能写入首页卡片快照。",
-            error_code="plugin_not_visible_in_household",
-            field="plugin_id",
-            status_code=409,
-        )
+    plugin = require_available_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+    )
 
     card_spec = _get_plugin_dashboard_card_spec(plugin, card_key=payload.card_key, placement=payload.placement)
     row = _get_or_create_snapshot_row(

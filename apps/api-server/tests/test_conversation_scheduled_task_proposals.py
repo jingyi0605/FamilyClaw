@@ -26,6 +26,8 @@ from app.modules.household.service import create_household
 from app.modules.llm_task.output_models import ProposalBatchExtractionOutput
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
+from app.modules.plugin.schemas import PluginStateUpdateRequest
+from app.modules.plugin.service import set_household_plugin_enabled
 from app.modules.scheduler import draft_service as scheduler_draft_service
 from app.modules.scheduler.draft_service import preview_draft_from_conversation
 from app.modules.scheduler.schemas import ScheduledTaskDefinitionCreate, ScheduledTaskDraftFromConversationRequest
@@ -46,7 +48,7 @@ class ConversationScheduledTaskProposalTests(unittest.TestCase):
         scheduler_draft_service._DRAFT_STORE.clear()
 
         self.household = create_household(self.db, HouseholdCreate(name="Conversation Scheduler Home", city="Hangzhou", timezone="Asia/Shanghai", locale="zh-CN"))
-        self.admin_member = create_member(self.db, MemberCreate(household_id=self.household.id, name="绠＄悊鍛?, role="admin"))
+        self.admin_member = create_member(self.db, MemberCreate(household_id=self.household.id, name="管理员", role="admin"))
         self.user_member = create_member(self.db, MemberCreate(household_id=self.household.id, name="濡堝", role="adult"))
         self.agent = create_agent(
             self.db,
@@ -83,7 +85,7 @@ class ConversationScheduledTaskProposalTests(unittest.TestCase):
         self._tempdir.cleanup()
 
     def test_confirm_creates_scheduled_task(self) -> None:
-        item = self._create_scheduled_task_proposal("姣忓ぉ鏅氫笂涔濈偣鎻愰啋鎴戝悆鑽?, actor=self.user_actor, authenticated_actor=self.user_auth_actor)
+        item = self._create_scheduled_task_proposal("每天晚上九点提醒我吃药", actor=self.user_actor, authenticated_actor=self.user_auth_actor)
         result = confirm_conversation_proposal(self.db, proposal_item_id=item.id, actor=self.user_actor)
         self.db.commit()
 
@@ -93,7 +95,7 @@ class ConversationScheduledTaskProposalTests(unittest.TestCase):
         self.assertEqual(result.affected_target_id, tasks[0].id)
 
     def test_dismiss_does_not_create_scheduled_task(self) -> None:
-        item = self._create_scheduled_task_proposal("姣忓ぉ鏅氫笂涔濈偣鎻愰啋鎴戝悆鑽?, actor=self.user_actor, authenticated_actor=self.user_auth_actor)
+        item = self._create_scheduled_task_proposal("每天晚上九点提醒我吃药", actor=self.user_actor, authenticated_actor=self.user_auth_actor)
         result = dismiss_conversation_proposal(self.db, proposal_item_id=item.id, actor=self.user_actor)
         self.db.commit()
 
@@ -101,7 +103,7 @@ class ConversationScheduledTaskProposalTests(unittest.TestCase):
         self.assertEqual([], list_task_definitions(self.db, actor=self.user_auth_actor, household_id=self.household.id))
 
     def test_incomplete_draft_cannot_confirm(self) -> None:
-        item = self._create_scheduled_task_proposal("鎻愰啋鎴戝悆鑽?, actor=self.user_actor, authenticated_actor=self.user_auth_actor)
+        item = self._create_scheduled_task_proposal("提醒我吃药", actor=self.user_actor, authenticated_actor=self.user_auth_actor)
         with self.assertRaises(HTTPException) as context:
             confirm_conversation_proposal(self.db, proposal_item_id=item.id, actor=self.user_actor)
         self.assertEqual(409, context.exception.status_code)
@@ -119,13 +121,33 @@ class ConversationScheduledTaskProposalTests(unittest.TestCase):
         draft = preview_draft_from_conversation(
             self.db,
             actor=self.admin_auth_actor,
-            payload=ScheduledTaskDraftFromConversationRequest(household_id=self.household.id, text="濡傛灉瀛╁瓙鍒板灏辨彁閱掓垜鏀惰。鏈?),
+            payload=ScheduledTaskDraftFromConversationRequest(household_id=self.household.id, text="如果孩子到家就提醒我收衣服"),
         )
         self.assertEqual("heartbeat", draft.draft_payload["trigger_type"])
         self.assertEqual("presence", draft.draft_payload["rule_type"])
 
+    def test_preview_does_not_match_disabled_plugin_target(self) -> None:
+        set_household_plugin_enabled(
+            self.db,
+            household_id=self.household.id,
+            plugin_id="channel-telegram",
+            payload=PluginStateUpdateRequest(enabled=False),
+        )
+        self.db.commit()
+
+        draft = preview_draft_from_conversation(
+            self.db,
+            actor=self.admin_auth_actor,
+            payload=ScheduledTaskDraftFromConversationRequest(
+                household_id=self.household.id,
+                text="通过 channel-telegram 插件提醒我查看消息",
+            ),
+        )
+        self.assertEqual("agent_reminder", draft.draft_payload["target_type"])
+        self.assertEqual(self.agent.id, draft.draft_payload["target_ref_id"])
+
     def test_confirm_creates_once_task(self) -> None:
-        item = self._create_scheduled_task_proposal("鏄庡ぉ涓婂崍10鐐规彁閱掓垜寮€浼?, actor=self.user_actor, authenticated_actor=self.user_auth_actor)
+        item = self._create_scheduled_task_proposal("明天上午10点提醒我开会", actor=self.user_actor, authenticated_actor=self.user_auth_actor)
         result = confirm_conversation_proposal(self.db, proposal_item_id=item.id, actor=self.user_actor)
         self.db.commit()
 
@@ -151,25 +173,25 @@ class ConversationScheduledTaskProposalTests(unittest.TestCase):
         )
         self.db.commit()
 
-        pause_item = self._create_scheduled_task_proposal("鎶婂悆鑽彁閱掓殏鍋?, actor=self.user_actor, authenticated_actor=self.user_auth_actor)
+        pause_item = self._create_scheduled_task_proposal("把吃药提醒暂停", actor=self.user_actor, authenticated_actor=self.user_auth_actor)
         pause_result = confirm_conversation_proposal(self.db, proposal_item_id=pause_item.id, actor=self.user_actor)
         self.db.commit()
         paused = get_task_definition_read_or_404(self.db, actor=self.user_auth_actor, task_id=pause_result.affected_target_id or task.id)
         self.assertFalse(paused.enabled)
 
-        resume_item = self._create_scheduled_task_proposal("鎶婂悆鑽彁閱掓仮澶?, actor=self.user_actor, authenticated_actor=self.user_auth_actor)
+        resume_item = self._create_scheduled_task_proposal("把吃药提醒恢复", actor=self.user_actor, authenticated_actor=self.user_auth_actor)
         resume_result = confirm_conversation_proposal(self.db, proposal_item_id=resume_item.id, actor=self.user_actor)
         self.db.commit()
         resumed = get_task_definition_read_or_404(self.db, actor=self.user_auth_actor, task_id=resume_result.affected_target_id or task.id)
         self.assertTrue(resumed.enabled)
 
-        update_item = self._create_scheduled_task_proposal("鎶婂悆鑽彁閱掓敼鎴愭槑澶╀笂鍗?0鐐规彁閱掓垜寮€浼?, actor=self.user_actor, authenticated_actor=self.user_auth_actor)
+        update_item = self._create_scheduled_task_proposal("把吃药提醒改成明天上午10点提醒我开会", actor=self.user_actor, authenticated_actor=self.user_auth_actor)
         update_result = confirm_conversation_proposal(self.db, proposal_item_id=update_item.id, actor=self.user_actor)
         self.db.commit()
         updated = get_task_definition_read_or_404(self.db, actor=self.user_auth_actor, task_id=update_result.affected_target_id or task.id)
         self.assertEqual("once", updated.schedule_type)
 
-        delete_item = self._create_scheduled_task_proposal("鎶婂悆鑽彁閱掑垹闄?, actor=self.user_actor, authenticated_actor=self.user_auth_actor)
+        delete_item = self._create_scheduled_task_proposal("把吃药提醒删除", actor=self.user_actor, authenticated_actor=self.user_auth_actor)
         confirm_conversation_proposal(self.db, proposal_item_id=delete_item.id, actor=self.user_actor)
         self.db.commit()
         tasks = list_task_definitions(self.db, actor=self.user_auth_actor, household_id=self.household.id)
@@ -181,7 +203,7 @@ class ConversationScheduledTaskProposalTests(unittest.TestCase):
         assert session is not None
         now = utc_now_iso()
         user_message = ConversationMessage(id=new_uuid(), session_id=session.id, request_id="req-scheduled-task", seq=1, role="user", message_type="text", content=text, status="completed", effective_agent_id=self.agent.id, ai_provider_code=None, ai_trace_id=None, degraded=False, error_code=None, facts_json=dump_json([]), suggestions_json=dump_json([]), created_at=now, updated_at=now)
-        assistant_message = ConversationMessage(id=new_uuid(), session_id=session.id, request_id="req-scheduled-task", seq=2, role="assistant", message_type="text", content="鎴戝厛缁欎綘鏁寸悊鎴愯鍒掍换鍔℃彁妗堛€?, status="completed", effective_agent_id=self.agent.id, ai_provider_code=None, ai_trace_id=None, degraded=False, error_code=None, facts_json=dump_json([]), suggestions_json=dump_json([]), created_at=now, updated_at=now)
+        assistant_message = ConversationMessage(id=new_uuid(), session_id=session.id, request_id="req-scheduled-task", seq=2, role="assistant", message_type="text", content="我先帮你整理成计划任务提案。", status="completed", effective_agent_id=self.agent.id, ai_provider_code=None, ai_trace_id=None, degraded=False, error_code=None, facts_json=dump_json([]), suggestions_json=dump_json([]), created_at=now, updated_at=now)
         conversation_repository.add_message(self.db, user_message)
         conversation_repository.add_message(self.db, assistant_message)
         self.db.flush()

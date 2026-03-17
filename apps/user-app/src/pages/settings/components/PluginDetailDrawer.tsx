@@ -85,6 +85,8 @@ function formatPluginType(type: PluginManifestType, locale: string | undefined) 
     channel: 'settings.plugin.type.channel',
     'locale-pack': 'settings.plugin.type.localePack',
     'region-provider': 'settings.plugin.type.regionProvider',
+    'theme-pack': 'settings.plugin.type.themePack',
+    'ai-provider': 'settings.plugin.type.aiProvider',
   };
   return getPageMessage(locale, keyMap[type]);
 }
@@ -96,6 +98,48 @@ function formatTimestamp(value: string | null, locale: string | undefined) {
   } catch {
     return value;
   }
+}
+
+function formatUpdateState(state: string | null | undefined, locale: string | undefined) {
+  switch (state) {
+    case 'up_to_date':
+      return getPageMessage(locale, 'settings.plugin.versionState.upToDate');
+    case 'update_available':
+      return getPageMessage(locale, 'settings.plugin.versionState.updateAvailable');
+    case 'unknown':
+      return getPageMessage(locale, 'settings.plugin.versionState.unknown');
+    default:
+      return state ?? getPageMessage(locale, 'settings.plugin.versionState.unknown');
+  }
+}
+
+function buildCompatibilityEntries(
+  value: Record<string, unknown> | null | undefined,
+  prefix = '',
+): Array<{ label: string; value: string }> {
+  if (!value) {
+    return [];
+  }
+
+  const entries: Array<{ label: string; value: string }> = [];
+
+  for (const [key, rawValue] of Object.entries(value)) {
+    const nextLabel = prefix ? `${prefix}.${key}` : key;
+    if (rawValue === null || rawValue === undefined) {
+      continue;
+    }
+    if (Array.isArray(rawValue)) {
+      entries.push({ label: nextLabel, value: rawValue.map(item => String(item)).join(', ') });
+      continue;
+    }
+    if (typeof rawValue === 'object') {
+      entries.push(...buildCompatibilityEntries(rawValue as Record<string, unknown>, nextLabel));
+      continue;
+    }
+    entries.push({ label: nextLabel, value: String(rawValue) });
+  }
+
+  return entries;
 }
 
 export function PluginDetailDrawer(props: {
@@ -126,6 +170,10 @@ export function PluginDetailDrawer(props: {
     disabledDesc: getPageMessage(locale, 'settings.plugin.disabledDesc'),
     basics: getPageMessage(locale, 'settings.plugin.section.basics'),
     version: getPageMessage(locale, 'settings.plugin.section.version'),
+    installedVersion: getPageMessage(locale, 'settings.plugin.section.installedVersion'),
+    updateState: getPageMessage(locale, 'settings.plugin.section.updateState'),
+    compatibility: getPageMessage(locale, 'settings.plugin.section.compatibility'),
+    noCompatibility: getPageMessage(locale, 'settings.plugin.section.noCompatibility'),
     type: getPageMessage(locale, 'settings.plugin.section.type'),
     source: getPageMessage(locale, 'settings.plugin.section.source'),
     permissions: getPageMessage(locale, 'settings.plugin.section.permissions'),
@@ -190,6 +238,7 @@ export function PluginDetailDrawer(props: {
   const riskInfo = formatRiskLevel(plugin.risk_level, locale);
   const latestFailedJob = jobs.find((item) => item.job.status === 'failed');
   const latestWaitingJob = jobs.find((item) => item.job.status === 'waiting_response');
+  const compatibilityEntries = buildCompatibilityEntries(plugin.compatibility);
 
   return (
     <div className="task-form-overlay" onClick={onClose}>
@@ -264,9 +313,27 @@ export function PluginDetailDrawer(props: {
             <div className="plugin-detail-grid">
               <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">ID</span><span className="plugin-detail-grid__value">{plugin.id}</span></div>
               <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.version}</span><span className="plugin-detail-grid__value">v{plugin.version}</span></div>
+              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.installedVersion}</span><span className="plugin-detail-grid__value">{plugin.installed_version ? `v${plugin.installed_version}` : '-'}</span></div>
+              <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.updateState}</span><span className="plugin-detail-grid__value">{formatUpdateState(plugin.update_state, locale)}</span></div>
               <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.type}</span><span className="plugin-detail-grid__value">{plugin.types.map((type) => formatPluginType(type, locale)).join(' / ')}</span></div>
               <div className="plugin-detail-grid__item"><span className="plugin-detail-grid__label">{copy.source}</span><span className={`plugin-detail-grid__value plugin-detail-grid__value--${sourceInfo.tone}`}>{sourceInfo.label}</span></div>
             </div>
+          </div>
+
+          <div className="plugin-detail-section">
+            <h3>{copy.compatibility}</h3>
+            {compatibilityEntries.length > 0 ? (
+              <div className="plugin-detail-entrypoints">
+                {compatibilityEntries.map((item) => (
+                  <div key={`${item.label}-${item.value}`} className="plugin-detail-entrypoint-item">
+                    <span className="plugin-detail-entrypoint-key">{item.label}</span>
+                    <span className="plugin-detail-entrypoint-value">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="plugin-detail-empty">{copy.noCompatibility}</p>
+            )}
           </div>
 
           <div className="plugin-detail-section">

@@ -13,7 +13,9 @@ import { settingsApi } from '../settingsApi';
 import type {
   AiCapabilityRoute,
   AiProviderAdapter,
+  AiProviderModelType,
   AiProviderProfile,
+  PluginRegistryItem,
 } from '../settingsTypes';
 import { AiProviderDetailDialog } from './AiProviderDetailDialog';
 import { AiProviderEditorDialog } from './AiProviderEditorDialog';
@@ -21,6 +23,65 @@ import { SettingsEmptyState, SettingsPanelCard } from './SettingsSharedBlocks';
 import { getLocalizedAdapterMeta } from './aiProviderCatalog';
 
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
+const AI_PROVIDER_MODEL_TYPES: AiProviderModelType[] = ['llm', 'embedding', 'vision', 'speech', 'image'];
+
+function normalizeProviderFieldDefaultValue(value: unknown): string | number | boolean | null {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  return null;
+}
+
+function buildRegistryAdapter(plugin: PluginRegistryItem): AiProviderAdapter | null {
+  const capability = plugin.capabilities.ai_provider;
+  if (!plugin.types.includes('ai-provider') || !capability) {
+    return null;
+  }
+  return {
+    plugin_id: plugin.id,
+    plugin_name: plugin.name,
+    adapter_code: capability.adapter_code,
+    display_name: capability.display_name,
+    description: typeof plugin.compatibility?.description === 'string'
+      ? plugin.compatibility.description
+      : capability.display_name,
+    transport_type: (String(capability.runtime_capability?.transport_type ?? 'openai_compatible') as AiProviderAdapter['transport_type']),
+    api_family: (String(capability.runtime_capability?.api_family ?? 'openai_chat_completions') as AiProviderAdapter['api_family']),
+    default_privacy_level: (
+      String(capability.runtime_capability?.default_privacy_level ?? 'public_cloud') as AiProviderAdapter['default_privacy_level']
+    ),
+    default_supported_capabilities: Array.isArray(capability.runtime_capability?.default_supported_capabilities)
+      ? capability.runtime_capability.default_supported_capabilities.map(item => String(item))
+      : [],
+    supported_model_types: capability.supported_model_types.filter(
+      (item): item is AiProviderModelType => AI_PROVIDER_MODEL_TYPES.includes(item as AiProviderModelType),
+    ),
+    llm_workflow: capability.llm_workflow,
+    field_schema: capability.field_schema.map((field) => ({
+      key: String(field.key ?? ''),
+      label: String(field.label ?? field.key ?? ''),
+      field_type: (
+        field.field_type === 'text'
+        || field.field_type === 'secret'
+        || field.field_type === 'number'
+        || field.field_type === 'select'
+        || field.field_type === 'boolean'
+          ? field.field_type
+          : 'text'
+      ),
+      required: Boolean(field.required),
+      placeholder: typeof field.placeholder === 'string' ? field.placeholder : null,
+      help_text: typeof field.help_text === 'string' ? field.help_text : null,
+      default_value: normalizeProviderFieldDefaultValue(field.default_value),
+      options: Array.isArray(field.options)
+        ? field.options.map((option) => ({
+          label: String(option.label ?? option.value ?? ''),
+          value: String(option.value ?? ''),
+        }))
+        : [],
+    })),
+  };
+}
 
 export function AiProviderConfigPanel(props: {
   householdId: string;
@@ -31,6 +92,7 @@ export function AiProviderConfigPanel(props: {
   const { locale, t } = useI18n();
   const { householdId, capabilityFilter, onChanged } = props;
   const [adapters, setAdapters] = useState<AiProviderAdapter[]>([]);
+  const [registryPlugins, setRegistryPlugins] = useState<PluginRegistryItem[]>([]);
   const [providers, setProviders] = useState<AiProviderProfile[]>([]);
   const [routes, setRoutes] = useState<AiCapabilityRoute[]>([]);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
@@ -43,9 +105,24 @@ export function AiProviderConfigPanel(props: {
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
 
-  const adapterMap = useMemo(
+  const availableAdapterMap = useMemo(
     () => new Map(adapters.map(item => [item.adapter_code, item])),
     [adapters],
+  );
+
+  const registryAdapterMap = useMemo(
+    () => new Map(
+      registryPlugins
+        .map(buildRegistryAdapter)
+        .filter((item): item is AiProviderAdapter => item !== null)
+        .map(item => [item.adapter_code, item]),
+    ),
+    [registryPlugins],
+  );
+
+  const adapterMap = useMemo(
+    () => new Map([...registryAdapterMap, ...availableAdapterMap]),
+    [availableAdapterMap, registryAdapterMap],
   );
 
   const visibleProviders = useMemo(
@@ -62,6 +139,10 @@ export function AiProviderConfigPanel(props: {
     () => (detailProvider ? adapterMap.get(getProviderAdapterCode(detailProvider)) ?? null : null),
     [adapterMap, detailProvider],
   );
+  const detailPlugin = useMemo(
+    () => (detailProvider?.plugin_id ? registryPlugins.find(item => item.id === detailProvider.plugin_id) ?? null : null),
+    [detailProvider, registryPlugins],
+  );
 
   const configuredRoutes = useMemo(
     () => routes.filter(item => item.enabled && item.primary_provider_profile_id),
@@ -71,11 +152,14 @@ export function AiProviderConfigPanel(props: {
   const summaryStats = useMemo(
     () => [
       { label: getPageMessage(locale, 'settings.ai.provider.summary.totalModels'), value: String(visibleProviders.length) },
-      { label: getPageMessage(locale, 'settings.ai.provider.summary.enabledModels'), value: String(visibleProviders.filter(item => item.enabled).length) },
+      {
+        label: getPageMessage(locale, 'settings.ai.provider.summary.enabledModels'),
+        value: String(visibleProviders.filter(item => item.enabled && item.plugin_enabled !== false).length),
+      },
       { label: getPageMessage(locale, 'settings.ai.provider.summary.activeRoutes'), value: String(configuredRoutes.length) },
-      { label: getPageMessage(locale, 'settings.ai.provider.summary.plugins'), value: String(new Set(adapters.map(item => item.plugin_id)).size) },
+      { label: getPageMessage(locale, 'settings.ai.provider.summary.plugins'), value: String(new Set([...adapterMap.values()].map(item => item.plugin_id)).size) },
     ],
-    [adapters, configuredRoutes.length, locale, visibleProviders],
+    [adapterMap, configuredRoutes.length, locale, visibleProviders],
   );
 
   const copy = {
@@ -93,6 +177,9 @@ export function AiProviderConfigPanel(props: {
     emptyProviders: getPageMessage(locale, 'settings.ai.provider.emptyProviders'),
     enabled: getPageMessage(locale, 'settings.ai.provider.enabled'),
     disabled: getPageMessage(locale, 'settings.ai.provider.disabled'),
+    pluginDisabled: getPageMessage(locale, 'settings.ai.provider.pluginDisabled'),
+    pluginDisabledTitle: getPageMessage(locale, 'settings.ai.provider.pluginDisabledTitle'),
+    pluginDisabledFallback: getPageMessage(locale, 'settings.ai.provider.pluginDisabledFallback'),
     modelNameEmpty: getPageMessage(locale, 'settings.ai.provider.modelNameEmpty'),
     editTitle: getPageMessage(locale, 'settings.ai.provider.editTitle'),
     addTitle: getPageMessage(locale, 'settings.ai.provider.addTitle'),
@@ -116,6 +203,8 @@ export function AiProviderConfigPanel(props: {
     emptySummaryTitle: getPageMessage(locale, 'settings.ai.provider.emptySummaryTitle'),
     emptySummaryDesc: getPageMessage(locale, 'settings.ai.provider.emptySummaryDesc'),
     pluginLabel: getPageMessage(locale, 'settings.ai.provider.pluginLabel'),
+    pluginVersionLabel: getPageMessage(locale, 'settings.ai.provider.pluginVersionLabel'),
+    pluginUpdateStateLabel: getPageMessage(locale, 'settings.ai.provider.pluginUpdateStateLabel'),
     updatedAtLabel: getPageMessage(locale, 'settings.ai.provider.updatedAtLabel'),
     cancel: t('common.cancel'),
     saving: t('common.saving'),
@@ -130,10 +219,11 @@ export function AiProviderConfigPanel(props: {
       setLoading(true);
       setError('');
       try {
-        const [adapterRows, providerRows, routeRows] = await Promise.all([
+        const [adapterRows, providerRows, routeRows, registrySnapshot] = await Promise.all([
           settingsApi.listAiProviderAdapters(),
           settingsApi.listHouseholdAiProviders(householdId),
           settingsApi.listHouseholdAiRoutes(householdId),
+          settingsApi.listRegisteredPlugins(householdId),
         ]);
         if (cancelled) {
           return;
@@ -147,6 +237,7 @@ export function AiProviderConfigPanel(props: {
         })));
         setProviders(providerRows);
         setRoutes(routeRows);
+        setRegistryPlugins(registrySnapshot.items);
       } catch (loadError) {
         if (!cancelled) {
           setError(loadError instanceof Error ? loadError.message : copy.loadFailed);
@@ -215,7 +306,7 @@ export function AiProviderConfigPanel(props: {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const currentAdapter = adapters.find(item => item.adapter_code === form.adapterCode) ?? null;
+    const currentAdapter = adapterMap.get(form.adapterCode) ?? null;
     if (!currentAdapter) {
       setError(copy.selectTypeFirst);
       return;
@@ -227,16 +318,16 @@ export function AiProviderConfigPanel(props: {
     try {
       if (editingProviderId) {
         await settingsApi.updateHouseholdAiProvider(
-          householdId,
-          editingProviderId,
-          buildUpdateProviderPayload(form, currentAdapter),
+        householdId,
+        editingProviderId,
+        buildUpdateProviderPayload(form, currentAdapter),
         );
         setStatus(copy.updatedStatus);
         await reload();
       } else {
         await settingsApi.createHouseholdAiProvider(
-          householdId,
-          buildCreateProviderPayload(form, currentAdapter),
+        householdId,
+        buildCreateProviderPayload(form, currentAdapter),
         );
         setStatus(copy.addedStatus);
         await reload();
@@ -301,6 +392,8 @@ export function AiProviderConfigPanel(props: {
               {visibleProviders.map(provider => {
                 const adapter = adapterMap.get(getProviderAdapterCode(provider)) ?? null;
                 const adapterMeta = adapter ? getLocalizedAdapterMeta(adapter, locale) : null;
+                const pluginDisabled = provider.plugin_enabled === false;
+                const availabilityLabel = pluginDisabled ? copy.pluginDisabled : (provider.enabled ? copy.enabled : copy.disabled);
 
                 return (
                   <button
@@ -313,9 +406,14 @@ export function AiProviderConfigPanel(props: {
                     <div className="ai-provider-simple-item__content">
                       <div className="ai-provider-simple-item__name">{provider.display_name}</div>
                       <div className="ai-provider-simple-item__meta">{adapterMeta?.label ?? provider.provider_code}</div>
+                      {pluginDisabled ? (
+                        <div className="ai-config-muted">
+                          {provider.plugin_disabled_reason || copy.pluginDisabledFallback}
+                        </div>
+                      ) : null}
                     </div>
-                    <span className={`ai-pill ai-pill--sm ${provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>
-                      {provider.enabled ? copy.enabled : copy.disabled}
+                    <span className={`ai-pill ai-pill--sm ${pluginDisabled ? 'ai-pill--warning' : provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>
+                      {availabilityLabel}
                     </span>
                   </button>
                 );
@@ -340,13 +438,19 @@ export function AiProviderConfigPanel(props: {
         open={detailOpen}
         provider={detailProvider}
         adapter={detailAdapter}
+        plugin={detailPlugin}
         routes={routes}
         locale={locale}
         copy={{
           enabled: copy.enabled,
           disabled: copy.disabled,
+          pluginDisabled: copy.pluginDisabled,
+          pluginDisabledTitle: copy.pluginDisabledTitle,
+          pluginDisabledFallback: copy.pluginDisabledFallback,
           modelNameEmpty: copy.modelNameEmpty,
           pluginLabel: copy.pluginLabel,
+          pluginVersionLabel: copy.pluginVersionLabel,
+          pluginUpdateStateLabel: copy.pluginUpdateStateLabel,
           llmWorkflow: copy.llmWorkflow,
           updatedAtLabel: copy.updatedAtLabel,
           summarySupportTitle: copy.summarySupportTitle,
@@ -369,6 +473,7 @@ export function AiProviderConfigPanel(props: {
         locale={locale}
         open={editorOpen}
         adapters={adapters}
+        resolvedAdapter={adapterMap.get(form.adapterCode) ?? null}
         form={form}
         editingProviderId={editingProviderId}
         saving={saving}

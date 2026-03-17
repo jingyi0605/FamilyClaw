@@ -154,15 +154,42 @@ function useContextConfigSettings() {
 }
 
 function SettingsAppearanceSection() {
-  const { themeId, themeList, setTheme } = useTheme();
+  const {
+    themeId,
+    themeList,
+    themeListLoading,
+    themeListError,
+    themeFallbackNotice,
+    setTheme,
+    getThemeVersionInfo,
+  } = useTheme();
   const { t } = useI18n();
+  const disabledThemeMeta = themeFallbackNotice
+    ? getLocalizedThemeMeta(themeFallbackNotice.disabledThemeId, t)
+    : null;
 
   return (
     <div className="settings-page">
       <PageSection title={t('settings.appearance.title')} contentStyle={{ marginTop: 0 }}>
+        {themeFallbackNotice ? (
+          <SettingsNotice tone="info" icon="!">
+            {t('settings.appearance.themeDisabledNotice', {
+              theme: disabledThemeMeta?.label ?? themeFallbackNotice.disabledThemeId,
+            })}
+            {themeFallbackNotice.disabledReason
+              ? ` ${t('settings.appearance.disabledReason', { reason: themeFallbackNotice.disabledReason })}`
+              : ''}
+          </SettingsNotice>
+        ) : null}
+        {themeListError ? <SettingsNotice tone="error" icon="!">{themeListError}</SettingsNotice> : null}
+        {themeListLoading ? <SettingsNotice icon="...">{t('settings.appearance.loading')}</SettingsNotice> : null}
+        {!themeListLoading && !themeListError && !themeList.length ? (
+          <SettingsNotice tone="info" icon="!">{t('settings.appearance.noAvailableThemes')}</SettingsNotice>
+        ) : null}
         <div className="theme-grid">
           {themeList.map((theme) => {
             const localizedTheme = getLocalizedThemeMeta(theme.id, t);
+            const themeVersionInfo = getThemeVersionInfo(theme.id);
             return (
             <div
               key={theme.id}
@@ -193,6 +220,11 @@ function SettingsAppearanceSection() {
                 <div className="theme-card__text">
                   <span className="theme-card__label">{localizedTheme?.label ?? theme.label}</span>
                   <span className="theme-card__desc">{localizedTheme?.description ?? theme.description}</span>
+                  {themeVersionInfo ? (
+                    <span className="theme-card__desc">
+                      v{themeVersionInfo.installedVersion ?? themeVersionInfo.version}
+                    </span>
+                  ) : null}
                 </div>
                 {themeId === theme.id ? <span className="theme-card__check">✓</span> : null}
               </div>
@@ -403,18 +435,26 @@ function SettingsNotificationsSection() {
 }
 
 function SettingsAccessibilitySection() {
-  const { themeId, setTheme } = useTheme();
+  const { themeId, setTheme, isThemeAvailable, getThemeDisabledReason } = useTheme();
   const { t } = useI18n();
   const isElder = themeId === 'ming-cha-qiu-hao';
+  const elderThemeAvailable = isThemeAvailable('ming-cha-qiu-hao');
+  const elderThemeDisabledReason = getThemeDisabledReason('ming-cha-qiu-hao');
+  const elderModeDescription = elderThemeAvailable
+    ? t('settings.accessibility.elderModeDesc')
+    : elderThemeDisabledReason
+      ? t('settings.accessibility.elderModeDisabledReason', { reason: elderThemeDisabledReason })
+      : t('settings.accessibility.elderModeUnavailable');
 
   return (
     <div className="settings-page">
       <PageSection title={t('settings.accessibility.title')} contentStyle={{ marginTop: 0 }}>
         <div className="settings-toggles">
           <ToggleSwitch
-            checked={isElder}
+            checked={isElder && elderThemeAvailable}
             label={t('settings.accessibility.elderMode')}
-            description={t('settings.accessibility.elderModeDesc')}
+            description={elderModeDescription}
+            disabled={!elderThemeAvailable}
             onChange={(value) => setTheme(value ? 'ming-cha-qiu-hao' : 'chun-he-jing-ming')}
           />
         </div>

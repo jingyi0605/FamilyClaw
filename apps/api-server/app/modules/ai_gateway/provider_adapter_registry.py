@@ -8,6 +8,8 @@ from app.core.config import BASE_DIR
 
 
 CUSTOM_PROVIDER_PLUGIN_ROOT = BASE_DIR / "app" / "modules" / "ai_gateway" / "provider_plugins"
+PROVIDER_ADAPTER_REGISTRY_PATH = Path(__file__).resolve()
+PROVIDER_ADAPTER_PLUGIN_VERSION = "1.0.0"
 
 
 def list_provider_adapters() -> list[dict[str, Any]]:
@@ -18,6 +20,22 @@ def list_provider_adapters() -> list[dict[str, Any]]:
     for item in _load_custom_provider_plugins():
         adapters[item["adapter_code"]] = item
     return list(adapters.values())
+
+
+def _build_plugin_compatibility(
+    *,
+    transport_type: str,
+    api_family: str,
+    description: str | None = None,
+    compatibility: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized = dict(compatibility or {})
+    normalized.setdefault("provider_profile_schema_version", 1)
+    normalized.setdefault("transport_type", transport_type)
+    normalized.setdefault("api_family", api_family)
+    if isinstance(description, str) and description.strip():
+        normalized.setdefault("description", description.strip())
+    return normalized
 
 
 def _build_builtin_provider_plugins() -> list[dict[str, Any]]:
@@ -240,6 +258,7 @@ def _normalize_custom_provider_plugin(item: Any, *, path: Path) -> dict[str, Any
     return {
         "plugin_id": str(item.get("plugin_id") or f"provider-plugin.{item['adapter_code']}"),
         "plugin_name": str(item.get("plugin_name") or item["display_name"]),
+        "plugin_version": str(item.get("plugin_version") or PROVIDER_ADAPTER_PLUGIN_VERSION),
         "adapter_code": str(item["adapter_code"]),
         "display_name": str(item["display_name"]),
         "description": str(item["description"]),
@@ -250,6 +269,12 @@ def _normalize_custom_provider_plugin(item: Any, *, path: Path) -> dict[str, Any
         "supported_model_types": _normalize_string_list(item.get("supported_model_types") or ["llm"]),
         "llm_workflow": str(item.get("llm_workflow") or item["api_family"]),
         "field_schema": [_normalize_field(field, path=path) for field in field_schema],
+        "compatibility": _build_plugin_compatibility(
+            transport_type=str(item["transport_type"]),
+            api_family=str(item["api_family"]),
+            description=str(item["description"]),
+            compatibility=item.get("compatibility") if isinstance(item.get("compatibility"), dict) else None,
+        ),
     }
 
 
@@ -295,6 +320,7 @@ def _build_openai_compatible_provider(
     return {
         "plugin_id": f"builtin.provider.{adapter_code}",
         "plugin_name": display_name,
+        "plugin_version": PROVIDER_ADAPTER_PLUGIN_VERSION,
         "adapter_code": adapter_code,
         "display_name": display_name,
         "description": description,
@@ -305,6 +331,11 @@ def _build_openai_compatible_provider(
         "supported_model_types": supported_model_types,
         "llm_workflow": "openai_chat_completions",
         "field_schema": fields,
+        "compatibility": _build_plugin_compatibility(
+            transport_type="openai_compatible",
+            api_family="openai_chat_completions",
+            description=description,
+        ),
     }
 
 
@@ -350,6 +381,7 @@ def _build_native_provider(
     return {
         "plugin_id": f"builtin.provider.{adapter_code}",
         "plugin_name": display_name,
+        "plugin_version": PROVIDER_ADAPTER_PLUGIN_VERSION,
         "adapter_code": adapter_code,
         "display_name": display_name,
         "description": description,
@@ -360,6 +392,11 @@ def _build_native_provider(
         "supported_model_types": supported_model_types,
         "llm_workflow": api_family,
         "field_schema": fields,
+        "compatibility": _build_plugin_compatibility(
+            transport_type="native_sdk",
+            api_family=api_family,
+            description=description,
+        ),
     }
 
 

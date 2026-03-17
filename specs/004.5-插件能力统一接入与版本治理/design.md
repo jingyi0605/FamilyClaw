@@ -28,6 +28,14 @@
 - 认证授权：沿用现有家庭管理员和成员权限边界
 - 外部依赖：现有插件 manifest、AI provider adapter 元数据、前端主题资源
 
+### 1.4 当前代码真相（2026-03-17 盘点）
+
+- 通用插件注册表现在只覆盖 `app/plugins/builtin` 里的 manifest 和 `plugin_mounts` 挂载记录，类型只认连接器、动作、语言包、地区 provider、通道这些现有类型。
+- 主题还完全在前端本地体系里：`packages/user-core/src/state/theme.ts` 维护主题 id 和说明，`apps/user-app/src/runtime/h5-shell/theme/ThemeProvider.tsx` 直接读写浏览器 `localStorage`，后端没有主题注册出口。
+- AI 供应商虽然已经带上了 `plugin_id`、`plugin_name` 这类字段，但这些字段来自 `app.modules.ai_gateway.provider_adapter_registry` 的专用字典，不来自 `app.modules.plugin` 的统一注册结果。
+- 当前版本字段也还是散的：插件系统只有 `manifest.version`，挂载记录不单独存安装版本；AI 供应商没有插件版本字段，只有上游 API 的 `api_version`；主题更没有版本概念。
+- 这次阶段 1 不做行为改造，先把这些真相写清楚，再用统一模型把后面的接入边界钉住。详细盘点见 `docs/20260317-阶段1现状盘点与统一模型草图.md`。
+
 ## 2. 架构
 
 ### 2.1 系统结构

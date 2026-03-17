@@ -76,6 +76,9 @@ export type AiProviderProfile = {
   id: string;
   provider_code: string;
   display_name: string;
+  plugin_id: string | null;
+  plugin_enabled: boolean | null;
+  plugin_disabled_reason: string | null;
   transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
   api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   base_url: string | null;
@@ -603,6 +606,9 @@ export type PluginRegistryItem = {
     enabled_by_default: boolean;
   }>;
   source_type: PluginSourceType;
+  install_status?: string | null;
+  config_status?: PluginConfigState | null;
+  marketplace_instance_id?: string | null;
 };
 
 export type PluginRegistrySnapshot = {
@@ -719,7 +725,7 @@ export type IntegrationResource = {
 
 export type IntegrationDiscoveryItem = {
   id: string;
-  household_id: string;
+  household_id: string | null;
   plugin_id: string;
   integration_instance_id?: string | null;
   discovery_type: string;
@@ -910,4 +916,149 @@ export type PluginJobListRead = {
   total: number;
   page: number;
   page_size: number;
+};
+
+export type MarketplaceTrustedLevel = 'official' | 'third_party';
+export type MarketplaceSyncStatus = 'idle' | 'syncing' | 'success' | 'failed';
+export type MarketplaceEntrySyncStatus = 'ready' | 'invalid';
+export type MarketplaceInstallStatus =
+  | 'not_installed'
+  | 'queued'
+  | 'resolving'
+  | 'downloading'
+  | 'validating'
+  | 'installing'
+  | 'installed'
+  | 'install_failed'
+  | 'uninstalled';
+
+export type MarketplaceSourceRead = {
+  source_id: string;
+  market_id: string | null;
+  name: string;
+  repo_url: string;
+  branch: string;
+  entry_root: string;
+  trusted_level: MarketplaceTrustedLevel;
+  enabled: boolean;
+  last_sync_status: MarketplaceSyncStatus | null;
+  last_sync_error: Record<string, unknown> | null;
+  last_synced_at: string | null;
+};
+
+export type MarketplaceSourceCreateRequest = {
+  repo_url: string;
+  branch?: string | null;
+  entry_root?: string | null;
+};
+
+export type MarketplaceSourceSyncResultRead = {
+  source: MarketplaceSourceRead;
+  total_entries: number;
+  ready_entries: number;
+  invalid_entries: number;
+  errors: Array<{
+    plugin_id: string;
+    error_code: string;
+    detail: string;
+  }>;
+};
+
+export type MarketplaceRepositoryMetricAvailability = {
+  stargazers_count: boolean;
+  forks_count: boolean;
+  subscribers_count: boolean;
+  open_issues_count: boolean;
+  views_count: boolean;
+};
+
+export type MarketplaceRepositoryMetrics = {
+  stargazers_count: number | null;
+  forks_count: number | null;
+  subscribers_count: number | null;
+  open_issues_count: number | null;
+  views_count: number | null;
+  views_period_days: number | null;
+  fetched_at: string;
+  availability: MarketplaceRepositoryMetricAvailability;
+};
+
+export type MarketplaceInstallStateRead = {
+  instance_id: string | null;
+  install_status: MarketplaceInstallStatus;
+  enabled: boolean;
+  config_status: PluginConfigState | null;
+  installed_version: string | null;
+};
+
+export type MarketplaceCatalogItemRead = {
+  source_id: string;
+  plugin_id: string;
+  name: string;
+  summary: string;
+  source_repo: string;
+  readme_url: string;
+  risk_level: PluginRiskLevel;
+  latest_version: string;
+  trusted_level: MarketplaceTrustedLevel;
+  sync_status: MarketplaceEntrySyncStatus;
+  sync_error: Record<string, unknown> | null;
+  categories: string[];
+  permissions: string[];
+  repository_metrics: MarketplaceRepositoryMetrics | null;
+  source_name: string;
+  install_state: MarketplaceInstallStateRead;
+};
+
+export type MarketplaceCatalogListRead = {
+  items: MarketplaceCatalogItemRead[];
+};
+
+export type MarketplaceInstallTaskRead = {
+  task_id: string;
+  household_id: string;
+  source_id: string;
+  plugin_id: string;
+  requested_version: string | null;
+  installed_version: string | null;
+  install_status: MarketplaceInstallStatus;
+  failure_stage: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  source_repo: string | null;
+  market_repo: string | null;
+  artifact_url: string | null;
+  plugin_root: string | null;
+  manifest_path: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type MarketplaceInstallTaskCreateRequest = {
+  household_id: string;
+  source_id: string;
+  plugin_id: string;
+  version?: string | null;
+};
+
+export type MarketplaceInstanceRead = {
+  instance_id: string;
+  household_id: string;
+  source_id: string;
+  plugin_id: string;
+  installed_version: string;
+  install_status: MarketplaceInstallStatus;
+  enabled: boolean;
+  config_status: PluginConfigState;
+  source_repo: string;
+  market_repo: string;
+  plugin_root: string;
+  manifest_path: string;
+  python_path: string;
+  working_dir: string | null;
+  installed_at: string | null;
+  created_at: string;
+  updated_at: string;
 };

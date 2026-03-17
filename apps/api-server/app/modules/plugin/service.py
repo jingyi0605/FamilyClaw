@@ -15,6 +15,10 @@ from app.core.blocking import BlockingCallPolicy, run_blocking_db
 from app.core.config import settings
 from app.core.config import BASE_DIR
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
+from app.modules.ai_gateway.provider_adapter_registry import (
+    PROVIDER_ADAPTER_REGISTRY_PATH,
+    list_provider_adapters as list_registered_provider_adapters,
+)
 from app.modules.audit.service import write_audit_log
 # NOTE: get_household_or_404 延迟导入，避免循环依赖 (household → region → plugin → household)
 from app.modules.memory.service import upsert_plugin_observation_memory
@@ -46,6 +50,7 @@ from app.modules.plugin.schemas import (
     PluginSyncPipelineResult,
 )
 from app.modules.plugin.job_service import create_plugin_job
+from app.modules.plugin.theme_registry import THEME_REGISTRY_SOURCE_PATH, list_theme_catalog
 
 
 BUILTIN_PLUGIN_ROOT = BASE_DIR / "app" / "plugins" / "builtin"
@@ -275,34 +280,74 @@ def discover_plugin_manifests(root_dir: str | Path) -> list[PluginManifest]:
     return [manifest for _, manifest in _discover_manifest_entries(root_dir)]
 
 
+def _build_registry_item_from_manifest(
+    manifest_path: str | Path,
+    manifest: PluginManifest,
+    *,
+    base_enabled: bool,
+    source_type: PluginSourceType = "builtin",
+    execution_backend: PluginExecutionBackend | None = None,
+    runner_config: PluginRunnerConfig | None = None,
+) -> PluginRegistryItem:
+    installed_version = manifest.version
+    return PluginRegistryItem.model_validate(
+        {
+            "id": manifest.id,
+            "name": manifest.name,
+            "version": manifest.version,
+            "installed_version": installed_version,
+            "compatibility": manifest.compatibility,
+            "update_state": _resolve_plugin_update_state(
+                version=manifest.version,
+                installed_version=installed_version,
+            ),
+            "types": manifest.types,
+            "permissions": manifest.permissions,
+            "risk_level": manifest.risk_level,
+            "triggers": manifest.triggers,
+            "base_enabled": base_enabled,
+            "household_enabled": None,
+            "enabled": base_enabled,
+            "disabled_reason": None,
+            "manifest_path": str(manifest_path),
+            "entrypoints": manifest.entrypoints.model_dump(mode="json"),
+            "capabilities": manifest.capabilities.model_dump(mode="json"),
+            "dashboard_cards": [item.model_dump(mode="json") for item in manifest.dashboard_cards],
+            "config_specs": [item.model_dump(mode="json") for item in manifest.config_specs],
+            "locales": [item.model_dump(mode="json") for item in manifest.locales],
+            "schedule_templates": [item.model_dump(mode="json") for item in manifest.schedule_templates],
+            "source_type": source_type,
+            "execution_backend": execution_backend,
+            "runner_config": runner_config.model_dump(mode="json") if runner_config is not None else None,
+        }
+    )
+
+
+def _resolve_plugin_update_state(*, version: str, installed_version: str | None) -> str | None:
+    normalized_version = version.strip()
+    normalized_installed_version = (installed_version or "").strip()
+    if not normalized_version:
+        return None
+    if not normalized_installed_version:
+        return "unknown"
+    if normalized_installed_version != normalized_version:
+        return "update_available"
+    return "up_to_date"
+
+
 def list_registered_plugins(
     root_dir: str | Path | None = None,
     *,
     state_file: str | Path | None = None,
 ) -> PluginRegistrySnapshot:
-    manifest_entries = _discover_manifest_entries(root_dir or BUILTIN_PLUGIN_ROOT)
+    manifest_entries = _discover_registry_manifest_entries(root_dir or BUILTIN_PLUGIN_ROOT)
     state_map = _load_registry_state_map(state_file or REGISTRY_STATE_PATH)
     return PluginRegistrySnapshot(
         items=[
-            PluginRegistryItem(
-                id=manifest.id,
-                name=manifest.name,
-                version=manifest.version,
-                types=manifest.types,
-                permissions=manifest.permissions,
-                risk_level=manifest.risk_level,
-                triggers=manifest.triggers,
+            _build_registry_item_from_manifest(
+                manifest_path,
+                manifest,
                 base_enabled=state_map.get(manifest.id, PluginRegistryStateEntry()).enabled,
-                household_enabled=None,
-                enabled=state_map.get(manifest.id, PluginRegistryStateEntry()).enabled,
-                disabled_reason=None,
-                manifest_path=str(manifest_path),
-                entrypoints=manifest.entrypoints,
-                capabilities=manifest.capabilities,
-                dashboard_cards=manifest.dashboard_cards,
-                config_specs=manifest.config_specs,
-                locales=manifest.locales,
-                schedule_templates=manifest.schedule_templates,
             )
             for manifest_path, manifest in manifest_entries
         ]
@@ -321,30 +366,13 @@ def _build_runner_config_from_mount(mount: PluginMount) -> PluginRunnerConfig:
 
 
 def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest) -> PluginRegistryItem:
-    return PluginRegistryItem.model_validate(
-        {
-            "id": manifest.id,
-            "name": manifest.name,
-            "version": manifest.version,
-            "types": manifest.types,
-            "permissions": manifest.permissions,
-            "risk_level": manifest.risk_level,
-            "triggers": manifest.triggers,
-            "base_enabled": mount.enabled,
-            "household_enabled": None,
-            "enabled": mount.enabled,
-            "disabled_reason": None,
-            "manifest_path": mount.manifest_path,
-            "entrypoints": manifest.entrypoints.model_dump(mode="json"),
-            "capabilities": manifest.capabilities.model_dump(mode="json"),
-            "dashboard_cards": [item.model_dump(mode="json") for item in manifest.dashboard_cards],
-            "config_specs": [item.model_dump(mode="json") for item in manifest.config_specs],
-            "locales": [item.model_dump(mode="json") for item in manifest.locales],
-            "schedule_templates": [item.model_dump(mode="json") for item in manifest.schedule_templates],
-            "source_type": mount.source_type,
-            "execution_backend": mount.execution_backend,
-            "runner_config": _build_runner_config_from_mount(mount).model_dump(mode="json"),
-        }
+    return _build_registry_item_from_manifest(
+        mount.manifest_path,
+        manifest,
+        base_enabled=mount.enabled,
+        source_type=cast(PluginSourceType, mount.source_type),
+        execution_backend=cast(PluginExecutionBackend, mount.execution_backend),
+        runner_config=_build_runner_config_from_mount(mount),
     )
 
 
@@ -354,6 +382,22 @@ def _build_disabled_reason(*, base_enabled: bool, household_enabled: bool | None
     if household_enabled is False:
         return "当前家庭已停用该插件。"
     return None
+
+
+def _apply_marketplace_registry_state(
+    item: PluginRegistryItem,
+    *,
+    instance_id: str,
+    install_status: str,
+    config_status: str,
+) -> PluginRegistryItem:
+    return item.model_copy(
+        update={
+            "install_status": install_status,
+            "config_status": config_status,
+            "marketplace_instance_id": instance_id,
+        }
+    )
 
 
 def _merge_effective_plugin_state(
@@ -492,6 +536,8 @@ def list_registered_plugins_for_household(
     root_dir: str | Path | None = None,
     state_file: str | Path | None = None,
 ) -> PluginRegistrySnapshot:
+    from app.modules.plugin_marketplace.service import get_marketplace_instance_for_household_plugin
+
     builtin_snapshot = list_registered_plugins(root_dir=root_dir, state_file=state_file)
     builtin_by_id = {item.id: item for item in builtin_snapshot.items}
     override_map = _list_plugin_state_override_map(db, household_id=household_id)
@@ -517,9 +563,35 @@ def list_registered_plugins_for_household(
                 ),
             )
             continue
+        mounted_item = _build_registry_item_from_mount(mount, manifest)
+        marketplace_instance = get_marketplace_instance_for_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=manifest.id,
+        )
+        if marketplace_instance is not None:
+            mounted_items.append(
+                _apply_marketplace_registry_state(
+                    mounted_item.model_copy(
+                        update={
+                            "base_enabled": mount.enabled,
+                            "household_enabled": None,
+                            "enabled": mount.enabled,
+                            "disabled_reason": _build_disabled_reason(
+                                base_enabled=mount.enabled,
+                                household_enabled=None,
+                            ),
+                        }
+                    ),
+                    instance_id=marketplace_instance.id,
+                    install_status=marketplace_instance.install_status,
+                    config_status=marketplace_instance.config_status,
+                )
+            )
+            continue
         mounted_items.append(
             _merge_effective_plugin_state(
-                _build_registry_item_from_mount(mount, manifest),
+                mounted_item,
                 override_map.get(manifest.id),
             )
         )
@@ -580,6 +652,21 @@ def require_available_household_plugin(
             field="plugin_id",
             status_code=409,
         )
+    if plugin.marketplace_instance_id is not None:
+        if plugin.install_status != "installed":
+            raise PluginExecutionError(
+                f"插件 {plugin_id} 还没有安装完成，不能执行。",
+                error_code="plugin_marketplace_not_installed",
+                field="plugin_id",
+                status_code=409,
+            )
+        if plugin.config_status != "configured":
+            raise PluginExecutionError(
+                f"插件 {plugin_id} 还没配置完成，不能执行。",
+                error_code="plugin_marketplace_not_configured",
+                field="plugin_id",
+                status_code=409,
+            )
     if plugin_type is not None and plugin_type not in plugin.types:
         raise PluginExecutionError(
             f"插件 {plugin_id} 没有声明 {plugin_type} 能力。",
@@ -606,6 +693,7 @@ def set_household_plugin_enabled(
     state_file: str | Path | None = None,
 ) -> PluginRegistryItem:
     from app.modules.household.service import get_household_or_404
+    from app.modules.plugin_marketplace.service import set_marketplace_instance_enabled
 
     get_household_or_404(db, household_id)
     current = get_household_plugin(
@@ -615,6 +703,21 @@ def set_household_plugin_enabled(
         root_dir=root_dir,
         state_file=state_file,
     )
+    if current.marketplace_instance_id is not None:
+        set_marketplace_instance_enabled(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            payload=payload,
+        )
+        sync_household_plugin_region_providers(db, household_id)
+        return get_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            root_dir=root_dir,
+            state_file=state_file,
+        )
     now = utc_now_iso()
     row = repository.get_plugin_state_override(db, household_id=household_id, plugin_id=plugin_id)
     if row is None:
@@ -845,6 +948,145 @@ def _discover_manifest_entries(root_dir: str | Path) -> list[tuple[Path, PluginM
         seen_ids.add(manifest.id)
         manifest_entries.append((manifest_path, manifest))
     return manifest_entries
+
+
+def _discover_registry_manifest_entries(root_dir: str | Path) -> list[tuple[Path, PluginManifest]]:
+    manifest_entries = _discover_manifest_entries(root_dir)
+    root = Path(root_dir).resolve()
+    if root != BUILTIN_PLUGIN_ROOT.resolve():
+        return manifest_entries
+    return _merge_virtual_registry_entries(
+        manifest_entries,
+        [
+            *_build_theme_registry_entries(),
+            *_build_ai_provider_registry_entries(),
+        ],
+        root=root,
+    )
+
+
+def _merge_virtual_registry_entries(
+    manifest_entries: list[tuple[Path, PluginManifest]],
+    extra_entries: list[tuple[Path, PluginManifest]],
+    *,
+    root: Path,
+) -> list[tuple[Path, PluginManifest]]:
+    merged_entries = list(manifest_entries)
+    seen_ids = {manifest.id for _, manifest in manifest_entries}
+    for manifest_path, manifest in extra_entries:
+        if manifest.id in seen_ids:
+            _log_plugin_registry_issue_once(
+                issue_key=f"virtual-manifest-duplicate-id:{root}:{manifest.id}",
+                message=(
+                    "兼容源插件 id 与现有插件冲突，已跳过兼容源结果。"
+                    f" plugin_id={manifest.id}"
+                    f" manifest_path={manifest_path}"
+                ),
+            )
+            continue
+        seen_ids.add(manifest.id)
+        merged_entries.append((manifest_path, manifest))
+    return merged_entries
+
+
+def _build_virtual_manifest_or_log(
+    *,
+    payload: dict[str, Any],
+    source_path: Path,
+    source_label: str,
+) -> PluginManifest | None:
+    try:
+        return PluginManifest.model_validate(payload)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]
+        error_path = ".".join(str(part) for part in first_error.get("loc", ()))
+        error_message = first_error.get("msg", "兼容源 manifest 校验失败")
+        issue_key = f"virtual-manifest-invalid:{source_label}:{payload.get('id')}:{error_path}:{error_message}"
+        _log_plugin_registry_issue_once(
+            issue_key=issue_key,
+            message=(
+                "兼容源插件元数据无效，已从统一注册结果中跳过。"
+                f" source={source_label}"
+                f" plugin_id={payload.get('id')}"
+                f" source_path={source_path}"
+                f" error_path={error_path}"
+                f" error={error_message}"
+            ),
+        )
+        return None
+
+
+def _build_theme_registry_entries() -> list[tuple[Path, PluginManifest]]:
+    entries: list[tuple[Path, PluginManifest]] = []
+    for item in list_theme_catalog():
+        manifest = _build_virtual_manifest_or_log(
+            payload={
+                "id": item["plugin_id"],
+                "name": item["plugin_name"],
+                "version": item["plugin_version"],
+                "types": ["theme-pack"],
+                "permissions": [],
+                "risk_level": "low",
+                "triggers": [],
+                "entrypoints": {},
+                "capabilities": {
+                    "theme_pack": {
+                        "theme_id": item["theme_id"],
+                        "display_name": item["display_name"],
+                        "description": item["description"],
+                        "tokens_resource": item["tokens_resource"],
+                        "preview": item["preview"],
+                        "fallback_theme_id": item["fallback_theme_id"],
+                    }
+                },
+                "compatibility": item["compatibility"],
+            },
+            source_path=THEME_REGISTRY_SOURCE_PATH,
+            source_label="theme_registry",
+        )
+        if manifest is None:
+            continue
+        entries.append((THEME_REGISTRY_SOURCE_PATH, manifest))
+    return entries
+
+
+def _build_ai_provider_registry_entries() -> list[tuple[Path, PluginManifest]]:
+    entries: list[tuple[Path, PluginManifest]] = []
+    for item in list_registered_provider_adapters():
+        manifest = _build_virtual_manifest_or_log(
+            payload={
+                "id": item["plugin_id"],
+                "name": item["plugin_name"],
+                "version": item.get("plugin_version") or "1.0.0",
+                "types": ["ai-provider"],
+                "permissions": [],
+                "risk_level": "low",
+                "triggers": [],
+                "entrypoints": {},
+                "capabilities": {
+                    "ai_provider": {
+                        "adapter_code": item["adapter_code"],
+                        "display_name": item["display_name"],
+                        "field_schema": item["field_schema"],
+                        "supported_model_types": item.get("supported_model_types", []),
+                        "llm_workflow": item.get("llm_workflow", item["api_family"]),
+                        "runtime_capability": {
+                            "transport_type": item["transport_type"],
+                            "api_family": item["api_family"],
+                            "default_privacy_level": item["default_privacy_level"],
+                            "default_supported_capabilities": item["default_supported_capabilities"],
+                        },
+                    }
+                },
+                "compatibility": item.get("compatibility"),
+            },
+            source_path=PROVIDER_ADAPTER_REGISTRY_PATH,
+            source_label="ai_provider_registry",
+        )
+        if manifest is None:
+            continue
+        entries.append((PROVIDER_ADAPTER_REGISTRY_PATH, manifest))
+    return entries
 
 
 def resolve_plugin_execution_context(

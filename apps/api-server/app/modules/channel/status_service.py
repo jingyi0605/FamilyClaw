@@ -18,7 +18,7 @@ from app.modules.channel.service import (
     _to_channel_inbound_event_read,
 )
 from app.modules.plugin.schemas import PluginExecutionRequest
-from app.modules.plugin.service import get_household_plugin, execute_household_plugin
+from app.modules.plugin.service import execute_household_plugin, get_household_plugin, require_available_household_plugin
 
 
 class ChannelStatusServiceError(ValueError):
@@ -101,13 +101,13 @@ def probe_channel_account(
     account_id: str,
 ) -> ChannelAccountStatusRead:
     account = get_channel_account_or_404(db, household_id=household_id, account_id=account_id)
-    try:
-        plugin = get_household_plugin(db, household_id=household_id, plugin_id=account.plugin_id)
-    except ValueError as exc:
-        raise ChannelStatusServiceError(str(exc)) from exc
-    if not plugin.enabled:
-        raise ChannelStatusServiceError("channel plugin is disabled for current household")
-
+    require_available_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=account.plugin_id,
+        plugin_type="channel",
+        trigger="channel-probe",
+    )
     execution = execute_household_plugin(
         db,
         household_id=household_id,

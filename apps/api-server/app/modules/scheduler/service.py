@@ -685,7 +685,7 @@ def _validate_target_dependency(db: Session, *, household_id: str, target_type: 
             trigger="schedule",
         )
     except PluginExecutionError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     if plugin.risk_level == "high":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scheduled task plugin target is high risk and cannot be scheduled by default")
 

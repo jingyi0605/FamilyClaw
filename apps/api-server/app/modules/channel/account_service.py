@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.household.service import get_household_or_404
-from app.modules.plugin.service import list_registered_plugins_for_household
+from app.modules.plugin.service import get_household_plugin, require_available_household_plugin
 
 from . import repository
 from .models import ChannelPluginAccount
@@ -33,7 +33,7 @@ def create_channel_account(
     payload: ChannelAccountCreate,
 ) -> ChannelAccountRead:
     get_household_or_404(db, household_id)
-    plugin = _resolve_channel_plugin(db, household_id=household_id, plugin_id=payload.plugin_id)
+    plugin = _require_available_channel_plugin(db, household_id=household_id, plugin_id=payload.plugin_id)
     spec = plugin.capabilities.channel
     assert spec is not None
     if payload.connection_mode not in spec.inbound_modes:
@@ -72,7 +72,7 @@ def update_channel_account(
     payload: ChannelAccountUpdate,
 ) -> ChannelAccountRead:
     row = get_channel_account_or_404(db, household_id=household_id, account_id=account_id)
-    plugin = _resolve_channel_plugin(db, household_id=household_id, plugin_id=row.plugin_id)
+    plugin = _get_channel_plugin(db, household_id=household_id, plugin_id=row.plugin_id)
     spec = plugin.capabilities.channel
     assert spec is not None
 
@@ -118,15 +118,23 @@ def delete_channel_account(
     return deleted_snapshot
 
 
-def _resolve_channel_plugin(db: Session, *, household_id: str, plugin_id: str):
-    snapshot = list_registered_plugins_for_household(db, household_id=household_id)
-    plugin = next((item for item in snapshot.items if item.id == plugin_id), None)
-    if plugin is None:
-        raise ChannelAccountServiceError("channel plugin not found")
-    if not plugin.enabled:
-        raise ChannelAccountServiceError("channel plugin is disabled for current household")
+def _get_channel_plugin(db: Session, *, household_id: str, plugin_id: str):
+    plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
     if "channel" not in plugin.types:
         raise ChannelAccountServiceError("plugin is not a channel plugin")
+    spec = plugin.capabilities.channel
+    if spec is None or spec.reserved or spec.platform_code is None:
+        raise ChannelAccountServiceError("channel plugin manifest is incomplete")
+    return plugin
+
+
+def _require_available_channel_plugin(db: Session, *, household_id: str, plugin_id: str):
+    plugin = require_available_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        plugin_type="channel",
+    )
     spec = plugin.capabilities.channel
     if spec is None or spec.reserved or spec.platform_code is None:
         raise ChannelAccountServiceError("channel plugin manifest is incomplete")

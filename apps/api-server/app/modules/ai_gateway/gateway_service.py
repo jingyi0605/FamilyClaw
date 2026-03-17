@@ -7,27 +7,32 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.ai_gateway import repository
+from app.modules.ai_gateway.models import AiProviderProfile
 from app.modules.ai_gateway.provider_runtime import (
     ProviderRuntimeError,
     build_template_fallback_output,
     get_provider_adapter,
 )
 from app.modules.ai_gateway.schemas import (
+    AiApiFamily,
     AiCapability,
     AiGatewayAttemptResult,
     AiGatewayInvokeRequest,
     AiGatewayInvokeResponse,
     AiInvocationPlan,
-    AiModelCallStatus,
     AiModelCallLogCreate,
+    AiModelCallStatus,
     AiPreparedPayload,
+    AiPrivacyLevel,
     AiProviderCandidate,
     AiRoutingMode,
-    AiApiFamily,
-    AiPrivacyLevel,
     AiTransportType,
 )
-from app.modules.ai_gateway.service import log_model_call, resolve_capability_route
+from app.modules.ai_gateway.service import (
+    get_household_ai_provider_plugin_for_profile,
+    log_model_call,
+    resolve_capability_route,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +60,7 @@ def build_invocation_plan(
             trace_id=trace_id,
         )
 
-    provider_candidates = _build_provider_candidates(
+    provider_candidates, blocked_plugin_id = _build_provider_candidates(
         db,
         provider_profile_ids=[
             provider_id
@@ -63,12 +68,22 @@ def build_invocation_plan(
             if provider_id is not None
         ],
         routing_mode=route.routing_mode,
+        household_id=household_id,
     )
     primary_provider = provider_candidates[0] if provider_candidates else None
     fallback_providers = provider_candidates[1:] if len(provider_candidates) > 1 else []
     blocked_reason = None
+    blocked_error_code = None
+
+    if route.routing_mode != "template_only" and primary_provider is None and blocked_plugin_id is not None and household_id is not None:
+        blocked_reason = "当前家庭绑定的 AI 供应商插件已禁用，不能继续调用。"
+        blocked_error_code = "plugin_disabled"
+
     if not route.enabled:
         blocked_reason = "当前能力路由已禁用"
+        blocked_error_code = None
+        blocked_plugin_id = None
+
     if route.routing_mode != "template_only" and primary_provider is None:
         blocked_reason = blocked_reason or "当前能力没有可用主供应商"
 
@@ -87,6 +102,8 @@ def build_invocation_plan(
         fallback_providers=fallback_providers,
         template_fallback_enabled=bool(route.response_policy.get("template_fallback_enabled", True)),
         blocked_reason=blocked_reason,
+        blocked_error_code=blocked_error_code,
+        blocked_plugin_id=blocked_plugin_id,
     )
 
 
@@ -144,8 +161,18 @@ def invoke_capability(
             plan=plan,
             masked_fields=prepared_payload.masked_fields,
             status="blocked",
-            error_code="policy_blocked",
+            error_code=plan.blocked_error_code or "policy_blocked",
         )
+        if plan.blocked_error_code == "plugin_disabled":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "detail": prepared_payload.blocked_reason,
+                    "error_code": "plugin_disabled",
+                    "field": "plugin_id",
+                    "plugin_id": plan.blocked_plugin_id,
+                },
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=prepared_payload.blocked_reason,
@@ -345,8 +372,18 @@ async def ainvoke_capability(
             plan=plan,
             masked_fields=prepared_payload.masked_fields,
             status="blocked",
-            error_code="policy_blocked",
+            error_code=plan.blocked_error_code or "policy_blocked",
         )
+        if plan.blocked_error_code == "plugin_disabled":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "detail": prepared_payload.blocked_reason,
+                    "error_code": "plugin_disabled",
+                    "field": "plugin_id",
+                    "plugin_id": plan.blocked_plugin_id,
+                },
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=prepared_payload.blocked_reason,
@@ -544,25 +581,22 @@ def _build_runtime_default_plan(
         if code
     ]
     rows = [repository.get_provider_profile_by_code(db, provider_code) for provider_code in provider_codes]
-    providers = [
-        AiProviderCandidate(
-            provider_profile_id=row.id,
-            provider_code=row.provider_code,
-            display_name=row.display_name,
-            privacy_level=cast(AiPrivacyLevel, row.privacy_level),
-            transport_type=cast(AiTransportType, row.transport_type),
-            api_family=cast(AiApiFamily, row.api_family),
-            order=index,
-        )
-        for index, row in enumerate(rows)
-        if row is not None and row.enabled
-    ]
-    providers = _reorder_candidates(providers, routing_mode=default_routing_mode)
+    providers, blocked_plugin_id = _build_candidates_from_rows(
+        db,
+        rows=rows,
+        routing_mode=default_routing_mode,
+        household_id=household_id,
+    )
     primary_provider = providers[0] if providers else None
     fallback_providers = providers[1:] if len(providers) > 1 else []
     blocked_reason = None
+    blocked_error_code = None
     if primary_provider is None and default_routing_mode != "template_only":
-        blocked_reason = "运行时默认 AI 供应商未配置"
+        if household_id is not None and blocked_plugin_id is not None:
+            blocked_reason = "当前家庭绑定的 AI 供应商插件已禁用，不能继续调用。"
+            blocked_error_code = "plugin_disabled"
+        else:
+            blocked_reason = "运行时默认 AI 供应商未配置"
 
     return AiInvocationPlan(
         capability=capability,
@@ -577,6 +611,8 @@ def _build_runtime_default_plan(
         fallback_providers=fallback_providers,
         template_fallback_enabled=True,
         blocked_reason=blocked_reason,
+        blocked_error_code=blocked_error_code,
+        blocked_plugin_id=blocked_plugin_id,
     )
 
 
@@ -585,14 +621,41 @@ def _build_provider_candidates(
     *,
     provider_profile_ids: list[str],
     routing_mode: str,
-) -> list[AiProviderCandidate]:
+    household_id: str | None = None,
+) -> tuple[list[AiProviderCandidate], str | None]:
     rows = repository.list_provider_profiles_by_ids(db, provider_profile_ids)
     row_by_id = {row.id: row for row in rows}
+    ordered_rows = [row_by_id.get(provider_profile_id) for provider_profile_id in provider_profile_ids]
+    return _build_candidates_from_rows(
+        db,
+        rows=ordered_rows,
+        routing_mode=routing_mode,
+        household_id=household_id,
+    )
+
+
+def _build_candidates_from_rows(
+    db: Session,
+    *,
+    rows: list[AiProviderProfile | None],
+    routing_mode: str,
+    household_id: str | None,
+) -> tuple[list[AiProviderCandidate], str | None]:
     candidates: list[AiProviderCandidate] = []
-    for index, provider_profile_id in enumerate(provider_profile_ids):
-        row = row_by_id.get(provider_profile_id)
+    blocked_plugin_id: str | None = None
+
+    for index, row in enumerate(rows):
         if row is None or not row.enabled:
             continue
+        if household_id is not None:
+            plugin = get_household_ai_provider_plugin_for_profile(
+                db,
+                household_id=household_id,
+                provider_profile=row,
+            )
+            if plugin is not None and not plugin.enabled:
+                blocked_plugin_id = blocked_plugin_id or plugin.id
+                continue
         candidates.append(
             AiProviderCandidate(
                 provider_profile_id=row.id,
@@ -604,7 +667,7 @@ def _build_provider_candidates(
                 order=index,
             )
         )
-    return _reorder_candidates(candidates, routing_mode=routing_mode)
+    return _reorder_candidates(candidates, routing_mode=routing_mode), blocked_plugin_id
 
 
 def _reorder_candidates(

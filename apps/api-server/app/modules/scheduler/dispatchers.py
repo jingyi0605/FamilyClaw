@@ -39,10 +39,19 @@ def dispatch_task_run(db: Session, *, task_run_id: str) -> ScheduledTaskRun:
         db.flush()
         finalize_task_run(db, definition=definition, run=run)
         return run
-    except (PluginExecutionError, AgentNotFoundError, HTTPException) as exc:
+    except PluginExecutionError as exc:
+        run.status = "failed"
+        run.error_code = exc.error_code
+        run.error_message = exc.detail
+        run.finished_at = utc_now_iso()
+        db.add(run)
+        db.flush()
+        finalize_task_run(db, definition=definition, run=run)
+        return run
+    except (AgentNotFoundError, HTTPException) as exc:
         run.status = "failed"
         run.error_code = "scheduled_task_dispatch_failed"
-        run.error_message = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+        run.error_message = _resolve_dispatch_error_message(exc)
         run.finished_at = utc_now_iso()
         db.add(run)
         db.flush()
@@ -133,6 +142,15 @@ def _dispatch_agent_reminder(db: Session, *, run: ScheduledTaskRun) -> Scheduled
     db.add(delivery)
     db.flush()
     return delivery
+
+
+def _resolve_dispatch_error_message(exc: AgentNotFoundError | HTTPException) -> str:
+    if isinstance(exc, HTTPException):
+        if isinstance(exc.detail, dict):
+            detail = exc.detail.get("detail")
+            return str(detail) if detail is not None else str(exc.detail)
+        return str(exc.detail)
+    return str(exc)
 
 
 def _build_agent_reminder_payload(*, run: ScheduledTaskRun, evaluation_snapshot: dict[str, object]) -> dict[str, object]:

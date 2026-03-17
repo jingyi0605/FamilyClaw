@@ -3,12 +3,13 @@
 ## 文档元数据
 
 - 文档目的：把 `manifest.json` 里哪些字段是正式入口、哪些约束是硬规则、哪些细节应该去别处查，说清楚。
-- 当前版本：v1.4
+- 当前版本：v1.5
 - 关联文档：`docs/开发者文档/插件开发/zh-CN/00-文档使用与维护原则.md`、`docs/开发者文档/插件开发/zh-CN/11-插件配置接入说明.md`、`specs/004.2.3-插件配置协议与动态表单/docs/README.md`、`apps/api-server/app/modules/plugin/schemas.py`
 - 修改记录：
   - `2026-03-13`：创建首版 manifest 字段规范。
   - `2026-03-14`：补充 `locale-pack`、地区上下文和 `schedule_templates` 规则。
   - `2026-03-16`：补充 `channel`、`region-provider`、正式配置协议入口，并改成“稳定规则 + 事实来源引用”写法。
+  - `2026-03-17`：补充 `theme-pack`、`ai-provider`、版本治理字段边界和统一启停规则引用。
 
 这份文档只保留稳定规则，不复制一大坨会频繁变化的字段表。
 
@@ -17,6 +18,22 @@
 - `apps/api-server/app/modules/plugin/schemas.py`
 - `specs/004.2.3-插件配置协议与动态表单/docs/20260316-manifest-示例.md`
 - `specs/004.2.3-插件配置协议与动态表单/docs/20260316-api-示例.md`
+
+## 0. 2026-03-17 最新边界
+
+这份文档现在要按 `004.5` 的结果理解，不要再按旧口径把主题和 AI 供应商排除在正式插件类型之外。
+
+先记住三件事：
+
+1. 正式插件类型现在是 9 类，不是旧文档里偶尔出现的 7 类。
+2. 插件是否可用只认统一状态：`enabled` 和 `disabled_reason`。
+3. 版本治理字段要分清谁声明、谁生成：
+   - `manifest.json` 负责声明：`version`、`compatibility`
+   - 统一插件注册结果负责补充：`installed_version`、`update_state`
+
+插件启停规则统一看：
+
+- `docs/开发设计规范/20260317-插件启用禁用统一规则.md`
 
 ## 1. 先说边界
 
@@ -85,6 +102,16 @@
 - 规则：去掉首尾空格后不能为空
 - 建议：用 semver，比如 `0.1.0`
 
+`version` 是插件声明版本，不是“当前设备上实际安装版本”的别名。
+
+这轮最小版本治理里要分清：
+
+- `version`：插件声明自己是什么版本
+- `installed_version`：统一注册结果里看到的已安装版本
+- `update_state`：统一注册结果里计算出来的更新状态
+
+不要把 `installed_version` 或 `update_state` 反向写回 `manifest.json`。
+
 ### `types`
 
 - 必填
@@ -100,6 +127,8 @@
 - `locale-pack`
 - `channel`
 - `region-provider`
+- `theme-pack`
+- `ai-provider`
 
 这里不要再写死成“只有 5 类”或者“只有 4 类”。
 
@@ -108,6 +137,8 @@
 - `locale-pack` 负责注册语言资源，不走 worker 执行链
 - `channel` 负责通讯平台进出站接入
 - `region-provider` 负责地区目录能力，不是普通同步插件换个名字
+- `theme-pack` 负责主题资源和主题元数据接入，是正式插件类型，但不是执行类插件
+- `ai-provider` 负责 AI 供应商能力声明和配置元数据接入，是正式插件类型，但不是普通动作插件
 
 ### `permissions`
 
@@ -232,6 +263,8 @@
 | `channel` | `channel.py` | `handle` | 处理通道平台进出站 |
 | `region-provider` | `region_provider.py` | `handle` | 提供地区目录能力 |
 | `locale-pack` | `locales/*.json` | 无 | 注册界面语言和文案资源 |
+| `theme-pack` | 资源清单或主题模块 | 无 | 注册主题资源和主题元数据 |
+| `ai-provider` | provider 描述模块或清单 | 无 | 注册 AI 供应商元数据和配置能力 |
 
 ## 5. 跟现有实现直接相关的硬约束
 

@@ -84,7 +84,9 @@ export type PluginManifestType =
   | 'agent-skill'
   | 'channel'
   | 'locale-pack'
-  | 'region-provider';
+  | 'region-provider'
+  | 'theme-pack'
+  | 'ai-provider';
 export type PluginJobStatus =
   | 'queued'
   | 'running'
@@ -120,12 +122,31 @@ export type PluginManifestCapabilities = {
     provider_code?: string | null;
     country_codes?: string[];
   } | null;
+  theme_pack?: {
+    theme_id: string;
+    display_name: string;
+    description?: string | null;
+    tokens_resource: string;
+    preview?: Record<string, unknown>;
+    fallback_theme_id?: string | null;
+  } | null;
+  ai_provider?: {
+    adapter_code: string;
+    display_name: string;
+    field_schema: Array<Record<string, unknown>>;
+    supported_model_types: string[];
+    llm_workflow: string;
+    runtime_capability?: Record<string, unknown>;
+  } | null;
 };
 
 export type PluginRegistryItem = {
   id: string;
   name: string;
   version: string;
+  installed_version?: string | null;
+  compatibility?: Record<string, unknown> | null;
+  update_state?: string | null;
   types: PluginManifestType[];
   permissions: string[];
   risk_level: PluginRiskLevel;
@@ -538,30 +559,6 @@ export type HomeAssistantRoomCandidatesResponse = {
   items: HomeAssistantRoomCandidate[];
 };
 
-export type VoiceDiscoveryTerminal = {
-  fingerprint: string;
-  model: string;
-  sn: string;
-  runtime_version: string;
-  capabilities: string[];
-  discovered_at: string;
-  last_seen_at: string;
-  connection_status: 'online' | 'offline' | 'unknown';
-  remote_addr: string | null;
-};
-
-export type VoiceDiscoveryListResponse = {
-  household_id: string;
-  items: VoiceDiscoveryTerminal[];
-};
-
-export type VoiceDiscoveryBinding = {
-  household_id: string;
-  terminal_id: string;
-  room_id: string | null;
-  terminal_name: string;
-};
-
 export type ContextOverviewMemberState = {
   member_id: string;
   name: string;
@@ -868,7 +865,11 @@ export type AiProviderField = {
   options: AiProviderFieldOption[];
 };
 
+export type AiProviderModelType = 'llm' | 'embedding' | 'vision' | 'speech' | 'image';
+
 export type AiProviderAdapter = {
+  plugin_id: string;
+  plugin_name: string;
   adapter_code: string;
   display_name: string;
   description: string;
@@ -876,6 +877,8 @@ export type AiProviderAdapter = {
   api_family: AiProviderApiFamily;
   default_privacy_level: AiProviderPrivacyLevel;
   default_supported_capabilities: string[];
+  supported_model_types: AiProviderModelType[];
+  llm_workflow: string;
   field_schema: AiProviderField[];
 };
 

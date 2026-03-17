@@ -9,18 +9,29 @@ from sqlalchemy.orm import Session
 from app.db.utils import load_json, new_uuid, utc_now_iso
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.device_integration.service import (
-    async_list_home_assistant_device_candidates_via_plugin,
-    async_list_home_assistant_room_candidates_via_plugin,
-    async_sync_home_assistant_devices_via_plugin,
-    async_sync_home_assistant_rooms_via_plugin,
+    async_list_device_candidates_via_plugin,
+    async_list_room_candidates_via_plugin,
+    async_sync_devices_via_plugin,
+    async_sync_rooms_via_plugin,
 )
 from app.modules.household.service import get_household_or_404
 from app.modules.integration import repository as integration_repository
+from app.modules.integration.discovery_service import (
+    attach_open_xiaoai_discoveries_to_instance,
+    list_integration_discoveries,
+    list_unbound_open_xiaoai_gateway_ids,
+)
 from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin import config_service as plugin_config_service
 from app.modules.plugin.schemas import PluginConfigFormRead, PluginManifestConfigSpec, PluginRegistryItem
-from app.modules.plugin.service import PluginServiceError, list_registered_plugins_for_household
+from app.modules.plugin.service import (
+    PluginServiceError,
+    get_household_plugin,
+    list_registered_plugins_for_household,
+    require_available_household_plugin,
+)
 from app.modules.room.models import Room
+from app.modules.voice.binding_service import OPEN_XIAOAI_PLUGIN_ID
 
 from .schemas import (
     IntegrationActionRead,
@@ -42,9 +53,8 @@ from .schemas import (
 )
 
 
-INTEGRATION_PLUGIN_IDS = {"homeassistant"}
 INTEGRATION_PERMISSION_PREFIXES = ("device.",)
-HOME_ASSISTANT_SYNC_SCOPES = {"device_candidates", "device_sync", "room_candidates", "room_sync"}
+SUPPORTED_SYNC_SCOPES = {"device_candidates", "device_sync", "room_candidates", "room_sync"}
 
 
 def list_integration_catalog(
@@ -65,6 +75,8 @@ def list_integration_catalog(
     items: list[IntegrationCatalogItemRead] = []
     for plugin in snapshot.items:
         if not _is_integration_plugin(plugin):
+            continue
+        if not plugin.enabled:
             continue
         resource_support = _build_resource_support(plugin)
         if resource_type is not None and not getattr(resource_support, resource_type):
@@ -187,7 +199,7 @@ def build_integration_page_view(db: Session, *, household_id: str) -> Integratio
         household_id=household_id,
         catalog=list_integration_catalog(db, household_id=household_id).items,
         instances=list_integration_instances(db, household_id=household_id).items,
-        discoveries=[],
+        discoveries=list_integration_discoveries(db, household_id=household_id).items,
         resources={
             "device": list_integration_resources(db, household_id=household_id, resource_type="device").items,
             "entity": [],
@@ -202,7 +214,17 @@ def create_integration_instance(
     payload: IntegrationInstanceCreateRequest,
     updated_by: str | None = None,
 ) -> IntegrationInstanceRead:
-    plugin = _require_integration_plugin(db, household_id=payload.household_id, plugin_id=payload.plugin_id)
+    plugin = _require_available_integration_plugin(
+        db,
+        household_id=payload.household_id,
+        plugin_id=payload.plugin_id,
+    )
+    normalized_config = _normalize_instance_config(
+        db,
+        household_id=payload.household_id,
+        plugin_id=plugin.id,
+        config=payload.config,
+    )
     instance = IntegrationInstance(
         id=new_uuid(),
         household_id=payload.household_id,
@@ -223,10 +245,17 @@ def create_integration_instance(
         household_id=payload.household_id,
         plugin_id=payload.plugin_id,
         integration_instance_id=instance.id,
-        values=payload.config,
+        values=normalized_config,
         clear_secret_fields=payload.clear_secret_fields,
         updated_by=updated_by,
     )
+    if plugin.id == OPEN_XIAOAI_PLUGIN_ID:
+        attach_open_xiaoai_discoveries_to_instance(
+            db,
+            household_id=payload.household_id,
+            integration_instance_id=instance.id,
+            gateway_id=str(normalized_config.get("gateway_id") or ""),
+        )
     instance.status = "active" if form.view.state == "configured" else "draft"
     instance.updated_at = utc_now_iso()
     db.add(instance)
@@ -256,7 +285,11 @@ async def execute_integration_instance_action(
             status_code=404,
         )
 
-    plugin = _require_integration_plugin(db, household_id=instance.household_id, plugin_id=instance.plugin_id)
+    plugin = _get_integration_plugin(
+        db,
+        household_id=instance.household_id,
+        plugin_id=instance.plugin_id,
+    )
 
     if payload.action == "configure":
         return _execute_configure_action(
@@ -268,6 +301,11 @@ async def execute_integration_instance_action(
         )
 
     if payload.action == "sync":
+        plugin = _require_available_integration_plugin(
+            db,
+            household_id=instance.household_id,
+            plugin_id=instance.plugin_id,
+        )
         return await _execute_sync_action(
             db,
             plugin=plugin,
@@ -295,14 +333,14 @@ def _execute_configure_action(
     clear_secret_fields = payload.payload.get("clear_secret_fields")
     if raw_values is not None and not isinstance(raw_values, dict):
         raise PluginServiceError(
-            "configure.payload.values 必须是对象。",
+            "configure.payload.values 必须是对象",
             error_code="integration_action_payload_invalid",
             field="payload.values",
             status_code=400,
         )
     if clear_secret_fields is not None and not isinstance(clear_secret_fields, list):
         raise PluginServiceError(
-            "configure.payload.clear_secret_fields 必须是数组。",
+            "configure.payload.clear_secret_fields 必须是数组",
             error_code="integration_action_payload_invalid",
             field="payload.clear_secret_fields",
             status_code=400,
@@ -335,7 +373,7 @@ def _execute_configure_action(
     return IntegrationActionResultRead(
         action="configure",
         execution_mode="immediate",
-        message="插件配置已保存。",
+        message="插件配置已保存",
         instance=integration_instance,
         config_form=form,
         output={},
@@ -350,25 +388,18 @@ async def _execute_sync_action(
     payload: IntegrationInstanceActionRequest,
 ) -> IntegrationActionResultRead:
     sync_scope = payload.payload.get("sync_scope")
-    if not isinstance(sync_scope, str) or sync_scope not in HOME_ASSISTANT_SYNC_SCOPES:
+    if not isinstance(sync_scope, str) or sync_scope not in SUPPORTED_SYNC_SCOPES:
         raise PluginServiceError(
-            "sync.payload.sync_scope 不合法。",
+            "sync.payload.sync_scope 不合法",
             error_code="integration_action_payload_invalid",
             field="payload.sync_scope",
-            status_code=400,
-        )
-    if plugin.id != "homeassistant":
-        raise PluginServiceError(
-            f"插件 {plugin.id} 还没有接通统一同步动作。",
-            error_code="integration_action_not_supported",
-            field="action",
             status_code=400,
         )
 
     selected_ids = payload.payload.get("selected_external_ids")
     if selected_ids is not None and not isinstance(selected_ids, list):
         raise PluginServiceError(
-            "sync.payload.selected_external_ids 必须是数组。",
+            "sync.payload.selected_external_ids 必须是数组",
             error_code="integration_action_payload_invalid",
             field="payload.selected_external_ids",
             status_code=400,
@@ -380,7 +411,7 @@ async def _execute_sync_action(
     ]
 
     if sync_scope == "device_candidates":
-        items = await async_list_home_assistant_device_candidates_via_plugin(
+        items = await async_list_device_candidates_via_plugin(
             db,
             household_id=instance.household_id,
             integration_instance_id=instance.id,
@@ -388,7 +419,7 @@ async def _execute_sync_action(
         return _build_sync_items_result(db, instance=instance, plugin=plugin, sync_scope=sync_scope, items=items)
 
     if sync_scope == "room_candidates":
-        items = await async_list_home_assistant_room_candidates_via_plugin(
+        items = await async_list_room_candidates_via_plugin(
             db,
             household_id=instance.household_id,
             integration_instance_id=instance.id,
@@ -396,7 +427,7 @@ async def _execute_sync_action(
         return _build_sync_items_result(db, instance=instance, plugin=plugin, sync_scope=sync_scope, items=items)
 
     if sync_scope == "device_sync":
-        summary = await async_sync_home_assistant_devices_via_plugin(
+        summary = await async_sync_devices_via_plugin(
             db,
             household_id=instance.household_id,
             integration_instance_id=instance.id,
@@ -406,7 +437,7 @@ async def _execute_sync_action(
         return IntegrationActionResultRead(
             action="sync",
             execution_mode="immediate",
-            message="Home Assistant 设备同步完成。",
+            message=f"{plugin.name} 设备同步完成",
             instance=_build_integration_instance_read(
                 db,
                 plugin=plugin,
@@ -436,7 +467,7 @@ async def _execute_sync_action(
             },
         )
 
-    summary = await async_sync_home_assistant_rooms_via_plugin(
+    summary = await async_sync_rooms_via_plugin(
         db,
         household_id=instance.household_id,
         integration_instance_id=instance.id,
@@ -446,7 +477,7 @@ async def _execute_sync_action(
     return IntegrationActionResultRead(
         action="sync",
         execution_mode="immediate",
-        message="Home Assistant 房间同步完成。",
+        message=f"{plugin.name} 房间同步完成",
         instance=_build_integration_instance_read(
             db,
             plugin=plugin,
@@ -526,6 +557,17 @@ def _build_integration_instance_read(
         plugin_id=plugin.id,
         integration_instance_id=instance.id,
     )
+    plugin_disabled_reason = None if plugin.enabled else plugin.disabled_reason
+    instance_status = instance.status if plugin.enabled or instance.status == "deleted" else "disabled"
+    instance_last_error = (
+        None
+        if not instance.last_error_code and not instance.last_error_message and plugin_disabled_reason is None
+        else {
+            "code": instance.last_error_code or ("plugin_disabled" if plugin_disabled_reason else "integration_sync_failed"),
+            "message": instance.last_error_message or plugin_disabled_reason or "集成同步失败",
+            "occurred_at": instance.updated_at,
+        }
+    )
     return IntegrationInstanceRead(
         id=instance.id,
         household_id=instance.household_id,
@@ -533,7 +575,7 @@ def _build_integration_instance_read(
         display_name=instance.display_name,
         description=_build_plugin_description(plugin),
         source_type=plugin.source_type,
-        status=instance.status,  # type: ignore[arg-type]
+        status=instance_status,  # type: ignore[arg-type]
         config_state=config_form.view.state,
         resource_support=_build_resource_support(plugin),
         resource_counts=resource_counts_by_instance.get(instance.id, IntegrationResourceCountsRead()),
@@ -553,15 +595,7 @@ def _build_integration_instance_read(
             )
         ],
         allowed_actions=_build_instance_actions(plugin, config_form=config_form),
-        last_error=(
-            None
-            if not instance.last_error_code and not instance.last_error_message
-            else {
-                "code": instance.last_error_code or "integration_sync_failed",
-                "message": instance.last_error_message or "集成同步失败",
-                "occurred_at": instance.updated_at,
-            }
-        ),
+        last_error=instance_last_error,
         created_at=instance.created_at,
         updated_at=instance.updated_at,
     )
@@ -572,14 +606,37 @@ def _load_integration_plugins_by_id(db: Session, *, household_id: str) -> dict[s
     return {item.id: item for item in snapshot.items if _is_integration_plugin(item)}
 
 
-def _require_integration_plugin(db: Session, *, household_id: str, plugin_id: str) -> PluginRegistryItem:
-    plugin = next(
-        (item for item in list_registered_plugins_for_household(db, household_id=household_id).items if item.id == plugin_id),
-        None,
+def _get_integration_plugin(db: Session, *, household_id: str, plugin_id: str) -> PluginRegistryItem:
+    plugin = get_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
     )
-    if plugin is None or not _is_integration_plugin(plugin):
+    if not _is_integration_plugin(plugin):
         raise PluginServiceError(
-            f"插件 {plugin_id} 不属于设备与集成目录。",
+            f"插件 {plugin_id} 不属于设备与集成目录",
+            error_code="integration_plugin_not_found",
+            field="plugin_id",
+            status_code=404,
+        )
+    return plugin
+
+
+def _require_available_integration_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+) -> PluginRegistryItem:
+    plugin = require_available_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        plugin_type="connector",
+    )
+    if not _is_integration_plugin(plugin):
+        raise PluginServiceError(
+            f"插件 {plugin_id} 不属于设备与集成目录",
             error_code="integration_plugin_not_found",
             field="plugin_id",
             status_code=404,
@@ -588,16 +645,18 @@ def _require_integration_plugin(db: Session, *, household_id: str, plugin_id: st
 
 
 def _is_integration_plugin(plugin: PluginRegistryItem) -> bool:
-    if plugin.id in INTEGRATION_PLUGIN_IDS:
-        return True
+    if "connector" not in plugin.types:
+        return False
     return any(permission.startswith(INTEGRATION_PERMISSION_PREFIXES) for permission in plugin.permissions)
 
 
 def _build_resource_support(plugin: PluginRegistryItem) -> IntegrationResourceSupportRead:
-    if plugin.id == "homeassistant":
-        return IntegrationResourceSupportRead(device=True, entity=True, helper=True)
     supports_device = any(permission.startswith("device.") for permission in plugin.permissions)
-    return IntegrationResourceSupportRead(device=supports_device, entity=supports_device, helper=False)
+    return IntegrationResourceSupportRead(
+        device=supports_device,
+        entity=(plugin.id == "homeassistant"),
+        helper=(plugin.id == "homeassistant"),
+    )
 
 
 def _build_search_text(plugin: PluginRegistryItem) -> str:
@@ -606,7 +665,9 @@ def _build_search_text(plugin: PluginRegistryItem) -> str:
 
 def _build_plugin_description(plugin: PluginRegistryItem) -> str | None:
     if plugin.id == "homeassistant":
-        return "通过实例接入 Home Assistant，并把设备同步收口到统一插件动作链路。"
+        return "通过正式集成实例接入 Home Assistant，并把设备同步到统一平台资源链路。"
+    if plugin.id == "open-xiaoai-speaker":
+        return "把一个小爱网关实例接入平台，并在该实例下发现和管理多台小爱音箱。"
     return None
 
 
@@ -637,14 +698,16 @@ def _build_instance_actions(
             )
         )
     if "connector" in plugin.types:
-        sync_disabled = config_form.view.state != "configured"
+        sync_disabled_reason = plugin.disabled_reason
+        if sync_disabled_reason is None and config_form.view.state != "configured":
+            sync_disabled_reason = "请先完成配置"
         actions.append(
             IntegrationActionRead(
                 action="sync",
                 label="同步资源",
                 destructive=False,
-                disabled=sync_disabled,
-                disabled_reason=("请先完成配置" if sync_disabled else None),
+                disabled=sync_disabled_reason is not None,
+                disabled_reason=sync_disabled_reason,
             )
         )
     actions.append(
@@ -653,7 +716,7 @@ def _build_instance_actions(
             label="删除集成",
             destructive=True,
             disabled=True,
-            disabled_reason="删除动作还没有接通。",
+            disabled_reason="删除动作还没有接通",
         )
     )
     return actions
@@ -694,3 +757,40 @@ def _load_binding_capabilities(raw_value: str | None) -> dict[str, Any]:
         return {}
     loaded = load_json(raw_value)
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _normalize_instance_config(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(config)
+    if plugin_id != OPEN_XIAOAI_PLUGIN_ID:
+        return normalized
+
+    gateway_id = str(normalized.get("gateway_id") or "").strip()
+    if gateway_id:
+        normalized["gateway_id"] = gateway_id
+        return normalized
+
+    gateway_candidates = list_unbound_open_xiaoai_gateway_ids(db)
+    if len(gateway_candidates) == 1:
+        normalized["gateway_id"] = gateway_candidates[0]
+        return normalized
+
+    if not gateway_candidates:
+        raise PluginServiceError(
+            "还没有发现可用的小爱网关。",
+            error_code="integration_instance_config_invalid",
+            field_errors={"gateway_id": "还没有发现可用的小爱网关，请先让 open-xiaoai-gateway 连到平台。"},
+            status_code=400,
+        )
+
+    raise PluginServiceError(
+        "已发现多个小爱网关，请先选择要接入的网关。",
+        error_code="integration_instance_config_invalid",
+        field_errors={"gateway_id": "已发现多个小爱网关，请先选择要接入的网关。"},
+        status_code=400,
+    )

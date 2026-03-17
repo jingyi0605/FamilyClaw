@@ -1058,6 +1058,24 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual("plugin_execution_failed", result.error_code)
         self.assertIn("demo plugin failure", result.error_message or "")
 
+    def test_registered_plugins_include_theme_and_ai_provider_virtual_entries(self) -> None:
+        registry = list_registered_plugins(self.builtin_root)
+
+        theme_plugin = next(item for item in registry.items if item.id == "builtin.theme.chun-he-jing-ming")
+        self.assertEqual(["theme-pack"], theme_plugin.types)
+        self.assertEqual("1.0.0", theme_plugin.installed_version)
+        self.assertEqual("chun-he-jing-ming", theme_plugin.capabilities.theme_pack.theme_id)
+        self.assertEqual("familyclaw-theme", theme_plugin.compatibility["selection_storage_key"])
+
+        ai_provider_plugin = next(item for item in registry.items if item.id == "builtin.provider.chatgpt")
+        self.assertEqual(["ai-provider"], ai_provider_plugin.types)
+        self.assertEqual("1.0.0", ai_provider_plugin.installed_version)
+        self.assertEqual("chatgpt", ai_provider_plugin.capabilities.ai_provider.adapter_code)
+        self.assertEqual(
+            "openai_chat_completions",
+            ai_provider_plugin.compatibility["api_family"],
+        )
+
     def test_stage1_framework_checkpoint_smoke(self) -> None:
         registry = list_registered_plugins(self.builtin_root)
         self.assertGreaterEqual(len(registry.items), 2)
@@ -1165,4 +1183,35 @@ class PluginEffectiveStateTests(unittest.TestCase):
         self.assertEqual(True, updated.household_enabled)
         self.assertFalse(updated.enabled)
         self.assertIn("鍩虹鐘舵€?, updated.disabled_reason or "")
+
+    def test_household_override_can_disable_virtual_ai_provider_plugin(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="AI Provider Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        updated = set_household_plugin_enabled(
+            self.db,
+            household_id=household.id,
+            plugin_id="builtin.provider.chatgpt",
+            payload=PluginStateUpdateRequest(enabled=False),
+            updated_by="tester",
+            root_dir=self.builtin_root,
+            state_file=self.state_file,
+        )
+
+        self.assertIn("ai-provider", updated.types)
+        self.assertFalse(updated.enabled)
+        self.assertEqual(False, updated.household_enabled)
+
+        snapshot = list_registered_plugins_for_household(
+            self.db,
+            household_id=household.id,
+            root_dir=self.builtin_root,
+            state_file=self.state_file,
+        )
+        plugin = next(item for item in snapshot.items if item.id == "builtin.provider.chatgpt")
+        self.assertFalse(plugin.enabled)
+        self.assertEqual(False, plugin.household_enabled)
 

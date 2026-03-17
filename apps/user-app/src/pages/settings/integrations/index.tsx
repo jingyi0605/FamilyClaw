@@ -19,6 +19,7 @@ import {
 import type {
   IntegrationActionResult,
   IntegrationCatalogItem,
+  IntegrationDiscoveryItem,
   IntegrationInstance,
   IntegrationResource,
   PluginManifestConfigField,
@@ -33,6 +34,16 @@ type CreateDraft = {
 };
 
 type SyncAllConfirmStep = 'first' | 'second' | null;
+type OpenXiaoaiGatewayCandidate = {
+  gatewayId: string;
+  modelSummary: string;
+  speakerCount: number;
+  onlineSpeakerCount: number;
+  lastSeenAt: string | null;
+};
+
+const OPEN_XIAOAI_PLUGIN_ID = 'open-xiaoai-speaker';
+const OPEN_XIAOAI_GATEWAY_FIELD_KEY = 'gateway_id';
 
 function getActionOutputItems<T>(result: IntegrationActionResult): T[] {
   const items = result.output.items;
@@ -89,6 +100,66 @@ function normalizeSubmitValue(field: PluginManifestConfigField, value: unknown):
   return value;
 }
 
+function buildOpenXiaoaiGatewayCandidates(discoveries: IntegrationDiscoveryItem[]): OpenXiaoaiGatewayCandidate[] {
+  const gatewayMap = new Map<
+    string,
+    {
+      models: Set<string>;
+      speakerCount: number;
+      onlineSpeakerCount: number;
+      lastSeenAt: string | null;
+    }
+  >();
+
+  for (const discovery of discoveries) {
+    if (
+      discovery.plugin_id !== OPEN_XIAOAI_PLUGIN_ID
+      || discovery.integration_instance_id
+      || discovery.status !== 'pending'
+    ) {
+      continue;
+    }
+    const gatewayId = String(discovery.metadata.gateway_id ?? '').trim();
+    if (!gatewayId) {
+      continue;
+    }
+
+    const current = gatewayMap.get(gatewayId) ?? {
+      models: new Set<string>(),
+      speakerCount: 0,
+      onlineSpeakerCount: 0,
+      lastSeenAt: null,
+    };
+    const model = String(discovery.metadata.model ?? '').trim();
+    const connectionStatus = String(discovery.metadata.connection_status ?? '').trim();
+    const lastSeenAt = typeof discovery.updated_at === 'string' && discovery.updated_at.trim()
+      ? discovery.updated_at
+      : discovery.discovered_at;
+
+    if (model) {
+      current.models.add(model);
+    }
+    current.speakerCount += 1;
+    if (connectionStatus === 'online') {
+      current.onlineSpeakerCount += 1;
+    }
+    if (!current.lastSeenAt || (lastSeenAt && lastSeenAt > current.lastSeenAt)) {
+      current.lastSeenAt = lastSeenAt;
+    }
+    gatewayMap.set(gatewayId, current);
+  }
+
+  return Array.from(gatewayMap.entries())
+    .map(([gatewayId, item]) => ({
+      gatewayId,
+      modelSummary: Array.from(item.models).join(' / ') || '小爱网关',
+      speakerCount: item.speakerCount,
+      onlineSpeakerCount: item.onlineSpeakerCount,
+      lastSeenAt: item.lastSeenAt,
+    }))
+    .sort((left, right) => left.gatewayId.localeCompare(right.gatewayId));
+}
+
 function SettingsIntegrationsContent() {
   const { locale } = useI18n();
   const { currentHouseholdId } = useHouseholdContext();
@@ -99,6 +170,7 @@ function SettingsIntegrationsContent() {
 
   const [catalog, setCatalog] = useState<IntegrationCatalogItem[]>([]);
   const [instances, setInstances] = useState<IntegrationInstance[]>([]);
+  const [discoveries, setDiscoveries] = useState<IntegrationDiscoveryItem[]>([]);
   const [deviceResources, setDeviceResources] = useState<IntegrationResource[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [selectedCatalogItem, setSelectedCatalogItem] = useState<IntegrationCatalogItem | null>(null);
@@ -130,6 +202,7 @@ function SettingsIntegrationsContent() {
       const view = await settingsApi.getIntegrationPageView(householdId);
       setCatalog(view.catalog);
       setInstances(view.instances);
+      setDiscoveries(view.discoveries ?? []);
       setDeviceResources(view.resources.device ?? []);
       setSelectedInstanceId((current) => {
         const nextId = preferredInstanceId ?? current;
@@ -150,6 +223,7 @@ function SettingsIntegrationsContent() {
     if (!currentHouseholdId) {
       setCatalog([]);
       setInstances([]);
+      setDiscoveries([]);
       setDeviceResources([]);
       setSelectedInstanceId(null);
       return;
@@ -165,6 +239,15 @@ function SettingsIntegrationsContent() {
     () => deviceResources.filter((item) => item.integration_instance_id === selectedInstanceId),
     [deviceResources, selectedInstanceId],
   );
+  const openXiaoaiGatewayCandidates = useMemo(
+    () => buildOpenXiaoaiGatewayCandidates(discoveries),
+    [discoveries],
+  );
+  const selectedGatewayId = getScalarValue(createDraft.values, OPEN_XIAOAI_GATEWAY_FIELD_KEY).trim();
+  const selectedGatewayCandidate = useMemo(
+    () => openXiaoaiGatewayCandidates.find((item) => item.gatewayId === selectedGatewayId) ?? null,
+    [openXiaoaiGatewayCandidates, selectedGatewayId],
+  );
   const candidateRoomOptions = useMemo(() => getCandidateRoomOptions(deviceCandidates), [deviceCandidates]);
   const candidateDomainOptions = useMemo(() => getCandidateDomainOptions(deviceCandidates), [deviceCandidates]);
   const filteredDeviceCandidates = useMemo(() => filterIntegrationDeviceCandidates(deviceCandidates, {
@@ -179,17 +262,44 @@ function SettingsIntegrationsContent() {
     setSyncAllImpactSummary(null);
   }, [selectedInstanceId]);
 
-  function formatStatus(instance: IntegrationInstance) {
+  function getInstanceStatusPresentation(instance: IntegrationInstance) {
     if (instance.status === 'degraded') {
-      return page('settings.integrations.instance.status.degraded');
+      return {
+        label: page('settings.integrations.instance.status.degraded'),
+        tone: 'warning',
+      } as const;
     }
     if (instance.status === 'disabled') {
-      return page('settings.integrations.instance.status.disabled');
+      return {
+        label: page('settings.integrations.instance.status.disabled'),
+        tone: 'secondary',
+      } as const;
     }
     if (instance.status === 'draft' || instance.config_state !== 'configured') {
-      return page('settings.integrations.instance.status.draft');
+      return {
+        label: page('settings.integrations.instance.status.draft'),
+        tone: 'info',
+      } as const;
     }
-    return page('settings.integrations.instance.status.active');
+    return {
+      label: page('settings.integrations.instance.status.active'),
+      tone: 'success',
+    } as const;
+  }
+
+  const selectedSyncAction = useMemo(
+    () => selectedInstance?.allowed_actions.find((item) => item.action === 'sync') ?? null,
+    [selectedInstance],
+  );
+  const syncActionDisabled = selectedSyncAction?.disabled ?? true;
+  const syncActionDisabledReason = selectedSyncAction?.disabled_reason ?? page('settings.integrations.action.syncUnavailable');
+
+  function formatOpenXiaoaiGatewaySummary(candidate: OpenXiaoaiGatewayCandidate) {
+    return page('settings.integrations.modal.create.gateway.summary', {
+      model: candidate.modelSummary,
+      count: candidate.speakerCount,
+      online: candidate.onlineSpeakerCount,
+    });
   }
 
   function openCreateModal(item: IntegrationCatalogItem) {
@@ -223,6 +333,57 @@ function SettingsIntegrationsContent() {
 
   function renderField(field: PluginManifestConfigField, widget?: PluginManifestFieldUiSchema) {
     const fieldError = createDraft.fieldErrors[field.key];
+    if (selectedCatalogItem?.plugin_id === OPEN_XIAOAI_PLUGIN_ID && field.key === OPEN_XIAOAI_GATEWAY_FIELD_KEY) {
+      return (
+        <div key={field.key} className="form-group">
+          <label>{page('settings.integrations.modal.create.gateway.label')}</label>
+          {openXiaoaiGatewayCandidates.length === 0 ? (
+            <>
+              <div className="form-help">{page('settings.integrations.modal.create.gateway.empty')}</div>
+              <div className="form-help">{page('settings.integrations.modal.create.gateway.emptyHint')}</div>
+            </>
+          ) : openXiaoaiGatewayCandidates.length === 1 ? (
+            <>
+              <div className="integration-status__detail">
+                {page('settings.integrations.modal.create.gateway.autoSelected')}
+              </div>
+              <div className="form-help">{formatOpenXiaoaiGatewaySummary(openXiaoaiGatewayCandidates[0])}</div>
+              {openXiaoaiGatewayCandidates[0].lastSeenAt ? (
+                <div className="form-help">
+                  {page('settings.integrations.modal.create.gateway.lastSeen', {
+                    time: openXiaoaiGatewayCandidates[0].lastSeenAt,
+                  })}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <select
+                className="form-select"
+                value={selectedGatewayId}
+                onChange={(event) => updateValue(field.key, event.target.value)}
+              >
+                <option value="">{page('settings.integrations.modal.create.gateway.selectPlaceholder')}</option>
+                {openXiaoaiGatewayCandidates.map((candidate) => (
+                  <option key={candidate.gatewayId} value={candidate.gatewayId}>
+                    {formatOpenXiaoaiGatewaySummary(candidate)}
+                  </option>
+                ))}
+              </select>
+              <div className="form-help">{page('settings.integrations.modal.create.gateway.multipleHint')}</div>
+              {selectedGatewayCandidate?.lastSeenAt ? (
+                <div className="form-help">
+                  {page('settings.integrations.modal.create.gateway.lastSeen', {
+                    time: selectedGatewayCandidate.lastSeenAt,
+                  })}
+                </div>
+              ) : null}
+            </>
+          )}
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
     if (field.type === 'secret') {
       return (
         <div key={field.key} className="form-group">
@@ -321,6 +482,28 @@ function SettingsIntegrationsContent() {
       }));
       return;
     }
+    if (selectedCatalogItem.plugin_id === OPEN_XIAOAI_PLUGIN_ID) {
+      if (openXiaoaiGatewayCandidates.length === 0) {
+        setCreateDraft((current) => ({
+          ...current,
+          fieldErrors: {
+            ...current.fieldErrors,
+            gateway_id: page('settings.integrations.modal.create.gateway.empty'),
+          },
+        }));
+        return;
+      }
+      if (!selectedGatewayId || !selectedGatewayCandidate) {
+        setCreateDraft((current) => ({
+          ...current,
+          fieldErrors: {
+            ...current.fieldErrors,
+            gateway_id: page('settings.integrations.modal.create.gateway.selectRequired'),
+          },
+        }));
+        return;
+      }
+    }
 
     const payloadValues: Record<string, unknown> = {};
     for (const field of selectedCatalogItem.config_spec.config_schema.fields) {
@@ -367,8 +550,41 @@ function SettingsIntegrationsContent() {
     }
   }
 
+  useEffect(() => {
+    if (selectedCatalogItem?.plugin_id !== OPEN_XIAOAI_PLUGIN_ID) {
+      return;
+    }
+    setCreateDraft((current) => {
+      const currentGatewayId = getScalarValue(current.values, OPEN_XIAOAI_GATEWAY_FIELD_KEY).trim();
+      if (openXiaoaiGatewayCandidates.length === 1) {
+        const onlyCandidate = openXiaoaiGatewayCandidates[0];
+        if (currentGatewayId === onlyCandidate.gatewayId && !current.fieldErrors.gateway_id) {
+          return current;
+        }
+        return {
+          ...current,
+          values: { ...current.values, [OPEN_XIAOAI_GATEWAY_FIELD_KEY]: onlyCandidate.gatewayId },
+          fieldErrors: { ...current.fieldErrors, gateway_id: '' },
+        };
+      }
+      if (currentGatewayId && openXiaoaiGatewayCandidates.some((item) => item.gatewayId === currentGatewayId)) {
+        return current;
+      }
+      if (!currentGatewayId && !current.fieldErrors.gateway_id) {
+        return current;
+      }
+      const nextValues = { ...current.values };
+      delete nextValues[OPEN_XIAOAI_GATEWAY_FIELD_KEY];
+      return {
+        ...current,
+        values: nextValues,
+        fieldErrors: { ...current.fieldErrors, gateway_id: '' },
+      };
+    });
+  }, [openXiaoaiGatewayCandidates, selectedCatalogItem?.plugin_id]);
+
   async function handleOpenSyncAllConfirm() {
-    if (!selectedInstance) {
+    if (!selectedInstance || syncActionDisabled) {
       return;
     }
     setSyncAllLoading(true);
@@ -391,7 +607,7 @@ function SettingsIntegrationsContent() {
   }
 
   async function handleSyncAll() {
-    if (!selectedInstance) {
+    if (!selectedInstance || syncActionDisabled) {
       return;
     }
     setSubmitting(true);
@@ -418,7 +634,7 @@ function SettingsIntegrationsContent() {
   }
 
   async function handleOpenPicker() {
-    if (!selectedInstance) {
+    if (!selectedInstance || syncActionDisabled) {
       return;
     }
     setSubmitting(true);
@@ -502,12 +718,12 @@ function SettingsIntegrationsContent() {
                   >
                     <div className="integration-instance-card__header">
                       <strong className="integration-instance-card__name">{instance.display_name}</strong>
-                      <span className={`badge badge--${instance.status === 'degraded' ? 'warning' : 'success'}`}>
-                        {formatStatus(instance)}
+                      <span className={`badge badge--${getInstanceStatusPresentation(instance).tone}`}>
+                        {getInstanceStatusPresentation(instance).label}
                       </span>
                     </div>
                     <div className="integration-instance-card__plugin">
-                      <span className="integration-instance-card__plugin-label">插件</span>
+                      <span className="integration-instance-card__plugin-label">{page('settings.integrations.instance.pluginLabel')}</span>
                       <span className="integration-instance-card__plugin-name">{instance.plugin_id}</span>
                     </div>
                     <div className="integration-instance-card__meta">
@@ -530,8 +746,8 @@ function SettingsIntegrationsContent() {
                   <div className="integration-detail-panel__header">
                     <div className="integration-detail-panel__title-row">
                       <h4 className="integration-detail-panel__title">{selectedInstance.display_name}</h4>
-                      <span className={`badge badge--${selectedInstance.status === 'degraded' ? 'warning' : 'success'}`}>
-                        {formatStatus(selectedInstance)}
+                      <span className={`badge badge--${getInstanceStatusPresentation(selectedInstance).tone}`}>
+                        {getInstanceStatusPresentation(selectedInstance).label}
                       </span>
                     </div>
                     <div className="integration-detail-panel__subtitle">
@@ -560,12 +776,19 @@ function SettingsIntegrationsContent() {
                     </div>
                   ) : null}
 
+                  {syncActionDisabled ? (
+                    <div className="settings-note settings-note--warning">
+                      {syncActionDisabledReason}
+                    </div>
+                  ) : null}
+
                   <div className="integration-detail-panel__actions">
                     <button
                       className="btn btn--primary btn--sm"
                       type="button"
                       onClick={() => void handleOpenSyncAllConfirm()}
-                      disabled={submitting || syncAllLoading || selectedInstance.config_state !== 'configured'}
+                      disabled={submitting || syncAllLoading || syncActionDisabled}
+                      title={syncActionDisabled ? syncActionDisabledReason : undefined}
                     >
                       {page('settings.integrations.action.syncAllEntities')}
                     </button>
@@ -573,7 +796,8 @@ function SettingsIntegrationsContent() {
                       className="btn btn--outline btn--sm"
                       type="button"
                       onClick={() => void handleOpenPicker()}
-                      disabled={submitting || selectedInstance.config_state !== 'configured'}
+                      disabled={submitting || syncActionDisabled}
+                      title={syncActionDisabled ? syncActionDisabledReason : undefined}
                     >
                       {page('settings.integrations.action.syncSelectedEntities')}
                     </button>
@@ -761,7 +985,20 @@ function SettingsIntegrationsContent() {
                   <button className="btn btn--outline btn--sm" type="button" onClick={closeCreateModal} disabled={submitting}>
                     {page('settings.integrations.action.cancel')}
                   </button>
-                  <button className="btn btn--primary btn--sm" type="submit" disabled={submitting}>
+                  <button
+                    className="btn btn--primary btn--sm"
+                    type="submit"
+                    disabled={
+                      submitting
+                      || (
+                        selectedCatalogItem.plugin_id === OPEN_XIAOAI_PLUGIN_ID
+                        && (
+                          openXiaoaiGatewayCandidates.length === 0
+                          || (openXiaoaiGatewayCandidates.length > 1 && !selectedGatewayCandidate)
+                        )
+                      )
+                    }
+                  >
                     {submitting ? page('settings.integrations.action.saving') : page('settings.integrations.modal.create.submit')}
                   </button>
                 </div>

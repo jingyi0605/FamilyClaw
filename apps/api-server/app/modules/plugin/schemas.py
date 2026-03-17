@@ -16,6 +16,8 @@ PluginManifestType = Literal[
     "channel",
     "locale-pack",
     "region-provider",
+    "theme-pack",
+    "ai-provider",
 ]
 RiskLevel = Literal["low", "medium", "high"]
 PluginSourceType = Literal["builtin", "official", "third_party"]
@@ -60,6 +62,7 @@ ENTRYPOINT_KEY_BY_TYPE: dict[PluginType, str] = {
     "channel": "channel",
     "region-provider": "region_provider",
 }
+NON_EXECUTABLE_PLUGIN_TYPES = {"locale-pack", "theme-pack", "ai-provider"}
 
 
 def _normalize_text_list(values: list[str], *, field_name: str) -> list[str]:
@@ -122,6 +125,57 @@ class PluginManifestRegionProviderSpec(BaseModel):
     @classmethod
     def validate_country_codes(cls, value: list[str]) -> list[str]:
         return _normalize_text_list(value, field_name="country_codes")
+
+
+class PluginManifestThemePackSpec(BaseModel):
+    theme_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+    tokens_resource: str = Field(min_length=1, max_length=255)
+    preview: dict[str, Any] = Field(default_factory=dict)
+    fallback_theme_id: str | None = Field(default=None, max_length=64)
+
+    @field_validator("theme_id", "display_name", "tokens_resource", "fallback_theme_id")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空字符串")
+        return normalized
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("description 不能为空字符串")
+        return normalized
+
+
+class PluginManifestAiProviderSpec(BaseModel):
+    adapter_code: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(min_length=1, max_length=100)
+    field_schema: list[dict[str, Any]] = Field(default_factory=list)
+    supported_model_types: list[str] = Field(default_factory=list)
+    llm_workflow: str = Field(min_length=1, max_length=100)
+    runtime_capability: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("adapter_code", "display_name", "llm_workflow")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空字符串")
+        return normalized
+
+    @field_validator("supported_model_types")
+    @classmethod
+    def validate_supported_model_types(cls, value: list[str]) -> list[str]:
+        return _normalize_text_list(value, field_name="supported_model_types")
 
 
 class PluginManifestChannelConfigField(BaseModel):
@@ -225,6 +279,8 @@ class PluginManifestCapabilities(BaseModel):
     context_reads: PluginManifestContextReads = Field(default_factory=PluginManifestContextReads)
     channel: PluginManifestChannelSpec | None = None
     region_provider: PluginManifestRegionProviderSpec | None = None
+    theme_pack: PluginManifestThemePackSpec | None = None
+    ai_provider: PluginManifestAiProviderSpec | None = None
 
 
 class PluginManifestDashboardCardSpec(BaseModel):
@@ -681,6 +737,7 @@ class PluginManifest(BaseModel):
     config_specs: list[PluginManifestConfigSpec] = Field(default_factory=list)
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
     schedule_templates: list[PluginManifestScheduleTemplate] = Field(default_factory=list)
+    compatibility: dict[str, Any] | None = None
 
     @field_validator("id")
     @classmethod
@@ -688,9 +745,9 @@ class PluginManifest(BaseModel):
         normalized = value.strip()
         if not normalized:
             raise ValueError("id 不能为空")
-        allowed = set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        allowed = set("abcdefghijklmnopqrstuvwxyz0123456789-.")
         if any(char not in allowed for char in normalized):
-            raise ValueError("id 只能包含小写字母、数字和连字符")
+            raise ValueError("id 只能包含小写字母、数字、点号和连字符")
         return normalized
 
     @field_validator("name", "version")
@@ -773,7 +830,7 @@ class PluginManifest(BaseModel):
     def validate_required_entrypoints(self) -> "PluginManifest":
         missing_keys: list[str] = []
         for plugin_type in self.types:
-            if plugin_type == "locale-pack":
+            if plugin_type in NON_EXECUTABLE_PLUGIN_TYPES:
                 continue
             entrypoint_key = ENTRYPOINT_KEY_BY_TYPE[plugin_type]
             if getattr(self.entrypoints, entrypoint_key) is None:
@@ -790,6 +847,8 @@ class PluginManifest(BaseModel):
         self._validate_channel_capability()
         self._validate_config_specs()
         self._validate_region_provider_capability()
+        self._validate_theme_pack_capability()
+        self._validate_ai_provider_capability()
         return self
 
     def _validate_channel_capability(self) -> None:
@@ -837,6 +896,30 @@ class PluginManifest(BaseModel):
             raise ValueError("地区 provider 运行时至少要声明一个 country_code")
         if self.entrypoints.region_provider != spec.entrypoint:
             raise ValueError("entrypoints.region_provider 必须和 capabilities.region_provider.entrypoint 一致")
+
+    def _validate_theme_pack_capability(self) -> None:
+        spec = self.capabilities.theme_pack
+        if spec is None:
+            if "theme-pack" in self.types:
+                raise ValueError("theme-pack 插件必须声明 capabilities.theme_pack")
+            return
+
+        if "theme-pack" not in self.types:
+            raise ValueError("声明 capabilities.theme_pack 时，types 必须包含 theme-pack")
+
+    def _validate_ai_provider_capability(self) -> None:
+        spec = self.capabilities.ai_provider
+        if spec is None:
+            if "ai-provider" in self.types:
+                raise ValueError("ai-provider 插件必须声明 capabilities.ai_provider")
+            return
+
+        if "ai-provider" not in self.types:
+            raise ValueError("声明 capabilities.ai_provider 时，types 必须包含 ai-provider")
+        if not spec.field_schema:
+            raise ValueError("ai-provider 插件至少要声明一个 field_schema 字段")
+        if not spec.supported_model_types:
+            raise ValueError("ai-provider 插件至少要声明一个 supported_model_type")
 
     def _validate_config_specs(self) -> None:
         if not self.config_specs:
@@ -946,6 +1029,9 @@ class PluginRegistryItem(BaseModel):
     id: str
     name: str
     version: str
+    installed_version: str | None = None
+    compatibility: dict[str, Any] | None = None
+    update_state: str | None = None
     types: list[PluginManifestType]
     permissions: list[str]
     risk_level: RiskLevel
@@ -964,6 +1050,9 @@ class PluginRegistryItem(BaseModel):
     source_type: PluginSourceType = "builtin"
     execution_backend: PluginExecutionBackend | None = None
     runner_config: PluginRunnerConfig | None = None
+    install_status: str | None = None
+    config_status: PluginConfigState | None = None
+    marketplace_instance_id: str | None = None
 
 
 class PluginRegistrySnapshot(BaseModel):

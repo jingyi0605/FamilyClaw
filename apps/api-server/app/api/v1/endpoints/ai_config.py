@@ -58,6 +58,7 @@ from app.modules.ai_gateway.service import (
     AiGatewayConfigurationError,
     AiGatewayNotFoundError,
     create_provider_profile,
+    list_provider_adapters_for_household,
     delete_provider_profile,
     list_capability_routes,
     list_provider_profiles,
@@ -108,6 +109,16 @@ def list_ai_provider_adapters_endpoint(
     return list_provider_adapters()
 
 
+@router.get("/{household_id}/provider-adapters", response_model=list[AiProviderAdapterRead])
+def list_household_ai_provider_adapters_endpoint(
+    household_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> list[AiProviderAdapterRead]:
+    ensure_actor_can_access_household(actor, household_id)
+    return list_provider_adapters_for_household(db, household_id=household_id)
+
+
 @router.get("/{household_id}/provider-profiles", response_model=list[AiProviderProfileRead])
 def list_ai_config_provider_profiles_endpoint(
     household_id: str,
@@ -117,7 +128,7 @@ def list_ai_config_provider_profiles_endpoint(
     _actor: ActorContext = Depends(require_admin_actor),
 ) -> list[AiProviderProfileRead]:
     ensure_actor_can_access_household(_actor, household_id)
-    return list_provider_profiles(db, enabled=enabled, capability=capability)
+    return list_provider_profiles(db, household_id=household_id, enabled=enabled, capability=capability)
 
 
 @router.post("/{household_id}/provider-profiles", response_model=AiProviderProfileRead, status_code=status.HTTP_201_CREATED)
@@ -129,7 +140,7 @@ def create_ai_config_provider_profile_endpoint(
 ) -> AiProviderProfileRead:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        result = create_provider_profile(db, payload)
+        result = create_provider_profile(db, payload, household_id=household_id)
         write_audit_log(
             db,
             household_id=household_id,
@@ -145,6 +156,9 @@ def create_ai_config_provider_profile_endpoint(
     except AiGatewayConfigurationError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
@@ -160,7 +174,7 @@ def update_ai_config_provider_profile_endpoint(
 ) -> AiProviderProfileRead:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        result = update_provider_profile(db, profile_id, payload)
+        result = update_provider_profile(db, profile_id, payload, household_id=household_id)
         write_audit_log(
             db,
             household_id=household_id,
@@ -179,6 +193,9 @@ def update_ai_config_provider_profile_endpoint(
     except AiGatewayConfigurationError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
@@ -259,6 +276,9 @@ def upsert_ai_config_provider_route_endpoint(
     except AiGatewayConfigurationError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc
