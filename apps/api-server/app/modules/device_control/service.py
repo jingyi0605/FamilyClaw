@@ -199,7 +199,7 @@ def _translate_execution_failure(error_code: str | None, error_message: str | No
         status_code = 409
     elif normalized_error_code == "platform_unreachable":
         status_code = 503
-        message = "device is offline"
+        message = "device platform is unreachable"
     elif normalized_error_code == "plugin_type_not_supported":
         status_code = 400
     elif normalized_error_code == "plugin_execution_timeout":

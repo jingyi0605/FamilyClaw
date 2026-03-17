@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import cast
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
@@ -559,7 +560,7 @@ def _run_fast_action_lane(
         return _attach_lane_selection(
             ConversationOrchestratorResult(
                 intent=ConversationIntent.FAST_ACTION,
-                text=f"我知道你想立刻控制设备，但这次执行失败了：{exc}",
+                text=_build_fast_action_failure_reply(exc),
                 degraded=False,
                 facts=[],
                 suggestions=["换个更明确的说法", "稍后再试一次"],
@@ -635,7 +636,7 @@ async def _arun_fast_action_lane(
         return _attach_lane_selection(
             ConversationOrchestratorResult(
                 intent=ConversationIntent.FAST_ACTION,
-                text=f"我知道你想立刻控制设备，但这次执行失败了：{exc}",
+                text=_build_fast_action_failure_reply(exc),
                 degraded=False,
                 facts=[],
                 suggestions=["换个更明确的说法", "稍后再试一次"],
@@ -1006,6 +1007,33 @@ def _build_fast_action_success_reply(*, device_name: str, action: str) -> str:
         "unlock": "解锁",
     }.get(action, "执行")
     return f"已为你{action_text}{device_name}。"
+
+
+def _build_fast_action_failure_reply(exc: Exception) -> str:
+    return f"我知道你想立刻控制设备，但这次执行失败了：{_extract_fast_action_error_message(exc)}"
+
+
+def _extract_fast_action_error_message(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            error_code = str(detail.get("error_code") or "").strip()
+            raw_detail = str(detail.get("detail") or "").strip()
+            if error_code == "platform_unreachable":
+                return "设备平台暂时不可达，设备本身可能在线，请稍后再试。"
+            mapped_message = {
+                "high_risk_confirmation_required": "这是高风险操作，需要你明确确认后才能执行。",
+                "plugin_disabled": "当前设备控制能力已被禁用，暂时不能执行。",
+                "permission_denied": "你当前没有权限执行这个设备控制。",
+            }.get(error_code)
+            if mapped_message:
+                return mapped_message
+            if raw_detail:
+                return raw_detail
+        elif isinstance(detail, str) and detail.strip():
+            return detail.strip()
+
+    return "系统暂时无法完成这次设备控制，请稍后再试。"
 
 
 def _looks_like_fast_action_request(message: str) -> bool:
