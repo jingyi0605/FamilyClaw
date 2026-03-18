@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-: "${IMAGE_NAME:=ghcr.io/your-org/familyclaw}"
+: "${IMAGE_NAME:=jingyi0605/familyclaw}"
 : "${PLATFORMS:=linux/amd64,linux/arm64}"
 : "${BUILDER_NAME:=familyclaw-builder}"
 : "${PUSH:=1}"

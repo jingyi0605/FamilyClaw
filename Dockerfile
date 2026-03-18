@@ -8,7 +8,7 @@ COPY packages ./packages
 COPY apps/user-app ./apps/user-app
 
 WORKDIR /workspace/apps/user-app
-RUN npm ci && npm run build:h5
+RUN npm ci --legacy-peer-deps && npm run build:h5
 
 
 FROM python:3.11-bookworm AS runtime
