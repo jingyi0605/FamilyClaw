@@ -31,6 +31,7 @@ import type {
   IntegrationInstanceActionRequest,
   IntegrationInstanceCreateRequest,
   IntegrationInstanceListRead,
+  IntegrationInstanceUpdateRequest,
   IntegrationPageViewModel,
   IntegrationResourceListRead,
   MarketplaceCatalogListRead,
@@ -304,7 +305,7 @@ export const settingsApi = {
     householdId: string,
     pluginId: string,
     params: {
-      scope_type: 'plugin' | 'channel_account' | 'device';
+      scope_type: 'plugin' | 'channel_account' | 'device' | 'integration_instance';
       scope_key: string;
     },
   ) {
@@ -320,7 +321,7 @@ export const settingsApi = {
     householdId: string,
     pluginId: string,
     payload: {
-      scope_type: 'plugin' | 'channel_account' | 'device';
+      scope_type: 'plugin' | 'channel_account' | 'device' | 'integration_instance';
       scope_key: string;
       values: Record<string, unknown>;
       clear_secret_fields: string[];
@@ -397,6 +398,17 @@ export const settingsApi = {
     return request<IntegrationInstance>('/integrations/instances', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  },
+  updateIntegrationInstance(instanceId: string, payload: IntegrationInstanceUpdateRequest) {
+    return request<IntegrationInstance>(`/integrations/instances/${encodeURIComponent(instanceId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+  deleteIntegrationInstance(instanceId: string) {
+    return request<void>(`/integrations/instances/${encodeURIComponent(instanceId)}`, {
+      method: 'DELETE',
     });
   },
   executeIntegrationInstanceAction(instanceId: string, payload: IntegrationInstanceActionRequest) {

@@ -745,7 +745,7 @@ def _execute_plugin_managed_sync_action(
                 "database_url": database_url,
             }
         }
-    if plugin.source_type == "builtin":
+    if _should_inject_db_session(plugin):
         system_context = request_payload.setdefault("_system_context", {})
         if isinstance(system_context, dict):
             integration_runtime = system_context.setdefault("integration_runtime", {})
@@ -1083,6 +1083,14 @@ def _render_database_url(url: Any) -> str:
     if hasattr(url, "render_as_string"):
         return url.render_as_string(hide_password=False)
     return str(url)
+
+
+def _should_inject_db_session(plugin: PluginRegistryItem) -> bool:
+    if plugin.execution_backend == "in_process":
+        return True
+    if plugin.execution_backend is not None:
+        return False
+    return plugin.source_type in {"builtin", "official"}
 
 
 def _load_binding_capabilities(raw_value: str | None) -> dict[str, Any]:

@@ -465,7 +465,7 @@ export type PluginManifestType =
   | 'region-provider'
   | 'theme-pack'
   | 'ai-provider';
-export type PluginConfigScopeType = 'plugin' | 'channel_account' | 'device';
+export type PluginConfigScopeType = 'plugin' | 'channel_account' | 'device' | 'integration_instance';
 export type PluginConfigFieldType = 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'enum' | 'multi_enum' | 'secret' | 'json';
 export type PluginConfigWidgetType = 'input' | 'password' | 'textarea' | 'switch' | 'select' | 'multi_select' | 'json_editor';
 export type PluginConfigVisibleOperator = 'equals' | 'not_equals' | 'in' | 'truthy';
@@ -827,6 +827,12 @@ export type IntegrationPageViewModel = {
 export type IntegrationInstanceCreateRequest = {
   household_id: string;
   plugin_id: string;
+  display_name: string;
+  config: Record<string, unknown>;
+  clear_secret_fields: string[];
+};
+
+export type IntegrationInstanceUpdateRequest = {
   display_name: string;
   config: Record<string, unknown>;
   clear_secret_fields: string[];

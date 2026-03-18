@@ -22,7 +22,9 @@ import type {
   IntegrationDiscoveryItem,
   IntegrationInstance,
   IntegrationResource,
+  PluginConfigFormRead,
   PluginManifestConfigField,
+  PluginManifestConfigSpec,
   PluginManifestFieldUiSchema,
 } from '../settingsTypes';
 
@@ -30,10 +32,19 @@ type CreateDraft = {
   displayName: string;
   values: Record<string, unknown>;
   secrets: Record<string, string>;
+  secretFields: Record<string, NonNullable<PluginConfigFormRead['view']['secret_fields'][string]>>;
+  clearSecretFields: Record<string, boolean>;
   fieldErrors: Record<string, string>;
 };
 
 type SyncAllConfirmStep = 'first' | 'second' | null;
+type InstanceFormMode = 'create' | 'edit';
+type InstanceFormContext = {
+  pluginId: string;
+  pluginName: string;
+  description: string | null;
+  configSpec: PluginManifestConfigSpec;
+};
 type OpenXiaoaiGatewayCandidate = {
   gatewayId: string;
   modelSummary: string;
@@ -55,17 +66,38 @@ function getActionOutputSummary<T>(result: IntegrationActionResult): T | null {
   return summary && typeof summary === 'object' ? (summary as T) : null;
 }
 
-function buildDraft(item: IntegrationCatalogItem | null): CreateDraft {
+function buildDraft(
+  configSpec: PluginManifestConfigSpec | null,
+  options?: {
+    displayName?: string;
+    form?: PluginConfigFormRead | null;
+  },
+): CreateDraft {
   const values: Record<string, unknown> = {};
-  for (const field of item?.config_spec?.config_schema.fields ?? []) {
-    if (field.default !== undefined && field.type !== 'secret') {
+  const secretFields: CreateDraft['secretFields'] = {};
+  for (const field of configSpec?.config_schema.fields ?? []) {
+    const formValue = options?.form?.view.values[field.key];
+    if (field.type === 'secret') {
+      const secretField = options?.form?.view.secret_fields[field.key];
+      if (secretField) {
+        secretFields[field.key] = secretField;
+      }
+      continue;
+    }
+    if (formValue !== undefined) {
+      values[field.key] = formValue;
+      continue;
+    }
+    if (field.default !== undefined && field.default !== null) {
       values[field.key] = field.default;
     }
   }
   return {
-    displayName: item?.name ?? '',
+    displayName: options?.displayName ?? '',
     values,
     secrets: {},
+    secretFields,
+    clearSecretFields: {},
     fieldErrors: {},
   };
 }
@@ -81,7 +113,37 @@ function getScalarValue(values: Record<string, unknown>, key: string): string {
   return '';
 }
 
+function isPluginFieldVisible(
+  fieldKey: string,
+  values: Record<string, unknown>,
+  widgets: Record<string, PluginManifestFieldUiSchema> | undefined,
+): boolean {
+  const rules = widgets?.[fieldKey]?.visible_when ?? [];
+  if (rules.length === 0) {
+    return true;
+  }
+  return rules.every((rule) => {
+    const currentValue = values[rule.field];
+    if (rule.operator === 'truthy') {
+      return Boolean(currentValue);
+    }
+    if (rule.operator === 'equals') {
+      return currentValue === rule.value;
+    }
+    if (rule.operator === 'not_equals') {
+      return currentValue !== rule.value;
+    }
+    if (rule.operator === 'in') {
+      return Array.isArray(rule.value) && rule.value.includes(currentValue);
+    }
+    return true;
+  });
+}
+
 function normalizeSubmitValue(field: PluginManifestConfigField, value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
   if (field.type === 'boolean') {
     return value === true;
   }
@@ -89,15 +151,26 @@ function normalizeSubmitValue(field: PluginManifestConfigField, value: unknown):
     if (typeof value === 'number') {
       return value;
     }
-    if (typeof value === 'string' && value.trim()) {
-      const parsed = Number(value.trim());
+    if (typeof value === 'string') {
+      const normalizedValue = value.trim();
+      if (!normalizedValue) {
+        return field.required ? value : undefined;
+      }
+      const parsed = Number(normalizedValue);
       return Number.isFinite(parsed) ? parsed : value;
     }
   }
   if (field.type === 'string' || field.type === 'text' || field.type === 'secret' || field.type === 'enum') {
-    return typeof value === 'string' ? value.trim() : value;
+    if (typeof value !== 'string') {
+      return value;
+    }
+    const normalizedValue = value.trim();
+    if (!normalizedValue) {
+      return field.required ? normalizedValue : undefined;
+    }
+    return normalizedValue;
   }
-  return value;
+  return value ?? undefined;
 }
 
 function buildOpenXiaoaiGatewayCandidates(discoveries: IntegrationDiscoveryItem[]): OpenXiaoaiGatewayCandidate[] {
@@ -173,13 +246,16 @@ function SettingsIntegrationsContent() {
   const [discoveries, setDiscoveries] = useState<IntegrationDiscoveryItem[]>([]);
   const [deviceResources, setDeviceResources] = useState<IntegrationResource[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
-  const [selectedCatalogItem, setSelectedCatalogItem] = useState<IntegrationCatalogItem | null>(null);
+  const [formContext, setFormContext] = useState<InstanceFormContext | null>(null);
+  const [instanceFormMode, setInstanceFormMode] = useState<InstanceFormMode>('create');
+  const [editingInstanceId, setEditingInstanceId] = useState<string | null>(null);
   const [createDraft, setCreateDraft] = useState<CreateDraft>(() => buildDraft(null));
   const [deviceCandidates, setDeviceCandidates] = useState<IntegrationDeviceCandidate[]>([]);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
   const [catalogModalOpen, setCatalogModalOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [deviceModalOpen, setDeviceModalOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<IntegrationInstance | null>(null);
   const [syncedPreviewOpen, setSyncedPreviewOpen] = useState(false);
   const [syncAllConfirmStep, setSyncAllConfirmStep] = useState<SyncAllConfirmStep>(null);
   const [syncAllImpactSummary, setSyncAllImpactSummary] = useState<SyncAllImpactSummary | null>(null);
@@ -291,8 +367,20 @@ function SettingsIntegrationsContent() {
     () => selectedInstance?.allowed_actions.find((item) => item.action === 'sync') ?? null,
     [selectedInstance],
   );
+  const selectedConfigureAction = useMemo(
+    () => selectedInstance?.allowed_actions.find((item) => item.action === 'configure') ?? null,
+    [selectedInstance],
+  );
+  const selectedDeleteAction = useMemo(
+    () => selectedInstance?.allowed_actions.find((item) => item.action === 'delete') ?? null,
+    [selectedInstance],
+  );
   const syncActionDisabled = selectedSyncAction?.disabled ?? true;
   const syncActionDisabledReason = selectedSyncAction?.disabled_reason ?? page('settings.integrations.action.syncUnavailable');
+  const configureActionDisabled = selectedConfigureAction?.disabled ?? false;
+  const configureActionDisabledReason = selectedConfigureAction?.disabled_reason ?? '';
+  const deleteActionDisabled = selectedDeleteAction?.disabled ?? false;
+  const deleteActionDisabledReason = selectedDeleteAction?.disabled_reason ?? '';
 
   function formatOpenXiaoaiGatewaySummary(candidate: OpenXiaoaiGatewayCandidate) {
     return page('settings.integrations.modal.create.gateway.summary', {
@@ -303,15 +391,64 @@ function SettingsIntegrationsContent() {
   }
 
   function openCreateModal(item: IntegrationCatalogItem) {
-    setSelectedCatalogItem(item);
-    setCreateDraft(buildDraft(item));
+    if (!item.config_spec) {
+      return;
+    }
+    setInstanceFormMode('create');
+    setEditingInstanceId(null);
+    setFormContext({
+      pluginId: item.plugin_id,
+      pluginName: item.name,
+      description: item.description ?? null,
+      configSpec: item.config_spec,
+    });
+    setCreateDraft(buildDraft(item.config_spec, { displayName: item.name }));
     setCatalogModalOpen(false);
     setCreateModalOpen(true);
   }
 
+  async function openEditModal(instance: IntegrationInstance) {
+    if (!currentHouseholdId) {
+      setError(page('settings.integrations.error.selectHousehold'));
+      return;
+    }
+    if (instanceFormMode === 'edit' && !editingInstanceId) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const configForm = await settingsApi.getHouseholdPluginConfigForm(currentHouseholdId, instance.plugin_id, {
+        scope_type: 'integration_instance',
+        scope_key: instance.id,
+      });
+      const catalogItem = catalog.find((item) => item.plugin_id === instance.plugin_id) ?? null;
+      setInstanceFormMode('edit');
+      setEditingInstanceId(instance.id);
+      setFormContext({
+        pluginId: instance.plugin_id,
+        pluginName: catalogItem?.name ?? instance.plugin_id,
+        description: catalogItem?.description ?? instance.description ?? null,
+        configSpec: configForm.config_spec,
+      });
+      setCreateDraft(buildDraft(configForm.config_spec, {
+        displayName: instance.display_name,
+        form: configForm,
+      }));
+      setCreateModalOpen(true);
+      setError('');
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : page('settings.integrations.error.loadIntegrationFormFailed'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function closeCreateModal() {
     setCreateModalOpen(false);
-    setSelectedCatalogItem(null);
+    setFormContext(null);
+    setEditingInstanceId(null);
+    setInstanceFormMode('create');
     setCreateDraft(buildDraft(null));
   }
 
@@ -327,21 +464,44 @@ function SettingsIntegrationsContent() {
     setCreateDraft((current) => ({
       ...current,
       secrets: { ...current.secrets, [fieldKey]: value },
+      clearSecretFields: value.trim()
+        ? { ...current.clearSecretFields, [fieldKey]: false }
+        : current.clearSecretFields,
+      fieldErrors: { ...current.fieldErrors, [fieldKey]: '' },
+    }));
+  }
+
+  function toggleClearSecret(fieldKey: string, checked: boolean) {
+    setCreateDraft((current) => ({
+      ...current,
+      secrets: checked
+        ? { ...current.secrets, [fieldKey]: '' }
+        : current.secrets,
+      clearSecretFields: { ...current.clearSecretFields, [fieldKey]: checked },
       fieldErrors: { ...current.fieldErrors, [fieldKey]: '' },
     }));
   }
 
   function renderField(field: PluginManifestConfigField, widget?: PluginManifestFieldUiSchema) {
     const fieldError = createDraft.fieldErrors[field.key];
-    if (selectedCatalogItem?.plugin_id === OPEN_XIAOAI_PLUGIN_ID && field.key === OPEN_XIAOAI_GATEWAY_FIELD_KEY) {
+    if (formContext?.pluginId === OPEN_XIAOAI_PLUGIN_ID && field.key === OPEN_XIAOAI_GATEWAY_FIELD_KEY) {
       return (
         <div key={field.key} className="form-group">
           <label>{page('settings.integrations.modal.create.gateway.label')}</label>
           {openXiaoaiGatewayCandidates.length === 0 ? (
-            <>
-              <div className="form-help">{page('settings.integrations.modal.create.gateway.empty')}</div>
-              <div className="form-help">{page('settings.integrations.modal.create.gateway.emptyHint')}</div>
-            </>
+            selectedGatewayId ? (
+              <>
+                <div className="integration-status__detail">
+                  {page('settings.integrations.modal.create.gateway.currentBound', { gateway: selectedGatewayId })}
+                </div>
+                <div className="form-help">{page('settings.integrations.modal.create.gateway.currentBoundHint')}</div>
+              </>
+            ) : (
+              <>
+                <div className="form-help">{page('settings.integrations.modal.create.gateway.empty')}</div>
+                <div className="form-help">{page('settings.integrations.modal.create.gateway.emptyHint')}</div>
+              </>
+            )
           ) : openXiaoaiGatewayCandidates.length === 1 ? (
             <>
               <div className="integration-status__detail">
@@ -385,6 +545,8 @@ function SettingsIntegrationsContent() {
       );
     }
     if (field.type === 'secret') {
+      const secretField = createDraft.secretFields[field.key];
+      const keepExisting = Boolean(secretField?.has_value) && !createDraft.secrets[field.key]?.trim() && !createDraft.clearSecretFields[field.key];
       return (
         <div key={field.key} className="form-group">
           <label>{field.label}</label>
@@ -393,9 +555,32 @@ function SettingsIntegrationsContent() {
             type="password"
             value={createDraft.secrets[field.key] ?? ''}
             onChange={(event) => updateSecret(field.key, event.target.value)}
-            placeholder={widget?.placeholder ?? undefined}
+            placeholder={secretField?.has_value
+              ? page('settings.integrations.modal.instance.secret.replacePlaceholder')
+              : (widget?.placeholder ?? undefined)}
           />
+          {secretField?.has_value ? (
+            <label className="form-help" style={{ display: 'block' }}>
+              <input
+                type="checkbox"
+                checked={Boolean(createDraft.clearSecretFields[field.key])}
+                onChange={(event) => toggleClearSecret(field.key, event.target.checked)}
+                disabled={Boolean(createDraft.secrets[field.key]?.trim())}
+              />
+              {' '}
+              {page('settings.integrations.modal.instance.secret.clearToggle', {
+                masked: secretField.masked ?? '******',
+              })}
+            </label>
+          ) : null}
           <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+          {keepExisting ? (
+            <div className="form-help">
+              {page('settings.integrations.modal.instance.secret.keepHint', {
+                masked: secretField?.masked ?? '******',
+              })}
+            </div>
+          ) : null}
           {fieldError ? <div className="form-help">{fieldError}</div> : null}
         </div>
       );
@@ -467,9 +652,9 @@ function SettingsIntegrationsContent() {
     );
   }
 
-  async function handleCreateInstance(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmitInstance(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!currentHouseholdId || !selectedCatalogItem?.config_spec) {
+    if (!currentHouseholdId || !formContext) {
       return;
     }
     if (!createDraft.displayName.trim()) {
@@ -482,7 +667,7 @@ function SettingsIntegrationsContent() {
       }));
       return;
     }
-    if (selectedCatalogItem.plugin_id === OPEN_XIAOAI_PLUGIN_ID) {
+    if (instanceFormMode === 'create' && formContext.pluginId === OPEN_XIAOAI_PLUGIN_ID) {
       if (openXiaoaiGatewayCandidates.length === 0) {
         setCreateDraft((current) => ({
           ...current,
@@ -506,29 +691,53 @@ function SettingsIntegrationsContent() {
     }
 
     const payloadValues: Record<string, unknown> = {};
-    for (const field of selectedCatalogItem.config_spec.config_schema.fields) {
-      const rawValue = field.type === 'secret'
-        ? (createDraft.secrets[field.key] ?? '')
-        : createDraft.values[field.key];
-      if (field.type === 'secret' && typeof rawValue === 'string' && !rawValue.trim()) {
+    const clearSecretFields: string[] = [];
+    for (const field of formContext.configSpec.config_schema.fields) {
+      if (!isPluginFieldVisible(field.key, createDraft.values, formContext.configSpec.ui_schema.widgets)) {
         continue;
       }
+      if (field.type === 'secret') {
+        const rawSecret = createDraft.secrets[field.key] ?? '';
+        if (rawSecret.trim()) {
+          payloadValues[field.key] = normalizeSubmitValue(field, rawSecret);
+          continue;
+        }
+        if (createDraft.clearSecretFields[field.key]) {
+          clearSecretFields.push(field.key);
+        }
+        continue;
+      }
+      const rawValue = createDraft.values[field.key];
       if (rawValue === undefined) {
         continue;
       }
-      payloadValues[field.key] = normalizeSubmitValue(field, rawValue);
+      const normalizedValue = normalizeSubmitValue(field, rawValue);
+      if (normalizedValue === undefined) {
+        continue;
+      }
+      payloadValues[field.key] = normalizedValue;
     }
 
     setSubmitting(true);
     try {
-      const instance = await settingsApi.createIntegrationInstance({
-        household_id: currentHouseholdId,
-        plugin_id: selectedCatalogItem.plugin_id,
+      const payload = {
         display_name: createDraft.displayName.trim(),
         config: payloadValues,
-        clear_secret_fields: [],
-      });
-      setStatus(page('settings.integrations.status.instanceCreated', { name: instance.display_name }));
+        clear_secret_fields: clearSecretFields,
+      };
+      const instance = instanceFormMode === 'create'
+        ? await settingsApi.createIntegrationInstance({
+          household_id: currentHouseholdId,
+          plugin_id: formContext.pluginId,
+          ...payload,
+        })
+        : await settingsApi.updateIntegrationInstance(editingInstanceId ?? '', payload);
+      setStatus(page(
+        instanceFormMode === 'create'
+          ? 'settings.integrations.status.instanceCreated'
+          : 'settings.integrations.status.instanceUpdated',
+        { name: instance.display_name },
+      ));
       closeCreateModal();
       await reload(currentHouseholdId, instance.id);
     } catch (submitError) {
@@ -551,11 +760,14 @@ function SettingsIntegrationsContent() {
   }
 
   useEffect(() => {
-    if (selectedCatalogItem?.plugin_id !== OPEN_XIAOAI_PLUGIN_ID) {
+    if (formContext?.pluginId !== OPEN_XIAOAI_PLUGIN_ID) {
       return;
     }
     setCreateDraft((current) => {
       const currentGatewayId = getScalarValue(current.values, OPEN_XIAOAI_GATEWAY_FIELD_KEY).trim();
+      if (instanceFormMode === 'edit' && currentGatewayId) {
+        return current;
+      }
       if (openXiaoaiGatewayCandidates.length === 1) {
         const onlyCandidate = openXiaoaiGatewayCandidates[0];
         if (currentGatewayId === onlyCandidate.gatewayId && !current.fieldErrors.gateway_id) {
@@ -581,7 +793,7 @@ function SettingsIntegrationsContent() {
         fieldErrors: { ...current.fieldErrors, gateway_id: '' },
       };
     });
-  }, [openXiaoaiGatewayCandidates, selectedCatalogItem?.plugin_id]);
+  }, [formContext?.pluginId, instanceFormMode, openXiaoaiGatewayCandidates]);
 
   async function handleOpenSyncAllConfirm() {
     if (!selectedInstance || syncActionDisabled) {
@@ -680,6 +892,25 @@ function SettingsIntegrationsContent() {
       await reload(currentHouseholdId ?? '', selectedInstance.id);
     } catch (syncError) {
       setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.actionFailed'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDeleteInstance() {
+    if (!currentHouseholdId || !deleteTarget) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const deletedInstanceId = deleteTarget.id;
+      const deletedInstanceName = deleteTarget.display_name;
+      await settingsApi.deleteIntegrationInstance(deletedInstanceId);
+      setDeleteTarget(null);
+      setStatus(page('settings.integrations.status.instanceDeleted', { name: deletedInstanceName }));
+      await reload(currentHouseholdId, selectedInstanceId === deletedInstanceId ? null : selectedInstanceId);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : page('settings.integrations.error.deleteInstanceFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -784,6 +1015,15 @@ function SettingsIntegrationsContent() {
 
                   <div className="integration-detail-panel__actions">
                     <button
+                      className="btn btn--outline btn--sm"
+                      type="button"
+                      onClick={() => void openEditModal(selectedInstance)}
+                      disabled={submitting || configureActionDisabled}
+                      title={configureActionDisabled ? configureActionDisabledReason : undefined}
+                    >
+                      {page('settings.integrations.action.editInstance')}
+                    </button>
+                    <button
                       className="btn btn--primary btn--sm"
                       type="button"
                       onClick={() => void handleOpenSyncAllConfirm()}
@@ -807,6 +1047,15 @@ function SettingsIntegrationsContent() {
                       onClick={() => setSyncedPreviewOpen(true)}
                     >
                       {page('settings.integrations.action.viewSyncedDevices')}
+                    </button>
+                    <button
+                      className="btn btn--danger btn--sm"
+                      type="button"
+                      onClick={() => setDeleteTarget(selectedInstance)}
+                      disabled={submitting || deleteActionDisabled}
+                      title={deleteActionDisabled ? deleteActionDisabledReason : undefined}
+                    >
+                      {page('settings.integrations.action.deleteInstance')}
                     </button>
                   </div>
                 </div>
@@ -883,6 +1132,42 @@ function SettingsIntegrationsContent() {
           </div>
         ) : null}
 
+        {deleteTarget ? (
+          <div className="member-modal-overlay" onClick={() => setDeleteTarget(null)}>
+            <div className="member-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="member-modal__header">
+                <div>
+                  <h3>{page('settings.integrations.modal.delete.title')}</h3>
+                  <p>{page('settings.integrations.modal.delete.desc', { name: deleteTarget.display_name })}</p>
+                </div>
+              </div>
+              <Card>
+                <div className="integration-status__detail">
+                  {page('settings.integrations.modal.delete.deviceHint')}
+                </div>
+              </Card>
+              <div className="member-modal__actions">
+                <button
+                  className="btn btn--outline btn--sm"
+                  type="button"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={submitting}
+                >
+                  {page('settings.integrations.action.cancel')}
+                </button>
+                <button
+                  className="btn btn--danger btn--sm"
+                  type="button"
+                  onClick={() => void handleDeleteInstance()}
+                  disabled={submitting}
+                >
+                  {submitting ? page('settings.integrations.action.deleting') : page('settings.integrations.modal.delete.confirm')}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {catalogModalOpen ? (
           <div className="member-modal-overlay" onClick={() => setCatalogModalOpen(false)}>
             <div className="member-modal integration-catalog-modal" onClick={(event) => event.stopPropagation()}>
@@ -942,18 +1227,27 @@ function SettingsIntegrationsContent() {
           </div>
         ) : null}
 
-        {createModalOpen && selectedCatalogItem?.config_spec ? (
+        {createModalOpen && formContext ? (
           <div className="member-modal-overlay" onClick={closeCreateModal}>
             <div className="member-modal" onClick={(event) => event.stopPropagation()}>
               <div className="member-modal__header">
                 <div>
-                  <h3>{page('settings.integrations.modal.create.title', { plugin: selectedCatalogItem.name })}</h3>
-                  <p>{selectedCatalogItem.config_spec.description || page('settings.integrations.modal.create.desc')}</p>
+                  <h3>{page(
+                    instanceFormMode === 'create'
+                      ? 'settings.integrations.modal.create.title'
+                      : 'settings.integrations.modal.edit.title',
+                    { plugin: formContext.pluginName },
+                  )}</h3>
+                  <p>{formContext.configSpec.description || page(
+                    instanceFormMode === 'create'
+                      ? 'settings.integrations.modal.create.desc'
+                      : 'settings.integrations.modal.edit.desc',
+                  )}</p>
                 </div>
               </div>
-              <form className="settings-form integration-config-form" onSubmit={handleCreateInstance}>
+              <form className="settings-form integration-config-form" onSubmit={handleSubmitInstance}>
                 <div className="form-group">
-                  <label>{page('settings.integrations.modal.create.displayName')}</label>
+                  <label>{page('settings.integrations.modal.instance.displayName')}</label>
                   <input
                     className="form-input"
                     value={createDraft.displayName}
@@ -962,22 +1256,25 @@ function SettingsIntegrationsContent() {
                       displayName: event.target.value,
                       fieldErrors: { ...current.fieldErrors, display_name: '' },
                     }))}
-                    placeholder={page('settings.integrations.modal.create.displayNamePlaceholder')}
+                    placeholder={page('settings.integrations.modal.instance.displayNamePlaceholder')}
                   />
                   {createDraft.fieldErrors.display_name ? <div className="form-help">{createDraft.fieldErrors.display_name}</div> : null}
                 </div>
-                {selectedCatalogItem.config_spec.ui_schema.sections.map((section) => (
+                {formContext.configSpec.ui_schema.sections.map((section) => (
                   <div key={section.id}>
                     <div className="form-group">
                       <label>{section.title}</label>
                       {section.description ? <div className="form-help">{section.description}</div> : null}
                     </div>
                     {section.fields.map((fieldKey) => {
-                      const field = selectedCatalogItem.config_spec?.config_schema.fields.find((item) => item.key === fieldKey);
+                      const field = formContext.configSpec.config_schema.fields.find((item) => item.key === fieldKey);
                       if (!field) {
                         return null;
                       }
-                      return renderField(field, selectedCatalogItem.config_spec?.ui_schema.widgets?.[field.key]);
+                      if (!isPluginFieldVisible(field.key, createDraft.values, formContext.configSpec.ui_schema.widgets)) {
+                        return null;
+                      }
+                      return renderField(field, formContext.configSpec.ui_schema.widgets?.[field.key]);
                     })}
                   </div>
                 ))}
@@ -991,7 +1288,8 @@ function SettingsIntegrationsContent() {
                     disabled={
                       submitting
                       || (
-                        selectedCatalogItem.plugin_id === OPEN_XIAOAI_PLUGIN_ID
+                        instanceFormMode === 'create'
+                        && formContext.pluginId === OPEN_XIAOAI_PLUGIN_ID
                         && (
                           openXiaoaiGatewayCandidates.length === 0
                           || (openXiaoaiGatewayCandidates.length > 1 && !selectedGatewayCandidate)
@@ -999,7 +1297,13 @@ function SettingsIntegrationsContent() {
                       )
                     }
                   >
-                    {submitting ? page('settings.integrations.action.saving') : page('settings.integrations.modal.create.submit')}
+                    {submitting
+                      ? page('settings.integrations.action.saving')
+                      : page(
+                        instanceFormMode === 'create'
+                          ? 'settings.integrations.modal.create.submit'
+                          : 'settings.integrations.modal.edit.submit',
+                      )}
                   </button>
                 </div>
               </form>

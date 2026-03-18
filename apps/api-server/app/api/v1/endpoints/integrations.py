@@ -18,17 +18,21 @@ from app.modules.integration import (
     IntegrationInstanceCreateRequest,
     IntegrationInstanceListRead,
     IntegrationInstanceRead,
+    IntegrationInstanceUpdateRequest,
     IntegrationPageViewRead,
     IntegrationResourceListRead,
 )
+from app.modules.integration import repository as integration_repository
 from app.modules.integration.discovery_service import upsert_open_xiaoai_discovery
 from app.modules.integration.service import (
     build_integration_page_view,
     create_integration_instance,
+    delete_integration_instance,
     execute_integration_instance_action,
     list_integration_catalog,
     list_integration_instances,
     list_integration_resources,
+    update_integration_instance,
 )
 from app.modules.plugin.service import PluginServiceError
 from app.modules.voice.binding_service import VoiceTerminalBindingSnapshot
@@ -200,6 +204,55 @@ def create_integration_instance_endpoint(
         result = create_integration_instance(db, payload=payload, updated_by=actor.actor_id)
         db.commit()
         return result
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.put("/instances/{instance_id}", response_model=IntegrationInstanceRead)
+def update_integration_instance_endpoint(
+    instance_id: str,
+    payload: IntegrationInstanceUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> IntegrationInstanceRead:
+    instance = integration_repository.get_integration_instance(db, instance_id)
+    if instance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="integration instance not found")
+    ensure_actor_can_access_household(actor, instance.household_id)
+    try:
+        result = update_integration_instance(
+            db,
+            instance_id=instance_id,
+            payload=payload,
+            updated_by=actor.actor_id,
+        )
+        db.commit()
+        return result
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.delete("/instances/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_integration_instance_endpoint(
+    instance_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> None:
+    instance = integration_repository.get_integration_instance(db, instance_id)
+    if instance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="integration instance not found")
+    ensure_actor_can_access_household(actor, instance.household_id)
+    try:
+        delete_integration_instance(db, instance_id=instance_id)
+        db.commit()
     except PluginServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
