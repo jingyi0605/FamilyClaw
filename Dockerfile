@@ -17,7 +17,7 @@ RUN npm ci --legacy-peer-deps && npm run build:h5
 
 
 # Python 依赖构建阶段
-FROM python:3.11-slim AS python-builder
+FROM python:3.11-slim-bookworm AS python-builder
 
 WORKDIR /build
 
@@ -41,7 +41,7 @@ RUN pip install --upgrade pip \
 
 
 # 运行时镜像
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim-bookworm AS runtime
 
 ARG APP_VERSION=0.1.0
 ARG BUILD_CHANNEL=development
