@@ -16,7 +16,32 @@ WORKDIR /workspace/apps/user-app
 RUN npm ci --legacy-peer-deps && npm run build:h5
 
 
-FROM python:3.11-bookworm AS runtime
+# Python 依赖构建阶段
+FROM python:3.11-slim AS python-builder
+
+WORKDIR /build
+
+# 安装编译依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建虚拟环境并安装依赖
+COPY apps/api-server /build/apps/api-server
+COPY apps/open-xiaoai-gateway /build/apps/open-xiaoai-gateway
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip install --upgrade pip \
+    && pip install /build/apps/api-server \
+    && pip install /build/apps/open-xiaoai-gateway \
+    && find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
+    && find /opt/venv -type f -name "*.pyc" -delete 2>/dev/null || true
+
+
+# 运行时镜像
+FROM python:3.11-slim AS runtime
 
 ARG APP_VERSION=0.1.0
 ARG BUILD_CHANNEL=development
@@ -35,8 +60,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FAMILYCLAW_GIT_TAG=${GIT_TAG} \
     FAMILYCLAW_RELEASE_URL=${RELEASE_URL} \
     FAMILYCLAW_RELEASE_MANIFEST_PATH=/opt/familyclaw/release-manifest.json \
-    PATH=/usr/lib/postgresql/15/bin:/opt/familyclaw/bin:${PATH}
+    PATH=/opt/venv/bin:/usr/lib/postgresql/15/bin:/opt/familyclaw/bin:${PATH}
 
+# 安装运行时依赖
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
@@ -48,20 +74,25 @@ RUN apt-get update \
         postgresql-client-15 \
         supervisor \
         libsndfile1 \
-    && rm -rf /var/lib/apt/lists/*
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 WORKDIR /opt/familyclaw
 
+# 复制虚拟环境
+COPY --from=python-builder /opt/venv /opt/venv
+
+# 复制应用文件（只复制必要文件）
 COPY VERSION /opt/familyclaw/VERSION
-COPY apps/api-server /opt/familyclaw/apps/api-server
-COPY apps/open-xiaoai-gateway /opt/familyclaw/apps/open-xiaoai-gateway
+COPY apps/api-server/app /opt/familyclaw/apps/api-server/app
+COPY apps/api-server/alembic.ini /opt/familyclaw/apps/api-server/alembic.ini
+COPY apps/api-server/alembic /opt/familyclaw/apps/api-server/alembic
+COPY apps/open-xiaoai-gateway/open_xiaoai_gateway /opt/familyclaw/apps/open-xiaoai-gateway/open_xiaoai_gateway
 COPY docker /opt/familyclaw/docker
 COPY --from=user-app-builder /workspace/apps/user-app/dist /opt/familyclaw/apps/user-app/dist
 
-RUN python -m pip install --upgrade pip \
-    && pip install -e /opt/familyclaw/apps/api-server \
-    && pip install -e /opt/familyclaw/apps/open-xiaoai-gateway \
-    && mkdir -p /opt/familyclaw/bin /data/postgres /data/plugins /data/backups /data/logs /data/runtime /data/voice-runtime-artifacts /var/run/postgresql /var/log/familyclaw /var/log/supervisor \
+RUN mkdir -p /opt/familyclaw/bin /data/postgres /data/plugins /data/backups /data/logs /data/runtime /data/voice-runtime-artifacts /var/run/postgresql /var/log/familyclaw /var/log/supervisor \
     && chmod +x /opt/familyclaw/docker/scripts/*.sh \
     && ln -sf /opt/familyclaw/docker/scripts/familyclawctl.sh /opt/familyclaw/bin/familyclawctl \
     && rm -f /etc/nginx/sites-enabled/default \
