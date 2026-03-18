@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     app_name: str = "FamilyClaw API Server"
     app_version: str = "0.1.0"
     environment: str = "development"
+    build_channel: str | None = None
+    build_time: str | None = None
+    git_tag: str | None = None
+    release_url: str | None = None
+    project_repository_url: str | None = None
+    release_manifest_path: str = str((BASE_DIR / "release-manifest.json").resolve())
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
