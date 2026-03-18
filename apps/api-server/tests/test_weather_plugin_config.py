@@ -57,7 +57,7 @@ class WeatherPluginConfigTests(unittest.TestCase):
         self.client.close()
         self._db_helper.close()
 
-    def test_switch_provider_requires_matching_api_key(self) -> None:
+    def test_switch_provider_without_key_can_still_be_saved(self) -> None:
         response = self.client.put(
             f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugins/official-weather/config",
             json={
@@ -68,12 +68,14 @@ class WeatherPluginConfigTests(unittest.TestCase):
                 },
             },
         )
-        self.assertEqual(400, response.status_code)
-        payload = response.json()["detail"]
-        self.assertEqual("plugin_config_validation_failed", payload["error_code"])
-        self.assertEqual("切换到 OpenWeather 时必须填写 API Key", payload["field_errors"]["openweather_api_key"])
+        self.assertEqual(200, response.status_code)
+        payload = response.json()
+        self.assertEqual("configured", payload["view"]["state"])
+        self.assertEqual("openweather", payload["view"]["values"]["provider_type"])
+        self.assertFalse(payload["view"]["secret_fields"]["openweather_api_key"]["has_value"])
+        self.assertEqual({}, payload["view"]["field_errors"])
 
-    def test_switch_provider_with_key_can_be_saved(self) -> None:
+    def test_switch_provider_with_key_keeps_secret_masked(self) -> None:
         response = self.client.put(
             f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugins/official-weather/config",
             json={
@@ -90,6 +92,7 @@ class WeatherPluginConfigTests(unittest.TestCase):
         self.assertEqual("configured", payload["view"]["state"])
         self.assertEqual("weatherapi", payload["view"]["values"]["provider_type"])
         self.assertTrue(payload["view"]["secret_fields"]["weatherapi_api_key"]["has_value"])
+        self.assertEqual("******", payload["view"]["secret_fields"]["weatherapi_api_key"]["masked"])
 
 
 if __name__ == "__main__":

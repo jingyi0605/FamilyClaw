@@ -4,15 +4,20 @@ from unittest.mock import patch
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.db.utils import load_json
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin.config_service import save_plugin_config_form
 from app.modules.plugin.schemas import PluginConfigUpdateRequest, PluginStateUpdateRequest
 from app.modules.plugin.service import set_household_plugin_enabled
-from app.modules.weather.models import WeatherDeviceBinding
-from app.modules.weather.schemas import WeatherForecastSummary, WeatherSnapshot
-from app.modules.weather.service import get_weather_device_binding_for_device, refresh_weather_device_binding
+from app.plugins.builtin.official_weather.models import WeatherDeviceBinding
+from app.plugins.builtin.official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
+from app.plugins.builtin.official_weather.service import (
+    get_weather_device_binding_for_device,
+    refresh_weather_device_binding,
+)
 
 
 class _FakeWeatherProvider:
@@ -25,13 +30,36 @@ class _FakeWeatherProvider:
 
 class _TimeoutWeatherProvider:
     def fetch_weather(self, *, coordinate, config):  # noqa: ANN001
-        from app.modules.weather.providers import WeatherProviderError
+        from app.plugins.builtin.official_weather.providers import WeatherProviderError
 
         raise WeatherProviderError(
             "weather_provider_timeout",
             "天气源请求超时。",
             retryable=True,
         )
+
+
+def _build_snapshot(*, source_type: str, updated_at: str, condition_code: str, condition_text: str) -> WeatherSnapshot:
+    return WeatherSnapshot(
+        source_type=source_type,  # type: ignore[arg-type]
+        condition_code=condition_code,
+        condition_text=condition_text,
+        temperature=23.5,
+        humidity=68.0,
+        wind_speed=4.2,
+        wind_direction=95.0,
+        pressure=1010.0,
+        cloud_cover=80.0,
+        precipitation_next_1h=0.0,
+        forecast_6h=WeatherForecastSummary(
+            condition_code="rain",
+            condition_text="小雨",
+            min_temperature=22.0,
+            max_temperature=26.0,
+        ),
+        updated_at=updated_at,
+        is_stale=False,
+    )
 
 
 class WeatherDefaultDeviceTests(unittest.TestCase):
@@ -46,7 +74,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.db.close()
         self._db_helper.close()
 
-    def test_enable_plugin_creates_default_weather_device_and_refreshes(self) -> None:
+    def test_enable_plugin_creates_default_instance_and_weather_device(self) -> None:
         household = create_household(
             self.db,
             HouseholdCreate(name="Weather Home", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
@@ -59,28 +87,17 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.db.add(household)
         self.db.flush()
 
-        snapshot = WeatherSnapshot(
+        snapshot = _build_snapshot(
             source_type="met_norway",
+            updated_at="2026-03-18T03:05:00Z",
             condition_code="cloudy",
             condition_text="多云",
-            temperature=23.5,
-            humidity=68.0,
-            wind_speed=4.2,
-            wind_direction=95.0,
-            pressure=1010.0,
-            cloud_cover=80.0,
-            precipitation_next_1h=0.0,
-            forecast_6h=WeatherForecastSummary(
-                condition_code="rain",
-                condition_text="下雨",
-                min_temperature=22.0,
-                max_temperature=26.0,
-            ),
-            updated_at="2026-03-18T03:05:00Z",
-            is_stale=False,
         )
 
-        with patch("app.modules.weather.service.get_weather_provider", return_value=_FakeWeatherProvider(snapshot)):
+        with patch(
+            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            return_value=_FakeWeatherProvider(snapshot),
+        ):
             set_household_plugin_enabled(
                 self.db,
                 household_id=household.id,
@@ -89,6 +106,15 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
                 updated_by="test-suite",
             )
 
+        instance = self.db.scalar(
+            select(IntegrationInstance).where(
+                IntegrationInstance.household_id == household.id,
+                IntegrationInstance.plugin_id == "official-weather",
+            )
+        )
+        assert instance is not None
+        self.assertEqual("active", instance.status)
+
         row = self.db.scalar(
             select(WeatherDeviceBinding).where(WeatherDeviceBinding.household_id == household.id)
         )
@@ -96,19 +122,26 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.assertEqual("default_household", row.binding_type)
         self.assertEqual("ready", row.state)
         self.assertEqual("2026-03-18T03:05:00Z", row.last_success_at)
+
         device = self.db.get(Device, row.device_id)
         assert device is not None
         self.assertEqual("sensor", device.device_type)
         self.assertEqual("other", device.vendor)
         self.assertEqual("active", device.status)
+
         device_binding = self.db.scalar(select(DeviceBinding).where(DeviceBinding.device_id == device.id))
         assert device_binding is not None
+        self.assertEqual(instance.id, device_binding.integration_instance_id)
         self.assertEqual("weather", device_binding.platform)
         self.assertEqual("official-weather", device_binding.plugin_id)
-        self.assertIn("weather.condition", device_binding.capabilities or "")
-        self.assertIn("weather.temperature", device_binding.capabilities or "")
 
-    def test_enable_plugin_without_coordinate_marks_pending(self) -> None:
+        capabilities = load_json(device_binding.capabilities)
+        assert isinstance(capabilities, dict)
+        self.assertEqual("weather.condition", capabilities["primary_entity_id"])
+        self.assertIn("weather.temperature", capabilities["entity_ids"])
+        self.assertEqual("met_norway", capabilities["metadata"]["provider_type"])
+
+    def test_enable_plugin_without_coordinate_marks_instance_degraded(self) -> None:
         household = create_household(
             self.db,
             HouseholdCreate(name="Pending Weather Home", city="Suzhou", timezone="Asia/Shanghai", locale="zh-CN"),
@@ -123,15 +156,22 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
             updated_by="test-suite",
         )
 
+        instance = self.db.scalar(
+            select(IntegrationInstance).where(
+                IntegrationInstance.household_id == household.id,
+                IntegrationInstance.plugin_id == "official-weather",
+            )
+        )
+        assert instance is not None
+        self.assertEqual("degraded", instance.status)
+        self.assertEqual("weather_coordinate_missing", instance.last_error_code)
+
         row = self.db.scalar(
             select(WeatherDeviceBinding).where(WeatherDeviceBinding.household_id == household.id)
         )
         assert row is not None
         self.assertEqual("pending_coordinate", row.state)
         self.assertEqual("weather_coordinate_missing", row.last_error_code)
-        device = self.db.get(Device, row.device_id)
-        assert device is not None
-        self.assertEqual("inactive", device.status)
 
     def test_refresh_weather_device_uses_cache_and_stale_fallback(self) -> None:
         household = create_household(
@@ -146,28 +186,17 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.db.add(household)
         self.db.flush()
 
-        snapshot = WeatherSnapshot(
+        snapshot = _build_snapshot(
             source_type="met_norway",
+            updated_at="2026-03-18T03:05:00Z",
             condition_code="partlycloudy_day",
             condition_text="局部多云",
-            temperature=21.3,
-            humidity=61.0,
-            wind_speed=3.6,
-            wind_direction=130.0,
-            pressure=1012.4,
-            cloud_cover=12.0,
-            precipitation_next_1h=0.4,
-            forecast_6h=WeatherForecastSummary(
-                condition_code="cloudy",
-                condition_text="多云",
-                min_temperature=21.3,
-                max_temperature=25.1,
-            ),
-            updated_at="2026-03-18T03:05:00Z",
-            is_stale=False,
         )
 
-        with patch("app.modules.weather.service.get_weather_provider", return_value=_FakeWeatherProvider(snapshot)):
+        with patch(
+            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            return_value=_FakeWeatherProvider(snapshot),
+        ):
             set_household_plugin_enabled(
                 self.db,
                 household_id=household.id,
@@ -185,19 +214,25 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         weather_binding = get_weather_device_binding_for_device(self.db, device_id=device.id)
         assert weather_binding is not None
 
-        with patch("app.modules.weather.service.get_weather_provider") as provider_factory:
+        with patch("app.plugins.builtin.official_weather.service.get_weather_provider") as provider_factory:
             refreshed = refresh_weather_device_binding(self.db, weather_binding=weather_binding, force=False)
         self.assertEqual("ready", refreshed.state)
         provider_factory.assert_not_called()
 
-        with patch("app.modules.weather.service.get_weather_provider", return_value=_TimeoutWeatherProvider()):
+        with patch(
+            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            return_value=_TimeoutWeatherProvider(),
+        ):
             refreshed = refresh_weather_device_binding(self.db, weather_binding=weather_binding, force=True)
 
         self.assertEqual("stale", refreshed.state)
         self.assertEqual("weather_provider_timeout", refreshed.last_error_code)
         device_binding = self.db.scalar(select(DeviceBinding).where(DeviceBinding.device_id == device.id))
         assert device_binding is not None
-        self.assertIn("局部多云", device_binding.capabilities or "")
+        capabilities = load_json(device_binding.capabilities)
+        assert isinstance(capabilities, dict)
+        self.assertTrue(capabilities["metadata"]["is_stale"])
+        self.assertEqual("weather_provider_timeout", capabilities["metadata"]["error_code"])
 
     def test_switch_provider_keeps_same_default_device_and_entities(self) -> None:
         household = create_household(
@@ -212,27 +247,12 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.db.add(household)
         self.db.flush()
 
-        initial_snapshot = WeatherSnapshot(
+        initial_snapshot = _build_snapshot(
             source_type="met_norway",
+            updated_at="2026-03-18T03:05:00Z",
             condition_code="cloudy",
             condition_text="多云",
-            temperature=23.5,
-            humidity=68.0,
-            wind_speed=4.2,
-            wind_direction=95.0,
-            pressure=1010.0,
-            cloud_cover=80.0,
-            precipitation_next_1h=0.0,
-            forecast_6h=WeatherForecastSummary(
-                condition_code="rain",
-                condition_text="下雨",
-                min_temperature=22.0,
-                max_temperature=26.0,
-            ),
-            updated_at="2026-03-18T03:05:00Z",
-            is_stale=False,
         )
-
         switched_snapshot = WeatherSnapshot(
             source_type="weatherapi",
             condition_code="weatherapi_1006",
@@ -254,7 +274,10 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
             is_stale=False,
         )
 
-        with patch("app.modules.weather.service.get_weather_provider", return_value=_FakeWeatherProvider(initial_snapshot)):
+        with patch(
+            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            return_value=_FakeWeatherProvider(initial_snapshot),
+        ):
             set_household_plugin_enabled(
                 self.db,
                 household_id=household.id,
@@ -284,7 +307,10 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
             updated_by="test-suite",
         )
 
-        with patch("app.modules.weather.service.get_weather_provider", return_value=_FakeWeatherProvider(switched_snapshot)):
+        with patch(
+            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            return_value=_FakeWeatherProvider(switched_snapshot),
+        ):
             refreshed = refresh_weather_device_binding(self.db, weather_binding=weather_binding, force=True)
 
         self.assertEqual(original_device_id, refreshed.device_id)
@@ -292,8 +318,10 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.assertEqual("2026-03-18T04:00:00Z", refreshed.last_success_at)
         device_binding = self.db.scalar(select(DeviceBinding).where(DeviceBinding.device_id == original_device_id))
         assert device_binding is not None
-        self.assertIn("weather.temperature", device_binding.capabilities or "")
-        self.assertIn("weatherapi", device_binding.capabilities or "")
+        capabilities = load_json(device_binding.capabilities)
+        assert isinstance(capabilities, dict)
+        self.assertEqual("weatherapi", capabilities["metadata"]["provider_type"])
+        self.assertIn("weather.updated_at", capabilities["entity_ids"])
 
 
 if __name__ == "__main__":

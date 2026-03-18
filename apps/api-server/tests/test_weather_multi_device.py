@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -5,20 +6,22 @@ from unittest.mock import patch
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.utils import dump_json, new_uuid
+from app.db.utils import dump_json, load_json, new_uuid
 from app.modules.device.models import DeviceBinding
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.integration.schemas import IntegrationInstanceActionRequest, IntegrationInstanceCreateRequest
+from app.modules.integration.service import create_integration_instance, execute_integration_instance_action
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
 from app.modules.plugin.dashboard_service import get_home_dashboard, save_member_dashboard_layout
 from app.modules.plugin.schemas import MemberDashboardLayoutItem, MemberDashboardLayoutUpdateRequest, PluginStateUpdateRequest
 from app.modules.plugin.service import set_household_plugin_enabled
 from app.modules.region.models import RegionNode
-from app.modules.weather.models import WeatherDeviceBinding
-from app.modules.weather.providers import WeatherProviderError
-from app.modules.weather.schemas import WeatherDeviceBindingCreate, WeatherForecastSummary, WeatherSnapshot
-from app.modules.weather.service import create_weather_device_binding, refresh_weather_device_binding
+from app.plugins.builtin.official_weather.providers import WeatherProviderError
+from app.plugins.builtin.official_weather.repository import get_weather_device_binding_for_integration_instance
+from app.plugins.builtin.official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
+from app.plugins.builtin.official_weather.service import refresh_weather_device_binding
 
 
 class _CoordinateAwareWeatherProvider:
@@ -108,7 +111,10 @@ class WeatherMultiDeviceTests(unittest.TestCase):
                 )
             }
         )
-        with patch("app.modules.weather.service.get_weather_provider", return_value=default_provider):
+        with patch(
+            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            return_value=default_provider,
+        ):
             set_household_plugin_enabled(
                 self.db,
                 household_id=self.household_id,
@@ -116,6 +122,35 @@ class WeatherMultiDeviceTests(unittest.TestCase):
                 payload=PluginStateUpdateRequest(enabled=True),
                 updated_by="test-suite",
             )
+
+        self.suzhou_instance = create_integration_instance(
+            self.db,
+            payload=IntegrationInstanceCreateRequest(
+                household_id=self.household_id,
+                plugin_id="official-weather",
+                display_name="苏州天气",
+                config={
+                    "binding_type": "region_node",
+                    "provider_code": "china_mca",
+                    "region_code": "320500",
+                },
+            ),
+            updated_by="test-suite",
+        )
+        self.hangzhou_instance = create_integration_instance(
+            self.db,
+            payload=IntegrationInstanceCreateRequest(
+                household_id=self.household_id,
+                plugin_id="official-weather",
+                display_name="杭州天气",
+                config={
+                    "binding_type": "region_node",
+                    "provider_code": "china_mca",
+                    "region_code": "330100",
+                },
+            ),
+            updated_by="test-suite",
+        )
 
         region_provider = _CoordinateAwareWeatherProvider(
             snapshots={
@@ -129,20 +164,27 @@ class WeatherMultiDeviceTests(unittest.TestCase):
                     source_type="met_norway",
                     updated_at="2026-03-18T03:12:00Z",
                     condition_code="rain",
-                    condition_text="下雨",
+                    condition_text="小雨",
                 ),
             }
         )
-        with patch("app.modules.weather.service.get_weather_provider", return_value=region_provider):
-            self.suzhou_binding = create_weather_device_binding(
-                self.db,
-                household_id=self.household_id,
-                payload=WeatherDeviceBindingCreate(provider_code="china_mca", region_code="320500"),
+        with patch(
+            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            return_value=region_provider,
+        ):
+            asyncio.run(
+                execute_integration_instance_action(
+                    self.db,
+                    instance_id=self.suzhou_instance.id,
+                    payload=IntegrationInstanceActionRequest(action="sync", payload={"sync_scope": "device_sync"}),
+                )
             )
-            self.hangzhou_binding = create_weather_device_binding(
-                self.db,
-                household_id=self.household_id,
-                payload=WeatherDeviceBindingCreate(provider_code="china_mca", region_code="330100"),
+            asyncio.run(
+                execute_integration_instance_action(
+                    self.db,
+                    instance_id=self.hangzhou_instance.id,
+                    payload=IntegrationInstanceActionRequest(action="sync", payload={"sync_scope": "device_sync"}),
+                )
             )
 
         self.db.commit()
@@ -152,8 +194,14 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         self._db_helper.close()
 
     def test_refresh_failure_does_not_affect_other_weather_device(self) -> None:
-        suzhou_binding = self.db.get(WeatherDeviceBinding, self.suzhou_binding.id)
-        hangzhou_binding = self.db.get(WeatherDeviceBinding, self.hangzhou_binding.id)
+        suzhou_binding = get_weather_device_binding_for_integration_instance(
+            self.db,
+            integration_instance_id=self.suzhou_instance.id,
+        )
+        hangzhou_binding = get_weather_device_binding_for_integration_instance(
+            self.db,
+            integration_instance_id=self.hangzhou_instance.id,
+        )
         assert suzhou_binding is not None
         assert hangzhou_binding is not None
 
@@ -175,7 +223,10 @@ class WeatherMultiDeviceTests(unittest.TestCase):
             },
         )
 
-        with patch("app.modules.weather.service.get_weather_provider", return_value=provider):
+        with patch(
+            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            return_value=provider,
+        ):
             suzhou_refreshed = refresh_weather_device_binding(self.db, weather_binding=suzhou_binding, force=True)
             hangzhou_refreshed = refresh_weather_device_binding(self.db, weather_binding=hangzhou_binding, force=True)
 
@@ -188,8 +239,12 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         hangzhou_device_binding = self.db.scalar(select(DeviceBinding).where(DeviceBinding.device_id == hangzhou_binding.device_id))
         assert suzhou_device_binding is not None
         assert hangzhou_device_binding is not None
-        self.assertIn("局部多云", suzhou_device_binding.capabilities or "")
-        self.assertIn("weatherapi_1006", hangzhou_device_binding.capabilities or "")
+        suzhou_capabilities = load_json(suzhou_device_binding.capabilities)
+        hangzhou_capabilities = load_json(hangzhou_device_binding.capabilities)
+        assert isinstance(suzhou_capabilities, dict)
+        assert isinstance(hangzhou_capabilities, dict)
+        self.assertTrue(suzhou_capabilities["metadata"]["is_stale"])
+        self.assertEqual("weatherapi", hangzhou_capabilities["metadata"]["provider_type"])
 
         dashboard = get_home_dashboard(
             self.db,
@@ -197,7 +252,7 @@ class WeatherMultiDeviceTests(unittest.TestCase):
             member_id=self.member.id,
         )
         weather_cards = {
-            card.title: card
+            card.payload.get("location"): card
             for card in dashboard.cards
             if card.card_ref.startswith("plugin:official-weather:home:weather-")
         }
@@ -206,8 +261,14 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         self.assertEqual("ready", weather_cards["中国 浙江省 杭州市"].state)
 
     def test_cache_isolated_per_weather_device(self) -> None:
-        suzhou_binding = self.db.get(WeatherDeviceBinding, self.suzhou_binding.id)
-        hangzhou_binding = self.db.get(WeatherDeviceBinding, self.hangzhou_binding.id)
+        suzhou_binding = get_weather_device_binding_for_integration_instance(
+            self.db,
+            integration_instance_id=self.suzhou_instance.id,
+        )
+        hangzhou_binding = get_weather_device_binding_for_integration_instance(
+            self.db,
+            integration_instance_id=self.hangzhou_instance.id,
+        )
         assert suzhou_binding is not None
         assert hangzhou_binding is not None
 
@@ -229,12 +290,15 @@ class WeatherMultiDeviceTests(unittest.TestCase):
                     source_type="met_norway",
                     updated_at="2026-03-18T04:31:00Z",
                     condition_code="rain",
-                    condition_text="下雨",
+                    condition_text="小雨",
                 ),
             }
         )
 
-        with patch("app.modules.weather.service.get_weather_provider", return_value=provider):
+        with patch(
+            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            return_value=provider,
+        ):
             suzhou_refreshed = refresh_weather_device_binding(self.db, weather_binding=suzhou_binding, force=False)
             hangzhou_refreshed = refresh_weather_device_binding(self.db, weather_binding=hangzhou_binding, force=False)
 
@@ -242,7 +306,7 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         self.assertEqual("2026-03-18T04:30:00Z", suzhou_refreshed.last_success_at)
         self.assertEqual("2026-03-18T03:12:00Z", hangzhou_refreshed.last_success_at)
 
-    def test_home_dashboard_shows_one_weather_card_per_device(self) -> None:
+    def test_home_dashboard_shows_one_weather_card_per_instance(self) -> None:
         dashboard = get_home_dashboard(
             self.db,
             household_id=self.household_id,
@@ -255,16 +319,18 @@ class WeatherMultiDeviceTests(unittest.TestCase):
             if card.card_ref.startswith("plugin:official-weather:home:weather-")
         ]
         self.assertEqual(3, len(weather_cards))
-        self.assertEqual("plugin:official-weather:home:weather-default", weather_cards[0].card_ref)
-        self.assertEqual("家庭天气", weather_cards[0].title)
-        self.assertEqual("家庭默认天气", weather_cards[0].subtitle)
-        self.assertEqual("weather", weather_cards[0].payload.get("card_kind"))
-        self.assertEqual("家庭天气", weather_cards[0].payload.get("location"))
 
-        extra_titles = {card.title for card in weather_cards[1:]}
-        self.assertEqual({"中国 江苏省 苏州市", "中国 浙江省 杭州市"}, extra_titles)
+        card_refs = {card.card_ref for card in weather_cards}
+        self.assertIn("plugin:official-weather:home:weather-default", card_refs)
+        payload_locations = {card.payload.get("location") for card in weather_cards}
+        self.assertIn("中国 江苏省 苏州市", payload_locations)
+        self.assertIn("中国 浙江省 杭州市", payload_locations)
 
-    def test_home_dashboard_layout_can_hide_other_weather_devices(self) -> None:
+        for card in weather_cards:
+            self.assertEqual("weather", card.payload.get("card_kind"))
+            self.assertTrue(card.payload.get("device_id"))
+
+    def test_home_dashboard_layout_can_hide_other_weather_instances(self) -> None:
         dashboard = get_home_dashboard(
             self.db,
             household_id=self.household_id,

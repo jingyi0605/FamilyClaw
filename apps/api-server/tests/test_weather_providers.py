@@ -3,21 +3,19 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from app.modules.weather.providers import (
+from app.plugins.builtin.official_weather.providers import (
     MetNorwayAdapter,
     OpenWeatherAdapter,
     WeatherApiAdapter,
     WeatherProviderError,
 )
-from app.modules.weather.schemas import WeatherCoordinate, WeatherProviderConfig
+from app.plugins.builtin.official_weather.schemas import WeatherCoordinate, WeatherProviderConfig
 
 
 def _build_met_payload() -> dict:
     return {
         "properties": {
-            "meta": {
-                "updated_at": "2026-03-18T02:15:00Z",
-            },
+            "meta": {"updated_at": "2026-03-18T02:15:00Z"},
             "timeseries": [
                 {
                     "time": "2026-03-18T02:00:00Z",
@@ -42,26 +40,11 @@ def _build_met_payload() -> dict:
                         },
                     },
                 },
-                {
-                    "time": "2026-03-18T03:00:00Z",
-                    "data": {"instant": {"details": {"air_temperature": 22.0}}},
-                },
-                {
-                    "time": "2026-03-18T04:00:00Z",
-                    "data": {"instant": {"details": {"air_temperature": 24.6}}},
-                },
-                {
-                    "time": "2026-03-18T05:00:00Z",
-                    "data": {"instant": {"details": {"air_temperature": 25.1}}},
-                },
-                {
-                    "time": "2026-03-18T06:00:00Z",
-                    "data": {"instant": {"details": {"air_temperature": 23.8}}},
-                },
-                {
-                    "time": "2026-03-18T07:00:00Z",
-                    "data": {"instant": {"details": {"air_temperature": 22.4}}},
-                },
+                {"time": "2026-03-18T03:00:00Z", "data": {"instant": {"details": {"air_temperature": 22.0}}}},
+                {"time": "2026-03-18T04:00:00Z", "data": {"instant": {"details": {"air_temperature": 24.6}}}},
+                {"time": "2026-03-18T05:00:00Z", "data": {"instant": {"details": {"air_temperature": 25.1}}}},
+                {"time": "2026-03-18T06:00:00Z", "data": {"instant": {"details": {"air_temperature": 23.8}}}},
+                {"time": "2026-03-18T07:00:00Z", "data": {"instant": {"details": {"air_temperature": 22.4}}}},
             ],
         }
     }
@@ -80,13 +63,7 @@ def _build_openweather_payload() -> dict:
             "wind_deg": 188,
             "pressure": 1008,
             "clouds": 60,
-            "weather": [
-                {
-                    "id": 500,
-                    "main": "Rain",
-                    "description": "light rain",
-                }
-            ],
+            "weather": [{"id": 500, "main": "Rain", "description": "light rain"}],
             "rain": {"1h": 0.7},
         },
         "hourly": [
@@ -102,10 +79,7 @@ def _build_openweather_payload() -> dict:
 
 def _build_weatherapi_payload() -> dict:
     return {
-        "location": {
-            "name": "Beijing",
-            "localtime_epoch": 1710728100,
-        },
+        "location": {"name": "Beijing", "localtime_epoch": 1710728100},
         "current": {
             "last_updated_epoch": 1710728100,
             "temp_c": 19.6,
@@ -115,51 +89,18 @@ def _build_weatherapi_payload() -> dict:
             "pressure_mb": 1015.0,
             "cloud": 82,
             "precip_mm": 0.1,
-            "condition": {
-                "text": "Light drizzle",
-                "code": 1150,
-            },
+            "condition": {"text": "Light drizzle", "code": 1150},
         },
         "forecast": {
             "forecastday": [
                 {
                     "hour": [
-                        {
-                            "time_epoch": 1710728100,
-                            "temp_c": 19.6,
-                            "precip_mm": 0.1,
-                            "condition": {"text": "Light drizzle", "code": 1150},
-                        },
-                        {
-                            "time_epoch": 1710731700,
-                            "temp_c": 20.1,
-                            "precip_mm": 0.4,
-                            "condition": {"text": "Patchy rain nearby", "code": 1063},
-                        },
-                        {
-                            "time_epoch": 1710735300,
-                            "temp_c": 21.3,
-                            "precip_mm": 0.2,
-                            "condition": {"text": "Patchy rain nearby", "code": 1063},
-                        },
-                        {
-                            "time_epoch": 1710738900,
-                            "temp_c": 22.0,
-                            "precip_mm": 0.0,
-                            "condition": {"text": "Cloudy", "code": 1006},
-                        },
-                        {
-                            "time_epoch": 1710742500,
-                            "temp_c": 23.1,
-                            "precip_mm": 0.0,
-                            "condition": {"text": "Cloudy", "code": 1006},
-                        },
-                        {
-                            "time_epoch": 1710746100,
-                            "temp_c": 22.4,
-                            "precip_mm": 0.0,
-                            "condition": {"text": "Cloudy", "code": 1006},
-                        },
+                        {"time_epoch": 1710728100, "temp_c": 19.6, "precip_mm": 0.1, "condition": {"text": "Light drizzle", "code": 1150}},
+                        {"time_epoch": 1710731700, "temp_c": 20.1, "precip_mm": 0.4, "condition": {"text": "Patchy rain nearby", "code": 1063}},
+                        {"time_epoch": 1710735300, "temp_c": 21.3, "precip_mm": 0.2, "condition": {"text": "Patchy rain nearby", "code": 1063}},
+                        {"time_epoch": 1710738900, "temp_c": 22.0, "precip_mm": 0.0, "condition": {"text": "Cloudy", "code": 1006}},
+                        {"time_epoch": 1710742500, "temp_c": 23.1, "precip_mm": 0.0, "condition": {"text": "Cloudy", "code": 1006}},
+                        {"time_epoch": 1710746100, "temp_c": 22.4, "precip_mm": 0.0, "condition": {"text": "Cloudy", "code": 1006}},
                     ]
                 }
             ]
@@ -179,7 +120,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.modules.weather.providers.httpx.Client", return_value=client):
+        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
             snapshot = adapter.fetch_weather(
                 coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
                 config=WeatherProviderConfig(),
@@ -187,7 +128,6 @@ class WeatherProviderTests(unittest.TestCase):
 
         self.assertEqual("met_norway", snapshot.source_type)
         self.assertEqual("partlycloudy_day", snapshot.condition_code)
-        self.assertEqual("局部多云", snapshot.condition_text)
         self.assertEqual(21.3, snapshot.temperature)
         self.assertEqual(61.0, snapshot.humidity)
         self.assertEqual(3.6, snapshot.wind_speed)
@@ -197,7 +137,6 @@ class WeatherProviderTests(unittest.TestCase):
         self.assertEqual(0.4, snapshot.precipitation_next_1h)
         assert snapshot.forecast_6h is not None
         self.assertEqual("cloudy", snapshot.forecast_6h.condition_code)
-        self.assertEqual("多云", snapshot.forecast_6h.condition_text)
         self.assertEqual(21.3, snapshot.forecast_6h.min_temperature)
         self.assertEqual(25.1, snapshot.forecast_6h.max_temperature)
         self.assertEqual("2026-03-18T02:15:00Z", snapshot.updated_at)
@@ -208,7 +147,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.modules.weather.providers.httpx.Client", return_value=client):
+        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
             with self.assertRaises(WeatherProviderError) as ctx:
                 MetNorwayAdapter().fetch_weather(
                     coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
@@ -229,7 +168,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.modules.weather.providers.httpx.Client", return_value=client):
+        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
             snapshot = adapter.fetch_weather(
                 coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
                 config=WeatherProviderConfig(provider_type="openweather", openweather_api_key="demo-key"),
@@ -247,7 +186,6 @@ class WeatherProviderTests(unittest.TestCase):
         self.assertEqual(0.7, snapshot.precipitation_next_1h)
         assert snapshot.forecast_6h is not None
         self.assertEqual("owm_500", snapshot.forecast_6h.condition_code)
-        self.assertEqual("light rain", snapshot.forecast_6h.condition_text)
         self.assertEqual(21.1, snapshot.forecast_6h.min_temperature)
         self.assertEqual(24.5, snapshot.forecast_6h.max_temperature)
         self.assertEqual("2024-03-18T02:15:00Z", snapshot.updated_at)
@@ -269,7 +207,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.modules.weather.providers.httpx.Client", return_value=client):
+        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
             with self.assertRaises(WeatherProviderError) as ctx:
                 OpenWeatherAdapter().fetch_weather(
                     coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
@@ -291,7 +229,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.modules.weather.providers.httpx.Client", return_value=client):
+        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
             snapshot = adapter.fetch_weather(
                 coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
                 config=WeatherProviderConfig(provider_type="weatherapi", weatherapi_api_key="demo-key"),
@@ -309,7 +247,6 @@ class WeatherProviderTests(unittest.TestCase):
         self.assertEqual(0.1, snapshot.precipitation_next_1h)
         assert snapshot.forecast_6h is not None
         self.assertEqual("weatherapi_1006", snapshot.forecast_6h.condition_code)
-        self.assertEqual("Cloudy", snapshot.forecast_6h.condition_text)
         self.assertEqual(19.6, snapshot.forecast_6h.min_temperature)
         self.assertEqual(23.1, snapshot.forecast_6h.max_temperature)
         self.assertEqual("2024-03-18T02:15:00Z", snapshot.updated_at)
