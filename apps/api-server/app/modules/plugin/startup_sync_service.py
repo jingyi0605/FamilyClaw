@@ -441,6 +441,7 @@ def _upsert_plugin_mount_from_disk(
     manifest_path_value = str(manifest_path.resolve())
     working_dir_value = plugin_root_value
     python_path_value = sys.executable
+    execution_backend_value = "in_process" if source_type == "official" else "subprocess_runner"
     now = utc_now_iso()
 
     if existing is None:
@@ -449,7 +450,7 @@ def _upsert_plugin_mount_from_disk(
             household_id=household_id,
             plugin_id=current_manifest.id,
             source_type=source_type,
-            execution_backend="subprocess_runner",
+            execution_backend=execution_backend_value,
             manifest_path=manifest_path_value,
             plugin_root=plugin_root_value,
             python_path=python_path_value,
@@ -466,6 +467,9 @@ def _upsert_plugin_mount_from_disk(
     changed = False
     if existing.source_type != source_type:
         existing.source_type = source_type
+        changed = True
+    if existing.execution_backend != execution_backend_value:
+        existing.execution_backend = execution_backend_value
         changed = True
     if existing.manifest_path != manifest_path_value:
         existing.manifest_path = manifest_path_value

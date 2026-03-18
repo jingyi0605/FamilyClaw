@@ -215,7 +215,7 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
   - 2026-03-18 实际回写：
     - `official-weather` 已从宿主天气专线迁到插件内 `integration -> device -> entity -> dashboard card` 主链路。
     - 宿主已移除天气专用 API 注册与 `app.modules.weather` 源码依赖，默认天气设备与附加地区天气都改由插件托管实例创建和同步。
-    - 官方天气插件的 manifest、integration 入口、实例配置、设备绑定和卡片快照都已经按 V1 主链路改造。
+    - 2026-03-18 19:xx 纠偏回写：`official-weather` 已继续从错误的 `app/plugins/builtin/official_weather` 迁到 `apps/api-server/data/plugins/official/official_weather`，并把 manifest 入口、官方插件挂载、同进程加载与测试链路一起改到 `official` 分类。
   - 这一步到底做什么：把 `official-weather`、`health-basic`、`homeassistant_*`、`open_xiaoai_speaker` 等插件改到正式类型和正式入口。
   - 做完你能看到什么：这些插件不会再各写各的主链路。
   - 先依赖什么：2.4
@@ -224,7 +224,7 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
     - `design.md` §3.1「核心组件」
     - `design.md` §4.1「数据关系」
   - 主要改哪里：
-    - `C:\Code\FamilyClaw\apps\api-server\app\plugins\builtin\official_weather\*`
+    - `C:\Code\FamilyClaw\apps\api-server\data\plugins\official\official_weather\*`
     - `C:\Code\FamilyClaw\apps\api-server\app\plugins\builtin\health_basic\*`
     - `C:\Code\FamilyClaw\apps\api-server\app\plugins\builtin\homeassistant_*\*`
     - `C:\Code\FamilyClaw\apps\api-server\app\plugins\builtin\open_xiaoai_speaker\*`
@@ -265,7 +265,7 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
   - 2026-03-18 实际回写：
     - 已删除宿主天气端点源码 `apps/api-server/app/api/v1/endpoints/weather.py`。
     - 已移除宿主路由中的天气专线注册，天气查询不再走核心专用 API。
-    - 已补齐并跑通天气相关 17 个 `unittest` 回归，覆盖默认实例、附加地区实例、集成 API、插件配置与 provider 适配器。
+    - 2026-03-18 19:xx 纠偏回写：已删除仓库内错误归类的 `app/plugins/builtin/official_weather`，并跑通天气相关 20 个 `unittest` 回归，覆盖默认实例、附加地区实例、集成 API、插件配置、provider 适配器和仪表盘文案。
     - 已确认源码层不存在 `app.modules.weather` 与 `weather_router` 引用残留。
   - 这一步到底做什么：删掉明确过时的旧主语义，补回归测试，形成最终迁移结果。
   - 做完你能看到什么：仓库里只剩一套正式插件系统架构，而不是新旧并存。

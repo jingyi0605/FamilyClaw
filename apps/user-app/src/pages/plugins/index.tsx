@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Taro from '@tarojs/taro';
 import { BadgeCheck, Download, ExternalLink, Eye, GitFork, Package, RefreshCw, Settings2, Star, X, Zap } from 'lucide-react';
 import { GuardedPage, useHouseholdContext } from '../../runtime';
-import { useI18n } from '../../runtime/h5-shell';
+import { useI18n, useTheme } from '../../runtime/h5-shell';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, EmptyState, Section } from '../family/base';
+import { shouldBlockDisableCurrentThemePlugin } from './pluginStateGuards';
 import { SettingsPageShell } from '../settings/SettingsPageShell';
 import { PluginDetailDrawer } from '../settings/components/PluginDetailDrawer';
 import { SettingsDialog } from '../settings/components/SettingsSharedBlocks';
@@ -312,6 +313,7 @@ function normalizeOptionalText(value: string) {
 function PluginsPageContent() {
   const { currentHouseholdId } = useHouseholdContext();
   const { locale, replacePluginLocales } = useI18n();
+  const { themeId, getThemeVersionInfo } = useTheme();
   const [plugins, setPlugins] = useState<PluginRegistryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -376,6 +378,11 @@ function PluginsPageContent() {
     }
     return sourceFilteredPlugins.filter(plugin => plugin.types.includes(selectedType));
   }, [sourceFilteredPlugins, selectedType]);
+
+  const activeThemePluginId = useMemo(
+    () => getThemeVersionInfo(themeId)?.pluginId ?? null,
+    [getThemeVersionInfo, themeId],
+  );
 
   const handleTypeFilterChange = useCallback((type: PluginManifestType) => {
     setSelectedType(type);
@@ -517,9 +524,15 @@ function PluginsPageContent() {
       return;
     }
 
-    setTogglingPluginId(plugin.id);
     setError('');
     setStatus('');
+
+    if (shouldBlockDisableCurrentThemePlugin(plugin, activeThemePluginId)) {
+      setError(page('plugins.themePack.disableInUse'));
+      return;
+    }
+
+    setTogglingPluginId(plugin.id);
 
     try {
       const updated = await settingsApi.updatePluginState(currentHouseholdId, plugin.id, { enabled: !plugin.enabled });

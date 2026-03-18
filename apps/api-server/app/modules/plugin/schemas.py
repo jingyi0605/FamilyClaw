@@ -957,8 +957,6 @@ class PluginManifest(BaseModel):
             raise ValueError(f"entrypoints 缺少类型对应入口: {missing_text}")
         if "locale-pack" in self.types and not self.locales:
             raise ValueError("locale-pack 插件至少要声明一个 locale")
-        if "locale-pack" not in self.types and self.locales:
-            raise ValueError("只有 locale-pack 插件才能声明 locales")
         if self.schedule_templates and "schedule" not in self.triggers:
             raise ValueError("声明计划任务模板前，triggers 必须包含 schedule")
         self._validate_integration_capability()

@@ -1788,19 +1788,21 @@ def _plugin_runtime_import_path(plugin: PluginRegistryItem):
         yield
         return
 
-    resolved_root = str(Path(plugin_root).resolve())
-    inserted = False
-    if resolved_root not in sys.path:
-        sys.path.insert(0, resolved_root)
-        inserted = True
+    resolved_root = Path(plugin_root).resolve()
+    candidate_paths = [str(resolved_root.parent), str(resolved_root)]
+    inserted_paths: list[str] = []
+    for candidate in candidate_paths:
+        if candidate not in sys.path:
+            sys.path.insert(0, candidate)
+            inserted_paths.append(candidate)
     try:
         yield
     finally:
-        if inserted:
+        for candidate in reversed(inserted_paths):
             try:
-                sys.path.remove(resolved_root)
+                sys.path.remove(candidate)
             except ValueError:
-                pass
+                continue
 
 
 def _sync_plugin_dashboard_cards(

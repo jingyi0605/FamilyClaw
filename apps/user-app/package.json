@@ -21,7 +21,8 @@
     "pretypecheck": "npm run clean:generated-js && npm run check:style-guard",
     "typecheck": "tsc --noEmit",
     "test:voiceprint": "powershell -NoProfile -Command \"Remove-Item -Recurse -Force '.tmp/voiceprint-tests' -ErrorAction SilentlyContinue; & '.\\node_modules\\.bin\\tsc.cmd' -p tsconfig.voiceprint-tests.json; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node --test '.tmp/voiceprint-tests/pages/settings/components/__tests__/speakerVoiceprintHelpers.test.js' '.tmp/voiceprint-tests/pages/settings/components/__tests__/speakerVoiceprintComponents.test.js'\"",
-    "test:integration-sync": "powershell -NoProfile -Command \"Remove-Item -Recurse -Force '.tmp/integration-sync-tests' -ErrorAction SilentlyContinue; & '.\\node_modules\\.bin\\tsc.cmd' -p tsconfig.integration-sync-tests.json; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node --test '.tmp/integration-sync-tests/__tests__/integrationSyncHelpers.test.js'\""
+    "test:integration-sync": "powershell -NoProfile -Command \"Remove-Item -Recurse -Force '.tmp/integration-sync-tests' -ErrorAction SilentlyContinue; & '.\\node_modules\\.bin\\tsc.cmd' -p tsconfig.integration-sync-tests.json; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node --test '.tmp/integration-sync-tests/__tests__/integrationSyncHelpers.test.js'\"",
+    "test:plugins-page": "powershell -NoProfile -Command \"Remove-Item -Recurse -Force '.tmp/plugins-page-tests' -ErrorAction SilentlyContinue; & '.\\node_modules\\.bin\\tsc.cmd' -p tsconfig.plugins-page-tests.json; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node --test '.tmp/plugins-page-tests/plugins/__tests__/pluginStateGuards.test.js'\""
   },
   "dependencies": {
     "@familyclaw/user-core": "file:../../packages/user-core",
