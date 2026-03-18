@@ -48,8 +48,8 @@ from app.modules.member import service as member_service
 
 INTENT_FALLBACK_THRESHOLD = 0.6
 INTENT_HISTORY_LIMIT = 6
-INTENT_DETECTION_TIMEOUT_MS = 4000
-FREE_CHAT_DEGRADED_TIMEOUT_MS = 8000
+INTENT_DETECTION_TIMEOUT_MS = 15000
+FREE_CHAT_DEGRADED_TIMEOUT_MS = 15000
 FAST_ACTION_ACTION_KEYWORDS = ("打开", "开启", "关掉", "关闭", "关上", "停止", "锁上", "解锁", "拉开", "拉上")
 FAST_ACTION_DEVICE_KEYWORDS = ("灯", "空调", "窗帘", "门锁", "音箱", "设备")
 FAST_ACTION_QUESTION_KEYWORDS = ("怎么", "如何", "为什么", "能不能", "可以吗", "吗", "呢", "？", "?")
