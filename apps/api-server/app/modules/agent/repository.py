@@ -206,6 +206,18 @@ def get_runtime_policy(db: Session, *, agent_id: str) -> FamilyAgentRuntimePolic
     return db.get(FamilyAgentRuntimePolicy, agent_id)
 
 
+def list_runtime_policies(
+    db: Session,
+    *,
+    household_id: str | None = None,
+) -> Sequence[FamilyAgentRuntimePolicy]:
+    stmt = select(FamilyAgentRuntimePolicy)
+    if household_id is not None:
+        stmt = stmt.join(FamilyAgent, FamilyAgent.id == FamilyAgentRuntimePolicy.agent_id).where(FamilyAgent.household_id == household_id)
+    stmt = stmt.order_by(FamilyAgentRuntimePolicy.updated_at.desc(), FamilyAgentRuntimePolicy.agent_id.asc())
+    return list(db.scalars(stmt).all())
+
+
 def add_runtime_policy(db: Session, row: FamilyAgentRuntimePolicy) -> FamilyAgentRuntimePolicy:
     db.add(row)
     return row

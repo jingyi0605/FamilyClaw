@@ -257,7 +257,7 @@ def upsert_ai_config_provider_route_endpoint(
     if payload.household_id != household_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="payload household_id 与路径不一致",
+            detail="payload household_id 与路径 household_id 不一致",
         )
     try:
         result = upsert_capability_route(db, payload)
@@ -529,19 +529,25 @@ def upsert_ai_config_agent_runtime_policy_endpoint(
     actor: ActorContext = Depends(require_admin_actor),
 ) -> AgentRuntimePolicyRead:
     ensure_actor_can_access_household(actor, household_id)
-    result = upsert_agent_runtime_policy(db, household_id=household_id, agent_id=agent_id, payload=payload)
-    write_audit_log(
-        db,
-        household_id=household_id,
-        actor=actor,
-        action="agent_runtime_policy.upsert",
-        target_type="family_agent_runtime_policy",
-        target_id=agent_id,
-        result="success",
-        details=payload.model_dump(mode="json"),
-    )
     try:
+        result = upsert_agent_runtime_policy(db, household_id=household_id, agent_id=agent_id, payload=payload)
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="agent_runtime_policy.upsert",
+            target_type="family_agent_runtime_policy",
+            target_id=agent_id,
+            result="success",
+            details=payload.model_dump(mode="json"),
+        )
         db.commit()
+    except AiGatewayConfigurationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except IntegrityError as exc:
         db.rollback()
         raise translate_integrity_error(exc) from exc

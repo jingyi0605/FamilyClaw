@@ -1,6 +1,8 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.modules.ai_gateway.schemas import AiCapability
 
 AgentType = Literal["butler", "nutritionist", "fitness_coach", "study_coach", "custom"]
 AgentStatus = Literal["draft", "active", "inactive"]
@@ -49,6 +51,17 @@ class AgentAutonomousActionPolicy(BaseModel):
     action: AgentAutonomousActionLevel = "ask"
 
 
+class AgentModelBindingRead(BaseModel):
+    capability: AiCapability
+    provider_profile_id: str
+
+
+class AgentSkillModelBindingRead(BaseModel):
+    plugin_id: str
+    capability: AiCapability
+    provider_profile_id: str
+
+
 class AgentRuntimePolicyRead(BaseModel):
     agent_id: str
     conversation_enabled: bool
@@ -56,6 +69,8 @@ class AgentRuntimePolicyRead(BaseModel):
     routing_tags: list[str] = Field(default_factory=list)
     memory_scope: dict[str, Any] | None = None
     autonomous_action_policy: AgentAutonomousActionPolicy = Field(default_factory=AgentAutonomousActionPolicy)
+    model_bindings: list[AgentModelBindingRead] = Field(default_factory=list)
+    agent_skill_model_bindings: list[AgentSkillModelBindingRead] = Field(default_factory=list)
     updated_at: str
 
 
@@ -185,6 +200,39 @@ class AgentRuntimePolicyUpsert(BaseModel):
     routing_tags: list[str] = Field(default_factory=list, max_length=20)
     memory_scope: dict[str, Any] | None = None
     autonomous_action_policy: AgentAutonomousActionPolicy = Field(default_factory=AgentAutonomousActionPolicy)
+    model_bindings: list[AgentModelBindingRead] = Field(default_factory=list)
+    agent_skill_model_bindings: list[AgentSkillModelBindingRead] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_model_bindings(self) -> "AgentRuntimePolicyUpsert":
+        seen_capabilities: set[str] = set()
+        normalized_model_bindings: list[AgentModelBindingRead] = []
+        for item in self.model_bindings:
+            if item.capability in seen_capabilities:
+                raise ValueError("同一个 Agent 不能重复绑定同一项模型能力")
+            seen_capabilities.add(item.capability)
+            normalized_model_bindings.append(item)
+
+        seen_skill_bindings: set[tuple[str, str]] = set()
+        normalized_skill_bindings: list[AgentSkillModelBindingRead] = []
+        for item in self.agent_skill_model_bindings:
+            binding_key = (item.plugin_id.strip(), item.capability)
+            if not binding_key[0]:
+                raise ValueError("agent-skill 模型绑定缺少 plugin_id")
+            if binding_key in seen_skill_bindings:
+                raise ValueError("同一个 agent-skill 不能重复绑定同一项模型能力")
+            seen_skill_bindings.add(binding_key)
+            normalized_skill_bindings.append(
+                AgentSkillModelBindingRead(
+                    plugin_id=binding_key[0],
+                    capability=item.capability,
+                    provider_profile_id=item.provider_profile_id,
+                )
+            )
+
+        self.model_bindings = normalized_model_bindings
+        self.agent_skill_model_bindings = normalized_skill_bindings
+        return self
 
 
 class AgentMemoryInsightFact(BaseModel):

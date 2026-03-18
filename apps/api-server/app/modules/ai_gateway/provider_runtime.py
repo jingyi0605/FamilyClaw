@@ -176,24 +176,26 @@ def build_template_fallback_output(
             "text": text,
             "mode": "template_fallback",
         }
-    if capability == "qa_generation":
+    if capability == "text":
+        text_task_kind = _resolve_text_task_kind(payload)
+        if text_task_kind == "reminder_copywriting":
+            title = str(payload.get("title") or "提醒")
+            return {
+                "text": f"{title}：请按计划处理。",
+                "mode": "template_fallback",
+            }
+        if text_task_kind == "scene_explanation":
+            scene_name = str(payload.get("scene_name") or "当前场景")
+            return {
+                "text": f"{scene_name} 当前使用模板解释，具体执行将按受控步骤处理。",
+                "mode": "template_fallback",
+            }
+
         question = str(payload.get("question") or "当前问题")
         agent_name = _read_agent_name_from_payload(payload)
         memory_summary = _read_agent_memory_summary(payload)
         return {
             "text": f"{agent_name}当前进入模板回答模式，先返回保守结论：{question} 需要结合结构化事实进一步确认。{memory_summary}",
-            "mode": "template_fallback",
-        }
-    if capability == "reminder_copywriting":
-        title = str(payload.get("title") or "提醒")
-        return {
-            "text": f"{title}：请按计划处理。",
-            "mode": "template_fallback",
-        }
-    if capability == "scene_explanation":
-        scene_name = str(payload.get("scene_name") or "当前场景")
-        return {
-            "text": f"{scene_name} 当前使用模板解释，具体执行将按受控步骤处理。",
             "mode": "template_fallback",
         }
     return {
@@ -242,6 +244,7 @@ def _invoke_openai_compatible(
         provider_profile=provider_profile,
         model_name=model_name,
         capability=capability,
+        payload=payload,
     )
 
     request_headers = {
@@ -406,6 +409,7 @@ async def _ainvoke_openai_compatible(
         provider_profile=provider_profile,
         model_name=model_name,
         capability=capability,
+        payload=payload,
     )
 
     request_headers = {"Content-Type": "application/json"}
@@ -532,7 +536,7 @@ async def _stream_openai_compatible(
     if not endpoint:
         raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缺少可用的接口地址")
 
-    messages = _build_messages(capability="qa_generation", payload=payload)
+    messages = _build_messages(capability="text", payload=payload)
     request_body: dict[str, object] = {
         "model": model_name,
         "messages": messages,
@@ -551,7 +555,8 @@ async def _stream_openai_compatible(
         request_body=request_body,
         provider_profile=provider_profile,
         model_name=model_name,
-        capability="qa_generation",
+        capability="text",
+        payload=payload,
     )
 
     logger.info(
@@ -776,7 +781,7 @@ async def _stream_anthropic_messages(
     if not endpoint:
         raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缂哄皯鍙敤鐨勬帴鍙ｅ湴鍧€")
 
-    system_prompt, messages = _split_system_and_messages(_build_messages(capability="qa_generation", payload=payload))
+    system_prompt, messages = _split_system_and_messages(_build_messages(capability="text", payload=payload))
     request_body: dict[str, object] = {
         "model": model_name,
         "messages": [
@@ -896,7 +901,7 @@ async def _stream_gemini_generate_content(
     if not endpoint_base:
         raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} 缂哄皯鍙敤鐨勬帴鍙ｅ湴鍧€")
 
-    system_prompt, messages = _split_system_and_messages(_build_messages(capability="qa_generation", payload=payload))
+    system_prompt, messages = _split_system_and_messages(_build_messages(capability="text", payload=payload))
     endpoint = f"{endpoint_base.rstrip('/')}/models/{model_name}:streamGenerateContent?alt=sse&key={api_key}"
     request_body: dict[str, object] = {
         "contents": [
@@ -1297,12 +1302,8 @@ def _split_system_and_messages(messages: list[dict[str, str]]) -> tuple[str, lis
 
 
 def _default_max_tokens_for_capability(capability: AiCapability) -> int:
-    if capability == "qa_generation":
-        return 256
-    if capability == "scene_explanation":
-        return 256
-    if capability == "reminder_copywriting":
-        return 128
+    if capability == "audio_generation":
+        return 512
     return 256
 
 
@@ -1312,6 +1313,7 @@ def _apply_provider_specific_defaults(
     provider_profile: AiProviderProfile,
     model_name: str,
     capability: AiCapability,
+    payload: Mapping[str, object],
 ) -> None:
     base_url = (provider_profile.base_url or "").lower()
     normalized_model_name = model_name.lower()
@@ -1333,10 +1335,13 @@ def _apply_provider_specific_defaults(
         # 只对支持 thinking 的模型强制关闭思考模式，避免先长时间空转再吐字
         request_body["enable_thinking"] = False
         request_body.setdefault("thinking_budget", 128)
-        if capability == "qa_generation":
-            request_body["max_tokens"] = min(_read_int_value(request_body.get("max_tokens"), 256), 256)
-        elif capability in {"scene_explanation", "reminder_copywriting"}:
-            request_body["max_tokens"] = min(_read_int_value(request_body.get("max_tokens"), 128), 128)
+        if capability == "text":
+            text_task_kind = _resolve_text_task_kind(payload)
+            max_tokens_ceiling = 128 if text_task_kind in {"scene_explanation", "reminder_copywriting"} else 256
+            request_body["max_tokens"] = min(
+                _read_int_value(request_body.get("max_tokens"), max_tokens_ceiling),
+                max_tokens_ceiling,
+            )
 
 
 def _apply_provider_specific_headers(
@@ -1386,6 +1391,17 @@ def _resolve_effective_timeout_ms(
     return timeout_ms
 
 
+def _resolve_text_task_kind(payload: Mapping[str, object]) -> str:
+    task_type = str(payload.get("task_type") or "").strip()
+    if task_type in {"reminder_copywriting", "scene_explanation"}:
+        return task_type
+    if "title" in payload and "question" not in payload and "scene_name" not in payload:
+        return "reminder_copywriting"
+    if "scene_name" in payload:
+        return "scene_explanation"
+    return "general_text"
+
+
 def _build_messages(
     *,
     capability: AiCapability,
@@ -1397,7 +1413,34 @@ def _build_messages(
         if isinstance(messages, list) and messages:
             return list(messages)
 
-    if capability == "qa_generation":
+    if capability == "text":
+        text_task_kind = _resolve_text_task_kind(payload)
+        if text_task_kind == "reminder_copywriting":
+            title = str(payload.get("title") or "提醒")
+            return [
+                {
+                    "role": "system",
+                    "content": "你是家庭提醒文案助手。请把提醒改写成自然、克制、明确的中文，不要夸张。",
+                },
+                {
+                    "role": "user",
+                    "content": f"请润色这条提醒：{title}",
+                },
+            ]
+        if text_task_kind == "scene_explanation":
+            scene_name = str(payload.get("scene_name") or "当前场景")
+            blocked_guards = payload.get("blocked_guards") or []
+            return [
+                {
+                    "role": "system",
+                    "content": "你是家庭场景解释助手。请用中文解释场景为什么执行或为什么被阻断，保持保守清晰。",
+                },
+                {
+                    "role": "user",
+                    "content": f"场景名：{scene_name}\n阻断原因：{blocked_guards}\n步骤数：{payload.get('step_count') or 0}",
+                },
+            ]
+
         answer_draft = str(payload.get("answer_draft") or "")
         question = str(payload.get("question") or "")
         agent_prompt = _build_agent_prompt(payload)
@@ -1423,31 +1466,6 @@ def _build_messages(
             }
         )
         return messages
-    if capability == "reminder_copywriting":
-        title = str(payload.get("title") or "提醒")
-        return [
-            {
-                "role": "system",
-                "content": "你是家庭提醒文案助手。请把提醒改写成自然、克制、明确的中文，不要夸张。",
-            },
-            {
-                "role": "user",
-                "content": f"请润色这条提醒：{title}",
-            },
-        ]
-    if capability == "scene_explanation":
-        scene_name = str(payload.get("scene_name") or "当前场景")
-        blocked_guards = payload.get("blocked_guards") or []
-        return [
-            {
-                "role": "system",
-                "content": "你是家庭场景解释助手。请用中文解释场景为什么执行或为什么被阻断，保持保守清晰。",
-            },
-            {
-                "role": "user",
-                "content": f"场景名：{scene_name}\n阻断原因：{blocked_guards}\n步骤数：{payload.get('step_count') or 0}",
-            },
-        ]
     return [
         {
             "role": "system",
@@ -1628,26 +1646,28 @@ def _build_simulated_output(
     model_name: str,
     payload: Mapping[str, object],
 ) -> dict[str, object]:
-    if capability == "qa_generation":
+    if capability == "text":
+        text_task_kind = _resolve_text_task_kind(payload)
+        if text_task_kind == "reminder_copywriting":
+            title = str(payload.get("title") or "提醒")
+            return {
+                "text": f"[{provider_code}] {title}，请尽快处理。",
+                "provider_code": provider_code,
+                "model_name": model_name,
+            }
+        if text_task_kind == "scene_explanation":
+            scene_name = str(payload.get("scene_name") or "场景")
+            return {
+                "text": f"[{provider_code}] {scene_name} 将按模板步骤执行。",
+                "provider_code": provider_code,
+                "model_name": model_name,
+            }
+
         question = str(payload.get("question") or "当前问题")
         agent_name = _read_agent_name_from_payload(payload)
         memory_summary = _read_agent_memory_summary(payload)
         return {
             "text": f"[{provider_code}] {agent_name}已根据结构化事实生成回答草稿：{question}{memory_summary}",
-            "provider_code": provider_code,
-            "model_name": model_name,
-        }
-    if capability == "reminder_copywriting":
-        title = str(payload.get("title") or "提醒")
-        return {
-            "text": f"[{provider_code}] {title}，请尽快处理。",
-            "provider_code": provider_code,
-            "model_name": model_name,
-        }
-    if capability == "scene_explanation":
-        scene_name = str(payload.get("scene_name") or "场景")
-        return {
-            "text": f"[{provider_code}] {scene_name} 将按模板步骤执行。",
             "provider_code": provider_code,
             "model_name": model_name,
         }

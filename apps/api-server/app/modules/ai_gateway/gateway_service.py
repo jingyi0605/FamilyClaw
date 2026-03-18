@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping
 from typing import cast
 from uuid import uuid4
 
@@ -43,9 +44,35 @@ def build_invocation_plan(
     capability: AiCapability,
     household_id: str | None = None,
     requester_member_id: str | None = None,
+    agent_id: str | None = None,
+    plugin_id: str | None = None,
+    request_payload: Mapping[str, object] | None = None,
     trace_id: str | None = None,
     timeout_ms_override: int | None = None,
 ) -> AiInvocationPlan:
+    resolved_agent_id, resolved_plugin_id = _resolve_binding_context(
+        agent_id=agent_id,
+        plugin_id=plugin_id,
+        request_payload=request_payload,
+    )
+    direct_provider_profile_id = _resolve_direct_binding_provider_profile_id(
+        db,
+        capability=capability,
+        household_id=household_id,
+        agent_id=resolved_agent_id,
+        plugin_id=resolved_plugin_id,
+    )
+    if direct_provider_profile_id is not None:
+        return _build_direct_binding_plan(
+            db,
+            capability=capability,
+            household_id=household_id,
+            requester_member_id=requester_member_id,
+            direct_provider_profile_id=direct_provider_profile_id,
+            trace_id=trace_id,
+            timeout_ms_override=timeout_ms_override,
+        )
+
     route = resolve_capability_route(
         db,
         capability=capability,
@@ -150,6 +177,9 @@ def invoke_capability(
         capability=payload.capability,
         household_id=payload.household_id,
         requester_member_id=payload.requester_member_id,
+        agent_id=payload.agent_id,
+        plugin_id=payload.plugin_id,
+        request_payload=payload.payload,
         timeout_ms_override=payload.timeout_ms_override,
     )
     prepared_payload = prepare_payload_for_invocation(plan, payload.payload)
@@ -361,6 +391,9 @@ async def ainvoke_capability(
         capability=payload.capability,
         household_id=payload.household_id,
         requester_member_id=payload.requester_member_id,
+        agent_id=payload.agent_id,
+        plugin_id=payload.plugin_id,
+        request_payload=payload.payload,
         timeout_ms_override=payload.timeout_ms_override,
     )
     prepared_payload = prepare_payload_for_invocation(plan, payload.payload)
@@ -572,15 +605,7 @@ def _build_runtime_default_plan(
     trace_id: str | None,
 ) -> AiInvocationPlan:
     default_routing_mode = cast(AiRoutingMode, settings.ai_runtime.default_routing_mode)
-    provider_codes = [
-        code
-        for code in [
-            settings.ai_runtime.default_provider_code,
-            *settings.ai_runtime.default_fallback_provider_codes,
-        ]
-        if code
-    ]
-    rows = [repository.get_provider_profile_by_code(db, provider_code) for provider_code in provider_codes]
+    rows = _list_runtime_default_provider_rows(db)
     providers, blocked_plugin_id = _build_candidates_from_rows(
         db,
         rows=rows,
@@ -616,6 +641,88 @@ def _build_runtime_default_plan(
     )
 
 
+def _build_direct_binding_plan(
+    db: Session,
+    *,
+    capability: AiCapability,
+    household_id: str | None,
+    requester_member_id: str | None,
+    direct_provider_profile_id: str,
+    trace_id: str | None,
+    timeout_ms_override: int | None,
+) -> AiInvocationPlan:
+    route = resolve_capability_route(
+        db,
+        capability=capability,
+        household_id=household_id,
+    )
+    use_route_fallback = route is not None and route.enabled
+    fallback_provider_profile_ids = (
+        _collect_route_provider_profile_ids(route)
+        if use_route_fallback
+        else _list_runtime_default_provider_profile_ids(db)
+    )
+    provider_profile_ids = list(
+        dict.fromkeys(
+            [
+                direct_provider_profile_id,
+                *fallback_provider_profile_ids,
+            ]
+        )
+    )
+
+    routing_mode: AiRoutingMode
+    if use_route_fallback:
+        routing_mode = cast(AiRoutingMode, "primary_then_fallback" if route.routing_mode == "template_only" else route.routing_mode)
+        timeout_ms = timeout_ms_override or route.timeout_ms
+        max_retry_count = route.max_retry_count
+        allow_remote = route.allow_remote
+        prompt_policy = route.prompt_policy
+        response_policy = route.response_policy
+    else:
+        routing_mode = cast(AiRoutingMode, "primary_then_fallback" if settings.ai_runtime.default_routing_mode == "template_only" else settings.ai_runtime.default_routing_mode)
+        timeout_ms = timeout_ms_override or settings.ai_runtime.default_timeout_ms
+        max_retry_count = settings.ai_runtime.default_max_retry_count
+        allow_remote = settings.ai_runtime.default_allow_remote
+        prompt_policy = {}
+        response_policy = {}
+
+    providers, blocked_plugin_id = _build_provider_candidates(
+        db,
+        provider_profile_ids=provider_profile_ids,
+        routing_mode=routing_mode,
+        household_id=household_id,
+    )
+    primary_provider = providers[0] if providers else None
+    fallback_providers = providers[1:] if len(providers) > 1 else []
+    blocked_reason = None
+    blocked_error_code = None
+    if primary_provider is None and household_id is not None and blocked_plugin_id is not None:
+        blocked_reason = "当前家庭绑定的 AI 提供商插件已禁用，不能继续调用。"
+        blocked_error_code = "plugin_disabled"
+    elif primary_provider is None:
+        blocked_reason = "当前 Agent 模型绑定没有可用提供商"
+
+    return AiInvocationPlan(
+        capability=capability,
+        household_id=household_id,
+        requester_member_id=requester_member_id,
+        trace_id=trace_id or _new_trace_id(),
+        routing_mode=routing_mode,
+        timeout_ms=timeout_ms,
+        max_retry_count=max_retry_count,
+        allow_remote=allow_remote,
+        prompt_policy=prompt_policy,
+        response_policy=response_policy,
+        primary_provider=primary_provider,
+        fallback_providers=fallback_providers,
+        template_fallback_enabled=bool(response_policy.get("template_fallback_enabled", True)),
+        blocked_reason=blocked_reason,
+        blocked_error_code=blocked_error_code,
+        blocked_plugin_id=blocked_plugin_id,
+    )
+
+
 def _build_provider_candidates(
     db: Session,
     *,
@@ -632,6 +739,30 @@ def _build_provider_candidates(
         routing_mode=routing_mode,
         household_id=household_id,
     )
+
+
+def _collect_route_provider_profile_ids(route) -> list[str]:
+    return [
+        provider_id
+        for provider_id in [route.primary_provider_profile_id, *route.fallback_provider_profile_ids]
+        if provider_id is not None
+    ]
+
+
+def _list_runtime_default_provider_rows(db: Session) -> list[AiProviderProfile | None]:
+    provider_codes = [
+        code
+        for code in [
+            settings.ai_runtime.default_provider_code,
+            *settings.ai_runtime.default_fallback_provider_codes,
+        ]
+        if code
+    ]
+    return [repository.get_provider_profile_by_code(db, provider_code) for provider_code in provider_codes]
+
+
+def _list_runtime_default_provider_profile_ids(db: Session) -> list[str]:
+    return [row.id for row in _list_runtime_default_provider_rows(db) if row is not None]
 
 
 def _build_candidates_from_rows(
@@ -680,6 +811,48 @@ def _reorder_candidates(
     return sorted(
         candidates,
         key=lambda item: (0 if item.privacy_level == "local_only" else 1, item.order),
+    )
+
+
+def _resolve_binding_context(
+    *,
+    agent_id: str | None,
+    plugin_id: str | None,
+    request_payload: Mapping[str, object] | None,
+) -> tuple[str | None, str | None]:
+    request_context = request_payload.get("request_context") if isinstance(request_payload, Mapping) else None
+    context = request_context if isinstance(request_context, Mapping) else {}
+
+    resolved_agent_id = _first_non_empty_string(
+        agent_id,
+        context.get("effective_agent_id"),
+        context.get("agent_id"),
+    )
+    resolved_plugin_id = _first_non_empty_string(
+        plugin_id,
+        context.get("plugin_id"),
+    )
+    return resolved_agent_id, resolved_plugin_id
+
+
+def _resolve_direct_binding_provider_profile_id(
+    db: Session,
+    *,
+    capability: AiCapability,
+    household_id: str | None,
+    agent_id: str | None,
+    plugin_id: str | None,
+) -> str | None:
+    if household_id is None or agent_id is None:
+        return None
+    from app.modules.agent.service import resolve_bound_provider_profile_id
+
+    return resolve_bound_provider_profile_id(
+        db,
+        household_id=household_id,
+        capability=capability,
+        agent_id=agent_id,
+        plugin_id=plugin_id,
     )
 
 
@@ -791,3 +964,13 @@ def _summarize_attempts(attempts: list[AiGatewayAttemptResult]) -> str:
 
 def _new_trace_id() -> str:
     return uuid4().hex
+
+
+def _first_non_empty_string(*values: object) -> str | None:
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip()
+        if normalized:
+            return normalized
+    return None

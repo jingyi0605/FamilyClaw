@@ -1,7 +1,11 @@
+from collections.abc import Mapping
 from fastapi import HTTPException, status
 from typing import cast
 
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
+from app.modules.ai_gateway import repository as ai_gateway_repository
+from app.modules.ai_gateway.schemas import AiCapability
+from app.modules.ai_gateway.service import AiGatewayConfigurationError, get_household_ai_provider_plugin_for_profile
 from app.modules.agent import repository
 from app.modules.agent.models import (
     FamilyAgent,
@@ -22,8 +26,10 @@ from app.modules.agent.schemas import (
     AgentPluginMemoryCheckpointRequest,
     AgentMemberCognitionRead,
     AgentMemberCognitionsUpsert,
+    AgentModelBindingRead,
     AgentRuntimePolicyRead,
     AgentRuntimePolicyUpsert,
+    AgentSkillModelBindingRead,
     AgentSoulProfileRead,
     AgentSoulProfileUpsert,
     AgentSummaryRead,
@@ -33,6 +39,7 @@ from app.modules.member import service as member_service
 from app.modules.member.models import Member
 from app.modules.memory.schemas import MemoryCardRead
 from app.modules.memory.service import list_memory_cards
+from app.modules.plugin import require_available_household_plugin
 from sqlalchemy.orm import Session
 
 
@@ -107,6 +114,8 @@ def create_agent(
         routing_tags_json=dump_json(["setup", payload.agent_type]) or "[]",
         memory_scope_json=None,
         autonomous_action_policy_json=dump_json(AgentAutonomousActionPolicy().model_dump(mode="json")) or '{"memory":"ask","config":"ask","action":"ask"}',
+        model_bindings_json="[]",
+        agent_skill_model_bindings_json="[]",
         updated_at=utc_now_iso(),
     )
     repository.add_runtime_policy(db, runtime_policy)
@@ -236,6 +245,10 @@ def build_agent_runtime_context(
             "routing_tags": _load_json_list(runtime_policy.routing_tags_json),
             "memory_scope": _load_json_dict(runtime_policy.memory_scope_json),
             "autonomous_action_policy": _load_autonomous_action_policy(runtime_policy.autonomous_action_policy_json).model_dump(mode="json"),
+            "model_bindings": [item.model_dump(mode="json") for item in _load_model_bindings(runtime_policy.model_bindings_json)],
+            "agent_skill_model_bindings": [
+                item.model_dump(mode="json") for item in _load_agent_skill_model_bindings(runtime_policy.agent_skill_model_bindings_json)
+            ],
         }
         if runtime_policy is not None
         else {
@@ -244,6 +257,8 @@ def build_agent_runtime_context(
             "routing_tags": [],
             "memory_scope": None,
             "autonomous_action_policy": AgentAutonomousActionPolicy().model_dump(mode="json"),
+            "model_bindings": [],
+            "agent_skill_model_bindings": [],
         },
     }
 
@@ -496,6 +511,12 @@ def upsert_agent_runtime_policy(
     payload: AgentRuntimePolicyUpsert,
 ) -> AgentRuntimePolicyRead:
     agent = _get_agent_in_household_or_404(db, household_id=household_id, agent_id=agent_id)
+    _validate_runtime_policy_model_bindings(
+        db,
+        household_id=household_id,
+        model_bindings=payload.model_bindings,
+        agent_skill_model_bindings=payload.agent_skill_model_bindings,
+    )
     row = repository.get_runtime_policy(db, agent_id=agent.id)
     if row is None:
         row = FamilyAgentRuntimePolicy(agent_id=agent.id)
@@ -514,8 +535,39 @@ def upsert_agent_runtime_policy(
     row.routing_tags_json = dump_json(payload.routing_tags) or "[]"
     row.memory_scope_json = dump_json(payload.memory_scope)
     row.autonomous_action_policy_json = dump_json(payload.autonomous_action_policy.model_dump(mode="json")) or '{"memory":"ask","config":"ask","action":"ask"}'
+    row.model_bindings_json = dump_json([item.model_dump(mode="json") for item in payload.model_bindings]) or "[]"
+    row.agent_skill_model_bindings_json = dump_json(
+        [item.model_dump(mode="json") for item in payload.agent_skill_model_bindings]
+    ) or "[]"
     row.updated_at = utc_now_iso()
     return _to_runtime_policy_read(row)
+
+
+def resolve_bound_provider_profile_id(
+    db: Session,
+    *,
+    household_id: str,
+    capability: AiCapability,
+    agent_id: str | None = None,
+    plugin_id: str | None = None,
+) -> str | None:
+    if not agent_id:
+        return None
+    _ = household_id
+    row = repository.get_runtime_policy(db, agent_id=agent_id)
+    if row is None:
+        return None
+
+    normalized_plugin_id = plugin_id.strip() if isinstance(plugin_id, str) else ""
+    if normalized_plugin_id:
+        for item in _load_agent_skill_model_bindings(row.agent_skill_model_bindings_json):
+            if item.plugin_id == normalized_plugin_id and item.capability == capability:
+                return item.provider_profile_id
+
+    for item in _load_model_bindings(row.model_bindings_json):
+        if item.capability == capability:
+            return item.provider_profile_id
+    return None
 
 
 def _to_agent_summary_read(db: Session, row: FamilyAgent) -> AgentSummaryRead:
@@ -605,6 +657,8 @@ def _to_runtime_policy_read(row: FamilyAgentRuntimePolicy) -> AgentRuntimePolicy
         routing_tags=_load_json_list(row.routing_tags_json),
         memory_scope=_load_json_dict(row.memory_scope_json),
         autonomous_action_policy=_load_autonomous_action_policy(row.autonomous_action_policy_json),
+        model_bindings=_load_model_bindings(row.model_bindings_json),
+        agent_skill_model_bindings=_load_agent_skill_model_bindings(row.agent_skill_model_bindings_json),
         updated_at=row.updated_at,
     )
 
@@ -617,6 +671,8 @@ def _default_runtime_policy_read(agent_id: str) -> AgentRuntimePolicyRead:
         routing_tags=[],
         memory_scope=None,
         autonomous_action_policy=AgentAutonomousActionPolicy(),
+        model_bindings=[],
+        agent_skill_model_bindings=[],
         updated_at="",
     )
 
@@ -656,6 +712,124 @@ def _load_autonomous_action_policy(value: str | None) -> AgentAutonomousActionPo
         config=str(data.get("config") or "ask"),
         action=str(data.get("action") or "ask"),
     )
+
+
+def _load_model_bindings(value: str | None) -> list[AgentModelBindingRead]:
+    data = load_json(value)
+    if not isinstance(data, list):
+        return []
+
+    result: list[AgentModelBindingRead] = []
+    for item in data:
+        if not isinstance(item, Mapping):
+            continue
+        capability = str(item.get("capability") or "").strip()
+        provider_profile_id = str(item.get("provider_profile_id") or "").strip()
+        if not capability or not provider_profile_id:
+            continue
+        result.append(
+            AgentModelBindingRead(
+                capability=cast(AiCapability, capability),
+                provider_profile_id=provider_profile_id,
+            )
+        )
+    return result
+
+
+def _load_agent_skill_model_bindings(value: str | None) -> list[AgentSkillModelBindingRead]:
+    data = load_json(value)
+    if not isinstance(data, list):
+        return []
+
+    result: list[AgentSkillModelBindingRead] = []
+    for item in data:
+        if not isinstance(item, Mapping):
+            continue
+        plugin_id = str(item.get("plugin_id") or "").strip()
+        capability = str(item.get("capability") or "").strip()
+        provider_profile_id = str(item.get("provider_profile_id") or "").strip()
+        if not plugin_id or not capability or not provider_profile_id:
+            continue
+        result.append(
+            AgentSkillModelBindingRead(
+                plugin_id=plugin_id,
+                capability=cast(AiCapability, capability),
+                provider_profile_id=provider_profile_id,
+            )
+        )
+    return result
+
+
+def _validate_runtime_policy_model_bindings(
+    db: Session,
+    *,
+    household_id: str,
+    model_bindings: list[AgentModelBindingRead],
+    agent_skill_model_bindings: list[AgentSkillModelBindingRead],
+) -> None:
+    provider_ids = {
+        item.provider_profile_id
+        for item in [*model_bindings, *agent_skill_model_bindings]
+        if item.provider_profile_id
+    }
+    if not provider_ids:
+        return
+
+    provider_rows = ai_gateway_repository.list_provider_profiles_by_ids(db, list(provider_ids))
+    provider_map = {row.id: row for row in provider_rows}
+    missing_provider_ids = [provider_id for provider_id in provider_ids if provider_id not in provider_map]
+    if missing_provider_ids:
+        raise AiGatewayConfigurationError("Agent 模型绑定引用了不存在的提供商档案")
+
+    for binding in model_bindings:
+        _validate_model_binding_provider(
+            db,
+            household_id=household_id,
+            capability=binding.capability,
+            provider_row=provider_map[binding.provider_profile_id],
+        )
+
+    for binding in agent_skill_model_bindings:
+        require_available_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=binding.plugin_id,
+            plugin_type="agent-skill",
+        )
+        _validate_model_binding_provider(
+            db,
+            household_id=household_id,
+            capability=binding.capability,
+            provider_row=provider_map[binding.provider_profile_id],
+        )
+
+
+def _validate_model_binding_provider(
+    db: Session,
+    *,
+    household_id: str,
+    capability: AiCapability,
+    provider_row,
+) -> None:
+    if not provider_row.enabled:
+        raise AiGatewayConfigurationError("Agent 模型绑定不能使用已禁用的提供商档案")
+
+    supported_capabilities = load_json(provider_row.supported_capabilities_json) or []
+    if capability not in supported_capabilities:
+        raise AiGatewayConfigurationError("Agent 模型绑定引用的提供商不支持对应能力")
+
+    plugin = get_household_ai_provider_plugin_for_profile(
+        db,
+        household_id=household_id,
+        provider_profile=provider_row,
+    )
+    if plugin is not None:
+        require_available_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=plugin.id,
+            plugin_type="ai-provider",
+        )
 
 
 def _resolve_card_observed_at(card: object) -> str:

@@ -38,6 +38,19 @@ def _build_plugin_compatibility(
     return normalized
 
 
+def _infer_default_supported_capabilities(supported_model_types: list[str]) -> list[str]:
+    capabilities: list[str] = []
+    if "llm" in supported_model_types:
+        capabilities.append("text")
+    if "vision" in supported_model_types:
+        capabilities.append("vision")
+    if "speech" in supported_model_types:
+        capabilities.extend(["audio_generation", "audio_recognition"])
+    if "image" in supported_model_types:
+        capabilities.append("image_generation")
+    return capabilities
+
+
 def _build_builtin_provider_plugins() -> list[dict[str, Any]]:
     return [
         _build_openai_compatible_provider(
@@ -328,7 +341,7 @@ def _build_openai_compatible_provider(
         "transport_type": "openai_compatible",
         "api_family": "openai_chat_completions",
         "default_privacy_level": "public_cloud",
-        "default_supported_capabilities": ["qa_generation", "qa_structured_answer"],
+        "default_supported_capabilities": _infer_default_supported_capabilities(supported_model_types),
         "supported_model_types": supported_model_types,
         "llm_workflow": "openai_chat_completions",
         "field_schema": fields,
@@ -390,7 +403,7 @@ def _build_native_provider(
         "transport_type": "native_sdk",
         "api_family": resolved_api_family,
         "default_privacy_level": "public_cloud",
-        "default_supported_capabilities": ["qa_generation", "qa_structured_answer"],
+        "default_supported_capabilities": _infer_default_supported_capabilities(supported_model_types),
         "supported_model_types": supported_model_types,
         "llm_workflow": resolved_api_family,
         "field_schema": fields,

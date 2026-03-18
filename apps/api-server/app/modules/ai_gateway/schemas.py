@@ -3,15 +3,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 AiCapability = Literal[
-    "qa_generation",
-    "qa_structured_answer",
-    "reminder_copywriting",
-    "scene_explanation",
-    "embedding",
-    "rerank",
-    "stt",
-    "tts",
+    "text",
     "vision",
+    "audio_generation",
+    "audio_recognition",
+    "image_generation",
 ]
 AiProviderModelType = Literal["llm", "embedding", "vision", "speech", "image"]
 AiTransportType = Literal["openai_compatible", "native_sdk", "local_gateway"]
@@ -127,7 +123,7 @@ class AiCapabilityRouteUpsert(BaseModel):
             if self.primary_provider_profile_id is not None:
                 raise ValueError("template_only 路由不能绑定主供应商")
             if self.fallback_provider_profile_ids:
-                raise ValueError("template_only 路由不能绑定备供应商")
+                raise ValueError("template_only 路由不能绑定备用供应商")
             return self
 
         if self.primary_provider_profile_id is None:
@@ -135,7 +131,7 @@ class AiCapabilityRouteUpsert(BaseModel):
 
         fallback_ids = list(dict.fromkeys(self.fallback_provider_profile_ids))
         if self.primary_provider_profile_id in fallback_ids:
-            raise ValueError("备供应商列表不能重复包含主供应商")
+            raise ValueError("备用供应商列表不能重复包含主供应商")
 
         self.fallback_provider_profile_ids = fallback_ids
         return self
@@ -206,6 +202,8 @@ class AiGatewayInvokeRequest(BaseModel):
     capability: AiCapability
     household_id: str | None = Field(default=None, min_length=1)
     requester_member_id: str | None = Field(default=None, min_length=1)
+    agent_id: str | None = Field(default=None, min_length=1)
+    plugin_id: str | None = Field(default=None, min_length=1)
     payload: dict[str, Any] = Field(default_factory=dict)
     timeout_ms_override: int | None = Field(default=None, ge=100, le=120000)
     honor_timeout_override: bool = False

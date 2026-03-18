@@ -55,6 +55,7 @@ export type AiProviderField = {
   options: AiProviderFieldOption[];
 };
 
+export type AiCapability = 'text' | 'vision' | 'audio_generation' | 'audio_recognition' | 'image_generation';
 export type AiProviderModelType = 'llm' | 'embedding' | 'vision' | 'speech' | 'image';
 
 export type AiProviderAdapter = {
@@ -66,7 +67,7 @@ export type AiProviderAdapter = {
   transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
   api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   default_privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
-  default_supported_capabilities: string[];
+  default_supported_capabilities: AiCapability[];
   supported_model_types: AiProviderModelType[];
   llm_workflow: string;
   field_schema: AiProviderField[];
@@ -85,7 +86,7 @@ export type AiProviderProfile = {
   api_version: string | null;
   secret_ref: string | null;
   enabled: boolean;
-  supported_capabilities: string[];
+  supported_capabilities: AiCapability[];
   privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
   latency_budget_ms: number | null;
   cost_policy: Record<string, unknown>;
@@ -102,7 +103,7 @@ export type AiProviderProfileCreatePayload = {
   api_version: string | null;
   secret_ref: string | null;
   enabled: boolean;
-  supported_capabilities: string[];
+  supported_capabilities: AiCapability[];
   privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
   latency_budget_ms: number | null;
   cost_policy: Record<string, unknown>;
@@ -113,7 +114,7 @@ export type AiProviderProfileUpdatePayload = Partial<Omit<AiProviderProfileCreat
 
 export type AiCapabilityRoute = {
   id: string;
-  capability: string;
+  capability: AiCapability;
   household_id: string | null;
   primary_provider_profile_id: string | null;
   fallback_provider_profile_ids: string[];
@@ -128,7 +129,7 @@ export type AiCapabilityRoute = {
 };
 
 export type AiCapabilityRouteUpsertPayload = {
-  capability: string;
+  capability: AiCapability;
   household_id: string | null;
   primary_provider_profile_id: string | null;
   fallback_provider_profile_ids: string[];
@@ -144,6 +145,17 @@ export type AiCapabilityRouteUpsertPayload = {
 export type AgentType = 'butler' | 'nutritionist' | 'fitness_coach' | 'study_coach' | 'custom';
 export type AgentStatus = 'draft' | 'active' | 'inactive';
 
+export type AgentModelBinding = {
+  capability: AiCapability;
+  provider_profile_id: string;
+};
+
+export type AgentSkillModelBinding = {
+  plugin_id: string;
+  capability: AiCapability;
+  provider_profile_id: string;
+};
+
 export type AgentRuntimePolicy = {
   agent_id: string;
   conversation_enabled: boolean;
@@ -155,6 +167,8 @@ export type AgentRuntimePolicy = {
     config: 'ask' | 'notify' | 'auto';
     action: 'ask' | 'notify' | 'auto';
   };
+  model_bindings: AgentModelBinding[];
+  agent_skill_model_bindings: AgentSkillModelBinding[];
   updated_at: string;
 };
 

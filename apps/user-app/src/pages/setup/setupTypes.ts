@@ -53,6 +53,7 @@ export type AiProviderField = {
   default_value: string | number | boolean | null;
   options: AiProviderFieldOption[];
 };
+export type AiCapability = 'text' | 'vision' | 'audio_generation' | 'audio_recognition' | 'image_generation';
 export type AiProviderModelType = 'llm' | 'embedding' | 'vision' | 'speech' | 'image';
 export type AiProviderAdapter = {
   plugin_id: string;
@@ -63,7 +64,7 @@ export type AiProviderAdapter = {
   transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
   api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   default_privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
-  default_supported_capabilities: string[];
+  default_supported_capabilities: AiCapability[];
   supported_model_types: AiProviderModelType[];
   llm_workflow: string;
   field_schema: AiProviderField[];
@@ -81,7 +82,7 @@ export type AiProviderProfile = {
   api_version: string | null;
   secret_ref: string | null;
   enabled: boolean;
-  supported_capabilities: string[];
+  supported_capabilities: AiCapability[];
   privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
   latency_budget_ms: number | null;
   cost_policy: Record<string, unknown>;
@@ -97,7 +98,7 @@ export type AiProviderProfileCreatePayload = {
   api_version: string | null;
   secret_ref: string | null;
   enabled: boolean;
-  supported_capabilities: string[];
+  supported_capabilities: AiCapability[];
   privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
   latency_budget_ms: number | null;
   cost_policy: Record<string, unknown>;
@@ -106,7 +107,7 @@ export type AiProviderProfileCreatePayload = {
 export type AiProviderProfileUpdatePayload = Partial<Omit<AiProviderProfileCreatePayload, 'provider_code'>>;
 export type AiCapabilityRoute = {
   id: string;
-  capability: string;
+  capability: AiCapability;
   household_id: string | null;
   primary_provider_profile_id: string | null;
   fallback_provider_profile_ids: string[];
@@ -120,7 +121,7 @@ export type AiCapabilityRoute = {
   updated_at: string;
 };
 export type AiCapabilityRouteUpsertPayload = {
-  capability: string;
+  capability: AiCapability;
   household_id: string | null;
   primary_provider_profile_id: string | null;
   fallback_provider_profile_ids: string[];

@@ -2,10 +2,75 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useI18n } from '../../../runtime';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel } from '../../assistant/assistant.agents';
 import { Card } from '../../family/base';
-import { parseTags, stringifyTags } from '../../setup/setupAiConfig';
+import { getCapabilityLabel, getProviderModelName, parseTags, stringifyTags } from '../../setup/setupAiConfig';
 import { SettingsDialog, SettingsEmptyState, SettingsPanelCard } from './SettingsSharedBlocks';
 import { settingsApi } from '../settingsApi';
-import type { AgentDetail, AgentSummary, Member } from '../settingsTypes';
+import type {
+  AgentDetail,
+  AgentModelBinding,
+  AgentSkillModelBinding,
+  AgentSummary,
+  AiCapability,
+  AiProviderProfile,
+  Member,
+  PluginRegistryItem,
+} from '../settingsTypes';
+
+const AI_CAPABILITIES: AiCapability[] = ['text', 'vision', 'audio_generation', 'audio_recognition', 'image_generation'];
+
+type ModelBindingFormState = Record<AiCapability, string>;
+type AgentSkillBindingFormState = Record<string, ModelBindingFormState>;
+
+function buildEmptyModelBindingForm(): ModelBindingFormState {
+  return {
+    text: '',
+    vision: '',
+    audio_generation: '',
+    audio_recognition: '',
+    image_generation: '',
+  };
+}
+
+function buildModelBindingForm(bindings: AgentModelBinding[]): ModelBindingFormState {
+  const result = buildEmptyModelBindingForm();
+  for (const item of bindings) {
+    result[item.capability] = item.provider_profile_id;
+  }
+  return result;
+}
+
+function buildAgentSkillBindingForm(
+  bindings: AgentSkillModelBinding[],
+  plugins: PluginRegistryItem[],
+): AgentSkillBindingFormState {
+  const result: AgentSkillBindingFormState = {};
+  for (const plugin of plugins) {
+    result[plugin.id] = buildEmptyModelBindingForm();
+  }
+  for (const item of bindings) {
+    result[item.plugin_id] ??= buildEmptyModelBindingForm();
+    result[item.plugin_id][item.capability] = item.provider_profile_id;
+  }
+  return result;
+}
+
+function serializeModelBindings(form: ModelBindingFormState): AgentModelBinding[] {
+  return AI_CAPABILITIES.flatMap(capability => (
+    form[capability]
+      ? [{ capability, provider_profile_id: form[capability] }]
+      : []
+  ));
+}
+
+function serializeAgentSkillBindings(form: AgentSkillBindingFormState): AgentSkillModelBinding[] {
+  return Object.entries(form).flatMap(([pluginId, bindings]) => (
+    AI_CAPABILITIES.flatMap(capability => (
+      bindings[capability]
+        ? [{ plugin_id: pluginId, capability, provider_profile_id: bindings[capability] }]
+        : []
+    ))
+  ));
+}
 
 type CreateFormState = {
   displayName: string;
@@ -37,10 +102,12 @@ export function AgentConfigPanel(props: {
   onlyButler?: boolean;
   onChanged?: () => Promise<void> | void;
 }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const { householdId, compact = false, onlyButler = false, onChanged } = props;
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [providers, setProviders] = useState<AiProviderProfile[]>([]);
+  const [agentSkillPlugins, setAgentSkillPlugins] = useState<PluginRegistryItem[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [detail, setDetail] = useState<AgentDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -66,6 +133,8 @@ export function AgentConfigPanel(props: {
     configActionLevel: 'ask' as 'ask' | 'notify' | 'auto',
     operationActionLevel: 'ask' as 'ask' | 'notify' | 'auto',
   });
+  const [modelBindingForm, setModelBindingForm] = useState<ModelBindingFormState>(buildEmptyModelBindingForm());
+  const [agentSkillBindingForm, setAgentSkillBindingForm] = useState<AgentSkillBindingFormState>({});
   const [cognitionForm, setCognitionForm] = useState<Record<string, {
     displayAddress: string;
     closenessLevel: string;
@@ -77,6 +146,19 @@ export function AgentConfigPanel(props: {
   const visibleAgents = useMemo(
     () => agents.filter(item => !onlyButler || item.agent_type === 'butler'),
     [agents, onlyButler],
+  );
+  const enabledProviders = useMemo(
+    () => providers.filter(item => item.enabled && item.plugin_enabled !== false),
+    [providers],
+  );
+  const providerOptionsByCapability = useMemo(
+    () => Object.fromEntries(
+      AI_CAPABILITIES.map(capability => [
+        capability,
+        enabledProviders.filter(item => item.supported_capabilities.includes(capability)),
+      ]),
+    ) as Record<AiCapability, AiProviderProfile[]>,
+    [enabledProviders],
   );
 
   const createActionLabel = compact
@@ -111,6 +193,12 @@ export function AgentConfigPanel(props: {
     saveRuntimeFailed: t('settings.ai.agent.saveRuntimeFailed'),
     saveCognitionSuccess: t('settings.ai.agent.saveCognitionSuccess'),
     saveCognitionFailed: t('settings.ai.agent.saveCognitionFailed'),
+    modelBindingsTitle: t('settings.ai.agent.modelBindingsTitle'),
+    modelBindingsHint: t('settings.ai.agent.modelBindingsHint'),
+    agentDefaultBindingsTitle: t('settings.ai.agent.agentDefaultBindingsTitle'),
+    agentSkillBindingsTitle: t('settings.ai.agent.agentSkillBindingsTitle'),
+    noAgentSkillPlugins: t('settings.ai.agent.noAgentSkillPlugins'),
+    inheritHouseholdRoute: t('settings.ai.agent.inheritHouseholdRoute'),
     panelTitleCompact: t('settings.ai.agent.createFirst'),
     panelTitleButler: t('settings.ai.agent.panelTitleButler'),
     panelTitleAgent: t('settings.ai.agent.panelTitleAgent'),
@@ -184,6 +272,10 @@ export function AgentConfigPanel(props: {
       configActionLevel: result.runtime_policy?.autonomous_action_policy?.config ?? 'ask',
       operationActionLevel: result.runtime_policy?.autonomous_action_policy?.action ?? 'ask',
     });
+    setModelBindingForm(buildModelBindingForm(result.runtime_policy?.model_bindings ?? []));
+    setAgentSkillBindingForm(
+      buildAgentSkillBindingForm(result.runtime_policy?.agent_skill_model_bindings ?? [], agentSkillPlugins),
+    );
     setCognitionForm(Object.fromEntries(result.member_cognitions.map(item => [
       item.member_id,
       {
@@ -220,14 +312,18 @@ export function AgentConfigPanel(props: {
       setLoading(true);
       setError('');
       try {
-        const [agentRows, memberRows] = await Promise.all([
+        const [agentRows, memberRows, providerRows, pluginSnapshot] = await Promise.all([
           settingsApi.listAgents(householdId),
           settingsApi.listMembers(householdId),
+          settingsApi.listHouseholdAiProviders(householdId),
+          settingsApi.listRegisteredPlugins(householdId),
         ]);
         if (cancelled) return;
         const nextAgents = onlyButler ? agentRows.items.filter(item => item.agent_type === 'butler') : agentRows.items;
         setAgents(nextAgents);
         setMembers(memberRows.items);
+        setProviders(providerRows);
+        setAgentSkillPlugins(pluginSnapshot.items.filter(item => item.types.includes('agent-skill') && item.enabled));
         setSelectedAgentId(current => (nextAgents.some(item => item.id === current) ? current : (nextAgents[0]?.id ?? '')));
       } catch (loadError) {
         if (!cancelled) {
@@ -279,13 +375,29 @@ export function AgentConfigPanel(props: {
     };
   }, [householdId, selectedAgentId]);
 
+  useEffect(() => {
+    if (!detail) {
+      setAgentSkillBindingForm(buildAgentSkillBindingForm([], agentSkillPlugins));
+      return;
+    }
+    setAgentSkillBindingForm(
+      buildAgentSkillBindingForm(detail.runtime_policy?.agent_skill_model_bindings ?? [], agentSkillPlugins),
+    );
+  }, [agentSkillPlugins, detail]);
+
   async function reload(selectAgentId?: string) {
-    const agentRows = await settingsApi.listAgents(householdId);
+    const [agentRows, providerRows, pluginSnapshot] = await Promise.all([
+      settingsApi.listAgents(householdId),
+      settingsApi.listHouseholdAiProviders(householdId),
+      settingsApi.listRegisteredPlugins(householdId),
+    ]);
     const nextAgents = onlyButler ? agentRows.items.filter(item => item.agent_type === 'butler') : agentRows.items;
     const nextSelectedId = selectAgentId ?? (
       nextAgents.some(item => item.id === selectedAgentId) ? selectedAgentId : (nextAgents[0]?.id ?? '')
     );
     setAgents(nextAgents);
+    setProviders(providerRows);
+    setAgentSkillPlugins(pluginSnapshot.items.filter(item => item.types.includes('agent-skill') && item.enabled));
     setSelectedAgentId(nextSelectedId);
     if (nextSelectedId) {
       applyDetail(await settingsApi.getAgentDetail(householdId, nextSelectedId));
@@ -383,6 +495,8 @@ export function AgentConfigPanel(props: {
           config: runtimeForm.configActionLevel,
           action: runtimeForm.operationActionLevel,
         },
+        model_bindings: serializeModelBindings(modelBindingForm),
+        agent_skill_model_bindings: serializeAgentSkillBindings(agentSkillBindingForm),
       });
       await reload(detail.id);
       setStatus(copy.saveRuntimeSuccess);
@@ -509,6 +623,84 @@ export function AgentConfigPanel(props: {
                     <div className="form-group"><label>{copy.memoryActionLabel}</label><select className="form-select" value={runtimeForm.memoryActionLevel} onChange={(event) => setRuntimeForm(current => ({ ...current, memoryActionLevel: event.target.value as 'ask' | 'notify' | 'auto' }))}>{actionOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
                     <div className="form-group"><label>{copy.configActionLabel}</label><select className="form-select" value={runtimeForm.configActionLevel} onChange={(event) => setRuntimeForm(current => ({ ...current, configActionLevel: event.target.value as 'ask' | 'notify' | 'auto' }))}>{actionOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
                     <div className="form-group"><label>{copy.operationActionLabel}</label><select className="form-select" value={runtimeForm.operationActionLevel} onChange={(event) => setRuntimeForm(current => ({ ...current, operationActionLevel: event.target.value as 'ask' | 'notify' | 'auto' }))}>{actionOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
+                  </div>
+                  <div className="ai-config-section-separator" />
+                  <div className="ai-config-subsection">
+                    <h5>{copy.modelBindingsTitle}</h5>
+                    <p className="ai-config-muted">{copy.modelBindingsHint}</p>
+                    <div className="ai-cognition-item">
+                      <div className="ai-cognition-item__top">
+                        <strong>{copy.agentDefaultBindingsTitle}</strong>
+                      </div>
+                      <div className="setup-form-grid">
+                        {AI_CAPABILITIES.map(capability => (
+                          <div key={capability} className="form-group">
+                            <label>{getCapabilityLabel(capability, locale)}</label>
+                            <select
+                              className="form-select"
+                              value={modelBindingForm[capability]}
+                              onChange={(event) => setModelBindingForm(current => ({ ...current, [capability]: event.target.value }))}
+                            >
+                              <option value="">{copy.inheritHouseholdRoute}</option>
+                              {providerOptionsByCapability[capability].map(provider => (
+                                <option key={provider.id} value={provider.id}>
+                                  {provider.display_name}
+                                  {getProviderModelName(provider) ? ` · ${getProviderModelName(provider)}` : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="ai-cognition-item">
+                      <div className="ai-cognition-item__top">
+                        <strong>{copy.agentSkillBindingsTitle}</strong>
+                      </div>
+                      {agentSkillPlugins.length === 0 ? (
+                        <p className="ai-config-muted">{copy.noAgentSkillPlugins}</p>
+                      ) : (
+                        <div className="ai-cognition-list">
+                          {agentSkillPlugins.map(plugin => {
+                            const skillBindings = agentSkillBindingForm[plugin.id] ?? buildEmptyModelBindingForm();
+                            return (
+                              <div key={plugin.id} className="ai-cognition-item">
+                                <div className="ai-cognition-item__top">
+                                  <strong>{plugin.name}</strong>
+                                  <span className="ai-config-muted">{plugin.id}</span>
+                                </div>
+                                <div className="setup-form-grid">
+                                  {AI_CAPABILITIES.map(capability => (
+                                    <div key={`${plugin.id}-${capability}`} className="form-group">
+                                      <label>{getCapabilityLabel(capability, locale)}</label>
+                                      <select
+                                        className="form-select"
+                                        value={skillBindings[capability]}
+                                        onChange={(event) => setAgentSkillBindingForm(current => ({
+                                          ...current,
+                                          [plugin.id]: {
+                                            ...(current[plugin.id] ?? buildEmptyModelBindingForm()),
+                                            [capability]: event.target.value,
+                                          },
+                                        }))}
+                                      >
+                                        <option value="">{copy.inheritHouseholdRoute}</option>
+                                        {providerOptionsByCapability[capability].map(provider => (
+                                          <option key={provider.id} value={provider.id}>
+                                            {provider.display_name}
+                                            {getProviderModelName(provider) ? ` · ${getProviderModelName(provider)}` : ''}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="setup-form-actions"><button type="button" className="btn btn--primary" onClick={() => void handleSaveRuntime()} disabled={saving}>{copy.saveRuntimeButton}</button></div>
                 </Card>

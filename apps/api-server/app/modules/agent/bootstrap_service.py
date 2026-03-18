@@ -30,7 +30,7 @@ from app.modules.member import service as member_service
 from app.modules.realtime.connection_manager import RealtimeConnectionManager
 from app.modules.realtime.schemas import build_bootstrap_realtime_event
 
-REQUIRED_PROVIDER_CAPABILITY = "qa_generation"
+REQUIRED_PROVIDER_CAPABILITY = "text"
 BOOTSTRAP_FIELD_ORDER: tuple[ButlerBootstrapField, ...] = (
     "display_name",
     "personality_traits",

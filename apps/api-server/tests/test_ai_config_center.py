@@ -19,6 +19,7 @@ from app.modules.agent.bootstrap_service import (
 )
 from app.modules.agent.schemas import ButlerBootstrapConfirm, ButlerBootstrapMessageCreate
 from app.modules.agent.service import create_agent, upsert_agent_runtime_policy
+from app.modules.ai_gateway.gateway_service import build_invocation_plan
 from app.modules.ai_gateway.provider_config_service import list_provider_adapters
 from app.modules.ai_gateway.schemas import AiCapabilityRouteUpsert, AiProviderProfileCreate
 from app.modules.ai_gateway.service import create_provider_profile, upsert_capability_route
@@ -128,7 +129,7 @@ class AiConfigCenterTests(unittest.TestCase):
                 base_url="https://api.siliconflow.cn/v1",
                 secret_ref="env://SILICONFLOW_API_KEY",
                 enabled=True,
-                supported_capabilities=["qa_generation", "qa_structured_answer"],
+                supported_capabilities=["text"],
                 privacy_level="public_cloud",
                 extra_config={
                     "adapter_code": "siliconflow",
@@ -253,7 +254,7 @@ class AiConfigCenterTests(unittest.TestCase):
                 api_version=None,
                 secret_ref="OPENAI_API_KEY",
                 enabled=True,
-                supported_capabilities=["qa_generation", "qa_structured_answer"],
+                supported_capabilities=["text"],
                 privacy_level="public_cloud",
                 latency_budget_ms=15000,
                 cost_policy={},
@@ -262,7 +263,7 @@ class AiConfigCenterTests(unittest.TestCase):
         )
         self.db.flush()
 
-        for capability in ["qa_generation", "qa_structured_answer"]:
+        for capability in ["text"]:
             upsert_capability_route(
                 self.db,
                 AiCapabilityRouteUpsert(
@@ -318,7 +319,7 @@ class AiConfigCenterTests(unittest.TestCase):
                 api_version=None,
                 secret_ref="OPENAI_API_KEY",
                 enabled=True,
-                supported_capabilities=["qa_generation"],
+                supported_capabilities=["text"],
                 privacy_level="public_cloud",
                 latency_budget_ms=15000,
                 cost_policy={},
@@ -330,7 +331,7 @@ class AiConfigCenterTests(unittest.TestCase):
         upsert_capability_route(
             self.db,
             AiCapabilityRouteUpsert(
-                capability="qa_generation",
+                capability="text",
                 household_id=household.id,
                 primary_provider_profile_id=provider.id,
                 fallback_provider_profile_ids=[],
@@ -426,6 +427,239 @@ class AiConfigCenterTests(unittest.TestCase):
         self.assertEqual(5, len(request_rows))
         self.assertTrue(all(item.status == "succeeded" for item in request_rows))
         self.assertTrue(all(item.user_message_id for item in request_rows))
+
+    def test_agent_model_binding_takes_priority_over_household_route(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Binding Home", city="Hangzhou", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        route_provider = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                provider_code="binding-route-provider",
+                display_name="Household Route Provider",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://api.openai.com/v1",
+                api_version=None,
+                secret_ref="OPENAI_API_KEY",
+                enabled=True,
+                supported_capabilities=["text"],
+                privacy_level="public_cloud",
+                latency_budget_ms=15000,
+                cost_policy={},
+                extra_config={"adapter_code": "chatgpt", "model_name": "gpt-4o-mini"},
+            ),
+        )
+        bound_provider = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                provider_code="binding-agent-provider",
+                display_name="Agent Bound Provider",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://api.openai.com/v1",
+                api_version=None,
+                secret_ref="OPENAI_API_KEY",
+                enabled=True,
+                supported_capabilities=["text"],
+                privacy_level="public_cloud",
+                latency_budget_ms=15000,
+                cost_policy={},
+                extra_config={"adapter_code": "chatgpt", "model_name": "gpt-4.1-mini"},
+            ),
+        )
+        agent = create_agent(
+            self.db,
+            household_id=household.id,
+            payload=AgentCreate(
+                display_name="Bound Butler",
+                agent_type="butler",
+                self_identity="I am bound",
+                role_summary="Handle household Q&A",
+                personality_traits=["calm"],
+                service_focus=["问答"],
+                default_entry=True,
+            ),
+        )
+        self.db.flush()
+
+        upsert_capability_route(
+            self.db,
+            AiCapabilityRouteUpsert(
+                capability="text",
+                household_id=household.id,
+                primary_provider_profile_id=route_provider.id,
+                fallback_provider_profile_ids=[],
+                routing_mode="primary_then_fallback",
+                timeout_ms=15000,
+                max_retry_count=0,
+                allow_remote=True,
+                prompt_policy={},
+                response_policy={},
+                enabled=True,
+            ),
+        )
+        upsert_agent_runtime_policy(
+            self.db,
+            household_id=household.id,
+            agent_id=agent.id,
+            payload=AgentRuntimePolicyUpsert(
+                conversation_enabled=True,
+                default_entry=True,
+                routing_tags=["qa"],
+                memory_scope=None,
+                model_bindings=[{"capability": "text", "provider_profile_id": bound_provider.id}],
+                agent_skill_model_bindings=[],
+            ),
+        )
+        self.db.flush()
+
+        plan = build_invocation_plan(
+            self.db,
+            capability="text",
+            household_id=household.id,
+            agent_id=agent.id,
+            request_payload={"request_context": {"effective_agent_id": agent.id}},
+        )
+
+        assert plan.primary_provider is not None
+        self.assertEqual(bound_provider.id, plan.primary_provider.provider_profile_id)
+
+    def test_agent_skill_model_binding_takes_priority_over_agent_binding(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Skill Binding Home", city="Hangzhou", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        route_provider = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                provider_code="skill-route-provider",
+                display_name="Household Route Provider",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://api.openai.com/v1",
+                api_version=None,
+                secret_ref="OPENAI_API_KEY",
+                enabled=True,
+                supported_capabilities=["text"],
+                privacy_level="public_cloud",
+                latency_budget_ms=15000,
+                cost_policy={},
+                extra_config={"adapter_code": "chatgpt", "model_name": "gpt-4o-mini"},
+            ),
+        )
+        agent_provider = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                provider_code="skill-agent-provider",
+                display_name="Agent Bound Provider",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://api.openai.com/v1",
+                api_version=None,
+                secret_ref="OPENAI_API_KEY",
+                enabled=True,
+                supported_capabilities=["text"],
+                privacy_level="public_cloud",
+                latency_budget_ms=15000,
+                cost_policy={},
+                extra_config={"adapter_code": "chatgpt", "model_name": "gpt-4.1-mini"},
+            ),
+        )
+        skill_provider = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                provider_code="skill-plugin-provider",
+                display_name="Skill Bound Provider",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://api.openai.com/v1",
+                api_version=None,
+                secret_ref="OPENAI_API_KEY",
+                enabled=True,
+                supported_capabilities=["text"],
+                privacy_level="public_cloud",
+                latency_budget_ms=15000,
+                cost_policy={},
+                extra_config={"adapter_code": "chatgpt", "model_name": "gpt-4.1"},
+            ),
+        )
+        agent = create_agent(
+            self.db,
+            household_id=household.id,
+            payload=AgentCreate(
+                display_name="Skill Bound Butler",
+                agent_type="butler",
+                self_identity="I am skill bound",
+                role_summary="Handle household Q&A",
+                personality_traits=["calm"],
+                service_focus=["问答"],
+                default_entry=True,
+            ),
+        )
+        self.db.flush()
+
+        upsert_capability_route(
+            self.db,
+            AiCapabilityRouteUpsert(
+                capability="text",
+                household_id=household.id,
+                primary_provider_profile_id=route_provider.id,
+                fallback_provider_profile_ids=[],
+                routing_mode="primary_then_fallback",
+                timeout_ms=15000,
+                max_retry_count=0,
+                allow_remote=True,
+                prompt_policy={},
+                response_policy={},
+                enabled=True,
+            ),
+        )
+        upsert_agent_runtime_policy(
+            self.db,
+            household_id=household.id,
+            agent_id=agent.id,
+            payload=AgentRuntimePolicyUpsert(
+                conversation_enabled=True,
+                default_entry=True,
+                routing_tags=["qa"],
+                memory_scope=None,
+                model_bindings=[{"capability": "text", "provider_profile_id": agent_provider.id}],
+                agent_skill_model_bindings=[],
+            ),
+        )
+        runtime_policy = agent_repository.get_runtime_policy(self.db, agent_id=agent.id)
+        assert runtime_policy is not None
+        runtime_policy.agent_skill_model_bindings_json = json.dumps([
+            {
+                "plugin_id": "demo-agent-skill",
+                "capability": "text",
+                "provider_profile_id": skill_provider.id,
+            }
+        ])
+        self.db.flush()
+
+        plan = build_invocation_plan(
+            self.db,
+            capability="text",
+            household_id=household.id,
+            agent_id=agent.id,
+            plugin_id="demo-agent-skill",
+            request_payload={
+                "request_context": {
+                    "effective_agent_id": agent.id,
+                    "plugin_id": "demo-agent-skill",
+                }
+            },
+        )
+
+        assert plan.primary_provider is not None
+        self.assertEqual(skill_provider.id, plan.primary_provider.provider_profile_id)
 
     def test_butler_bootstrap_requires_provider_first(self) -> None:
         household = create_household(

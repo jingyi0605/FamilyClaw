@@ -11,7 +11,6 @@ from app.modules.ai_gateway.provider_runtime import stream_provider_invoke
 from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
 from app.modules.agent.service import build_agent_runtime_context, resolve_effective_agent
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
-from app.modules.agent.service import resolve_effective_agent
 from app.modules.conversation.device_context_summary import ConversationDeviceContextSummary
 from app.modules.family_qa import repository
 from app.modules.family_qa.fact_view_service import build_qa_fact_view
@@ -101,9 +100,10 @@ def query_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: ActorCont
         ai_response = invoke_capability(
             db,
             AiGatewayInvokeRequest(
-                capability="qa_generation",
+                capability="text",
                 household_id=payload.household_id,
                 requester_member_id=payload.requester_member_id,
+                agent_id=prepared.effective_agent.id,
                 payload=_build_qa_generation_payload(prepared),
             ),
         )
@@ -139,9 +139,10 @@ async def aquery_family_qa(db: Session, payload: FamilyQaQueryRequest, actor: Ac
         ai_response = await ainvoke_capability(
             db,
             AiGatewayInvokeRequest(
-                capability="qa_generation",
+                capability="text",
                 household_id=payload.household_id,
                 requester_member_id=payload.requester_member_id,
+                agent_id=prepared.effective_agent.id,
                 payload=_build_qa_generation_payload(prepared),
             ),
         )
@@ -178,9 +179,11 @@ async def stream_family_qa(
 
     plan = build_invocation_plan(
         db,
-        capability="qa_generation",
+        capability="text",
         household_id=payload.household_id,
         requester_member_id=payload.requester_member_id,
+        agent_id=prepared.effective_agent.id,
+        request_payload=_build_qa_generation_payload(prepared),
     )
     prepared_payload = prepare_payload_for_invocation(plan, _build_qa_generation_payload(prepared))
 
@@ -193,9 +196,10 @@ async def stream_family_qa(
         response = await ainvoke_capability(
             db,
             AiGatewayInvokeRequest(
-                capability="qa_generation",
+                capability="text",
                 household_id=payload.household_id,
                 requester_member_id=payload.requester_member_id,
+                agent_id=prepared.effective_agent.id,
                 payload=_build_qa_generation_payload(prepared),
             ),
         )
@@ -242,7 +246,7 @@ async def stream_family_qa(
         return
     except ProviderRuntimeError as exc:
         logger.warning(
-            "Family QA 流式调用失败，切换到同步降级 capability=qa_generation trace_id=%s household_id=%s requester_member_id=%s session_id=%s provider=%s error_code=%s",
+            "Family QA 流式调用失败，切换到同步降级 capability=text trace_id=%s household_id=%s requester_member_id=%s session_id=%s provider=%s error_code=%s",
             trace_id,
             payload.household_id,
             payload.requester_member_id or "-",
@@ -253,14 +257,15 @@ async def stream_family_qa(
         response = await ainvoke_capability(
             db,
             AiGatewayInvokeRequest(
-                capability="qa_generation",
+                capability="text",
                 household_id=payload.household_id,
                 requester_member_id=payload.requester_member_id,
+                agent_id=prepared.effective_agent.id,
                 payload=_build_qa_generation_payload(prepared),
             ),
         )
         logger.info(
-            "Family QA 同步降级完成 capability=qa_generation trace_id=%s fallback_trace_id=%s household_id=%s requester_member_id=%s provider=%s degraded=%s attempts=%s",
+            "Family QA 同步降级完成 capability=text trace_id=%s fallback_trace_id=%s household_id=%s requester_member_id=%s provider=%s degraded=%s attempts=%s",
             trace_id,
             response.trace_id,
             payload.household_id,

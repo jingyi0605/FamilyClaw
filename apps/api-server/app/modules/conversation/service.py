@@ -1405,6 +1405,7 @@ def _run_orchestrated_turn(
             "request_id": request_id,
             "trace_id": request_id,
             "session_id": session.id,
+            "effective_agent_id": session.active_agent_id,
             "channel": "conversation_turn",
         },
     )
@@ -1432,6 +1433,7 @@ async def _arun_orchestrated_turn(
         "request_id": request_id,
         "trace_id": request_id,
         "session_id": session.id,
+        "effective_agent_id": session.active_agent_id,
         "channel": "conversation_turn",
     }
     final_text = ""
@@ -1518,6 +1520,7 @@ def _generate_memory_candidates_for_turn(
                 "request_id": request_id,
                 "trace_id": request_id,
                 "session_id": session.id,
+                "effective_agent_id": session.active_agent_id,
                 "channel": "conversation_memory_autogen",
             },
         )
@@ -1574,6 +1577,7 @@ async def _agenerate_memory_candidates_for_turn(
                 "request_id": request_id,
                 "trace_id": request_id,
                 "session_id": session.id,
+                "effective_agent_id": session.active_agent_id,
                 "channel": "conversation_memory_autogen",
             },
         )
@@ -3431,6 +3435,7 @@ async def run_conversation_realtime_turn(
                 "request_id": request_id,
                 "trace_id": request_id,
                 "session_id": session.id,
+                "effective_agent_id": session.active_agent_id,
                 "channel": "conversation_turn",
             },
         ):
@@ -3728,6 +3733,7 @@ async def arun_conversation_realtime_turn(
                 "request_id": request_id,
                 "trace_id": request_id,
                 "session_id": turn_setup.session_id,
+                "effective_agent_id": session.active_agent_id,
                 "channel": "conversation_turn",
             },
         ):

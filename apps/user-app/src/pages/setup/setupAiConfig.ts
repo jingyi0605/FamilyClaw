@@ -1,5 +1,6 @@
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import type {
+  AiCapability,
   AiCapabilityRoute,
   AiProviderAdapter,
   AiProviderField,
@@ -9,18 +10,14 @@ import type {
 } from './setupTypes';
 
 export const AI_CAPABILITY_OPTIONS = [
-  { value: 'qa_generation', labelKey: 'ai.capability.qaGeneration' },
-  { value: 'qa_structured_answer', labelKey: 'ai.capability.qaStructuredAnswer' },
-  { value: 'reminder_copywriting', labelKey: 'ai.capability.reminderCopywriting' },
-  { value: 'scene_explanation', labelKey: 'ai.capability.sceneExplanation' },
-  { value: 'embedding', labelKey: 'ai.capability.embedding' },
-  { value: 'rerank', labelKey: 'ai.capability.rerank' },
-  { value: 'stt', labelKey: 'ai.capability.stt' },
-  { value: 'tts', labelKey: 'ai.capability.tts' },
+  { value: 'text', labelKey: 'ai.capability.text' },
   { value: 'vision', labelKey: 'ai.capability.vision' },
+  { value: 'audio_generation', labelKey: 'ai.capability.audioGeneration' },
+  { value: 'audio_recognition', labelKey: 'ai.capability.audioRecognition' },
+  { value: 'image_generation', labelKey: 'ai.capability.imageGeneration' },
 ] as const;
 
-export const SETUP_ROUTE_CAPABILITIES = ['qa_generation', 'qa_structured_answer'];
+export const SETUP_ROUTE_CAPABILITIES: AiCapability[] = ['text'];
 
 const CORE_PROVIDER_FIELD_KEYS = new Set([
   'display_name',
@@ -166,7 +163,7 @@ export function assignProviderFormValue(form: ReturnType<typeof buildProviderFor
 
 export function buildRoutePayload(
   householdId: string,
-  capability: string,
+  capability: AiCapability,
   currentRoute: AiCapabilityRoute | undefined,
   primaryProviderProfileId: string | null,
   enabled: boolean,

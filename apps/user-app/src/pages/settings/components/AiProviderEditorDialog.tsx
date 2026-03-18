@@ -8,9 +8,9 @@ import type { AiProviderAdapter } from '../settingsTypes';
 import { SettingsDialog } from './SettingsSharedBlocks';
 import {
   getLocalizedAdapterMeta,
+  getLocalizedCapabilityLabel,
   getLocalizedCapabilityOptions,
   getLocalizedField,
-  getLocalizedModelTypeLabel,
   getLocalizedWorkflowLabel,
 } from './aiProviderCatalog';
 import { getAiProviderLogo } from './AiProviderLogos';
@@ -32,6 +32,7 @@ export function AiProviderEditorDialog(props: {
   adapters: AiProviderAdapter[];
   resolvedAdapter: AiProviderAdapter | null;
   form: ProviderFormState;
+  assignedCapabilities: string[];
   editingProviderId: string | null;
   saving: boolean;
   status: string;
@@ -42,13 +43,14 @@ export function AiProviderEditorDialog(props: {
     providerTypeLabel: string;
     selectPlaceholder: string;
     capabilityCheckboxLabel: string;
+    capabilityCheckboxHint: string;
+    assignedCapabilityLabel: string;
+    assignedCapabilityHint: string;
     enableAfterSave: string;
     saveProvider: string;
     submitAddProvider: string;
-    chooseProviderPlugin: string;
-    chooseProviderPluginDesc: string;
-    supportedModelTypes: string;
     llmWorkflow: string;
+    back: string;
     cancel: string;
     saving: string;
   };
@@ -57,6 +59,7 @@ export function AiProviderEditorDialog(props: {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onAdapterChange: (adapterCode: string) => void;
   onFormChange: (form: ProviderFormState) => void;
+  onAssignedCapabilitiesChange: (capabilities: string[]) => void;
 }) {
   const {
     householdId,
@@ -65,6 +68,7 @@ export function AiProviderEditorDialog(props: {
     adapters,
     resolvedAdapter,
     form,
+    assignedCapabilities,
     editingProviderId,
     saving,
     status,
@@ -74,6 +78,7 @@ export function AiProviderEditorDialog(props: {
     onSubmit,
     onAdapterChange,
     onFormChange,
+    onAssignedCapabilitiesChange,
   } = props;
 
   if (!open) {
@@ -88,7 +93,7 @@ export function AiProviderEditorDialog(props: {
   const adapterMeta = currentAdapter ? getLocalizedAdapterMeta(currentAdapter, locale) : null;
   const Logo = currentAdapter ? getAiProviderLogo(currentAdapter.adapter_code) : null;
 
-  // 构建对话框标题：编辑模式显示"编辑xxx"，新建模式显示"添加模型"
+  // 编辑态直接显示编辑标题，新建态把供应商名字带进标题里。
   const dialogTitle = editingProviderId
     ? copy.editTitle
     : (currentAdapter && adapterMeta ? `${copy.addTitle} - ${adapterMeta.label}` : copy.addTitle);
@@ -111,7 +116,7 @@ export function AiProviderEditorDialog(props: {
               onClick={onBack}
               disabled={saving}
             >
-              {locale?.startsWith('en') ? 'Back' : '返回'}
+              {copy.back}
             </button>
           ) : null}
           <button className="btn btn--outline btn--sm" type="button" onClick={onClose} disabled={saving}>
@@ -136,7 +141,7 @@ export function AiProviderEditorDialog(props: {
     >
       {currentAdapter && adapterMeta ? (
         <>
-          {/* 供应商信息头部 - 紧凑型 */}
+          {/* 供应商头部摘要 */}
           <div className="ai-provider-editor-header">
             {Logo ? (
               <div className="ai-provider-editor-header__logo">
@@ -148,16 +153,16 @@ export function AiProviderEditorDialog(props: {
               <p>{adapterMeta.description}</p>
             </div>
             <div className="ai-provider-editor-header__tags">
-              {(currentAdapter.supported_model_types ?? []).slice(0, 3).map(type => (
-                <span key={type} className="ai-pill ai-pill--primary">
-                  {getLocalizedModelTypeLabel(type, locale)}
+              {(currentAdapter.default_supported_capabilities ?? []).slice(0, 3).map(capability => (
+                <span key={capability} className="ai-pill ai-pill--primary">
+                  {getLocalizedCapabilityLabel(capability, locale)}
                 </span>
               ))}
             </div>
           </div>
 
           <div className="ai-provider-editor-body">
-            {/* 基础信息区块 */}
+            {/* 基础配置 */}
             <div className="ai-editor-section">
               <div className="ai-editor-row">
                 <div className="form-group form-group--compact">
@@ -189,7 +194,7 @@ export function AiProviderEditorDialog(props: {
               </div>
             </div>
 
-            {/* 连接配置区块 */}
+            {/* 动态表单配置 */}
             <div className="ai-editor-section">
               <div className="ai-editor-grid">
                 {currentAdapter.field_schema.map(field => {
@@ -249,10 +254,11 @@ export function AiProviderEditorDialog(props: {
               </div>
             </div>
 
-            {/* 功能配置区块 */}
+            {/* 能力配置 */}
             <div className="ai-editor-section ai-editor-section--capabilities">
               <div className="ai-editor-capabilities">
                 <label className="ai-editor-capabilities__label">{copy.capabilityCheckboxLabel}</label>
+                <p className="ai-editor-capabilities__hint">{copy.capabilityCheckboxHint}</p>
                 <div className="ai-editor-caps-grid">
                   {localizedCapabilityOptions.map(item => (
                     <label key={item.value} className="ai-editor-cap-chip">
@@ -260,12 +266,19 @@ export function AiProviderEditorDialog(props: {
                         type="checkbox"
                         checked={form.supportedCapabilities.includes(item.value)}
                         onChange={() => {
+                          const capabilityChecked = form.supportedCapabilities.includes(item.value);
+                          const nextSupportedCapabilities = capabilityChecked
+                            ? form.supportedCapabilities.filter(capability => capability !== item.value)
+                            : [...form.supportedCapabilities, item.value];
                           onFormChange({
                             ...form,
-                            supportedCapabilities: form.supportedCapabilities.includes(item.value)
-                              ? form.supportedCapabilities.filter(capability => capability !== item.value)
-                              : [...form.supportedCapabilities, item.value],
+                            supportedCapabilities: nextSupportedCapabilities,
                           });
+                          if (capabilityChecked && assignedCapabilities.includes(item.value)) {
+                            onAssignedCapabilitiesChange(
+                              assignedCapabilities.filter(capability => capability !== item.value),
+                            );
+                          }
                         }}
                       />
                       <span>{item.label}</span>
@@ -282,6 +295,38 @@ export function AiProviderEditorDialog(props: {
                   />
                   <span className="ai-editor-switch__label">{copy.enableAfterSave}</span>
                 </label>
+              </div>
+            </div>
+
+            <div className="ai-editor-section ai-editor-section--routes">
+              <div className="ai-editor-capabilities">
+                <label className="ai-editor-capabilities__label">{copy.assignedCapabilityLabel}</label>
+                <p className="ai-editor-capabilities__hint">{copy.assignedCapabilityHint}</p>
+                <div className="ai-editor-caps-grid">
+                  {localizedCapabilityOptions.map(item => (
+                    <label key={`assigned-${item.value}`} className="ai-editor-cap-chip">
+                      <input
+                        type="checkbox"
+                        checked={assignedCapabilities.includes(item.value)}
+                        onChange={() => {
+                          const currentlyAssigned = assignedCapabilities.includes(item.value);
+                          const nextAssignedCapabilities = currentlyAssigned
+                            ? assignedCapabilities.filter(capability => capability !== item.value)
+                            : [...assignedCapabilities, item.value];
+
+                          onAssignedCapabilitiesChange(nextAssignedCapabilities);
+                          if (!currentlyAssigned && !form.supportedCapabilities.includes(item.value)) {
+                            onFormChange({
+                              ...form,
+                              supportedCapabilities: [...form.supportedCapabilities, item.value],
+                            });
+                          }
+                        }}
+                      />
+                      <span>{item.label}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

@@ -298,7 +298,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
             async def _invoke() -> None:
                 nonlocal text, invoke_done_at
                 result = await adapter.ainvoke(
-                    capability="qa_generation",
+                    capability="text",
                     provider_profile=provider_profile,
                     payload={"question": "hello"},
                     timeout_ms=3000,

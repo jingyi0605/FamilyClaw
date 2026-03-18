@@ -5,6 +5,9 @@ import { Card } from './base';
 import { buildCreateProviderPayload, buildProviderFormState, buildRoutePayload, buildUpdateProviderPayload, getProviderAdapterCode, readProviderFormValue, SETUP_ROUTE_CAPABILITIES, toProviderFormState, assignProviderFormValue } from './setupAiConfig';
 import { setupApi } from './setupApi';
 import type { AiCapabilityRoute, AiProviderAdapter, AiProviderField, AiProviderFieldOption, AiProviderProfile } from './setupTypes';
+import { AiProviderSelectDialog } from '../settings/components/AiProviderSelectDialog';
+import { getAiProviderLogo } from '../settings/components/AiProviderLogos';
+import { getLocalizedAdapterMeta } from '../settings/components/aiProviderCatalog';
 
 const HIDDEN_SETUP_FIELDS = new Set(['provider_code', 'latency_budget_ms']);
 
@@ -98,12 +101,21 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
   const [adapters, setAdapters] = useState<AiProviderAdapter[]>([]);
   const [form, setForm] = useState(buildProviderFormState());
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [selectOpen, setSelectOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
 
   const currentAdapter = useMemo(() => adapters.find(item => item.adapter_code === form.adapterCode) ?? null, [adapters, form.adapterCode]);
+  const currentAdapterMeta = useMemo(
+    () => (currentAdapter ? getLocalizedAdapterMeta(currentAdapter, locale) : null),
+    [currentAdapter, locale],
+  );
+  const CurrentAdapterLogo = useMemo(
+    () => (currentAdapter ? getAiProviderLogo(currentAdapter.adapter_code) : null),
+    [currentAdapter],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -162,21 +174,49 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
     }
   }
 
+  function handleSelectAdapter(adapterCode: string) {
+    setForm(buildProviderFormState(adapters.find(item => item.adapter_code === adapterCode) ?? null));
+    setSelectOpen(false);
+  }
+
   if (loading) return <Card><p>{t('setup.providerSetup.loading')}</p></Card>;
 
   return (
     <Card className="ai-config-detail-card">
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor={`provider-adapter-${props.householdId}`}>{t('setup.providerSetup.platformLabel')}</label>
-          <select id={`provider-adapter-${props.householdId}`} className="form-select" value={form.adapterCode} onChange={event => setForm(buildProviderFormState(adapters.find(item => item.adapter_code === event.target.value) ?? null))} disabled={Boolean(editingProviderId)}>
-            <option value="">{t('setup.providerSetup.selectPlaceholder')}</option>
-            {adapters.map(adapter => <option key={adapter.adapter_code} value={adapter.adapter_code}>{adapter.display_name}</option>)}
-          </select>
+          <label htmlFor={`provider-adapter-trigger-${props.householdId}`}>{t('setup.providerSetup.platformLabel')}</label>
+          <button
+            id={`provider-adapter-trigger-${props.householdId}`}
+            type="button"
+            className="setup-provider-trigger"
+            onClick={() => setSelectOpen(true)}
+            disabled={Boolean(editingProviderId)}
+            aria-haspopup="dialog"
+            aria-expanded={selectOpen}
+          >
+            {currentAdapter && currentAdapterMeta && CurrentAdapterLogo ? (
+              <>
+                <span className="setup-provider-trigger__logo">
+                  <CurrentAdapterLogo width={18} height={18} />
+                </span>
+                <span className="setup-provider-trigger__content">
+                  <span className="setup-provider-trigger__title">{currentAdapterMeta.label}</span>
+                  <span className="setup-provider-trigger__desc">{currentAdapterMeta.description}</span>
+                </span>
+              </>
+            ) : (
+              <span className="setup-provider-trigger__placeholder">
+                {t('setup.providerSetup.selectPlaceholder')}
+              </span>
+            )}
+            <span className="setup-provider-trigger__action">
+              {editingProviderId ? t('setup.providerSetup.selectedState') : t('setup.providerSetup.changeAction')}
+            </span>
+          </button>
         </div>
         {currentAdapter ? (
           <>
-            <p className="ai-config-muted">{getLocalizedAdapterDescription(currentAdapter, locale)}</p>
             <div className="setup-form-grid">
               {currentAdapter.field_schema.filter(field => !HIDDEN_SETUP_FIELDS.has(field.key)).map(field => {
                 const localizedField = getLocalizedField(field, locale);
@@ -203,6 +243,18 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
         {status ? <div className="setup-form-status">{status}</div> : null}
         <div className="setup-form-actions"><button className="btn btn--primary btn--large" type="submit" disabled={saving || !currentAdapter || !form.displayName.trim() || !form.modelName.trim()}>{saving ? t('setup.providerSetup.binding') : editingProviderId ? t('setup.providerSetup.saveAndUpdateAll') : t('setup.providerSetup.createAndApplyAll')}</button></div>
       </form>
+      <AiProviderSelectDialog
+        open={selectOpen}
+        locale={locale}
+        adapters={adapters}
+        copy={{
+          title: t('setup.providerSetup.dialogTitle'),
+          description: t('setup.providerSetup.dialogDescription'),
+          close: t('common.close'),
+        }}
+        onSelect={handleSelectAdapter}
+        onClose={() => setSelectOpen(false)}
+      />
     </Card>
   );
 }

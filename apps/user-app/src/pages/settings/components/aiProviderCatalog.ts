@@ -7,33 +7,17 @@ import type {
   AiProviderAdapter,
   AiProviderField,
   AiProviderFieldOption,
-  AiProviderModelType,
 } from '../settingsTypes';
-
-export const AI_PROVIDER_MODEL_TYPE_OPTIONS: Array<{
-  value: AiProviderModelType;
-  labelKey: Parameters<typeof getPageMessage>[1];
-}> = [
-  { value: 'llm', labelKey: 'settings.ai.provider.modelType.llm' },
-  { value: 'embedding', labelKey: 'settings.ai.provider.modelType.embedding' },
-  { value: 'vision', labelKey: 'settings.ai.provider.modelType.vision' },
-  { value: 'speech', labelKey: 'settings.ai.provider.modelType.speech' },
-  { value: 'image', labelKey: 'settings.ai.provider.modelType.image' },
-];
 
 const WORKFLOW_LABEL_MAP: Record<string, Parameters<typeof getPageMessage>[1]> = {
   openai_chat_completions: 'settings.ai.provider.workflow.openaiCompatible',
   anthropic_messages: 'settings.ai.provider.workflow.anthropic',
   gemini_generate_content: 'settings.ai.provider.workflow.gemini',
 };
+const CAPABILITY_ORDER = new Map(AI_CAPABILITY_OPTIONS.map((item, index) => [item.value, index]));
 
 export function getLocalizedCapabilityLabel(capability: string, locale: string | undefined) {
   return getCapabilityLabel(capability, locale);
-}
-
-export function getLocalizedModelTypeLabel(type: AiProviderModelType, locale: string | undefined) {
-  const matched = AI_PROVIDER_MODEL_TYPE_OPTIONS.find(item => item.value === type);
-  return matched ? getPageMessage(locale, matched.labelKey) : type;
 }
 
 export function getLocalizedWorkflowLabel(workflow: string, locale: string | undefined) {
@@ -70,6 +54,17 @@ export function getLocalizedCapabilityOptions(locale: string | undefined) {
     ...item,
     label: getLocalizedCapabilityLabel(item.value, locale),
   }));
+}
+
+export function sortCapabilities(capabilities: string[]) {
+  return Array.from(new Set(capabilities.filter(Boolean))).sort((left, right) => {
+    const leftOrder = CAPABILITY_ORDER.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = CAPABILITY_ORDER.get(right) ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return left.localeCompare(right);
+  });
 }
 
 function localizeExamplePrefix(text: string | null | undefined, locale: string | undefined) {

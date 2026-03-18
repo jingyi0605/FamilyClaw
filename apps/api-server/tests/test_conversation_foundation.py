@@ -1082,7 +1082,7 @@ class ConversationFoundationTests(unittest.TestCase):
 
     def test_template_fallback_for_intent_detection_returns_structured_json(self) -> None:
         output = build_template_fallback_output(
-            capability="qa_generation",
+            capability="text",
             payload={"task_type": "conversation_intent_detection"},
         )
         parsed = parse_to_model(str(output.get("text") or ""), ConversationIntentDetectionOutput)
@@ -1092,7 +1092,7 @@ class ConversationFoundationTests(unittest.TestCase):
 
     def test_template_fallback_for_free_chat_returns_human_greeting(self) -> None:
         output = build_template_fallback_output(
-            capability="qa_generation",
+            capability="text",
             payload={"task_type": "free_chat", "user_message": "浣犲ソ"},
         )
         self.assertIn("浣犲ソ锛屾垜鍦?, str(output.get("text") or ""))

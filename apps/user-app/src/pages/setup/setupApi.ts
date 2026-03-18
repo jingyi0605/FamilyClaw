@@ -1,6 +1,7 @@
 import { createCoreApiClient, createRequestClient } from '@familyclaw/user-core';
 import type {
   AgentDetail,
+  AiCapability,
   AiCapabilityRoute,
   AiCapabilityRouteUpsertPayload,
   AiProviderAdapter,
@@ -40,7 +41,7 @@ export const setupApi = {
   listHouseholdAiRoutes(householdId: string) {
     return request<AiCapabilityRoute[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-routes`);
   },
-  upsertHouseholdAiRoute(householdId: string, capability: string, payload: AiCapabilityRouteUpsertPayload) {
+  upsertHouseholdAiRoute(householdId: string, capability: AiCapability, payload: AiCapabilityRouteUpsertPayload) {
     return request<AiCapabilityRoute>(`/ai-config/${encodeURIComponent(householdId)}/provider-routes/${encodeURIComponent(capability)}`, {
       method: 'PUT',
       body: JSON.stringify(payload),

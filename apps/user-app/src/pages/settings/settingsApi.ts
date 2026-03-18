@@ -1,9 +1,12 @@
 import { ApiError, createCoreApiClient, createRequestClient } from '@familyclaw/user-core';
 import type {
   AgentDetail,
+  AgentModelBinding,
   AgentListResponse,
+  AgentSkillModelBinding,
   AiCapabilityRoute,
   AiCapabilityRouteUpsertPayload,
+  AiCapability,
   AiProviderAdapter,
   AiProviderProfile,
   AiProviderProfileCreatePayload,
@@ -93,7 +96,7 @@ export const settingsApi = {
   listHouseholdAiRoutes(householdId: string) {
     return request<AiCapabilityRoute[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-routes`);
   },
-  upsertHouseholdAiRoute(householdId: string, capability: string, payload: AiCapabilityRouteUpsertPayload) {
+  upsertHouseholdAiRoute(householdId: string, capability: AiCapability, payload: AiCapabilityRouteUpsertPayload) {
     return request<AiCapabilityRoute>(
       `/ai-config/${encodeURIComponent(householdId)}/provider-routes/${encodeURIComponent(capability)}`,
       {
@@ -176,6 +179,8 @@ export const settingsApi = {
         config: 'ask' | 'notify' | 'auto';
         action: 'ask' | 'notify' | 'auto';
       };
+      model_bindings: AgentModelBinding[];
+      agent_skill_model_bindings: AgentSkillModelBinding[];
     },
   ) {
     return request<AgentDetail['runtime_policy']>(

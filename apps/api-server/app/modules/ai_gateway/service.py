@@ -182,6 +182,17 @@ def delete_provider_profile(
         if route.primary_provider_profile_id == provider_profile_id or provider_profile_id in fallback_ids:
             raise AiGatewayConfigurationError("供应商档案仍被能力路由引用，不能直接删除")
 
+    from app.modules.agent import repository as agent_repository
+
+    for runtime_policy in agent_repository.list_runtime_policies(db):
+        model_bindings = load_json(runtime_policy.model_bindings_json) or []
+        if any(isinstance(item, dict) and item.get("provider_profile_id") == provider_profile_id for item in model_bindings):
+            raise AiGatewayConfigurationError("提供商档案仍被 Agent 模型绑定引用，不能直接删除")
+
+        skill_bindings = load_json(runtime_policy.agent_skill_model_bindings_json) or []
+        if any(isinstance(item, dict) and item.get("provider_profile_id") == provider_profile_id for item in skill_bindings):
+            raise AiGatewayConfigurationError("提供商档案仍被 agent-skill 模型绑定引用，不能直接删除")
+
     repository.delete_provider_profile(db, row)
     db.flush()
 
@@ -502,7 +513,6 @@ def _require_available_household_ai_provider_plugin(
         plugin_id=plugin.id,
         plugin_type="ai-provider",
     )
-
 
 def _to_capability_route_read(row: AiCapabilityRoute) -> AiCapabilityRouteRead:
     capability: AiCapability = cast(AiCapability, row.capability)

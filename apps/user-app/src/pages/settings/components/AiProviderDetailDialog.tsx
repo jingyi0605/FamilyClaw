@@ -1,12 +1,12 @@
 import { SettingsDialog } from './SettingsSharedBlocks';
 import type { AiProviderAdapter, AiCapabilityRoute, AiProviderProfile, AiProviderField, PluginRegistryItem } from '../settingsTypes';
-import { getProviderAdapterCode, getProviderModelName } from '../../setup/setupAiConfig';
+import { getProviderModelName } from '../../setup/setupAiConfig';
 import {
   getLocalizedAdapterMeta,
   getLocalizedCapabilityLabel,
   getLocalizedField,
-  getLocalizedModelTypeLabel,
   getLocalizedWorkflowLabel,
+  sortCapabilities,
 } from './aiProviderCatalog';
 import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
 
@@ -87,6 +87,8 @@ export function AiProviderDetailDialog(props: {
     summarySupportTitle: string;
     summaryRouteTitle: string;
     summaryRouteEmpty: string;
+    routeMismatchTitle: string;
+    routeMismatchDescription: string;
     summaryConfigTitle: string;
     close: string;
     edit: string;
@@ -104,6 +106,9 @@ export function AiProviderDetailDialog(props: {
   const routeCapabilities = routes
     .filter(item => item.enabled && item.primary_provider_profile_id === provider.id)
     .map(item => item.capability);
+  const supportedCapabilities = sortCapabilities(provider.supported_capabilities);
+  const activeRouteCapabilities = sortCapabilities(routeCapabilities);
+  const invalidRouteCapabilities = activeRouteCapabilities.filter(capability => !supportedCapabilities.includes(capability));
   const summaryFields = adapter?.field_schema
     .map(field => {
       const localizedField = getLocalizedField(field, locale);
@@ -192,12 +197,7 @@ export function AiProviderDetailDialog(props: {
       <div className="ai-detail-modal__section">
         <h4>{copy.summarySupportTitle}</h4>
         <div className="ai-config-chip-list">
-          {(adapter?.supported_model_types ?? []).map(type => (
-            <span key={type} className="ai-pill ai-pill--primary">
-              {getLocalizedModelTypeLabel(type, locale)}
-            </span>
-          ))}
-          {provider.supported_capabilities.map(capability => (
+          {supportedCapabilities.map(capability => (
             <span key={capability} className="ai-pill">
               {getLocalizedCapabilityLabel(capability, locale)}
             </span>
@@ -207,9 +207,9 @@ export function AiProviderDetailDialog(props: {
 
       <div className="ai-detail-modal__section">
         <h4>{copy.summaryRouteTitle}</h4>
-        {routeCapabilities.length > 0 ? (
+        {activeRouteCapabilities.length > 0 ? (
           <div className="ai-config-chip-list">
-            {routeCapabilities.map(capability => (
+            {activeRouteCapabilities.map(capability => (
               <span key={capability} className="ai-pill">
                 {getLocalizedCapabilityLabel(capability, locale)}
               </span>
@@ -218,6 +218,13 @@ export function AiProviderDetailDialog(props: {
         ) : (
           <p className="ai-config-muted">{copy.summaryRouteEmpty}</p>
         )}
+        {invalidRouteCapabilities.length > 0 ? (
+          <div className="settings-note settings-note--warning ai-detail-modal__warning">
+            <strong>{copy.routeMismatchTitle}</strong>
+            {' '}
+            {copy.routeMismatchDescription}
+          </div>
+        ) : null}
       </div>
 
       <div className="ai-detail-modal__section">

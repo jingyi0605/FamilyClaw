@@ -11,6 +11,7 @@ import {
 } from '../../setup/setupAiConfig';
 import { settingsApi } from '../settingsApi';
 import type {
+  AiCapability,
   AiCapabilityRoute,
   AiProviderAdapter,
   AiProviderModelType,
@@ -25,12 +26,22 @@ import { getLocalizedAdapterMeta } from './aiProviderCatalog';
 
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
 const AI_PROVIDER_MODEL_TYPES: AiProviderModelType[] = ['llm', 'embedding', 'vision', 'speech', 'image'];
+const AI_CAPABILITIES: AiCapability[] = ['text', 'vision', 'audio_generation', 'audio_recognition', 'image_generation'];
 
 function normalizeProviderFieldDefaultValue(value: unknown): string | number | boolean | null {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return value;
   }
   return null;
+}
+
+function normalizeCapabilityList(value: unknown): AiCapability[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(item => String(item))
+    .filter((item): item is AiCapability => AI_CAPABILITIES.includes(item as AiCapability));
 }
 
 function buildRegistryAdapter(plugin: PluginRegistryItem): AiProviderAdapter | null {
@@ -51,9 +62,7 @@ function buildRegistryAdapter(plugin: PluginRegistryItem): AiProviderAdapter | n
     default_privacy_level: (
       String(capability.runtime_capability?.default_privacy_level ?? 'public_cloud') as AiProviderAdapter['default_privacy_level']
     ),
-    default_supported_capabilities: Array.isArray(capability.runtime_capability?.default_supported_capabilities)
-      ? capability.runtime_capability.default_supported_capabilities.map(item => String(item))
-      : [],
+    default_supported_capabilities: normalizeCapabilityList(capability.runtime_capability?.default_supported_capabilities),
     supported_model_types: capability.supported_model_types.filter(
       (item): item is AiProviderModelType => AI_PROVIDER_MODEL_TYPES.includes(item as AiProviderModelType),
     ),
@@ -87,7 +96,7 @@ function buildRegistryAdapter(plugin: PluginRegistryItem): AiProviderAdapter | n
 export function AiProviderConfigPanel(props: {
   householdId: string;
   compact?: boolean;
-  capabilityFilter?: string[];
+  capabilityFilter?: AiCapability[];
   onChanged?: () => Promise<void> | void;
 }) {
   const { locale, t } = useI18n();
@@ -196,6 +205,7 @@ export function AiProviderConfigPanel(props: {
     chooseProviderPluginDesc: getPageMessage(locale, 'settings.ai.provider.chooseProviderPluginDesc'),
     supportedModelTypes: getPageMessage(locale, 'settings.ai.provider.supportedModelTypes'),
     llmWorkflow: getPageMessage(locale, 'settings.ai.provider.llmWorkflow'),
+    back: getPageMessage(locale, 'settings.ai.provider.back'),
     summaryTitle: getPageMessage(locale, 'settings.ai.provider.summaryTitle'),
     summaryDesc: getPageMessage(locale, 'settings.ai.provider.summaryDesc'),
     summaryConfigTitle: getPageMessage(locale, 'settings.ai.provider.summaryConfigTitle'),
@@ -508,6 +518,11 @@ export function AiProviderConfigPanel(props: {
         adapters={[...registryAdapterMap.values(), ...adapters].filter(
           (item, index, self) => self.findIndex(i => i.adapter_code === item.adapter_code) === index
         )}
+        copy={{
+          title: copy.chooseProviderPlugin,
+          description: copy.chooseProviderPluginDesc,
+          close: copy.close,
+        }}
         onSelect={selectAdapter}
         onClose={() => setSelectOpen(false)}
       />

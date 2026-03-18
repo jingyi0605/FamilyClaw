@@ -26,7 +26,7 @@ class LlmTaskDef:
         output_model: type[BaseModel] | None = None,
         temperature: float = 0.2,
         max_tokens: int = 256,
-        capability: AiCapability = "qa_generation",
+        capability: AiCapability = "text",
     ):
         self.task_type = task_type
         self.system_prompt = system_prompt

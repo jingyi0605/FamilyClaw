@@ -9,10 +9,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.modules.ai_gateway import repository as ai_gateway_repo
-from app.modules.ai_gateway.gateway_service import ainvoke_capability, invoke_capability
+from app.modules.ai_gateway.gateway_service import ainvoke_capability, build_invocation_plan, invoke_capability
 from app.modules.ai_gateway.provider_runtime import stream_provider_invoke
 from app.modules.ai_gateway.schemas import AiCapability, AiGatewayInvokeRequest
-from app.modules.ai_gateway.service import resolve_capability_route
 from app.modules.llm_task.definitions import get_task
 from app.modules.llm_task.parser import parse_to_model, strip_structured_output
 
@@ -197,6 +196,7 @@ async def stream_llm(
         db,
         capability=task.capability,
         household_id=household_id,
+        request_context=request_context,
     )
 
     full_text = ""
@@ -272,15 +272,18 @@ def _resolve_stream_provider(
     *,
     capability: AiCapability,
     household_id: str | None,
+    request_context: dict[str, Any] | None,
 ):
-    route = resolve_capability_route(db, capability=cast(AiCapability, capability), household_id=household_id)
-    if route is None or not route.enabled:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="当前能力路由不可用")
-    if not route.primary_provider_profile_id:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="当前能力未配置主供应商")
+    plan = build_invocation_plan(
+        db,
+        capability=cast(AiCapability, capability),
+        household_id=household_id,
+        request_payload={"request_context": request_context or {}},
+    )
+    if plan.primary_provider is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=plan.blocked_reason or "当前能力没有可用主提供商")
 
-    provider_profile = ai_gateway_repo.get_provider_profile(db, route.primary_provider_profile_id)
+    provider_profile = ai_gateway_repo.get_provider_profile(db, plan.primary_provider.provider_profile_id)
     if provider_profile is None or not provider_profile.enabled:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="当前主供应商不可用")
-
-    return provider_profile, route.timeout_ms
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="当前主提供商不可用")
+    return provider_profile, plan.timeout_ms
