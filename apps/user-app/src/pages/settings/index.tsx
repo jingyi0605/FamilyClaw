@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Taro, { useRouter } from '@tarojs/taro';
 import { getLocaleSourceLabel } from '@familyclaw/user-core';
-import { PageSection, ToggleSwitch, UiCard, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
+import { PageSection, ToggleSwitch, UiButton, UiCard, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
 import { GuardedPage, useHouseholdContext } from '../../runtime';
 import { useI18n, useTheme } from '../../runtime/h5-shell';
 import { SettingsPageShell } from './SettingsPageShell';
 import { SettingsNotice } from './components/SettingsSharedBlocks';
 import { settingsApi } from './settingsApi';
-import type { ContextConfigRead } from './settingsTypes';
+import type { ContextConfigRead, SystemVersionRead } from './settingsTypes';
 
-type SettingsSection = 'appearance' | 'language' | 'notifications' | 'accessibility';
+type SettingsSection = 'appearance' | 'language' | 'notifications' | 'accessibility' | 'version-management';
 function resolveSection(value?: string | string[]): SettingsSection {
   const raw = Array.isArray(value) ? value[0] : value;
-  if (raw === 'language' || raw === 'notifications' || raw === 'accessibility') {
+  if (
+    raw === 'language'
+    || raw === 'notifications'
+    || raw === 'accessibility'
+    || raw === 'version-management'
+  ) {
     return raw;
   }
   return 'appearance';
@@ -472,6 +477,198 @@ function SettingsAccessibilitySection() {
   );
 }
 
+function SettingsVersionManagementSection() {
+  const { t, locale } = useI18n();
+  const [versionInfo, setVersionInfo] = useState<SystemVersionRead | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadVersionInfo() {
+      setLoading(true);
+      setLoadFailed(false);
+
+      try {
+        const result = await settingsApi.getSystemVersion();
+        if (!cancelled) {
+          setVersionInfo(result);
+        }
+      } catch {
+        if (!cancelled) {
+          setVersionInfo(null);
+          setLoadFailed(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadVersionInfo();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function formatDateLabel(value: string | null) {
+    if (!value) {
+      return '';
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+
+    return new Intl.DateTimeFormat(locale, {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+    }).format(date);
+  }
+
+  function openReleaseNotes(url: string) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  const currentVersion = versionInfo?.current_version ?? null;
+  const latestVersion = versionInfo?.latest_version ?? versionInfo?.current_version ?? null;
+  const latestVersionValue = latestVersion ?? '';
+  const publishedAtLabel = formatDateLabel(versionInfo?.latest_release_published_at ?? null);
+  const showLatestVersionPill = versionInfo?.update_status === 'update_available'
+    && Boolean(latestVersionValue)
+    && latestVersion !== currentVersion;
+  const releaseNotesUrl = versionInfo?.update_status === 'update_available'
+    ? versionInfo.latest_release_notes_url ?? versionInfo.release_notes_url
+    : versionInfo?.release_notes_url ?? versionInfo?.latest_release_notes_url ?? null;
+  const releaseNotesLabel = versionInfo?.update_status === 'update_available'
+    ? t('settings.versionManagement.viewNewReleaseNotes')
+    : t('settings.versionManagement.viewReleaseNotes');
+  const statusToneClass = loading
+    ? 'version-management-overview--loading'
+    : versionInfo?.update_status === 'update_available'
+      ? 'version-management-overview--available'
+      : versionInfo?.update_status === 'up_to_date'
+        ? 'version-management-overview--up-to-date'
+        : 'version-management-overview--unknown';
+  const statusBadgeLabel = loading
+    ? t('settings.versionManagement.loadingValue')
+    : versionInfo?.update_status === 'update_available'
+      ? t('settings.versionManagement.statusBadge.updateAvailable')
+      : versionInfo?.update_status === 'up_to_date'
+        ? t('settings.versionManagement.statusBadge.upToDate')
+        : t('settings.versionManagement.statusBadge.unavailable');
+  const statusTitle = loading
+    ? t('settings.versionManagement.loadingTitle')
+    : versionInfo?.update_status === 'update_available'
+      ? t('settings.versionManagement.statusTitle.updateAvailable', {
+        version: latestVersion ?? t('settings.versionManagement.versionFallback'),
+      })
+      : versionInfo?.update_status === 'up_to_date'
+        ? t('settings.versionManagement.statusTitle.upToDate')
+        : t('settings.versionManagement.statusTitle.unavailable');
+  const statusDescription = loading
+    ? t('settings.versionManagement.loadingDescription')
+    : versionInfo?.update_status === 'update_available'
+      ? t('settings.versionManagement.statusDescription.updateAvailable', {
+        current: currentVersion ?? t('settings.versionManagement.versionFallback'),
+        latest: latestVersion ?? t('settings.versionManagement.versionFallback'),
+      })
+      : versionInfo?.update_status === 'up_to_date'
+        ? t('settings.versionManagement.statusDescription.upToDate', {
+          version: currentVersion ?? t('settings.versionManagement.versionFallback'),
+        })
+        : t('settings.versionManagement.statusDescription.unavailable', {
+          version: currentVersion ?? t('settings.versionManagement.versionFallback'),
+        });
+  const releaseTitle = loading
+    ? t('settings.versionManagement.releaseCard.loadingTitle')
+    : versionInfo?.latest_release_title
+      ? versionInfo.latest_release_title
+      : versionInfo?.update_status === 'update_available'
+        ? t('settings.versionManagement.releaseCard.fallbackTitleAvailable', {
+          version: latestVersion ?? t('settings.versionManagement.versionFallback'),
+        })
+        : t('settings.versionManagement.releaseCard.fallbackTitleCurrent', {
+          version: latestVersion ?? currentVersion ?? t('settings.versionManagement.versionFallback'),
+        });
+  const releaseSummary = loading
+    ? t('settings.versionManagement.loadingDescription')
+    : versionInfo?.latest_release_summary
+      ? versionInfo.latest_release_summary
+      : versionInfo?.update_status === 'update_available'
+        ? t('settings.versionManagement.releaseCard.fallbackSummaryAvailable')
+        : versionInfo?.update_status === 'up_to_date'
+          ? t('settings.versionManagement.releaseCard.fallbackSummaryCurrent')
+          : t('settings.versionManagement.releaseCard.fallbackSummaryUnavailable');
+
+  return (
+    <div className="settings-page settings-page--version-management">
+      <PageSection title={t('settings.versionManagement.title')} contentStyle={{ marginTop: 0 }}>
+        {loadFailed ? (
+          <SettingsNotice tone="error" icon="!">
+            {t('settings.versionManagement.loadFailed')}
+          </SettingsNotice>
+        ) : null}
+
+        <UiCard className={`version-management-overview ${statusToneClass}`}>
+          <div className="version-management-overview__body">
+            <span className="version-management-overview__badge">{statusBadgeLabel}</span>
+            <h3 className="version-management-overview__title">{statusTitle}</h3>
+            <p className="version-management-overview__desc">{statusDescription}</p>
+            <div className="version-management-overview__meta">
+              {currentVersion ? (
+                <span className="version-management-overview__meta-item">
+                  {t('settings.versionManagement.currentVersionPill', { version: currentVersion })}
+                </span>
+              ) : null}
+              {showLatestVersionPill ? (
+                <span className="version-management-overview__meta-item">
+                  {t('settings.versionManagement.latestVersionPill', { version: latestVersionValue })}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </UiCard>
+
+        <UiCard className="version-management-release">
+          <div className="version-management-release__header">
+            <div>
+              <UiText variant="label">{t('settings.versionManagement.releaseCard.eyebrow')}</UiText>
+              <h3 className="version-management-release__title">{releaseTitle}</h3>
+              {publishedAtLabel ? (
+                <p className="version-management-release__meta">
+                  {t('settings.versionManagement.releaseCard.publishedAt', { date: publishedAtLabel })}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <p className="version-management-release__summary">{releaseSummary}</p>
+          {releaseNotesUrl ? (
+            <div className="version-management-release__actions">
+              <UiButton variant="secondary" size="sm" onClick={() => openReleaseNotes(releaseNotesUrl)}>
+                {releaseNotesLabel}
+              </UiButton>
+            </div>
+          ) : null}
+          {!releaseNotesUrl && !loading ? (
+            <p className="version-management-release__hint">
+              {t('settings.versionManagement.releaseCard.noLinkHint')}
+            </p>
+          ) : null}
+        </UiCard>
+      </PageSection>
+    </div>
+  );
+}
+
 function SettingsIndexContent() {
   const router = useRouter();
   const { t, locale } = useI18n();
@@ -487,6 +684,7 @@ function SettingsIndexContent() {
       {section === 'language' ? <SettingsLanguageSection /> : null}
       {section === 'notifications' ? <SettingsNotificationsSection /> : null}
       {section === 'accessibility' ? <SettingsAccessibilitySection /> : null}
+      {section === 'version-management' ? <SettingsVersionManagementSection /> : null}
     </SettingsPageShell>
   );
 }

@@ -44,6 +44,19 @@ export type AiProviderFieldOption = {
   value: string;
 };
 
+export type SystemVersionRead = {
+  current_version: string;
+  build_channel: 'stable' | 'preview' | 'development';
+  build_time: string | null;
+  release_notes_url: string | null;
+  update_status: 'up_to_date' | 'update_available' | 'check_unavailable';
+  latest_version: string | null;
+  latest_release_notes_url: string | null;
+  latest_release_title: string | null;
+  latest_release_summary: string | null;
+  latest_release_published_at: string | null;
+};
+
 export type AiProviderField = {
   key: string;
   label: string;

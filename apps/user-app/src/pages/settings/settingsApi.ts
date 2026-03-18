@@ -54,6 +54,7 @@ import type {
   PluginVersionOperationRequest,
   PluginVersionOperationResultRead,
   VoiceprintEnrollmentRead,
+  SystemVersionRead,
 } from './settingsTypes';
 
 const request = createRequestClient({
@@ -67,6 +68,9 @@ export { ApiError };
 
 export const settingsApi = {
   ...coreApi,
+  getSystemVersion() {
+    return request<SystemVersionRead>('/system/version');
+  },
   listAiProviderAdapters(householdId: string) {
     return request<AiProviderAdapter[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-adapters`);
   },

@@ -7,6 +7,7 @@ import {
   MessageCircle,
   Palette,
   Puzzle,
+  Tag as TagIcon,
 } from 'lucide-react';
 import Taro from '@tarojs/taro';
 import type { ReactNode } from 'react';
@@ -18,6 +19,7 @@ type SettingsNavKey =
   | 'language'
   | 'notifications'
   | 'accessibility'
+  | 'version-management'
   | 'integrations'
   | 'channel-access'
   | 'plugins';
@@ -86,6 +88,13 @@ const settingsItems: SettingsNavItem[] = [
     descKey: 'settings.nav.plugins.desc',
     url: '/pages/plugins/index',
     icon: <Puzzle size={20} />,
+  },
+  {
+    key: 'version-management',
+    labelKey: 'settings.nav.versionManagement.label',
+    descKey: 'settings.nav.versionManagement.desc',
+    url: '/pages/settings/index?section=version-management',
+    icon: <TagIcon size={20} />,
   },
 ];
 
