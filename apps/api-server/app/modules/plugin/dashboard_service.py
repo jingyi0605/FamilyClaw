@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
@@ -54,10 +54,6 @@ DEFAULT_HOME_LAYOUT_CARD_REFS = (
     "builtin:events",
     "builtin:quick-actions",
 )
-OFFICIAL_WEATHER_PLUGIN_ID = "official-weather"
-OFFICIAL_WEATHER_DEFAULT_CARD_KEY = "weather-default"
-OFFICIAL_WEATHER_DEVICE_CARD_KEY_PREFIX = "weather-device-"
-OFFICIAL_WEATHER_CARD_REF_PREFIX = f"plugin:{OFFICIAL_WEATHER_PLUGIN_ID}:home:weather-"
 BUILTIN_DASHBOARD_TEXT_DEFAULTS: dict[str, str] = {
     "home.familyStatus": "家庭状态",
     "home.dashboardOverview": "首页总览",
@@ -124,7 +120,6 @@ BUILTIN_QUICK_ACTION_SPECS = (
 )
 
 
-
 def build_plugin_dashboard_card_ref(*, plugin_id: str, placement: str, card_key: str) -> str:
     return f"plugin:{plugin_id}:{placement}:{card_key}"
 
@@ -158,7 +153,13 @@ def upsert_plugin_dashboard_card_snapshot(
     generated_at = payload.generated_at or utc_now_iso()
 
     try:
-        envelope = _validate_snapshot_envelope(card_spec, payload.payload, payload.actions)
+        envelope = _validate_snapshot_envelope(
+            card_spec,
+            payload.title,
+            payload.subtitle,
+            payload.payload,
+            payload.actions,
+        )
     except PluginServiceError as exc:
         row.state = "invalid"
         row.payload_json = dump_json({"payload": {}, "actions": []}) or "{}"
@@ -577,15 +578,20 @@ def _build_plugin_home_cards(
         for card_spec in plugin.dashboard_cards:
             if card_spec.placement != "home":
                 continue
-            card_ref = build_plugin_dashboard_card_ref(
+            matched_rows = _list_matching_plugin_snapshot_rows(
+                snapshot_rows=snapshot_rows,
                 plugin_id=plugin.id,
                 placement=card_spec.placement,
-                card_key=card_spec.card_key,
+                card_spec=card_spec,
             )
-            title = _resolve_plugin_dashboard_text(locale_messages, card_spec.title_key, plugin_name=plugin.name)
-            subtitle = _resolve_plugin_dashboard_text(locale_messages, card_spec.subtitle_key, plugin_name=plugin.name)
-            row = snapshot_rows.get((plugin.id, card_spec.placement, card_spec.card_key))
-            if row is None:
+            if not matched_rows:
+                card_ref = build_plugin_dashboard_card_ref(
+                    plugin_id=plugin.id,
+                    placement=card_spec.placement,
+                    card_key=card_spec.card_key,
+                )
+                fallback_title = _resolve_plugin_dashboard_text(locale_messages, card_spec.title_key, plugin_name=plugin.name)
+                fallback_subtitle = _resolve_plugin_dashboard_text(locale_messages, card_spec.subtitle_key, plugin_name=plugin.name)
                 warnings.append(f"插件卡片缺少快照：{plugin.id}/{card_spec.card_key}")
                 cards.append(
                     HomeDashboardCardRead(
@@ -594,179 +600,89 @@ def _build_plugin_home_cards(
                         template_type=card_spec.template_type,
                         size=card_spec.size,
                         state="error",
-                        title=title or plugin.name,
-                        subtitle=subtitle,
+                        title=fallback_title or plugin.name,
+                        subtitle=fallback_subtitle,
                         payload={},
                         actions=[],
                     )
                 )
                 continue
 
-            snapshot_read = _to_snapshot_read(row)
-            try:
-                envelope = PluginDashboardCardSnapshotEnvelope.model_validate(load_json(row.payload_json) or {})
-            except Exception as exc:
-                warnings.append(f"插件卡片快照损坏：{plugin.id}/{card_spec.card_key}：{exc}")
+            for row in matched_rows:
+                card_ref = build_plugin_dashboard_card_ref(
+                    plugin_id=plugin.id,
+                    placement=card_spec.placement,
+                    card_key=row.card_key,
+                )
+                fallback_title = _resolve_plugin_dashboard_text(locale_messages, card_spec.title_key, plugin_name=plugin.name)
+                fallback_subtitle = _resolve_plugin_dashboard_text(locale_messages, card_spec.subtitle_key, plugin_name=plugin.name)
+                snapshot_read = _to_snapshot_read(row)
+                try:
+                    envelope = PluginDashboardCardSnapshotEnvelope.model_validate(load_json(row.payload_json) or {})
+                except Exception as exc:
+                    warnings.append(f"插件卡片快照损坏：{plugin.id}/{row.card_key}：{exc}")
+                    cards.append(
+                        HomeDashboardCardRead(
+                            card_ref=card_ref,
+                            source_type="plugin",
+                            template_type=card_spec.template_type,
+                            size=card_spec.size,
+                            state="error",
+                            title=fallback_title or plugin.name,
+                            subtitle=fallback_subtitle,
+                            payload={},
+                            actions=[],
+                        )
+                    )
+                    continue
+
+                current_state = _resolve_snapshot_state(snapshot_read)
+                if current_state == "invalid":
+                    warnings.append(f"插件卡片快照结构非法：{plugin.id}/{row.card_key}")
+                elif current_state == "error":
+                    warnings.append(f"插件卡片快照生成失败：{plugin.id}/{row.card_key}")
+
+                home_state = (
+                    "error"
+                    if current_state in {"invalid", "error"}
+                    else _resolve_home_card_state(card_spec.template_type, current_state, envelope.payload)
+                )
                 cards.append(
                     HomeDashboardCardRead(
                         card_ref=card_ref,
                         source_type="plugin",
                         template_type=card_spec.template_type,
                         size=card_spec.size,
-                        state="error",
-                        title=title or plugin.name,
-                        subtitle=subtitle,
-                        payload={},
-                        actions=[],
+                        state=home_state,
+                        title=envelope.title or fallback_title or plugin.name,
+                        subtitle=envelope.subtitle or fallback_subtitle,
+                        payload={} if home_state == "error" else envelope.payload,
+                        actions=[] if home_state == "error" else envelope.actions,
                     )
                 )
-                continue
 
-            current_state = _resolve_snapshot_state(snapshot_read)
-            if current_state == "invalid":
-                warnings.append(f"插件卡片快照结构非法：{plugin.id}/{card_spec.card_key}")
-            elif current_state == "error":
-                warnings.append(f"插件卡片快照生成失败：{plugin.id}/{card_spec.card_key}")
-
-            home_state = (
-                "error"
-                if current_state in {"invalid", "error"}
-                else _resolve_home_card_state(card_spec.template_type, current_state, envelope.payload)
-            )
-            cards.append(
-                HomeDashboardCardRead(
-                    card_ref=card_ref,
-                    source_type="plugin",
-                    template_type=card_spec.template_type,
-                    size=card_spec.size,
-                    state=home_state,
-                    title=title or plugin.name,
-                    subtitle=subtitle,
-                    payload={} if home_state == "error" else envelope.payload,
-                    actions=[] if home_state == "error" else envelope.actions,
-                )
-            )
-
-    weather_cards, weather_warnings = _build_official_weather_home_cards(
-        db,
-        household_id=household_id,
-        enabled_plugin_ids={plugin.id for plugin in snapshot.items if plugin.enabled},
-    )
-    cards.extend(weather_cards)
-    warnings.extend(weather_warnings)
     cards.sort(key=lambda item: item.card_ref)
     return cards, warnings
 
 
-def _build_official_weather_home_cards(
-    db: Session,
+def _list_matching_plugin_snapshot_rows(
     *,
-    household_id: str,
-    enabled_plugin_ids: set[str],
-) -> tuple[list[HomeDashboardCardRead], list[str]]:
-    if OFFICIAL_WEATHER_PLUGIN_ID not in enabled_plugin_ids:
-        return [], []
-
-    from app.modules.weather.service import (
-        WEATHER_DEFAULT_BINDING_TYPE,
-        list_weather_card_snapshots,
-        list_weather_device_binding_reads,
-    )
-
-    warnings: list[str] = []
-    try:
-        bindings = list_weather_device_binding_reads(db, household_id=household_id)
-        snapshots = {
-            item.device_id: item
-            for item in list_weather_card_snapshots(db, household_id=household_id)
-        }
-    except Exception as exc:
-        return [], [f"官方天气卡片聚合失败：{exc}"]
-
-    cards: list[HomeDashboardCardRead] = []
-    for binding in bindings:
-        snapshot = snapshots.get(binding.device_id)
-        if snapshot is None:
-            warnings.append(f"官方天气卡片缺少快照：{binding.device_id}")
-            cards.append(
-                HomeDashboardCardRead(
-                    card_ref=_build_official_weather_card_ref(
-                        device_id=binding.device_id,
-                        binding_type=binding.binding_type,
-                    ),
-                    source_type="plugin",
-                    template_type="insight",
-                    size="half",
-                    state="error",
-                    title=binding.display_name,
-                    subtitle=_build_official_weather_card_subtitle(binding.binding_type),
-                    payload={
-                        "card_kind": "weather",
-                        "location": binding.display_name,
-                        "message": "天气卡片暂不可用",
-                    },
-                    actions=[],
-                )
-            )
+    snapshot_rows: dict[tuple[str, str, str], PluginDashboardCardSnapshot],
+    plugin_id: str,
+    placement: str,
+    card_spec: PluginManifestDashboardCardSpec,
+) -> list[PluginDashboardCardSnapshot]:
+    matched: list[PluginDashboardCardSnapshot] = []
+    for row in snapshot_rows.values():
+        if row.plugin_id != plugin_id or row.placement != placement:
             continue
-
-        payload = dict(snapshot.payload)
-        payload["card_kind"] = "weather"
-        payload["device_id"] = binding.device_id
-        payload["binding_type"] = binding.binding_type
-        cards.append(
-            HomeDashboardCardRead(
-                card_ref=_build_official_weather_card_ref(
-                    device_id=binding.device_id,
-                    binding_type=binding.binding_type,
-                ),
-                source_type="plugin",
-                template_type="insight",
-                size="half",
-                state=_resolve_official_weather_home_card_state(snapshot.state),
-                title=binding.display_name,
-                subtitle=_build_official_weather_card_subtitle(binding.binding_type),
-                payload=payload,
-                actions=[],
-            )
-        )
-
-    cards.sort(
-        key=lambda item: (
-            0 if item.card_ref.endswith(OFFICIAL_WEATHER_DEFAULT_CARD_KEY) else 1,
-            item.title,
-            item.card_ref,
-        )
-    )
-    return cards, warnings
-
-
-def _build_official_weather_card_ref(*, device_id: str, binding_type: str) -> str:
-    if binding_type == "default_household":
-        card_key = OFFICIAL_WEATHER_DEFAULT_CARD_KEY
-    else:
-        card_key = f"{OFFICIAL_WEATHER_DEVICE_CARD_KEY_PREFIX}{device_id}"
-    return build_plugin_dashboard_card_ref(
-        plugin_id=OFFICIAL_WEATHER_PLUGIN_ID,
-        placement="home",
-        card_key=card_key,
-    )
-
-
-def _build_official_weather_card_subtitle(binding_type: str) -> str:
-    if binding_type == "default_household":
-        return "家庭默认天气"
-    return "附加地区天气"
-
-
-def _resolve_official_weather_home_card_state(snapshot_state: str) -> str:
-    if snapshot_state == "ready":
-        return "ready"
-    if snapshot_state == "stale":
-        return "stale"
-    if snapshot_state == "pending_coordinate":
-        return "empty"
-    return "error"
+        if row.card_key == card_spec.card_key:
+            matched.append(row)
+            continue
+        if card_spec.card_key_prefix and row.card_key.startswith(card_spec.card_key_prefix):
+            matched.append(row)
+    matched.sort(key=lambda item: item.card_key)
+    return matched
 
 
 def _normalize_member_layout(
@@ -794,7 +710,7 @@ def _normalize_member_layout(
         if item.card_ref in seen_card_refs:
             if strict:
                 raise PluginServiceError(
-                    f"布局里存在重复卡片：{item.card_ref}",
+                    f"甯冨眬閲屽瓨鍦ㄩ噸澶嶅崱鐗囷細{item.card_ref}",
                     error_code=MEMBER_DASHBOARD_LAYOUT_INVALID_ERROR_CODE,
                     field="items.card_ref",
                     status_code=400,
@@ -863,12 +779,6 @@ def _build_default_home_order(available_cards: dict[str, HomeDashboardCardRead])
 
     next_order = (len(order_map) + 1) * 10
     for card_ref in sorted(available_cards):
-        if card_ref in order_map or not card_ref.startswith(OFFICIAL_WEATHER_CARD_REF_PREFIX):
-            continue
-        order_map[card_ref] = next_order
-        next_order += 10
-
-    for card_ref in sorted(available_cards):
         if card_ref in order_map:
             continue
         order_map[card_ref] = next_order
@@ -916,7 +826,11 @@ def _get_or_create_snapshot_row(
 
 def _get_plugin_dashboard_card_spec(plugin: Any, *, card_key: str, placement: str) -> PluginManifestDashboardCardSpec:
     for item in plugin.dashboard_cards:
-        if item.card_key == card_key and item.placement == placement:
+        if item.placement != placement:
+            continue
+        if item.card_key == card_key:
+            return item
+        if item.card_key_prefix and card_key.startswith(item.card_key_prefix):
             return item
     raise PluginServiceError(
         f"插件 {plugin.id} 没有声明首页卡片 {placement}/{card_key}。",
@@ -928,6 +842,8 @@ def _get_plugin_dashboard_card_spec(plugin: Any, *, card_key: str, placement: st
 
 def _validate_snapshot_envelope(
     card_spec: PluginManifestDashboardCardSpec,
+    title: str | None,
+    subtitle: str | None,
     payload: dict[str, Any],
     actions: list[HomeDashboardCardActionRead],
 ) -> PluginDashboardCardSnapshotEnvelope:
@@ -942,7 +858,12 @@ def _validate_snapshot_envelope(
 
     validated_actions = _validate_dashboard_actions(card_spec, actions)
     validated_payload = _validate_dashboard_payload(card_spec, payload, validated_actions)
-    return PluginDashboardCardSnapshotEnvelope(payload=validated_payload, actions=validated_actions)
+    return PluginDashboardCardSnapshotEnvelope(
+        title=title,
+        subtitle=subtitle,
+        payload=validated_payload,
+        actions=validated_actions,
+    )
 
 
 def _validate_dashboard_actions(
@@ -995,6 +916,11 @@ def _validate_dashboard_payload(
     actions: list[HomeDashboardCardActionRead],
 ) -> dict[str, Any]:
     action_key_map = {item.action_key: item for item in actions if item.action_key is not None}
+    custom_card_kind = payload.get("card_kind")
+    if isinstance(custom_card_kind, str) and custom_card_kind.strip():
+        if "card_state" in payload:
+            _ensure_text(payload.get("card_state"), max_length=20, field="payload.card_state", required=True)
+        return payload
     if card_spec.template_type == "metric":
         return _validate_metric_payload(payload)
     if card_spec.template_type == "insight":
@@ -1018,7 +944,7 @@ def _validate_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
     value = payload.get("value")
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         raise PluginServiceError(
-            "metric 卡片必须声明 value，且只能是数字或短文本。",
+            "metric 卡片必须声明 value，而且只能是数字或短文本。",
             error_code=PLUGIN_DASHBOARD_CARD_PAYLOAD_INVALID_ERROR_CODE,
             field="payload.value",
             status_code=400,
@@ -1322,6 +1248,8 @@ def _to_snapshot_read(row: PluginDashboardCardSnapshot) -> PluginDashboardCardSn
         card_key=row.card_key,
         placement=row.placement,
         state=row.state,
+        title=envelope.title,
+        subtitle=envelope.subtitle,
         payload=envelope.payload,
         actions=envelope.actions,
         error_code=row.error_code,
@@ -1345,6 +1273,9 @@ def _resolve_snapshot_state(snapshot: PluginDashboardCardSnapshotRead) -> str:
 
 
 def _resolve_home_card_state(template_type: str, snapshot_state: str, payload: dict[str, Any]) -> str:
+    payload_state = payload.get("card_state")
+    if isinstance(payload_state, str) and payload_state in {"ready", "empty", "stale", "error"}:
+        return payload_state
     if snapshot_state == "stale":
         return "stale"
     if snapshot_state != "ready":
@@ -1417,6 +1348,7 @@ def _resolve_plugin_dashboard_text(
         return f"{humanized or plugin_name} 暂无数据"
     return humanized or plugin_name
 
+
 def _resolve_builtin_dashboard_text(
     locale_messages: dict[str, str],
     key: str,
@@ -1432,8 +1364,6 @@ def _resolve_builtin_dashboard_text(
         return template.format(**kwargs)
     except Exception:
         return template
-
-
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -1541,3 +1471,4 @@ def _format_automation_level(locale_messages: dict[str, str], value: str) -> str
 def _format_member_presence(locale_messages: dict[str, str], value: str) -> str:
     key = f"home.memberPresence.{value}" if value in {"home", "away", "unknown"} else "home.memberPresence.default"
     return _resolve_builtin_dashboard_text(locale_messages, key)
+

@@ -78,18 +78,20 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             HouseholdCreate(name="Plugin Job Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
         )
+        self.household_id = self.household.id
         self.member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="濡堝", role="admin"),
+            MemberCreate(household_id=self.household_id, name="濡堝", role="admin"),
         )
+        self.member_id = self.member.id
         self.db.commit()
         bootstrap = authenticate_account(self.db, "user", "user")
         account = complete_bootstrap_account(
             self.db,
             actor=bootstrap,
             payload=BootstrapAccountCompleteRequest(
-                household_id=self.household.id,
-                member_id=self.member.id,
+                household_id=self.household_id,
+                member_id=self.member_id,
                 username="plugin_owner",
                 password="owner123",
             ),
@@ -97,7 +99,7 @@ class PluginJobTests(unittest.TestCase):
         _, self.session_token = create_account_session(self.db, account.id)
         self.agent = create_agent(
             self.db,
-            household_id=self.household.id,
+            household_id=self.household_id,
             payload=AgentCreate(
                 display_name="绗ㄧ",
                 agent_type="butler",
@@ -106,6 +108,7 @@ class PluginJobTests(unittest.TestCase):
                 created_by="test",
             ),
         )
+        self.agent_id = self.agent.id
         self.db.commit()
 
     def tearDown(self) -> None:
@@ -115,6 +118,15 @@ class PluginJobTests(unittest.TestCase):
         settings.database_url = self._previous_database_url
         settings.plugin_job_worker_enabled = self._previous_worker_enabled
         self._tempdir.cleanup()
+
+    def _release_test_db_session(self) -> None:
+        """在发起 ASGI 请求前释放测试自己持有的连接，避免单连接池互相堵死。"""
+        self.db.commit()
+        self.db.close()
+
+    def _reopen_test_db_session(self) -> None:
+        """请求结束后重新拿一个测试 Session，保持后续断言和清理逻辑稳定。"""
+        self.db = self.SessionLocal()
 
     def test_plugin_job_tables_exist_and_idempotency_reuses_existing_job(self) -> None:
         inspector = inspect(self.engine)
@@ -126,7 +138,7 @@ class PluginJobTests(unittest.TestCase):
             payload=PluginJobCreate(
                 household_id=self.household.id,
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 trigger="manual",
                 request_payload={"scope": "daily"},
                 payload_summary={"scope": "daily"},
@@ -139,7 +151,7 @@ class PluginJobTests(unittest.TestCase):
             payload=PluginJobCreate(
                 household_id=self.household.id,
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 trigger="manual",
                 request_payload={"scope": "daily"},
                 idempotency_key="job-001",
@@ -167,7 +179,7 @@ class PluginJobTests(unittest.TestCase):
             payload=PluginJobCreate(
                 household_id=self.household.id,
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 trigger="manual",
                 request_payload={"scope": "weekly"},
                 max_attempts=2,
@@ -179,7 +191,7 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             attempt_id=first_attempt.id,
             error_code="job_execution_failed",
-            error_message="涓婃父鏆傛椂涓嶅彲鐢?,
+            error_message="上游暂时不可用",
             retryable=True,
         )
         self.assertEqual("retry_waiting", retried.status)
@@ -222,7 +234,7 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             attempt_id=attempt.id,
             error_code="job_response_required",
-            error_message="闇€瑕佷汉宸ョ‘璁?,
+            error_message="需要人工确认",
             response_required=True,
             response_deadline_at="2026-03-15T00:00:00Z",
         )
@@ -255,7 +267,7 @@ class PluginJobTests(unittest.TestCase):
             household_id=self.household.id,
             request=PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": self.member.id},
                 trigger="manual",
             ),
@@ -287,7 +299,7 @@ class PluginJobTests(unittest.TestCase):
             household_id=self.household.id,
             request=PluginExecutionRequest(
                 plugin_id="not-exists-plugin",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={},
                 trigger="manual",
             ),
@@ -311,7 +323,7 @@ class PluginJobTests(unittest.TestCase):
             household_id=self.household.id,
             request=PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": self.member.id},
                 trigger="manual",
             ),
@@ -354,7 +366,7 @@ class PluginJobTests(unittest.TestCase):
                 household_id=self.household.id,
                 request=PluginExecutionRequest(
                     plugin_id="slow-sync-plugin",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={"member_id": self.member.id},
                     trigger="manual",
                 ),
@@ -380,22 +392,21 @@ class PluginJobTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "鎱㈤€熷悓姝ユ彃浠?,
+                    "name": "慢速同步插件",
                     "version": "0.1.0",
-                    "types": ["connector", "memory-ingestor"],
+                    "types": ["integration"],
                     "permissions": ["health.read", "memory.write.observation"],
                     "risk_level": "low",
                     "triggers": ["manual"],
                     "entrypoints": {
-                        "connector": "plugin.connector.sync",
-                        "memory_ingestor": "plugin.ingestor.transform",
+                        "integration": "plugin.integration.sync",
                     },
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
-        (package_dir / "connector.py").write_text(
+        (package_dir / "integration.py").write_text(
             "import time\n"
             "def sync(payload=None):\n"
             "    time.sleep(2)\n"
@@ -426,7 +437,7 @@ class PluginJobTests(unittest.TestCase):
             self.db,
             attempt_id=attempt.id,
             error_code="job_response_required",
-            error_message="闇€瑕佷汉宸ョ‘璁?,
+            error_message="需要人工确认",
             response_required=True,
             response_deadline_at="2026-03-16T00:00:00Z",
         )
@@ -435,7 +446,7 @@ class PluginJobTests(unittest.TestCase):
             payload=PluginJobCreate(
                 household_id=self.household.id,
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 trigger="manual",
                 request_payload={"scope": "api"},
                 max_attempts=1,
@@ -449,6 +460,7 @@ class PluginJobTests(unittest.TestCase):
             error_message="鎺ュ彛娴嬭瘯澶辫触",
         )
         self.db.commit()
+        self._release_test_db_session()
 
         transport = httpx.ASGITransport(app=app)
 
@@ -458,7 +470,7 @@ class PluginJobTests(unittest.TestCase):
 
                 detail_response = await client.get(
                     f"/api/v1/plugin-jobs/{waiting_job.id}",
-                    params={"household_id": self.household.id},
+                    params={"household_id": self.household_id},
                 )
                 self.assertEqual(200, detail_response.status_code)
                 detail_payload = detail_response.json()
@@ -468,7 +480,7 @@ class PluginJobTests(unittest.TestCase):
 
                 list_response = await client.get(
                     "/api/v1/plugin-jobs",
-                    params={"household_id": self.household.id, "status": "failed", "page": 1, "page_size": 10},
+                    params={"household_id": self.household_id, "status": "failed", "page": 1, "page_size": 10},
                 )
                 self.assertEqual(200, list_response.status_code)
                 list_payload = list_response.json()
@@ -477,21 +489,24 @@ class PluginJobTests(unittest.TestCase):
 
                 invalid_response = await client.post(
                     f"/api/v1/plugin-jobs/{failed_job.id}/responses",
-                    params={"household_id": self.household.id},
-                    json={"action": "confirm", "actor_type": "member", "actor_id": self.member.id},
+                    params={"household_id": self.household_id},
+                    json={"action": "confirm", "actor_type": "member", "actor_id": self.member_id},
                 )
                 self.assertEqual(409, invalid_response.status_code)
 
                 confirm_response = await client.post(
                     f"/api/v1/plugin-jobs/{waiting_job.id}/responses",
-                    params={"household_id": self.household.id},
-                    json={"action": "confirm", "actor_type": "member", "actor_id": self.member.id, "payload": {"confirmed": True}},
+                    params={"household_id": self.household_id},
+                    json={"action": "confirm", "actor_type": "member", "actor_id": self.member_id, "payload": {"confirmed": True}},
                 )
                 self.assertEqual(200, confirm_response.status_code)
                 confirm_payload = confirm_response.json()
                 self.assertEqual("queued", confirm_payload["job"]["status"])
 
-        asyncio.run(run_case())
+        try:
+            asyncio.run(run_case())
+        finally:
+            self._reopen_test_db_session()
 
     def test_plugin_job_update_event_reaches_household_websocket(self) -> None:
         job = create_plugin_job(
@@ -499,7 +514,7 @@ class PluginJobTests(unittest.TestCase):
             payload=PluginJobCreate(
                 household_id=self.household.id,
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 trigger="manual",
                 request_payload={"scope": "ws"},
                 max_attempts=1,
@@ -528,12 +543,13 @@ class PluginJobTests(unittest.TestCase):
         self.assertTrue(any(item.channel == "websocket" and item.delivered_at is not None for item in notifications))
 
     def test_create_plugin_job_endpoint_then_worker_then_query(self) -> None:
+        self._release_test_db_session()
         transport = httpx.ASGITransport(app=app)
 
         async def run_case() -> None:
             websocket = _FakeWebSocket()
             realtime_connection_manager.register(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 session_id="session-job-create",
                 websocket=websocket,  # type: ignore[arg-type]
             )
@@ -543,11 +559,11 @@ class PluginJobTests(unittest.TestCase):
 
                     create_response = await client.post(
                         "/api/v1/plugin-jobs",
-                        params={"household_id": self.household.id},
+                        params={"household_id": self.household_id},
                         json={
                             "plugin_id": "health-basic-reader",
-                            "plugin_type": "connector",
-                            "payload": {"member_id": self.member.id},
+                            "plugin_type": "integration",
+                            "payload": {"member_id": self.member_id},
                             "trigger": "manual",
                             "idempotency_key": "api-create-001",
                         },
@@ -561,7 +577,7 @@ class PluginJobTests(unittest.TestCase):
 
                     detail_response = await client.get(
                         f"/api/v1/plugin-jobs/{job_id}",
-                        params={"household_id": self.household.id},
+                        params={"household_id": self.household_id},
                     )
                     self.assertEqual(200, detail_response.status_code)
                     detail = detail_response.json()
@@ -569,14 +585,16 @@ class PluginJobTests(unittest.TestCase):
                     self.assertEqual("succeeded", detail["latest_attempt"]["status"])
             finally:
                 realtime_connection_manager.unregister(
-                    household_id=self.household.id,
+                    household_id=self.household_id,
                     session_id="session-job-create",
                     websocket=websocket,  # type: ignore[arg-type]
                 )
 
             self.assertTrue(any(message["type"] == "plugin.job.updated" for message in websocket.sent_messages))
-
-        asyncio.run(run_case())
+        try:
+            asyncio.run(run_case())
+        finally:
+            self._reopen_test_db_session()
 
     def test_create_plugin_job_endpoint_returns_structured_error_when_plugin_disabled(self) -> None:
         set_household_plugin_enabled(
@@ -587,6 +605,7 @@ class PluginJobTests(unittest.TestCase):
             updated_by="tester",
         )
         self.db.commit()
+        self._release_test_db_session()
 
         transport = httpx.ASGITransport(app=app)
 
@@ -595,11 +614,11 @@ class PluginJobTests(unittest.TestCase):
                 client.cookies.set(settings.auth_session_cookie_name, self.session_token)
                 response = await client.post(
                     "/api/v1/plugin-jobs",
-                    params={"household_id": self.household.id},
+                    params={"household_id": self.household_id},
                     json={
                         "plugin_id": "health-basic-reader",
-                        "plugin_type": "connector",
-                        "payload": {"member_id": self.member.id},
+                        "plugin_type": "integration",
+                        "payload": {"member_id": self.member_id},
                         "trigger": "manual",
                     },
                 )
@@ -607,29 +626,31 @@ class PluginJobTests(unittest.TestCase):
                 payload = response.json()
                 self.assertEqual("plugin_disabled", payload["detail"]["error_code"])
                 self.assertEqual("plugin_id", payload["detail"]["field"])
-
-        asyncio.run(run_case())
+        try:
+            asyncio.run(run_case())
+        finally:
+            self._reopen_test_db_session()
 
     def test_existing_agent_plugin_entrypoints_now_enqueue_jobs(self) -> None:
         invoke_result = invoke_agent_plugin(
             self.db,
-            household_id=self.household.id,
-            agent_id=self.agent.id,
+            household_id=self.household_id,
+            agent_id=self.agent_id,
             request=AgentPluginInvokeRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
-                payload={"member_id": self.member.id},
+                plugin_type="integration",
+                payload={"member_id": self.member_id},
                 trigger="agent",
             ),
         )
         checkpoint_result = asyncio.run(
             arun_agent_plugin_memory_checkpoint(
                 self.db,
-                household_id=self.household.id,
-                agent_id=self.agent.id,
+                household_id=self.household_id,
+                agent_id=self.agent_id,
                 payload=AgentPluginMemoryCheckpointRequest(
                     plugin_id="health-basic-reader",
-                    payload={"member_id": self.member.id},
+                    payload={"member_id": self.member_id},
                     trigger="agent-checkpoint",
                 ),
             )
@@ -648,4 +669,5 @@ class PluginJobTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

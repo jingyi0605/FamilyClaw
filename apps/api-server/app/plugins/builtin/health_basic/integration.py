@@ -12,7 +12,7 @@ def sync(payload: dict | None = None) -> dict:
     step_value = 8421
     return {
         "source": "health-basic-reader",
-        "mode": "connector",
+        "mode": "integration",
         "member_id": member_id,
         "records": [
             {

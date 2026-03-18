@@ -133,12 +133,12 @@ class PluginMountTests(unittest.TestCase):
                         "id": "third_party_sync_plugin",
                         "name": "坏挂载插件",
                         "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["health.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
                         "entrypoints": {
-                            "connector": "plugin.connector.sync",
+                            "integration": "plugin.integration.sync",
                         },
                     },
                     ensure_ascii=False,
@@ -166,20 +166,19 @@ class PluginMountTests(unittest.TestCase):
                     "id": plugin_id,
                     "name": "第三方插件",
                     "version": "0.1.0",
-                    "types": ["connector", "memory-ingestor"],
+                    "types": ["integration"],
                     "permissions": ["health.read", "memory.write.observation"],
                     "risk_level": "low",
                     "triggers": ["manual"],
                     "entrypoints": {
-                        "connector": "plugin.connector.sync",
-                        "memory_ingestor": "plugin.ingestor.transform",
+                        "integration": "plugin.integration.sync",
                     },
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
-        (package_dir / "connector.py").write_text(
+        (package_dir / "integration.py").write_text(
             "def sync(payload=None):\n    return {'records': []}\n",
             encoding="utf-8",
         )
@@ -192,4 +191,5 @@ class PluginMountTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
@@ -8,6 +8,8 @@ from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.channel import repository as channel_repository
 from app.modules.channel.models import ChannelPluginAccount
 from app.modules.device.models import Device
+from app.modules.integration import repository as integration_repository
+from app.modules.integration.models import IntegrationInstance
 
 from . import repository
 from .config_crypto import decrypt_plugin_config_secrets, encrypt_plugin_config_secrets
@@ -29,7 +31,6 @@ from app.modules.device.plugin_config_bridge import (
     load_device_scope_legacy_payloads,
     sync_device_scope_legacy_fields,
 )
-from app.modules.weather.schemas import WEATHER_PROVIDER_DEFAULT_TYPE
 
 
 PLUGIN_SCOPE_KEY = "default"
@@ -140,7 +141,7 @@ def save_plugin_config_form(
         field = field_map.get(field_key)
         if field is None:
             raise PluginServiceError(
-                "提交了 schema 里不存在的字段。",
+                "提交了 schema 中不存在的字段。",
                 error_code=PLUGIN_CONFIG_VALIDATION_FAILED,
                 field_errors={field_key: "字段不存在"},
                 status_code=400,
@@ -151,7 +152,6 @@ def save_plugin_config_form(
         next_data[field_key] = value
 
     field_errors, values, secret_fields, state = _build_view_payload(
-        plugin_id=plugin.id,
         config_spec=config_spec,
         stored_data=next_data,
         stored_secret_data=next_secret_data,
@@ -237,16 +237,22 @@ def get_integration_instance_plugin_config_form(
     integration_instance_id: str,
 ) -> PluginConfigFormRead:
     plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
-    config_spec = _require_config_spec(plugin, scope_type="plugin")
+    config_spec = _require_config_spec(plugin, scope_type="integration_instance")
     instance = repository.get_plugin_config_instance_for_integration_instance(
         db,
         integration_instance_id=integration_instance_id,
         plugin_id=plugin.id,
         scope_type=config_spec.scope_type,
     )
+    if instance is None and config_spec.scope_type != "plugin":
+        instance = repository.get_plugin_config_instance_for_integration_instance(
+            db,
+            integration_instance_id=integration_instance_id,
+            plugin_id=plugin.id,
+            scope_type="plugin",
+        )
     stored_data, stored_secret_data = _load_config_instance_payload(instance)
     field_errors, values, secret_fields, state = _build_view_payload(
-        plugin_id=plugin.id,
         config_spec=config_spec,
         stored_data=stored_data,
         stored_secret_data=stored_secret_data,
@@ -278,13 +284,20 @@ def save_integration_instance_plugin_config_form(
     updated_by: str | None = None,
 ) -> PluginConfigFormRead:
     plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
-    config_spec = _require_config_spec(plugin, scope_type="plugin")
+    config_spec = _require_config_spec(plugin, scope_type="integration_instance")
     existing_instance = repository.get_plugin_config_instance_for_integration_instance(
         db,
         integration_instance_id=integration_instance_id,
         plugin_id=plugin.id,
         scope_type=config_spec.scope_type,
     )
+    if existing_instance is None and config_spec.scope_type != "plugin":
+        existing_instance = repository.get_plugin_config_instance_for_integration_instance(
+            db,
+            integration_instance_id=integration_instance_id,
+            plugin_id=plugin.id,
+            scope_type="plugin",
+        )
     stored_data, stored_secret_data = _load_config_instance_payload(existing_instance)
 
     next_data = dict(stored_data)
@@ -312,7 +325,7 @@ def save_integration_instance_plugin_config_form(
         field = field_map.get(field_key)
         if field is None:
             raise PluginServiceError(
-                "提交了 schema 里不存在的字段。",
+                "提交了 schema 中不存在的字段。",
                 error_code=PLUGIN_CONFIG_VALIDATION_FAILED,
                 field_errors={field_key: "字段不存在"},
                 status_code=400,
@@ -323,7 +336,6 @@ def save_integration_instance_plugin_config_form(
         next_data[field_key] = value
 
     field_errors, view_values, secret_fields, state = _build_view_payload(
-        plugin_id=plugin.id,
         config_spec=config_spec,
         stored_data=next_data,
         stored_secret_data=next_secret_data,
@@ -361,6 +373,7 @@ def save_integration_instance_plugin_config_form(
         repository.add_plugin_config_instance(db, existing_instance)
     else:
         existing_instance.integration_instance_id = integration_instance_id
+        existing_instance.scope_type = config_spec.scope_type
         existing_instance.schema_version = config_spec.schema_version
         existing_instance.scope_key = integration_instance_id
         existing_instance.data_json = data_json
@@ -414,7 +427,7 @@ def _build_scope_read(
             instances=[
                 PluginConfigScopeInstanceRead(
                     scope_key=PLUGIN_SCOPE_KEY,
-                    label="默认配置",
+                    label="榛樿閰嶇疆",
                     description="当前插件在这个家庭下只有一份插件级配置。",
                     configured=form.view.state != "unconfigured",
                 )
@@ -441,6 +454,34 @@ def _build_scope_read(
                     scope_key=device.id,
                     label=device.name,
                     description=device.device_type,
+                    configured=form.view.state != "unconfigured",
+                )
+            )
+        return PluginConfigScopeRead(
+            scope_type=config_spec.scope_type,
+            title=config_spec.title,
+            description=config_spec.description,
+            instances=instances,
+        )
+
+    if config_spec.scope_type == "integration_instance":
+        instances: list[PluginConfigScopeInstanceRead] = []
+        for integration_instance in integration_repository.list_integration_instances(db, household_id=household_id):
+            if integration_instance.plugin_id != plugin.id:
+                continue
+            form = _build_plugin_config_form(
+                db,
+                household_id=household_id,
+                plugin=plugin,
+                config_spec=config_spec,
+                scope_key=integration_instance.id,
+                scope_context=integration_instance,
+            )
+            instances.append(
+                PluginConfigScopeInstanceRead(
+                    scope_key=integration_instance.id,
+                    label=integration_instance.display_name,
+                    description=integration_instance.status,
                     configured=form.view.state != "unconfigured",
                 )
             )
@@ -486,7 +527,7 @@ def _build_plugin_config_form(
     plugin: PluginRegistryItem,
     config_spec: PluginManifestConfigSpec,
     scope_key: str,
-    scope_context: ChannelPluginAccount | Device | None,
+    scope_context: ChannelPluginAccount | Device | IntegrationInstance | None,
 ) -> PluginConfigFormRead:
     instance = repository.get_plugin_config_instance(
         db,
@@ -504,7 +545,6 @@ def _build_plugin_config_form(
         scope_context=scope_context,
     )
     field_errors, values, secret_fields, state = _build_view_payload(
-        plugin_id=plugin.id,
         config_spec=config_spec,
         stored_data=stored_data,
         stored_secret_data=stored_secret_data,
@@ -576,7 +616,6 @@ def _load_config_payloads(
 
 def _build_view_payload(
     *,
-    plugin_id: str,
     config_spec: PluginManifestConfigSpec,
     stored_data: dict[str, Any],
     stored_secret_data: dict[str, Any],
@@ -603,13 +642,6 @@ def _build_view_payload(
             values[field.key] = actual_value
         _validate_field_value(field, actual_value, has_value=has_value, field_errors=field_errors)
 
-    _apply_plugin_specific_validation(
-        plugin_id=plugin_id,
-        values=values,
-        secret_fields=secret_fields,
-        field_errors=field_errors,
-    )
-
     if not has_persisted_record:
         state: PluginConfigState = "unconfigured"
     elif field_errors:
@@ -617,22 +649,6 @@ def _build_view_payload(
     else:
         state = "configured"
     return field_errors, values, secret_fields, state
-
-
-def _apply_plugin_specific_validation(
-    *,
-    plugin_id: str,
-    values: dict[str, Any],
-    secret_fields: dict[str, Any],
-    field_errors: dict[str, str],
-) -> None:
-    if plugin_id != "official-weather":
-        return
-    provider_type = values.get("provider_type", WEATHER_PROVIDER_DEFAULT_TYPE)
-    if provider_type == "openweather" and not secret_fields.get("openweather_api_key", {}).get("has_value"):
-        field_errors["openweather_api_key"] = "切换到 OpenWeather 时必须填写 API Key"
-    if provider_type == "weatherapi" and not secret_fields.get("weatherapi_api_key", {}).get("has_value"):
-        field_errors["weatherapi_api_key"] = "切换到 WeatherAPI 时必须填写 API Key"
 
 
 def _validate_field_value(
@@ -644,11 +660,11 @@ def _validate_field_value(
 ) -> None:
     if not has_value:
         if field.required and not field.nullable:
-            field_errors[field.key] = f"{field.label} 不能为空"
+            field_errors[field.key] = f"{field.label} 涓嶈兘涓虹┖"
         return
 
     if isinstance(actual_value, str) and field.type in {"string", "text", "secret"} and field.required and not actual_value.strip():
-        field_errors[field.key] = f"{field.label} 不能为空"
+        field_errors[field.key] = f"{field.label} 涓嶈兘涓虹┖"
         return
 
     try:
@@ -680,7 +696,7 @@ def _sync_runtime_scope_config(
     *,
     household_id: str,
     plugin: PluginRegistryItem,
-    scope_context: ChannelPluginAccount | Device | None,
+    scope_context: ChannelPluginAccount | Device | IntegrationInstance | None,
     config_spec: PluginManifestConfigSpec,
     values: dict[str, Any],
     secret_fields: dict[str, Any],
@@ -761,9 +777,20 @@ def _resolve_scope_context(
     plugin: PluginRegistryItem,
     config_spec: PluginManifestConfigSpec,
     scope_key: str,
-) -> ChannelPluginAccount | Device | None:
+) -> ChannelPluginAccount | Device | IntegrationInstance | None:
     if config_spec.scope_type == "plugin":
         return None
+
+    if config_spec.scope_type == "integration_instance":
+        integration_instance = integration_repository.get_integration_instance(db, scope_key)
+        if integration_instance is None or integration_instance.household_id != household_id or integration_instance.plugin_id != plugin.id:
+            raise PluginServiceError(
+                "请求的 integration_instance 作用域不存在。",
+                error_code=PLUGIN_CONFIG_INSTANCE_NOT_FOUND,
+                field="scope_key",
+                status_code=404,
+            )
+        return integration_instance
 
     if config_spec.scope_type == "device":
         device = db.get(Device, scope_key)
@@ -785,3 +812,4 @@ def _resolve_scope_context(
             status_code=404,
         )
     return account
+

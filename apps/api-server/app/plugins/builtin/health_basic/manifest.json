@@ -1,8 +1,9 @@
-{
+﻿{
   "id": "health-basic-reader",
   "name": "健康基础数据插件",
   "version": "0.1.0",
-  "types": ["connector", "memory-ingestor"],
+  "api_version": 1,
+  "types": ["integration"],
   "permissions": [
     "health.read",
     "memory.write.observation"
@@ -10,8 +11,20 @@
   "risk_level": "low",
   "triggers": ["manual", "schedule"],
   "entrypoints": {
-    "connector": "app.plugins.builtin.health_basic.connector.sync",
-    "memory_ingestor": "app.plugins.builtin.health_basic.ingestor.transform"
+    "integration": "app.plugins.builtin.health_basic.integration.sync"
+  },
+  "capabilities": {
+    "integration": {
+      "domains": ["health"],
+      "instance_model": "single_instance",
+      "refresh_mode": "polling",
+      "supports_discovery": false,
+      "supports_actions": false,
+      "supports_cards": true,
+      "entity_types": ["health.steps", "health.sleep", "health.heart_rate"],
+      "default_cache_ttl_seconds": 1800,
+      "max_stale_seconds": 21600
+    }
   },
   "dashboard_cards": [
     {
@@ -29,3 +42,4 @@
     }
   ]
 }
+

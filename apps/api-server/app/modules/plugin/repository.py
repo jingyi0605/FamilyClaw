@@ -257,6 +257,19 @@ def list_plugin_config_instances(
     return list(db.scalars(stmt).all())
 
 
+def list_plugin_config_instances_for_integration_instance(
+    db: Session,
+    *,
+    integration_instance_id: str,
+) -> list[PluginConfigInstance]:
+    stmt: Select[tuple[PluginConfigInstance]] = (
+        select(PluginConfigInstance)
+        .where(PluginConfigInstance.integration_instance_id == integration_instance_id)
+        .order_by(PluginConfigInstance.updated_at.desc(), PluginConfigInstance.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
 def delete_plugin_config_instance(db: Session, row: PluginConfigInstance) -> None:
     db.delete(row)
 

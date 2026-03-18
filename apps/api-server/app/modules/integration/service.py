@@ -23,12 +23,19 @@ from app.modules.integration.discovery_service import (
 )
 from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin import config_service as plugin_config_service
-from app.modules.plugin.schemas import PluginConfigFormRead, PluginManifestConfigSpec, PluginRegistryItem
+from app.modules.plugin import repository as plugin_repository
+from app.modules.plugin.schemas import (
+    PluginConfigFormRead,
+    PluginExecutionRequest,
+    PluginManifestConfigSpec,
+    PluginRegistryItem,
+)
 from app.modules.plugin.service import (
     PluginServiceError,
     get_household_plugin,
     list_registered_plugins_for_household,
     require_available_household_plugin,
+    run_plugin_sync_pipeline,
 )
 from app.modules.room.models import Room
 from app.modules.voice.binding_service import OPEN_XIAOAI_PLUGIN_ID
@@ -43,6 +50,7 @@ from .schemas import (
     IntegrationInstanceCreateRequest,
     IntegrationInstanceListRead,
     IntegrationInstanceRead,
+    IntegrationInstanceUpdateRequest,
     IntegrationPageViewRead,
     IntegrationResourceCountsRead,
     IntegrationResourceListRead,
@@ -269,6 +277,162 @@ def create_integration_instance(
     )
 
 
+def update_integration_instance(
+    db: Session,
+    *,
+    instance_id: str,
+    payload: IntegrationInstanceUpdateRequest,
+    updated_by: str | None = None,
+) -> IntegrationInstanceRead:
+    instance = _require_existing_integration_instance(db, instance_id=instance_id)
+    plugin = _get_integration_plugin(
+        db,
+        household_id=instance.household_id,
+        plugin_id=instance.plugin_id,
+    )
+    normalized_config = _normalize_instance_config(
+        db,
+        household_id=instance.household_id,
+        plugin_id=plugin.id,
+        config=payload.config,
+    )
+    form = plugin_config_service.save_integration_instance_plugin_config_form(
+        db,
+        household_id=instance.household_id,
+        plugin_id=plugin.id,
+        integration_instance_id=instance.id,
+        values=normalized_config,
+        clear_secret_fields=payload.clear_secret_fields,
+        updated_by=updated_by,
+    )
+    if plugin.id == OPEN_XIAOAI_PLUGIN_ID:
+        attach_open_xiaoai_discoveries_to_instance(
+            db,
+            household_id=instance.household_id,
+            integration_instance_id=instance.id,
+            gateway_id=str(form.view.values.get("gateway_id") or ""),
+        )
+    instance.display_name = payload.display_name.strip()
+    instance.status = "active" if form.view.state == "configured" else "draft"
+    instance.updated_at = utc_now_iso()
+    db.add(instance)
+    db.flush()
+    return _build_integration_instance_read(
+        db,
+        plugin=plugin,
+        instance=instance,
+        resource_counts_by_instance=_load_resource_counts_by_instance(db, household_id=instance.household_id),
+    )
+
+
+def delete_integration_instance(
+    db: Session,
+    *,
+    instance_id: str,
+) -> None:
+    instance = _require_existing_integration_instance(db, instance_id=instance_id)
+
+    for config_instance in plugin_repository.list_plugin_config_instances_for_integration_instance(
+        db,
+        integration_instance_id=instance.id,
+    ):
+        plugin_repository.delete_plugin_config_instance(db, config_instance)
+
+    for discovery in integration_repository.list_integration_discoveries(
+        db,
+        household_id=instance.household_id,
+        integration_instance_id=instance.id,
+    ):
+        db.delete(discovery)
+
+    bound_device_ids: list[str] = []
+    binding_stmt: Select[tuple[DeviceBinding]] = select(DeviceBinding).where(
+        DeviceBinding.integration_instance_id == instance.id,
+    )
+    for binding in db.scalars(binding_stmt).all():
+        bound_device_ids.append(binding.device_id)
+        db.delete(binding)
+
+    db.flush()
+
+    for device_id in dict.fromkeys(bound_device_ids):
+        remaining_binding = db.scalar(
+            select(DeviceBinding.id)
+            .where(DeviceBinding.device_id == device_id)
+            .limit(1)
+        )
+        if remaining_binding is not None:
+            continue
+        device = db.get(Device, device_id)
+        if device is not None:
+            db.delete(device)
+
+    integration_repository.delete_integration_instance(db, instance)
+    db.flush()
+
+
+def ensure_default_integration_instance(
+    db: Session,
+    *,
+    household_id: str,
+    plugin: PluginRegistryItem,
+    updated_by: str | None = None,
+) -> IntegrationInstance | None:
+    integration_capability = plugin.capabilities.integration
+    if integration_capability is None or not integration_capability.auto_create_default_instance:
+        return None
+
+    default_display_name = (
+        integration_capability.default_instance_display_name
+        or f"{plugin.name} 默认实例"
+    )
+    existing_instance = next(
+        (
+            item
+            for item in integration_repository.list_integration_instances(
+                db,
+                household_id=household_id,
+                plugin_id=plugin.id,
+            )
+            if item.display_name == default_display_name
+        ),
+        None,
+    )
+    if existing_instance is not None:
+        return existing_instance
+
+    created = create_integration_instance(
+        db,
+        payload=IntegrationInstanceCreateRequest(
+            household_id=household_id,
+            plugin_id=plugin.id,
+            display_name=default_display_name,
+            config=dict(integration_capability.default_instance_config),
+        ),
+        updated_by=updated_by,
+    )
+    return integration_repository.get_integration_instance(db, created.id)
+
+
+def sync_plugin_managed_integration_instance(
+    db: Session,
+    *,
+    plugin: PluginRegistryItem,
+    instance: IntegrationInstance,
+    sync_scope: str = "device_sync",
+    selected_external_ids: list[str] | None = None,
+    options: dict[str, Any] | None = None,
+) -> IntegrationActionResultRead:
+    return _execute_plugin_managed_sync_action(
+        db,
+        plugin=plugin,
+        instance=instance,
+        sync_scope=sync_scope,
+        selected_external_ids=selected_external_ids or [],
+        options=options or {},
+    )
+
+
 async def execute_integration_instance_action(
     db: Session,
     *,
@@ -387,6 +551,7 @@ async def _execute_sync_action(
     instance: IntegrationInstance,
     payload: IntegrationInstanceActionRequest,
 ) -> IntegrationActionResultRead:
+    integration_capability = plugin.capabilities.integration
     sync_scope = payload.payload.get("sync_scope")
     if not isinstance(sync_scope, str) or sync_scope not in SUPPORTED_SYNC_SCOPES:
         raise PluginServiceError(
@@ -409,6 +574,16 @@ async def _execute_sync_action(
         for item in (selected_ids or [])
         if isinstance(item, str) and item.strip()
     ]
+
+    if integration_capability is not None and not integration_capability.supports_discovery:
+        return _execute_plugin_managed_sync_action(
+            db,
+            plugin=plugin,
+            instance=instance,
+            sync_scope=sync_scope,
+            selected_external_ids=normalized_selected_ids,
+            options=payload.payload.get("options"),
+        )
 
     if sync_scope == "device_candidates":
         items = await async_list_device_candidates_via_plugin(
@@ -544,6 +719,123 @@ def _build_sync_items_result(
     )
 
 
+def _execute_plugin_managed_sync_action(
+    db: Session,
+    *,
+    plugin: PluginRegistryItem,
+    instance: IntegrationInstance,
+    sync_scope: str,
+    selected_external_ids: list[str],
+    options: Any,
+) -> IntegrationActionResultRead:
+    normalized_options = options if isinstance(options, dict) else {}
+    request_payload: dict[str, Any] = {
+        "schema_version": "integration-sync-request.v1",
+        "household_id": instance.household_id,
+        "plugin_id": plugin.id,
+        "integration_instance_id": instance.id,
+        "sync_scope": sync_scope,
+        "selected_external_ids": selected_external_ids,
+        "options": normalized_options,
+    }
+    database_url = _build_database_url(db)
+    if database_url:
+        request_payload["_system_context"] = {
+            "integration_runtime": {
+                "database_url": database_url,
+            }
+        }
+    if plugin.source_type == "builtin":
+        system_context = request_payload.setdefault("_system_context", {})
+        if isinstance(system_context, dict):
+            integration_runtime = system_context.setdefault("integration_runtime", {})
+            if isinstance(integration_runtime, dict):
+                integration_runtime["db_session"] = db
+
+    pipeline = run_plugin_sync_pipeline(
+        db,
+        household_id=instance.household_id,
+        request=PluginExecutionRequest(
+            plugin_id=plugin.id,
+            plugin_type="integration",
+            trigger="manual",
+            payload=request_payload,
+        ),
+    )
+    execution_output = pipeline.execution.output if isinstance(pipeline.execution.output, dict) else {}
+    _apply_plugin_managed_instance_status(
+        db,
+        instance=instance,
+        execution_output=execution_output,
+        execution_success=pipeline.execution.success,
+        execution_error_code=pipeline.execution.error_code,
+        execution_error_message=pipeline.execution.error_message,
+    )
+    db.flush()
+    return IntegrationActionResultRead(
+        action="sync",
+        execution_mode="immediate",
+        message=_resolve_plugin_managed_sync_message(plugin=plugin, sync_scope=sync_scope, execution_output=execution_output),
+        instance=_build_integration_instance_read(
+            db,
+            plugin=plugin,
+            instance=instance,
+            resource_counts_by_instance=_load_resource_counts_by_instance(db, household_id=instance.household_id),
+        ),
+        output=execution_output,
+    )
+
+
+def _apply_plugin_managed_instance_status(
+    db: Session,
+    *,
+    instance: IntegrationInstance,
+    execution_output: dict[str, Any],
+    execution_success: bool,
+    execution_error_code: str | None,
+    execution_error_message: str | None,
+) -> None:
+    now = utc_now_iso()
+    raw_status = execution_output.get("instance_status")
+    status_payload = raw_status if isinstance(raw_status, dict) else {}
+    success = bool(status_payload.get("success", execution_success))
+    degraded = bool(status_payload.get("degraded", False))
+    refreshed_at = status_payload.get("refreshed_at")
+    refreshed_at_value = refreshed_at if isinstance(refreshed_at, str) and refreshed_at.strip() else now
+    error_code = status_payload.get("error_code")
+    error_message = status_payload.get("error_message")
+    if not isinstance(error_code, str) or not error_code.strip():
+        error_code = execution_error_code
+    if not isinstance(error_message, str) or not error_message.strip():
+        error_message = execution_error_message
+
+    instance.last_synced_at = refreshed_at_value
+    if success and not degraded:
+        instance.status = "active"
+        instance.last_error_code = None
+        instance.last_error_message = None
+    else:
+        instance.status = "degraded"
+        instance.last_error_code = error_code or "integration_sync_failed"
+        instance.last_error_message = error_message or "集成同步失败"
+    instance.updated_at = now
+    db.add(instance)
+
+
+def _resolve_plugin_managed_sync_message(
+    *,
+    plugin: PluginRegistryItem,
+    sync_scope: str,
+    execution_output: dict[str, Any],
+) -> str:
+    message = execution_output.get("message")
+    if isinstance(message, str) and message.strip():
+        return message
+    if sync_scope in {"device_candidates", "room_candidates"}:
+        return f"{plugin.name} 候选资源已更新"
+    return f"{plugin.name} 资源同步完成"
+
+
 def _build_integration_instance_read(
     db: Session,
     *,
@@ -622,6 +914,22 @@ def _get_integration_plugin(db: Session, *, household_id: str, plugin_id: str) -
     return plugin
 
 
+def _require_existing_integration_instance(
+    db: Session,
+    *,
+    instance_id: str,
+) -> IntegrationInstance:
+    instance = integration_repository.get_integration_instance(db, instance_id)
+    if instance is None:
+        raise PluginServiceError(
+            f"集成实例不存在: {instance_id}",
+            error_code="integration_instance_not_found",
+            field="instance_id",
+            status_code=404,
+        )
+    return instance
+
+
 def _require_available_integration_plugin(
     db: Session,
     *,
@@ -632,7 +940,7 @@ def _require_available_integration_plugin(
         db,
         household_id=household_id,
         plugin_id=plugin_id,
-        plugin_type="connector",
+        plugin_type="integration",
     )
     if not _is_integration_plugin(plugin):
         raise PluginServiceError(
@@ -645,7 +953,7 @@ def _require_available_integration_plugin(
 
 
 def _is_integration_plugin(plugin: PluginRegistryItem) -> bool:
-    if "connector" not in plugin.types:
+    if "integration" not in plugin.types:
         return False
     return any(permission.startswith(INTEGRATION_PERMISSION_PREFIXES) for permission in plugin.permissions)
 
@@ -675,7 +983,7 @@ def _build_catalog_actions(plugin: PluginRegistryItem) -> list[str]:
     actions: list[str] = []
     if _get_plugin_config_spec(plugin) is not None:
         actions.append("configure")
-    if "connector" in plugin.types:
+    if "integration" in plugin.types:
         actions.append("sync")
     actions.append("delete")
     return actions
@@ -697,7 +1005,7 @@ def _build_instance_actions(
                 disabled_reason=None,
             )
         )
-    if "connector" in plugin.types:
+    if "integration" in plugin.types:
         sync_disabled_reason = plugin.disabled_reason
         if sync_disabled_reason is None and config_form.view.state != "configured":
             sync_disabled_reason = "请先完成配置"
@@ -715,7 +1023,7 @@ def _build_instance_actions(
             action="delete",
             label="删除集成",
             destructive=True,
-            disabled=True,
+            disabled=False,
             disabled_reason="删除动作还没有接通",
         )
     )
@@ -727,7 +1035,16 @@ def _build_catalog_tags(plugin: PluginRegistryItem) -> list[str]:
 
 
 def _get_plugin_config_spec(plugin: PluginRegistryItem) -> PluginManifestConfigSpec | None:
-    return next((item for item in plugin.config_specs if item.scope_type == "plugin"), None)
+    integration_instance_spec = next(
+        (item for item in plugin.config_specs if item.scope_type == "integration_instance"),
+        None,
+    )
+    if integration_instance_spec is not None:
+        return integration_instance_spec
+    return next(
+        (item for item in plugin.config_specs if item.scope_type == "plugin"),
+        None,
+    )
 
 
 def _load_resource_counts_by_instance(
@@ -750,6 +1067,22 @@ def _load_resource_counts_by_instance(
         entry = counts[integration_instance_id]
         entry.device += 1
     return counts
+
+
+def _build_database_url(db: Session) -> str | None:
+    bind = db.get_bind()
+    if hasattr(bind, "url"):
+        return _render_database_url(bind.url)
+    engine = getattr(bind, "engine", None)
+    if engine is not None and hasattr(engine, "url"):
+        return _render_database_url(engine.url)
+    return None
+
+
+def _render_database_url(url: Any) -> str:
+    if hasattr(url, "render_as_string"):
+        return url.render_as_string(hide_password=False)
+    return str(url)
 
 
 def _load_binding_capabilities(raw_value: str | None) -> dict[str, Any]:

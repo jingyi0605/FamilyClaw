@@ -75,6 +75,28 @@ class IntegrationConfigBindingRead(BaseModel):
     config_spec: PluginManifestConfigSpec | None = None
 
 
+class IntegrationRefreshInstanceStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    success: bool = True
+    degraded: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
+    refreshed_at: str | None = None
+
+
+class IntegrationRefreshResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instance_status: IntegrationRefreshInstanceStatus = Field(default_factory=IntegrationRefreshInstanceStatus)
+    devices: list[dict[str, Any]] = Field(default_factory=list)
+    entities: list[dict[str, Any]] = Field(default_factory=list)
+    discoveries: list[dict[str, Any]] = Field(default_factory=list)
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+    card_snapshots: list[dict[str, Any]] = Field(default_factory=list)
+    diagnostics: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class IntegrationCatalogItemRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -202,6 +224,14 @@ class IntegrationInstanceCreateRequest(BaseModel):
 
     household_id: str = Field(min_length=1)
     plugin_id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1, max_length=100)
+    config: dict[str, Any] = Field(default_factory=dict)
+    clear_secret_fields: list[str] = Field(default_factory=list)
+
+
+class IntegrationInstanceUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     display_name: str = Field(min_length=1, max_length=100)
     config: dict[str, Any] = Field(default_factory=dict)
     clear_secret_fields: list[str] = Field(default_factory=list)

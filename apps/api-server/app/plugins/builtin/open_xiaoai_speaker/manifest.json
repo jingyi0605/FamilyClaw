@@ -1,16 +1,28 @@
-{
+﻿{
   "id": "open-xiaoai-speaker",
   "name": "小爱音箱网关",
   "version": "0.1.0",
-  "types": ["action", "connector"],
+  "api_version": 1,
+  "types": ["action", "integration"],
   "permissions": ["device.read", "device.control"],
   "risk_level": "medium",
   "triggers": ["manual"],
   "entrypoints": {
-    "connector": "app.plugins.builtin.open_xiaoai_speaker.connector.sync",
+    "integration": "app.plugins.builtin.open_xiaoai_speaker.integration.sync",
     "action": "app.plugins.builtin.open_xiaoai_speaker.executor.run"
   },
   "capabilities": {
+    "integration": {
+      "domains": ["speaker", "voice_gateway"],
+      "instance_model": "multi_instance",
+      "refresh_mode": "manual",
+      "supports_discovery": true,
+      "supports_actions": true,
+      "supports_cards": false,
+      "entity_types": ["device.speaker"],
+      "default_cache_ttl_seconds": 60,
+      "max_stale_seconds": 600
+    },
     "device_detail_tabs": [
       {
         "tab_key": "voice-takeover",
@@ -21,7 +33,7 @@
   },
   "config_specs": [
     {
-      "scope_type": "plugin",
+      "scope_type": "integration_instance",
       "title": "小爱网关配置",
       "description": "配置当前小爱网关实例的唯一标识，让平台能把网关上报的音箱发现结果归到正确实例下。",
       "schema_version": 1,
@@ -108,3 +120,4 @@
     }
   ]
 }
+

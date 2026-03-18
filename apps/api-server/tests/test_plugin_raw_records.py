@@ -44,7 +44,7 @@ class PluginRawRecordTests(unittest.TestCase):
         execution_result = execute_plugin(
             PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": "mom"},
             ),
             root_dir=self.builtin_root,
@@ -77,4 +77,5 @@ class PluginRawRecordTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

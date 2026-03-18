@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, new_uuid, utc_now_iso
 from app.modules.device.models import Device, DeviceBinding
-from app.modules.device_integration.schemas import DeviceIntegrationPluginPayload, DeviceIntegrationPluginResult
+from app.modules.device_integration.schemas import IntegrationSyncPluginPayload, IntegrationSyncPluginResult
 from app.modules.household.service import get_household_or_404
 from app.modules.integration import repository as integration_repository
 from app.modules.integration.discovery_service import mark_discovery_claimed
@@ -87,7 +87,7 @@ def list_device_candidates_via_plugin(
     household_id: str,
     integration_instance_id: str,
 ) -> list[DeviceCandidate]:
-    result = _execute_connector_plugin(
+    result = _execute_integration_sync_plugin(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -95,8 +95,8 @@ def list_device_candidates_via_plugin(
         selected_external_ids=[],
         options={},
     )
-    _raise_if_connector_failed(result, sync_scope="device_candidates")
-    instance = _require_connector_instance(
+    _raise_if_integration_sync_failed(result, sync_scope="device_candidates")
+    instance = _require_syncable_integration_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -128,7 +128,7 @@ def list_room_candidates_via_plugin(
     household_id: str,
     integration_instance_id: str,
 ) -> list[RoomCandidate]:
-    result = _execute_connector_plugin(
+    result = _execute_integration_sync_plugin(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -136,7 +136,7 @@ def list_room_candidates_via_plugin(
         selected_external_ids=[],
         options={},
     )
-    _raise_if_connector_failed(result, sync_scope="room_candidates")
+    _raise_if_integration_sync_failed(result, sync_scope="room_candidates")
     room_cache = _load_room_cache(db, household_id)
     return [
         RoomCandidate(
@@ -156,7 +156,7 @@ def sync_devices_via_plugin(
     integration_instance_id: str,
     external_device_ids: list[str] | None = None,
 ) -> SyncSummary:
-    result = _execute_connector_plugin(
+    result = _execute_integration_sync_plugin(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -164,7 +164,7 @@ def sync_devices_via_plugin(
         selected_external_ids=external_device_ids or [],
         options={},
     )
-    _raise_if_connector_failed(result, sync_scope="device_sync")
+    _raise_if_integration_sync_failed(result, sync_scope="device_sync")
     return _apply_device_sync_result(
         db,
         household_id=household_id,
@@ -180,7 +180,7 @@ def sync_rooms_via_plugin(
     integration_instance_id: str,
     room_names: list[str] | None = None,
 ) -> RoomSyncSummary:
-    result = _execute_connector_plugin(
+    result = _execute_integration_sync_plugin(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -188,7 +188,7 @@ def sync_rooms_via_plugin(
         selected_external_ids=room_names or [],
         options={},
     )
-    _raise_if_connector_failed(result, sync_scope="room_sync")
+    _raise_if_integration_sync_failed(result, sync_scope="room_sync")
     return _apply_room_sync_result(
         db,
         household_id=household_id,
@@ -203,7 +203,7 @@ async def async_list_device_candidates_via_plugin(
     household_id: str,
     integration_instance_id: str,
 ) -> list[DeviceCandidate]:
-    result = await _aexecute_connector_plugin(
+    result = await _aexecute_integration_sync_plugin(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -211,8 +211,8 @@ async def async_list_device_candidates_via_plugin(
         selected_external_ids=[],
         options={},
     )
-    _raise_if_connector_failed(result, sync_scope="device_candidates")
-    instance = _require_connector_instance(
+    _raise_if_integration_sync_failed(result, sync_scope="device_candidates")
+    instance = _require_syncable_integration_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -244,7 +244,7 @@ async def async_list_room_candidates_via_plugin(
     household_id: str,
     integration_instance_id: str,
 ) -> list[RoomCandidate]:
-    result = await _aexecute_connector_plugin(
+    result = await _aexecute_integration_sync_plugin(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -252,7 +252,7 @@ async def async_list_room_candidates_via_plugin(
         selected_external_ids=[],
         options={},
     )
-    _raise_if_connector_failed(result, sync_scope="room_candidates")
+    _raise_if_integration_sync_failed(result, sync_scope="room_candidates")
     room_cache = _load_room_cache(db, household_id)
     return [
         RoomCandidate(
@@ -272,7 +272,7 @@ async def async_sync_devices_via_plugin(
     integration_instance_id: str,
     external_device_ids: list[str] | None = None,
 ) -> SyncSummary:
-    result = await _aexecute_connector_plugin(
+    result = await _aexecute_integration_sync_plugin(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -280,7 +280,7 @@ async def async_sync_devices_via_plugin(
         selected_external_ids=external_device_ids or [],
         options={},
     )
-    _raise_if_connector_failed(result, sync_scope="device_sync")
+    _raise_if_integration_sync_failed(result, sync_scope="device_sync")
     return _apply_device_sync_result(
         db,
         household_id=household_id,
@@ -296,7 +296,7 @@ async def async_sync_rooms_via_plugin(
     integration_instance_id: str,
     room_names: list[str] | None = None,
 ) -> RoomSyncSummary:
-    result = await _aexecute_connector_plugin(
+    result = await _aexecute_integration_sync_plugin(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -304,7 +304,7 @@ async def async_sync_rooms_via_plugin(
         selected_external_ids=room_names or [],
         options={},
     )
-    _raise_if_connector_failed(result, sync_scope="room_sync")
+    _raise_if_integration_sync_failed(result, sync_scope="room_sync")
     return _apply_room_sync_result(
         db,
         household_id=household_id,
@@ -342,7 +342,7 @@ def mark_integration_instance_sync_failed(
     db.add(instance)
 
 
-def _execute_connector_plugin(
+def _execute_integration_sync_plugin(
     db: Session,
     *,
     household_id: str,
@@ -350,8 +350,8 @@ def _execute_connector_plugin(
     sync_scope: str,
     selected_external_ids: list[str],
     options: dict[str, Any],
-) -> DeviceIntegrationPluginResult:
-    instance = _require_connector_instance(
+) -> IntegrationSyncPluginResult:
+    instance = _require_syncable_integration_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -368,7 +368,7 @@ def _execute_connector_plugin(
         household_id=household_id,
         request=PluginExecutionRequest(
             plugin_id=instance.plugin_id,
-            plugin_type="connector",
+            plugin_type="integration",
             payload=_serialize_payload(payload),
             trigger="device-integration",
         ),
@@ -382,7 +382,7 @@ def _execute_connector_plugin(
     return _parse_plugin_result(execution.output, expected_plugin_id=instance.plugin_id)
 
 
-async def _aexecute_connector_plugin(
+async def _aexecute_integration_sync_plugin(
     db: Session,
     *,
     household_id: str,
@@ -390,9 +390,9 @@ async def _aexecute_connector_plugin(
     sync_scope: str,
     selected_external_ids: list[str],
     options: dict[str, Any],
-) -> DeviceIntegrationPluginResult:
+) -> IntegrationSyncPluginResult:
     # 这里先复用同步执行链，避免测试数据库在线程切换时重复抢连接池。
-    return _execute_connector_plugin(
+    return _execute_integration_sync_plugin(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -401,7 +401,7 @@ async def _aexecute_connector_plugin(
         options=options,
     )
 
-    instance = _require_connector_instance(
+    instance = _require_syncable_integration_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -418,7 +418,7 @@ async def _aexecute_connector_plugin(
         household_id=household_id,
         request=PluginExecutionRequest(
             plugin_id=instance.plugin_id,
-            plugin_type="connector",
+            plugin_type="integration",
             payload=_serialize_payload(payload),
             trigger="device-integration",
         ),
@@ -432,7 +432,7 @@ async def _aexecute_connector_plugin(
     return _parse_plugin_result(execution.output, expected_plugin_id=instance.plugin_id)
 
 
-def _require_connector_instance(
+def _require_syncable_integration_instance(
     db: Session,
     *,
     household_id: str,
@@ -450,7 +450,7 @@ def _require_connector_instance(
             db,
             household_id=household_id,
             plugin_id=instance.plugin_id,
-            plugin_type="connector",
+            plugin_type="integration",
         )
     except PluginServiceError as exc:
         raise DeviceIntegrationServiceError(exc.detail, error_code=exc.error_code, status_code=exc.status_code) from exc
@@ -464,9 +464,9 @@ def _build_payload(
     sync_scope: str,
     selected_external_ids: list[str],
     options: dict[str, Any],
-) -> DeviceIntegrationPluginPayload:
+) -> IntegrationSyncPluginPayload:
     database_url = _build_database_url(db)
-    return DeviceIntegrationPluginPayload(
+    return IntegrationSyncPluginPayload(
         household_id=instance.household_id,
         plugin_id=instance.plugin_id,
         integration_instance_id=instance.id,
@@ -477,9 +477,9 @@ def _build_payload(
     )
 
 
-def _parse_plugin_result(output: Any, *, expected_plugin_id: str) -> DeviceIntegrationPluginResult:
+def _parse_plugin_result(output: Any, *, expected_plugin_id: str) -> IntegrationSyncPluginResult:
     try:
-        result = DeviceIntegrationPluginResult.model_validate(output or {})
+        result = IntegrationSyncPluginResult.model_validate(output or {})
     except ValidationError as exc:
         raise DeviceIntegrationServiceError(
             f"插件返回结果不合法: {exc.errors()[0].get('msg', 'unknown error')}",
@@ -491,7 +491,7 @@ def _parse_plugin_result(output: Any, *, expected_plugin_id: str) -> DeviceInteg
     return result
 
 
-def _raise_if_connector_failed(result: DeviceIntegrationPluginResult, *, sync_scope: str) -> None:
+def _raise_if_integration_sync_failed(result: IntegrationSyncPluginResult, *, sync_scope: str) -> None:
     if not result.failures:
         return
 
@@ -517,9 +517,9 @@ def _apply_device_sync_result(
     *,
     household_id: str,
     integration_instance_id: str,
-    result: DeviceIntegrationPluginResult,
+    result: IntegrationSyncPluginResult,
 ) -> SyncSummary:
-    instance = _require_connector_instance(
+    instance = _require_syncable_integration_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -657,9 +657,9 @@ def _apply_room_sync_result(
     *,
     household_id: str,
     integration_instance_id: str,
-    result: DeviceIntegrationPluginResult,
+    result: IntegrationSyncPluginResult,
 ) -> RoomSyncSummary:
-    _require_connector_instance(
+    _require_syncable_integration_instance(
         db,
         household_id=household_id,
         integration_instance_id=integration_instance_id,
@@ -691,7 +691,7 @@ def _apply_room_sync_result(
     )
 
 
-def _serialize_payload(payload: DeviceIntegrationPluginPayload) -> dict[str, Any]:
+def _serialize_payload(payload: IntegrationSyncPluginPayload) -> dict[str, Any]:
     payload_dict = payload.model_dump(mode="json")
     if payload.system_context is not None:
         payload_dict["_system_context"] = payload.system_context

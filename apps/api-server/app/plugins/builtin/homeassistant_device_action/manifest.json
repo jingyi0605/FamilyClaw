@@ -1,8 +1,9 @@
-{
+﻿{
   "id": "homeassistant",
   "name": "Home Assistant 插件",
   "version": "0.1.0",
-  "types": ["action", "connector", "memory-ingestor"],
+  "api_version": 1,
+  "types": ["action", "integration"],
   "permissions": [
     "device.control",
     "device.read",
@@ -13,12 +14,24 @@
   "triggers": ["manual", "schedule"],
   "entrypoints": {
     "action": "app.plugins.builtin.homeassistant_device_action.executor.run",
-    "connector": "app.plugins.builtin.homeassistant_device_action.connector.sync",
-    "memory_ingestor": "app.plugins.builtin.homeassistant_device_action.ingestor.transform"
+    "integration": "app.plugins.builtin.homeassistant_device_action.integration.sync"
+  },
+  "capabilities": {
+    "integration": {
+      "domains": ["homeassistant", "device"],
+      "instance_model": "multi_instance",
+      "refresh_mode": "polling",
+      "supports_discovery": true,
+      "supports_actions": true,
+      "supports_cards": false,
+      "entity_types": ["device.state", "sensor.temperature", "sensor.humidity"],
+      "default_cache_ttl_seconds": 300,
+      "max_stale_seconds": 1800
+    }
   },
   "config_specs": [
     {
-      "scope_type": "plugin",
+      "scope_type": "integration_instance",
       "title": "Home Assistant 连接配置",
       "description": "配置当前家庭使用的 Home Assistant 地址、访问令牌和同步策略。",
       "schema_version": 1,
@@ -77,3 +90,4 @@
     }
   ]
 }
+

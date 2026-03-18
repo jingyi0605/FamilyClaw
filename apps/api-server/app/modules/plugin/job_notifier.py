@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 from app.db.utils import utc_now_iso
 from app.modules.realtime.connection_manager import realtime_connection_manager
 from app.modules.realtime.schemas import build_plugin_job_updated_event
-import app.db.session as db_session_module
 
 from . import repository
 from .job_service import get_plugin_job_detail
@@ -31,7 +30,7 @@ async def publish_plugin_job_updates(db: Session, *, household_id: str, job_id: 
         ),
     )
     if notification_ids:
-        _mark_delivered(notification_ids)
+        _mark_delivered(db, notification_ids)
 
 
 def _websocket_notification_ids(db: Session, *, job_id: str) -> list[str]:
@@ -39,12 +38,11 @@ def _websocket_notification_ids(db: Session, *, job_id: str) -> list[str]:
     return [item.id for item in rows if item.channel == "websocket" and item.delivered_at is None]
 
 
-def _mark_delivered(notification_ids: Iterable[str]) -> None:
+def _mark_delivered(db: Session, notification_ids: Iterable[str]) -> None:
     ids = list(notification_ids)
     if not ids:
         return
-    with db_session_module.SessionLocal() as db:
-        delivered_at = utc_now_iso()
-        for notification_id in ids:
-            repository.mark_plugin_job_notification_delivered(db, notification_id=notification_id, delivered_at=delivered_at)
-        db.commit()
+    delivered_at = utc_now_iso()
+    for notification_id in ids:
+        repository.mark_plugin_job_notification_delivered(db, notification_id=notification_id, delivered_at=delivered_at)
+    db.commit()

@@ -65,7 +65,7 @@ class PluginRunTests(unittest.TestCase):
             household_id=household.id,
             request=PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": member.id},
             ),
             root_dir=self.builtin_root,
@@ -100,7 +100,7 @@ class PluginRunTests(unittest.TestCase):
             household_id=household.id,
             request=PluginExecutionRequest(
                 plugin_id="not-exists-plugin",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={},
             ),
             root_dir=self.builtin_root,
@@ -133,7 +133,7 @@ class PluginRunTests(unittest.TestCase):
             household_id=household.id,
             request=PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": member.id},
             ),
             root_dir=self.builtin_root,
@@ -175,7 +175,7 @@ class PluginRunTests(unittest.TestCase):
             household_id=household.id,
             request=PluginExecutionRequest(
                 plugin_id="not-exists-plugin",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={},
             ),
             root_dir=self.builtin_root,
@@ -207,7 +207,7 @@ class PluginRunTests(unittest.TestCase):
                 household_id=household.id,
                 request=PluginExecutionRequest(
                     plugin_id="homeassistant",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload=self._build_homeassistant_sync_payload(
                         household_id=household.id,
                         integration_instance_id=instance.id,
@@ -257,7 +257,7 @@ class PluginRunTests(unittest.TestCase):
                 household_id=household.id,
                 request=PluginExecutionRequest(
                     plugin_id="homeassistant",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload=self._build_homeassistant_sync_payload(
                         household_id=household.id,
                         integration_instance_id=instance.id,
@@ -270,7 +270,7 @@ class PluginRunTests(unittest.TestCase):
             household_id=household.id,
             request=PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": member.id},
             ),
             root_dir=self.builtin_root,
@@ -340,7 +340,7 @@ class PluginRunTests(unittest.TestCase):
             },
         }
 
-    def test_run_plugin_sync_pipeline_supports_third_party_runner_for_memory_ingestor(self) -> None:
+    def test_run_plugin_sync_pipeline_supports_third_party_runner_for_observation_transform(self) -> None:
         household = create_household(
             self.db,
             HouseholdCreate(name="Third Party Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
@@ -359,7 +359,7 @@ class PluginRunTests(unittest.TestCase):
                 household_id=household.id,
                 request=PluginExecutionRequest(
                     plugin_id="third-party-sync-plugin",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={"member_id": member.id},
                 ),
                 root_dir=plugin_root,
@@ -417,7 +417,7 @@ class PluginRunTests(unittest.TestCase):
                 household_id=household.id,
                 request=PluginExecutionRequest(
                     plugin_id="third-party-sync-plugin",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={"member_id": member.id},
                 ),
             )
@@ -438,20 +438,19 @@ class PluginRunTests(unittest.TestCase):
                     "id": plugin_id,
                     "name": "第三方同步插件",
                     "version": "0.1.0",
-                    "types": ["connector", "memory-ingestor"],
+                    "types": ["integration"],
                     "permissions": ["health.read", "memory.write.observation"],
                     "risk_level": "low",
                     "triggers": ["manual"],
                     "entrypoints": {
-                        "connector": "plugin.connector.sync",
-                        "memory_ingestor": "plugin.ingestor.transform",
+                        "integration": "plugin.integration.sync",
                     },
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
-        (package_dir / "connector.py").write_text(
+        (package_dir / "integration.py").write_text(
             "def sync(payload=None):\n"
             "    data = payload or {}\n"
             "    member_id = data.get('member_id', 'member-001')\n"
@@ -497,4 +496,5 @@ class PluginRunTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -61,7 +61,7 @@ class PluginObservationIngestTests(unittest.TestCase):
         execution_result = execute_plugin(
             PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": member.id},
             ),
             root_dir=self.builtin_root,
@@ -111,7 +111,7 @@ class PluginObservationIngestTests(unittest.TestCase):
             execution_result = execute_plugin(
                 PluginExecutionRequest(
                     plugin_id="homeassistant",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={
                         **build_homeassistant_sync_payload(
                             household_id=household.id,
@@ -156,4 +156,5 @@ class PluginObservationIngestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

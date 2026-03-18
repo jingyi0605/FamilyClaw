@@ -79,6 +79,8 @@ class IntegrationPluginStateTests(unittest.TestCase):
         self.assertIn("sync", actions)
         self.assertTrue(actions["sync"].disabled)
         self.assertEqual(item.last_error.message, actions["sync"].disabled_reason)
+        self.assertIn("delete", actions)
+        self.assertFalse(actions["delete"].disabled)
 
     def test_execute_sync_action_rejects_disabled_plugin(self) -> None:
         household = self._create_household()

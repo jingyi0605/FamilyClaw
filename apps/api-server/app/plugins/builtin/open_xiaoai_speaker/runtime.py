@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.engine import build_database_engine
 from app.modules.device_control.schemas import DeviceControlPluginPayload
-from app.modules.device_integration.schemas import DeviceIntegrationPluginPayload
+from app.modules.device_integration.schemas import IntegrationSyncPluginPayload
 
 DEVICE_CONTROL_RESULT_SCHEMA_VERSION = "device-control-result.v1"
 
@@ -30,8 +30,8 @@ def extract_database_url(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def parse_connector_payload(raw_payload: dict[str, Any] | None) -> DeviceIntegrationPluginPayload:
-    return DeviceIntegrationPluginPayload.model_validate(raw_payload or {})
+def parse_integration_payload(raw_payload: dict[str, Any] | None) -> IntegrationSyncPluginPayload:
+    return IntegrationSyncPluginPayload.model_validate(raw_payload or {})
 
 
 def parse_action_payload(raw_payload: dict[str, Any] | None) -> DeviceControlPluginPayload:

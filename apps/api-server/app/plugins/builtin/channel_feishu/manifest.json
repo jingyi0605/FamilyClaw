@@ -2,6 +2,7 @@
   "id": "channel-feishu",
   "name": "飞书通讯通道",
   "version": "0.1.0",
+  "api_version": 1,
   "types": ["channel"],
   "permissions": [
     "channel.receive",

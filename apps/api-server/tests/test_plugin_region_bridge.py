@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 import tempfile
 import unittest
@@ -109,7 +109,7 @@ class PluginRegionBridgeTests(unittest.TestCase):
                 household_id=self.household.id,
                 request=PluginExecutionRequest(
                     plugin_id="region-context-reader",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={"note": "test"},
                 ),
                 root_dir=plugin_root,
@@ -143,11 +143,11 @@ class PluginRegionBridgeTests(unittest.TestCase):
                     "id": "region-context-reader",
                     "name": "Region Context Reader",
                     "version": "0.1.0",
-                    "types": ["connector"],
+                    "types": ["integration"],
                     "permissions": ["region.read"],
                     "risk_level": "low",
                     "triggers": ["manual", "agent"],
-                    "entrypoints": {"connector": "plugin.connector.sync"},
+                    "entrypoints": {"integration": "plugin.integration.sync"},
                     "capabilities": {
                         "context_reads": {"household_region_context": True},
                     },
@@ -156,7 +156,7 @@ class PluginRegionBridgeTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (package_dir / "connector.py").write_text(
+        (package_dir / "integration.py").write_text(
             "def sync(payload=None):\n"
             "    data = payload or {}\n"
             "    return {'system_context': data.get('_system_context'), 'records': []}\n",
@@ -167,3 +167,4 @@ class PluginRegionBridgeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

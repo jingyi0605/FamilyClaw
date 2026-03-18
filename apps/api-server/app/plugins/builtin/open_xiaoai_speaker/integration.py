@@ -9,14 +9,14 @@ from app.modules.integration.models import IntegrationDiscovery
 from app.plugins.builtin.open_xiaoai_speaker.runtime import (
     build_session_factory,
     extract_database_url,
-    parse_connector_payload,
+    parse_integration_payload,
 )
 
 
 def sync(payload: dict | None = None) -> dict:
     raw_payload = payload or {}
     try:
-        request = parse_connector_payload(raw_payload)
+        request = parse_integration_payload(raw_payload)
     except Exception as exc:
         return _plugin_error_result(
             plugin_id=str(raw_payload.get("plugin_id") or "open-xiaoai-speaker"),
@@ -76,7 +76,7 @@ def sync(payload: dict | None = None) -> dict:
                 )
 
             return {
-                "schema_version": "device-sync-result.v1",
+                "schema_version": "integration-sync-result.v1",
                 "plugin_id": request.plugin_id,
                 "platform": "open_xiaoai",
                 "device_candidates": device_candidates if request.sync_scope == "device_candidates" else [],
@@ -116,7 +116,7 @@ def _load_text_list(raw_value: str | None) -> list[str]:
 
 def _plugin_error_result(*, plugin_id: str, reason: str) -> dict[str, Any]:
     return {
-        "schema_version": "device-sync-result.v1",
+        "schema_version": "integration-sync-result.v1",
         "plugin_id": plugin_id,
         "platform": "open_xiaoai",
         "device_candidates": [],

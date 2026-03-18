@@ -111,7 +111,7 @@ class PluginConfigApiTests(unittest.TestCase):
                 "scope_key": "default",
                 "values": {
                     "base_url": "https://example.com/api",
-                    "notes": "绗竴鐗堣鏄?,
+                    "notes": "第一版说明",
                     "retry_limit": 5,
                     "temperature": 0.7,
                     "enabled": True,
@@ -148,7 +148,7 @@ class PluginConfigApiTests(unittest.TestCase):
                 "scope_key": "default",
                 "values": {
                     "base_url": "https://example.com/v2",
-                    "notes": "绗簩鐗堣鏄?,
+                    "notes": "第二版说明",
                 },
             },
         )
@@ -191,7 +191,7 @@ class PluginConfigApiTests(unittest.TestCase):
                 payload=ChannelAccountCreate(
                     plugin_id="channel-telegram",
                     account_code="telegram-main",
-                    display_name="Telegram 涓昏处鍙?,
+                    display_name="Telegram 主账号",
                     connection_mode="polling",
                     config={
                         "bot_token": "legacy-token-001",
@@ -255,18 +255,18 @@ class PluginConfigApiTests(unittest.TestCase):
             "id": "demo-plugin-config",
             "name": "婕旂ず鎻掍欢閰嶇疆",
             "version": "0.1.0",
-            "types": ["connector"],
+            "types": ["integration"],
             "permissions": ["health.read"],
             "risk_level": "low",
             "triggers": ["manual"],
             "entrypoints": {
-                "connector": "plugin.connector.sync",
+                "integration": "plugin.integration.sync",
             },
             "config_specs": [
                 {
                     "scope_type": "plugin",
                     "title": "婕旂ず鎻掍欢閰嶇疆",
-                    "description": "鐢ㄦ潵瑕嗙洊鎻掍欢绾ч厤缃崗璁殑鏈€灏忓彲鐢ㄥ満鏅€?,
+                    "description": "用来覆盖插件级配置协议的最小可用场景。",
                     "schema_version": 1,
                     "config_schema": {
                         "fields": [
@@ -333,10 +333,11 @@ class PluginConfigApiTests(unittest.TestCase):
 
         (plugin_root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         (package_dir / "__init__.py").write_text("", encoding="utf-8")
-        (package_dir / "connector.py").write_text(
+        (package_dir / "integration.py").write_text(
             "def sync(payload=None):\n"
             "    return {'ok': True, 'payload': payload or {}}\n",
             encoding="utf-8",
         )
         return plugin_root
+
 

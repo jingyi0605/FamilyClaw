@@ -187,8 +187,8 @@ def _enqueue_agent_plugin_request(
             root_dir=root_dir,
             state_file=state_file,
         )
-        if request.plugin_type not in {"connector", "agent-skill"}:
-            raise ValueError("Agent 统一入口当前只允许 connector 或 agent-skill")
+        if request.plugin_type not in {"integration", "agent-skill"}:
+            raise ValueError("Agent 统一入口当前只允许 integration 或 agent-skill")
 
         return enqueue_household_plugin_job(
             db,

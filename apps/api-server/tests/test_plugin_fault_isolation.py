@@ -1,11 +1,11 @@
-import json
+﻿import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.modules.plugin.service import list_plugin_mounts, list_registered_plugin_locales_for_household
+import app.modules.plugin.service as plugin_service
 from app.modules.region.plugin_runtime import region_provider_registry, sync_household_plugin_region_providers
 
 
@@ -18,6 +18,7 @@ class PluginFaultIsolationTests(unittest.TestCase):
         return manifest_path
 
     def test_list_plugin_mounts_skips_invalid_manifest_and_logs_error(self) -> None:
+        plugin_service._REPORTED_PLUGIN_REGISTRY_ISSUES.clear()
         with tempfile.TemporaryDirectory() as tempdir:
             manifest_path = self._write_manifest(
                 Path(tempdir),
@@ -26,11 +27,11 @@ class PluginFaultIsolationTests(unittest.TestCase):
                     "id": "broken_mount",
                     "name": "坏挂载插件",
                     "version": "0.1.0",
-                    "types": ["connector"],
+                    "types": ["integration"],
                     "permissions": ["health.read"],
                     "risk_level": "low",
                     "triggers": ["manual"],
-                    "entrypoints": {"connector": "plugin.connector.sync"},
+                    "entrypoints": {"integration": "plugin.integration.sync"},
                 },
             )
             mount = SimpleNamespace(
@@ -41,14 +42,17 @@ class PluginFaultIsolationTests(unittest.TestCase):
             with patch("app.modules.household.service.get_household_or_404", return_value=None), patch(
                 "app.modules.plugin.service.repository.list_plugin_mounts",
                 return_value=[mount],
-            ), self.assertLogs("app.modules.plugin.service", level="ERROR") as log_context:
-                items = list_plugin_mounts(object(), household_id="demo-household")
+            ), patch.object(plugin_service.logger, "error") as error_mock:
+                items = plugin_service.list_plugin_mounts(object(), household_id="demo-household")
 
         self.assertEqual([], items)
-        self.assertIn("list_plugin_mounts", "\n".join(log_context.output))
-        self.assertIn("broken-mount", "\n".join(log_context.output))
+        error_mock.assert_called_once()
+        message = error_mock.call_args.args[0]
+        self.assertIn("list_plugin_mounts", message)
+        self.assertIn("broken-mount", message)
 
     def test_list_registered_plugin_locales_skips_invalid_resource_and_logs_error(self) -> None:
+        plugin_service._REPORTED_PLUGIN_REGISTRY_ISSUES.clear()
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
             manifest_path = self._write_manifest(
@@ -86,14 +90,20 @@ class PluginFaultIsolationTests(unittest.TestCase):
             with patch(
                 "app.modules.plugin.service.list_registered_plugins_for_household",
                 return_value=snapshot,
-            ), self.assertLogs("app.modules.plugin.service", level="ERROR") as log_context:
-                result = list_registered_plugin_locales_for_household(object(), household_id="demo-household")
+            ), patch.object(plugin_service.logger, "error") as error_mock:
+                result = plugin_service.list_registered_plugin_locales_for_household(
+                    object(),
+                    household_id="demo-household",
+                )
 
         self.assertEqual([], result.items)
-        self.assertIn("broken-locale-pack", "\n".join(log_context.output))
-        self.assertIn("zh-CN", "\n".join(log_context.output))
+        error_mock.assert_called_once()
+        message = error_mock.call_args.args[0]
+        self.assertIn("broken-locale-pack", message)
+        self.assertIn("zh-CN", message)
 
     def test_sync_household_plugin_region_providers_skips_invalid_manifest_and_does_not_raise(self) -> None:
+        plugin_service._REPORTED_PLUGIN_REGISTRY_ISSUES.clear()
         with tempfile.TemporaryDirectory() as tempdir:
             manifest_path = self._write_manifest(
                 Path(tempdir),
@@ -138,14 +148,17 @@ class PluginFaultIsolationTests(unittest.TestCase):
             ), patch.object(region_provider_registry, "clear_scope") as clear_scope_mock, patch.object(
                 region_provider_registry,
                 "register",
-            ) as register_mock, self.assertLogs("app.modules.plugin.service", level="ERROR") as log_context:
+            ) as register_mock, patch.object(plugin_service.logger, "error") as error_mock:
                 sync_household_plugin_region_providers(object(), "demo-household")
 
         clear_scope_mock.assert_called_once_with("demo-household")
         register_mock.assert_not_called()
-        self.assertIn("sync_household_plugin_region_providers", "\n".join(log_context.output))
-        self.assertIn("broken-region-provider", "\n".join(log_context.output))
+        error_mock.assert_called_once()
+        message = error_mock.call_args.args[0]
+        self.assertIn("sync_household_plugin_region_providers", message)
+        self.assertIn("broken-region-provider", message)
 
 
 if __name__ == "__main__":
     unittest.main()
+

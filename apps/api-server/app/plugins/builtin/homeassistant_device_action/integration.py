@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from app.modules.device_integration.schemas import DeviceIntegrationPluginPayload
+from app.modules.device_integration.schemas import IntegrationSyncPluginPayload
 from app.plugins.builtin.homeassistant_device_action.adapter import (
     build_home_assistant_client,
     build_session_factory,
@@ -37,7 +37,7 @@ DOMAIN_PRIORITY = {
 def sync(payload: dict | None = None) -> dict:
     raw_payload = payload or {}
     try:
-        request = DeviceIntegrationPluginPayload.model_validate(raw_payload)
+        request = IntegrationSyncPluginPayload.model_validate(raw_payload)
     except Exception as exc:
         return _plugin_error_result(
             plugin_id=str(raw_payload.get("plugin_id") or "homeassistant"),
@@ -91,7 +91,7 @@ def _fetch_home_assistant_payloads(client) -> tuple[list[dict], list[dict], list
 
 def _build_sync_result(
     *,
-    request: DeviceIntegrationPluginPayload,
+    request: IntegrationSyncPluginPayload,
     device_registry: list[dict],
     entity_registry: list[dict],
     area_registry: list[dict],
@@ -177,7 +177,7 @@ def _build_sync_result(
     rooms = room_candidates if request.sync_scope == "room_sync" else []
 
     return {
-        "schema_version": "device-sync-result.v1",
+        "schema_version": "integration-sync-result.v1",
         "plugin_id": request.plugin_id,
         "platform": "home_assistant",
         "device_candidates": device_candidates if request.sync_scope == "device_candidates" else [],
@@ -387,7 +387,7 @@ def _friendly_state_display(value: str) -> str:
 
 def _plugin_error_result(*, plugin_id: str, reason: str) -> dict[str, Any]:
     return {
-        "schema_version": "device-sync-result.v1",
+        "schema_version": "integration-sync-result.v1",
         "plugin_id": plugin_id,
         "platform": "home_assistant",
         "device_candidates": [],
