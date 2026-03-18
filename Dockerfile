@@ -87,7 +87,7 @@ COPY --from=python-builder /opt/venv /opt/venv
 COPY VERSION /opt/familyclaw/VERSION
 COPY apps/api-server/app /opt/familyclaw/apps/api-server/app
 COPY apps/api-server/alembic.ini /opt/familyclaw/apps/api-server/alembic.ini
-COPY apps/api-server/alembic /opt/familyclaw/apps/api-server/alembic
+COPY apps/api-server/migrations /opt/familyclaw/apps/api-server/migrations
 COPY apps/open-xiaoai-gateway/open_xiaoai_gateway /opt/familyclaw/apps/open-xiaoai-gateway/open_xiaoai_gateway
 COPY docker /opt/familyclaw/docker
 COPY --from=user-app-builder /workspace/apps/user-app/dist /opt/familyclaw/apps/user-app/dist

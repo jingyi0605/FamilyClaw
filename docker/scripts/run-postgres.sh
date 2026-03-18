@@ -17,26 +17,29 @@ initialize_database() {
 
   runuser -u postgres -- pg_ctl -D "${FAMILYCLAW_PGDATA}" -w start -o "-c listen_addresses='' -k /var/run/postgresql -p ${FAMILYCLAW_DB_PORT}"
 
+  # 创建用户和数据库
   runuser -u postgres -- psql \
     --username postgres \
     --host /var/run/postgresql \
     --port "${FAMILYCLAW_DB_PORT}" \
     --set=ON_ERROR_STOP=1 \
-    --set=db_user="${FAMILYCLAW_DB_USER}" \
-    --set=db_password="${FAMILYCLAW_DB_PASSWORD}" \
-    --set=db_name="${FAMILYCLAW_DB_NAME}" <<'SQL'
-DO $do$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'db_user') THEN
-    EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', :'db_user', :'db_password');
-  ELSE
-    EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L', :'db_user', :'db_password');
-  END IF;
-END
-$do$;
-SELECT format('CREATE DATABASE %I OWNER %I', :'db_name', :'db_user')
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db_name') \gexec
-SQL
+    -c "DO \$\$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${FAMILYCLAW_DB_USER}') THEN
+            CREATE ROLE \"${FAMILYCLAW_DB_USER}\" LOGIN PASSWORD '${FAMILYCLAW_DB_PASSWORD}';
+          ELSE
+            ALTER ROLE \"${FAMILYCLAW_DB_USER}\" LOGIN PASSWORD '${FAMILYCLAW_DB_PASSWORD}';
+          END IF;
+        END
+        \$\$;"
+
+  runuser -u postgres -- psql \
+    --username postgres \
+    --host /var/run/postgresql \
+    --port "${FAMILYCLAW_DB_PORT}" \
+    --set=ON_ERROR_STOP=1 \
+    -c "SELECT 1 FROM pg_database WHERE datname = '${FAMILYCLAW_DB_NAME}'" | grep -q 1 || \
+    runuser -u postgres -- createdb -O "${FAMILYCLAW_DB_USER}" "${FAMILYCLAW_DB_NAME}"
 
   runuser -u postgres -- pg_ctl -D "${FAMILYCLAW_PGDATA}" -m fast -w stop
 }
