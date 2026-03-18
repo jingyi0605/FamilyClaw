@@ -191,6 +191,37 @@ def add_device_control_shortcut(
     return row
 
 
+def list_device_control_shortcuts(
+    db: Session,
+    *,
+    household_id: str,
+    member_id: str | None = None,
+    statuses: Sequence[str] | None = None,
+) -> Sequence[ConversationDeviceControlShortcut]:
+    stmt: Select[tuple[ConversationDeviceControlShortcut]] = (
+        select(ConversationDeviceControlShortcut)
+        .where(ConversationDeviceControlShortcut.household_id == household_id)
+        .order_by(
+            case((ConversationDeviceControlShortcut.member_id == member_id, 0), else_=1),
+            ConversationDeviceControlShortcut.hit_count.desc(),
+            ConversationDeviceControlShortcut.last_used_at.desc().nullslast(),
+            ConversationDeviceControlShortcut.created_at.desc(),
+        )
+    )
+    if member_id is not None:
+        stmt = stmt.where(
+            or_(
+                ConversationDeviceControlShortcut.member_id == member_id,
+                ConversationDeviceControlShortcut.member_id.is_(None),
+            )
+        )
+    else:
+        stmt = stmt.where(ConversationDeviceControlShortcut.member_id.is_(None))
+    if statuses:
+        stmt = stmt.where(ConversationDeviceControlShortcut.status.in_(list(statuses)))
+    return list(db.scalars(stmt).all())
+
+
 def list_device_control_shortcuts_by_phrase(
     db: Session,
     *,
