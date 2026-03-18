@@ -56,7 +56,7 @@ COPY --from=user-app-builder /workspace/apps/user-app/dist /opt/familyclaw/apps/
 RUN python -m pip install --upgrade pip \
     && pip install -e /opt/familyclaw/apps/api-server \
     && pip install -e /opt/familyclaw/apps/open-xiaoai-gateway \
-    && mkdir -p /opt/familyclaw/bin /data/postgres /data/plugins /data/backups /data/runtime /data/voice-runtime-artifacts /var/run/postgresql /var/log/familyclaw /var/log/supervisor \
+    && mkdir -p /opt/familyclaw/bin /data/postgres /data/plugins /data/backups /data/logs /data/runtime /data/voice-runtime-artifacts /var/run/postgresql /var/log/familyclaw /var/log/supervisor \
     && chmod +x /opt/familyclaw/docker/scripts/*.sh \
     && ln -sf /opt/familyclaw/docker/scripts/familyclawctl.sh /opt/familyclaw/bin/familyclawctl \
     && rm -f /etc/nginx/sites-enabled/default \

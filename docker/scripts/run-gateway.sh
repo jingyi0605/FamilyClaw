@@ -2,9 +2,11 @@
 
 set -euo pipefail
 
+export FAMILYCLAW_LOG_PREFIX="gateway"
 source /opt/familyclaw/docker/scripts/common.sh
 
 main() {
+  setup_service_logging "gateway"
   if ! is_truthy "${FAMILYCLAW_ENABLE_GATEWAY}"; then
     log "Gateway disabled by FAMILYCLAW_ENABLE_GATEWAY=${FAMILYCLAW_ENABLE_GATEWAY}"
     exit 0

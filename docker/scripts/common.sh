@@ -6,6 +6,7 @@ set -euo pipefail
 : "${FAMILYCLAW_DATA_DIR:=/data}"
 : "${FAMILYCLAW_PGDATA:=${FAMILYCLAW_DATA_DIR}/postgres}"
 : "${FAMILYCLAW_BACKUP_DIR:=${FAMILYCLAW_DATA_DIR}/backups}"
+: "${FAMILYCLAW_LOG_DIR:=${FAMILYCLAW_DATA_DIR}/logs}"
 : "${FAMILYCLAW_RUNTIME_DIR:=${FAMILYCLAW_DATA_DIR}/runtime}"
 : "${FAMILYCLAW_PLUGIN_DATA_DIR:=${FAMILYCLAW_DATA_DIR}/plugins}"
 : "${FAMILYCLAW_VOICE_ARTIFACTS_DIR:=${FAMILYCLAW_DATA_DIR}/voice-runtime-artifacts}"
@@ -19,6 +20,7 @@ set -euo pipefail
 : "${FAMILYCLAW_NGINX_PORT:=8080}"
 : "${FAMILYCLAW_ENABLE_GATEWAY:=1}"
 : "${FAMILYCLAW_RELEASE_MANIFEST_PATH:=${FAMILYCLAW_APP_ROOT}/release-manifest.json}"
+: "${FAMILYCLAW_LOG_PREFIX:=familyclaw-container}"
 
 export FAMILYCLAW_DATABASE_URL="${FAMILYCLAW_DATABASE_URL:-postgresql+psycopg://${FAMILYCLAW_DB_USER}:${FAMILYCLAW_DB_PASSWORD}@${FAMILYCLAW_DB_HOST}:${FAMILYCLAW_DB_PORT}/${FAMILYCLAW_DB_NAME}}"
 export FAMILYCLAW_PLUGIN_STORAGE_ROOT="${FAMILYCLAW_PLUGIN_STORAGE_ROOT:-${FAMILYCLAW_PLUGIN_DATA_DIR}}"
@@ -26,6 +28,7 @@ export FAMILYCLAW_PLUGIN_MARKETPLACE_INSTALL_ROOT="${FAMILYCLAW_PLUGIN_MARKETPLA
 export FAMILYCLAW_VOICE_RUNTIME_ARTIFACTS_ROOT="${FAMILYCLAW_VOICE_RUNTIME_ARTIFACTS_ROOT:-${FAMILYCLAW_VOICE_ARTIFACTS_DIR}}"
 export FAMILYCLAW_RELEASE_MANIFEST_PATH
 export FAMILYCLAW_RUNTIME_DIR
+export FAMILYCLAW_LOG_DIR
 export FAMILYCLAW_ENVIRONMENT="${FAMILYCLAW_ENVIRONMENT:-production}"
 export FAMILYCLAW_BUILD_CHANNEL="${FAMILYCLAW_BUILD_CHANNEL:-development}"
 export FAMILYCLAW_VOICE_GATEWAY_TOKEN="${FAMILYCLAW_VOICE_GATEWAY_TOKEN:-dev-voice-gateway-token}"
@@ -37,7 +40,7 @@ export FAMILYCLAW_OPEN_XIAOAI_GATEWAY_VOICE_GATEWAY_TOKEN="${FAMILYCLAW_OPEN_XIA
 export PGPASSWORD="${PGPASSWORD:-${FAMILYCLAW_DB_PASSWORD}}"
 
 log() {
-  printf '[familyclaw-container] %s\n' "$1"
+  printf '[%s] %s\n' "${FAMILYCLAW_LOG_PREFIX}" "$1"
 }
 
 is_truthy() {
@@ -51,12 +54,28 @@ ensure_runtime_layout() {
   mkdir -p \
     "${FAMILYCLAW_PGDATA}" \
     "${FAMILYCLAW_BACKUP_DIR}" \
+    "${FAMILYCLAW_LOG_DIR}" \
+    "${FAMILYCLAW_LOG_DIR}/api-server" \
+    "${FAMILYCLAW_LOG_DIR}/gateway" \
+    "${FAMILYCLAW_LOG_DIR}/postgres" \
+    "${FAMILYCLAW_LOG_DIR}/nginx" \
     "${FAMILYCLAW_RUNTIME_DIR}" \
     "${FAMILYCLAW_PLUGIN_DATA_DIR}" \
     "${FAMILYCLAW_VOICE_ARTIFACTS_DIR}" \
     /var/run/postgresql
   chown -R postgres:postgres "${FAMILYCLAW_PGDATA}" /var/run/postgresql
   chmod 700 "${FAMILYCLAW_PGDATA}"
+}
+
+setup_service_logging() {
+  local service_name="$1"
+  local service_log_dir="${FAMILYCLAW_LOG_DIR}/${service_name}"
+  local service_log_file="${service_log_dir}/current.log"
+
+  mkdir -p "${service_log_dir}"
+  touch "${service_log_file}"
+
+  exec > >(tee -a "${service_log_file}") 2>&1
 }
 
 wait_for_postgres() {

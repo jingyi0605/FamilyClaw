@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+export FAMILYCLAW_LOG_PREFIX="postgres"
 source /opt/familyclaw/docker/scripts/common.sh
 
 initialize_database() {
@@ -41,6 +42,7 @@ SQL
 }
 
 main() {
+  setup_service_logging "postgres"
   ensure_runtime_layout
   initialize_database
   log "Starting PostgreSQL on ${FAMILYCLAW_DB_HOST}:${FAMILYCLAW_DB_PORT}"

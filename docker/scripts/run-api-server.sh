@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+export FAMILYCLAW_LOG_PREFIX="api-server"
 source /opt/familyclaw/docker/scripts/common.sh
 
 current_revision() {
@@ -61,6 +62,7 @@ run_migrations() {
 }
 
 main() {
+  setup_service_logging "api-server"
   ensure_runtime_layout
   wait_for_postgres
   run_migrations
