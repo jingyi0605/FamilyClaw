@@ -25,11 +25,12 @@ PY
 }
 
 head_revision() {
+  cd /opt/familyclaw/apps/api-server
   python - <<'PY'
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-config = Config("/opt/familyclaw/apps/api-server/alembic.ini")
+config = Config("alembic.ini")
 script = ScriptDirectory.from_config(config)
 print(",".join(script.get_heads()))
 PY
