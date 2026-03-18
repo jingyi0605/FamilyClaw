@@ -84,11 +84,8 @@ export function AiProviderDetailDialog(props: {
     pluginUpdateStateLabel: string;
     llmWorkflow: string;
     updatedAtLabel: string;
-    summarySupportTitle: string;
     summaryRouteTitle: string;
     summaryRouteEmpty: string;
-    routeMismatchTitle: string;
-    routeMismatchDescription: string;
     summaryConfigTitle: string;
     close: string;
     edit: string;
@@ -106,9 +103,9 @@ export function AiProviderDetailDialog(props: {
   const routeCapabilities = routes
     .filter(item => item.enabled && item.primary_provider_profile_id === provider.id)
     .map(item => item.capability);
-  const supportedCapabilities = sortCapabilities(provider.supported_capabilities);
-  const activeRouteCapabilities = sortCapabilities(routeCapabilities);
-  const invalidRouteCapabilities = activeRouteCapabilities.filter(capability => !supportedCapabilities.includes(capability));
+  const effectiveCapabilities = sortCapabilities(
+    routeCapabilities.length > 0 ? routeCapabilities : provider.supported_capabilities,
+  );
   const summaryFields = adapter?.field_schema
     .map(field => {
       const localizedField = getLocalizedField(field, locale);
@@ -195,21 +192,10 @@ export function AiProviderDetailDialog(props: {
       </div>
 
       <div className="ai-detail-modal__section">
-        <h4>{copy.summarySupportTitle}</h4>
-        <div className="ai-config-chip-list">
-          {supportedCapabilities.map(capability => (
-            <span key={capability} className="ai-pill">
-              {getLocalizedCapabilityLabel(capability, locale)}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="ai-detail-modal__section">
         <h4>{copy.summaryRouteTitle}</h4>
-        {activeRouteCapabilities.length > 0 ? (
+        {effectiveCapabilities.length > 0 ? (
           <div className="ai-config-chip-list">
-            {activeRouteCapabilities.map(capability => (
+            {effectiveCapabilities.map(capability => (
               <span key={capability} className="ai-pill">
                 {getLocalizedCapabilityLabel(capability, locale)}
               </span>
@@ -218,13 +204,6 @@ export function AiProviderDetailDialog(props: {
         ) : (
           <p className="ai-config-muted">{copy.summaryRouteEmpty}</p>
         )}
-        {invalidRouteCapabilities.length > 0 ? (
-          <div className="settings-note settings-note--warning ai-detail-modal__warning">
-            <strong>{copy.routeMismatchTitle}</strong>
-            {' '}
-            {copy.routeMismatchDescription}
-          </div>
-        ) : null}
       </div>
 
       <div className="ai-detail-modal__section">

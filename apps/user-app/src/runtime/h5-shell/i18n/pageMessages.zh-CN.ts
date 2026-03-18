@@ -402,7 +402,11 @@
   'ai.capability.rerank': '结果重排',
   'ai.capability.stt': '语音转文字',
   'ai.capability.tts': '文字转语音',
+  'ai.capability.text': '文本',
   'ai.capability.vision': '视觉理解',
+  'ai.capability.audioGeneration': '音频生成',
+  'ai.capability.audioRecognition': '音频识别',
+  'ai.capability.imageGeneration': '图片生成',
 
   'settings.ai.provider.adapter.chatgpt': '适合直接接入 OpenAI 官方接口或兼容 OpenAI Chat Completions 的网关。',
   'settings.ai.provider.adapter.deepseek': 'DeepSeek 官方兼容接口，适合通用问答，也能处理轻量代码解释。',

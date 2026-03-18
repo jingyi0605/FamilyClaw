@@ -14,7 +14,7 @@ const WORKFLOW_LABEL_MAP: Record<string, Parameters<typeof getPageMessage>[1]> =
   anthropic_messages: 'settings.ai.provider.workflow.anthropic',
   gemini_generate_content: 'settings.ai.provider.workflow.gemini',
 };
-const CAPABILITY_ORDER = new Map(AI_CAPABILITY_OPTIONS.map((item, index) => [item.value, index]));
+const CAPABILITY_ORDER = new Map<string, number>(AI_CAPABILITY_OPTIONS.map((item, index) => [item.value, index]));
 
 export function getLocalizedCapabilityLabel(capability: string, locale: string | undefined) {
   return getCapabilityLabel(capability, locale);

@@ -5,6 +5,7 @@ import { Card } from '../../family/base';
 import {
   buildCreateProviderPayload,
   buildProviderFormState,
+  buildRoutePayload,
   buildUpdateProviderPayload,
   getProviderAdapterCode,
   toProviderFormState,
@@ -22,7 +23,7 @@ import { AiProviderDetailDialog } from './AiProviderDetailDialog';
 import { AiProviderEditorDialog } from './AiProviderEditorDialog';
 import { AiProviderSelectDialog } from './AiProviderSelectDialog';
 import { SettingsEmptyState, SettingsPanelCard } from './SettingsSharedBlocks';
-import { getLocalizedAdapterMeta } from './aiProviderCatalog';
+import { getLocalizedAdapterMeta, sortCapabilities } from './aiProviderCatalog';
 
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
 const AI_PROVIDER_MODEL_TYPES: AiProviderModelType[] = ['llm', 'embedding', 'vision', 'speech', 'image'];
@@ -111,6 +112,7 @@ export function AiProviderConfigPanel(props: {
   const [detailProviderId, setDetailProviderId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [form, setForm] = useState<ProviderFormState>(buildProviderFormState());
+  const [assignedCapabilities, setAssignedCapabilities] = useState<AiCapability[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -197,7 +199,8 @@ export function AiProviderConfigPanel(props: {
     formDescription: getPageMessage(locale, 'settings.ai.provider.formDescription'),
     providerTypeLabel: getPageMessage(locale, 'settings.ai.provider.providerTypeLabel'),
     selectPlaceholder: getPageMessage(locale, 'settings.ai.provider.selectPlaceholder'),
-    capabilityCheckboxLabel: getPageMessage(locale, 'settings.ai.provider.capabilityCheckboxLabel'),
+    assignedCapabilityLabel: getPageMessage(locale, 'settings.ai.provider.assignedCapabilityLabel'),
+    assignedCapabilityHint: getPageMessage(locale, 'settings.ai.provider.assignedCapabilityHint'),
     enableAfterSave: getPageMessage(locale, 'settings.ai.provider.enableAfterSave'),
     saveProvider: getPageMessage(locale, 'settings.ai.provider.saveProvider'),
     submitAddProvider: getPageMessage(locale, 'settings.ai.provider.submitAddProvider'),
@@ -211,7 +214,6 @@ export function AiProviderConfigPanel(props: {
     summaryConfigTitle: getPageMessage(locale, 'settings.ai.provider.summaryConfigTitle'),
     summaryRouteTitle: getPageMessage(locale, 'settings.ai.provider.summaryRouteTitle'),
     summaryRouteEmpty: getPageMessage(locale, 'settings.ai.provider.summaryRouteEmpty'),
-    summarySupportTitle: getPageMessage(locale, 'settings.ai.provider.summarySupportTitle'),
     emptySummaryTitle: getPageMessage(locale, 'settings.ai.provider.emptySummaryTitle'),
     emptySummaryDesc: getPageMessage(locale, 'settings.ai.provider.emptySummaryDesc'),
     pluginLabel: getPageMessage(locale, 'settings.ai.provider.pluginLabel'),
@@ -280,6 +282,7 @@ export function AiProviderConfigPanel(props: {
   function startCreate() {
     setEditingProviderId(null);
     setForm(buildProviderFormState());
+    setAssignedCapabilities([]);
     setError('');
     setSelectOpen(true);
   }
@@ -289,6 +292,7 @@ export function AiProviderConfigPanel(props: {
     if (adapter) {
       setForm(buildProviderFormState(adapter));
     }
+    setAssignedCapabilities([]);
     setSelectOpen(false);
     setEditorOpen(true);
   }
@@ -300,8 +304,14 @@ export function AiProviderConfigPanel(props: {
 
   function startEdit(provider: AiProviderProfile) {
     const adapter = adapterMap.get(getProviderAdapterCode(provider)) ?? null;
+    const routeCapabilities = routes
+      .filter(item => item.enabled && item.primary_provider_profile_id === provider.id)
+      .map(item => item.capability);
     setEditingProviderId(provider.id);
     setForm(toProviderFormState(provider, adapter));
+    setAssignedCapabilities(
+      sortCapabilities(routeCapabilities.length > 0 ? routeCapabilities : provider.supported_capabilities) as AiCapability[],
+    );
     setError('');
     setDetailOpen(false);
     setEditorOpen(true);
@@ -314,6 +324,7 @@ export function AiProviderConfigPanel(props: {
     setEditorOpen(false);
     setEditingProviderId(null);
     setForm(buildProviderFormState());
+    setAssignedCapabilities([]);
   }
 
   function openDetail(provider: AiProviderProfile) {
@@ -328,6 +339,61 @@ export function AiProviderConfigPanel(props: {
   function handleAdapterChange(adapterCode: string) {
     const adapter = adapters.find(item => item.adapter_code === adapterCode) ?? null;
     setForm(buildProviderFormState(adapter));
+    setAssignedCapabilities([]);
+  }
+
+  function buildDisabledRoutePayload(capability: AiCapability, currentRoute?: AiCapabilityRoute) {
+    return {
+      capability,
+      household_id: householdId,
+      primary_provider_profile_id: null,
+      fallback_provider_profile_ids: [],
+      routing_mode: 'template_only',
+      timeout_ms: currentRoute?.timeout_ms ?? 15000,
+      max_retry_count: currentRoute?.max_retry_count ?? 0,
+      allow_remote: currentRoute?.allow_remote ?? true,
+      prompt_policy: currentRoute?.prompt_policy ?? {},
+      response_policy: currentRoute?.response_policy ?? {},
+      enabled: false,
+    };
+  }
+
+  async function syncAssignedCapabilityRoutes(providerId: string, supportedCapabilities: AiCapability[]) {
+    const supportedCapabilitySet = new Set(supportedCapabilities);
+    const desiredAssignedCapabilities = sortCapabilities(
+      assignedCapabilities.filter(capability => supportedCapabilitySet.has(capability)),
+    ) as AiCapability[];
+    const currentAssignedCapabilities = routes
+      .filter(item => item.enabled && item.primary_provider_profile_id === providerId)
+      .map(item => item.capability);
+    const capabilitiesToSync = sortCapabilities([
+      ...desiredAssignedCapabilities,
+      ...currentAssignedCapabilities,
+    ]) as AiCapability[];
+
+    if (capabilitiesToSync.length === 0) {
+      return;
+    }
+
+    await Promise.all(capabilitiesToSync.map(async (capability) => {
+      const currentRoute = routes.find(item => item.capability === capability);
+      if (desiredAssignedCapabilities.includes(capability)) {
+        await settingsApi.upsertHouseholdAiRoute(
+          householdId,
+          capability,
+          buildRoutePayload(householdId, capability, currentRoute, providerId, true),
+        );
+        return;
+      }
+
+      if (currentRoute?.primary_provider_profile_id === providerId) {
+        await settingsApi.upsertHouseholdAiRoute(
+          householdId,
+          capability,
+          buildDisabledRoutePayload(capability, currentRoute),
+        );
+      }
+    }));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -342,22 +408,33 @@ export function AiProviderConfigPanel(props: {
     setError('');
     setStatus('');
     try {
-      if (editingProviderId) {
-        await settingsApi.updateHouseholdAiProvider(
-        householdId,
-        editingProviderId,
-        buildUpdateProviderPayload(form, currentAdapter),
-        );
-        setStatus(copy.updatedStatus);
-        await reload();
-      } else {
-        await settingsApi.createHouseholdAiProvider(
-        householdId,
-        buildCreateProviderPayload(form, currentAdapter),
-        );
-        setStatus(copy.addedStatus);
-        await reload();
+      const nextSupportedCapabilities = sortCapabilities(assignedCapabilities) as AiCapability[];
+      if (nextSupportedCapabilities.length === 0) {
+        setError(copy.selectTypeFirst);
+        return;
       }
+      if (editingProviderId) {
+        const payload = buildUpdateProviderPayload(form, currentAdapter);
+        payload.supported_capabilities = nextSupportedCapabilities;
+        const savedProvider = await settingsApi.updateHouseholdAiProvider(
+          householdId,
+          editingProviderId,
+          payload,
+        );
+        await syncAssignedCapabilityRoutes(savedProvider.id, nextSupportedCapabilities);
+        setStatus(copy.updatedStatus);
+      } else {
+        const payload = buildCreateProviderPayload(form, currentAdapter);
+        payload.supported_capabilities = nextSupportedCapabilities;
+        const savedProvider = await settingsApi.createHouseholdAiProvider(
+          householdId,
+          payload,
+        );
+        await syncAssignedCapabilityRoutes(savedProvider.id, nextSupportedCapabilities);
+        setStatus(copy.addedStatus);
+      }
+
+      await reload();
       closeEditor();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : copy.saveFailed);
@@ -479,7 +556,6 @@ export function AiProviderConfigPanel(props: {
           pluginUpdateStateLabel: copy.pluginUpdateStateLabel,
           llmWorkflow: copy.llmWorkflow,
           updatedAtLabel: copy.updatedAtLabel,
-          summarySupportTitle: copy.summarySupportTitle,
           summaryRouteTitle: copy.summaryRouteTitle,
           summaryRouteEmpty: copy.summaryRouteEmpty,
           summaryConfigTitle: copy.summaryConfigTitle,
@@ -501,6 +577,7 @@ export function AiProviderConfigPanel(props: {
         adapters={adapters}
         resolvedAdapter={adapterMap.get(form.adapterCode) ?? null}
         form={form}
+        assignedCapabilities={assignedCapabilities}
         editingProviderId={editingProviderId}
         saving={saving}
         status=""
@@ -510,6 +587,7 @@ export function AiProviderConfigPanel(props: {
         onSubmit={handleSubmit}
         onAdapterChange={handleAdapterChange}
         onFormChange={setForm}
+        onAssignedCapabilitiesChange={(capabilities) => setAssignedCapabilities(sortCapabilities(capabilities) as AiCapability[])}
       />
 
       <AiProviderSelectDialog

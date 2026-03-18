@@ -20,6 +20,7 @@ import { PAGE_MESSAGES } from './pageMessages';
 
 const SHELL_MESSAGES = {
   'zh-CN': {
+    'common.close': '关闭',
     'auth.loading': '正在检查登录状态...',
     'login.welcome': '欢迎来到智能家庭空间',
     'login.subtitle': '一个温暖、智能、关怀的家庭助手，让每一天都充满可能',
@@ -226,6 +227,7 @@ const SHELL_MESSAGES = {
     'member.preferences': 'Preferences',
     'common.save': 'Save',
     'common.cancel': 'Cancel',
+    'common.close': 'Close',
     'common.edit': 'Edit',
     'common.currentHousehold': 'Current Household',
     'common.userMenu': 'User Menu',

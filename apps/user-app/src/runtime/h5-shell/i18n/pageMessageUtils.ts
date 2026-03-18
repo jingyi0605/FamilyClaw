@@ -21,7 +21,8 @@ export function getPageMessage(
   key: MessageKey,
   params?: Record<string, string | number>,
 ) {
-  const bundle = PAGE_MESSAGES[resolveLocale(locale)];
-  const template = bundle[key] ?? PAGE_MESSAGES['en-US'][key] ?? key;
+  const bundle = PAGE_MESSAGES[resolveLocale(locale)] as Record<string, string>;
+  const fallbackBundle = PAGE_MESSAGES['en-US'] as Record<string, string>;
+  const template = bundle[key] ?? fallbackBundle[key] ?? key;
   return formatMessage(template, params);
 }

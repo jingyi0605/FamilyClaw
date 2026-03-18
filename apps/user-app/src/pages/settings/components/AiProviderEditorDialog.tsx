@@ -42,8 +42,6 @@ export function AiProviderEditorDialog(props: {
     formDescription: string;
     providerTypeLabel: string;
     selectPlaceholder: string;
-    capabilityCheckboxLabel: string;
-    capabilityCheckboxHint: string;
     assignedCapabilityLabel: string;
     assignedCapabilityHint: string;
     enableAfterSave: string;
@@ -107,7 +105,7 @@ export function AiProviderEditorDialog(props: {
       closeDisabled={saving}
       onClose={onClose}
       onSubmit={onSubmit}
-      actions={(
+    actions={(
         <>
           {!editingProviderId && onBack ? (
             <button
@@ -131,7 +129,7 @@ export function AiProviderEditorDialog(props: {
               || !form.displayName.trim()
               || !form.providerCode.trim()
               || !form.modelName.trim()
-              || form.supportedCapabilities.length === 0
+              || assignedCapabilities.length === 0
             }
           >
             {saving ? copy.saving : editingProviderId ? copy.saveProvider : copy.submitAddProvider}
@@ -256,50 +254,7 @@ export function AiProviderEditorDialog(props: {
 
             {/* 能力配置 */}
             <div className="ai-editor-section ai-editor-section--capabilities">
-              <div className="ai-editor-capabilities">
-                <label className="ai-editor-capabilities__label">{copy.capabilityCheckboxLabel}</label>
-                <p className="ai-editor-capabilities__hint">{copy.capabilityCheckboxHint}</p>
-                <div className="ai-editor-caps-grid">
-                  {localizedCapabilityOptions.map(item => (
-                    <label key={item.value} className="ai-editor-cap-chip">
-                      <input
-                        type="checkbox"
-                        checked={form.supportedCapabilities.includes(item.value)}
-                        onChange={() => {
-                          const capabilityChecked = form.supportedCapabilities.includes(item.value);
-                          const nextSupportedCapabilities = capabilityChecked
-                            ? form.supportedCapabilities.filter(capability => capability !== item.value)
-                            : [...form.supportedCapabilities, item.value];
-                          onFormChange({
-                            ...form,
-                            supportedCapabilities: nextSupportedCapabilities,
-                          });
-                          if (capabilityChecked && assignedCapabilities.includes(item.value)) {
-                            onAssignedCapabilitiesChange(
-                              assignedCapabilities.filter(capability => capability !== item.value),
-                            );
-                          }
-                        }}
-                      />
-                      <span>{item.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <div className="ai-editor-enable">
-                <label className="ai-editor-switch">
-                  <input
-                    type="checkbox"
-                    checked={form.enabled}
-                    onChange={event => onFormChange({ ...form, enabled: event.target.checked })}
-                  />
-                  <span className="ai-editor-switch__label">{copy.enableAfterSave}</span>
-                </label>
-              </div>
-            </div>
-
-            <div className="ai-editor-section ai-editor-section--routes">
-              <div className="ai-editor-capabilities">
+              <div className="ai-editor-capability-panel">
                 <label className="ai-editor-capabilities__label">{copy.assignedCapabilityLabel}</label>
                 <p className="ai-editor-capabilities__hint">{copy.assignedCapabilityHint}</p>
                 <div className="ai-editor-caps-grid">
@@ -315,18 +270,22 @@ export function AiProviderEditorDialog(props: {
                             : [...assignedCapabilities, item.value];
 
                           onAssignedCapabilitiesChange(nextAssignedCapabilities);
-                          if (!currentlyAssigned && !form.supportedCapabilities.includes(item.value)) {
-                            onFormChange({
-                              ...form,
-                              supportedCapabilities: [...form.supportedCapabilities, item.value],
-                            });
-                          }
                         }}
                       />
                       <span>{item.label}</span>
                     </label>
                   ))}
                 </div>
+              </div>
+              <div className="ai-editor-enable ai-editor-enable-card">
+                <label className="ai-editor-switch">
+                  <input
+                    type="checkbox"
+                    checked={form.enabled}
+                    onChange={event => onFormChange({ ...form, enabled: event.target.checked })}
+                  />
+                  <span className="ai-editor-switch__label">{copy.enableAfterSave}</span>
+                </label>
               </div>
             </div>
           </div>
