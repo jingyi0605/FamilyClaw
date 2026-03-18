@@ -133,7 +133,7 @@ flowchart LR
 2. 页面调用 `sync_scope=device_candidates` 拉取候选设备。
 3. 页面本地建立筛选条件：
    - 名称搜索
-   - HA 房间
+   - 房间
    - 集成分类
 4. 用户筛选后勾选设备，页面保留跨筛选条件的已选状态。
 5. 用户点击“同步选中设备”，页面调用 `sync_scope=device_sync` 且提交 `selected_external_ids`。
@@ -246,7 +246,7 @@ flowchart LR
 | 字段 | 类型 | 必填 | 说明 | 约束 |
 | --- | --- | --- | --- | --- |
 | `keyword` | string | 否 | 按名称搜索 | 默认空字符串 |
-| `ha_room` | string \| null | 否 | 按 HA 房间筛选 | 可空 |
+| `ha_room` | string \| null | 否 | 按 房间筛选 | 可空 |
 | `integration_category` | string \| null | 否 | 按集成分类筛选 | 可空 |
 | `show_already_synced` | boolean | 否 | 是否显示已同步候选 | 默认 true |
 
@@ -261,7 +261,7 @@ flowchart LR
 | `external_device_id` | string | 是 | HA 设备 id | 非空 |
 | `primary_entity_id` | string | 是 | 主实体 id，例如 `light.bedroom_main` | 非空 |
 | `name` | string | 是 | 设备显示名 | 非空 |
-| `room_name` | string \| null | 否 | HA 房间名 | 可空 |
+| `room_name` | string \| null | 否 | 房间名 | 可空 |
 | `device_type` | string | 是 | 本地映射后的设备类型 | 非空 |
 | `entity_count` | number | 是 | 关联实体数量 | >= 1 |
 | `already_synced` | boolean | 是 | 是否已同步过 | 布尔 |
@@ -369,7 +369,7 @@ flowchart LR
 | 筛选项 | HA 数据来源 | 当前项目是否已读取 | 前端承接方式 |
 | --- | --- | --- | --- |
 | 名称搜索 | device registry 名称、entity friendly_name、state 属性 | 已读取 | 直接按 `candidate.name` 搜索 |
-| HA 房间 | area registry `name`、entity/device 的 `area_id`、state 属性中的 `area_name/room_name` | 已读取 | 直接按 `room_name` 分组筛选 |
+| 房间 | area registry `name`、entity/device 的 `area_id`、state 属性中的 `area_name/room_name` | 已读取 | 直接按 `room_name` 分组筛选 |
 | 集成分类 | entity registry 平台字段或 config entry 关联 | 部分已读取路径存在，但当前候选 DTO 未稳定暴露 | 优先读显式字段，拿不到时退化为 `primary_entity_id` domain |
 
 ## 7. HA 接口分析

@@ -9,7 +9,7 @@
 最明显的问题有四类：
 
 - 后端仍然保留 `Home Assistant` 专用配置表、专用接口和专用服务。
-- `user-app` 的 `/pages/settings/integrations/index` 页面仍然直接写死 `Home Assistant` 接入、HA 房间同步、音箱发现与音箱管理。
+- `user-app` 的 `/pages/settings/integrations/index` 页面仍然直接写死 `Home Assistant` 接入、房间同步、音箱发现与音箱管理。
 - 设备、实体、辅助元素没有统一管理模型，页面和接口仍按历史遗留能力分散堆叠。
 - 旧代码和新插件链并存，后续继续接新插件时，开发者很容易误走旧路。
 
