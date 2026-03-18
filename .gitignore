@@ -29,3 +29,5 @@ apps\api-server\tests\*
 apps/user-app/**/*.js
 apps/user-app/config/**/*.js
 .claude/settings.json
+docs/Documentation/.vitepress/dist/
+docs/Documentation/.vitepress/cache/

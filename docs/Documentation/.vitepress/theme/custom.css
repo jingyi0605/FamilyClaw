@@ -1,0 +1,60 @@
+:root {
+  --fc-accent: #18634b;
+  --fc-accent-soft: rgba(24, 99, 75, 0.12);
+  --fc-border-soft: rgba(15, 23, 42, 0.08);
+  --fc-surface: linear-gradient(180deg, rgba(245, 248, 246, 0.95) 0%, rgba(255, 255, 255, 1) 100%);
+}
+
+.dark {
+  --fc-accent: #6dc7aa;
+  --fc-accent-soft: rgba(109, 199, 170, 0.18);
+  --fc-border-soft: rgba(255, 255, 255, 0.1);
+  --fc-surface: linear-gradient(180deg, rgba(20, 27, 31, 0.96) 0%, rgba(15, 23, 42, 1) 100%);
+}
+
+.VPHome {
+  background: var(--fc-surface);
+}
+
+.VPButton.brand {
+  border-color: var(--fc-accent);
+  background-color: var(--fc-accent);
+}
+
+.vp-doc img,
+.doc-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.doc-image {
+  margin: 24px auto;
+}
+
+.doc-image__frame {
+  overflow: hidden;
+  border: 1px solid var(--fc-border-soft);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+}
+
+.dark .doc-image__frame {
+  background: rgba(15, 23, 42, 0.48);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+}
+
+.doc-image__caption {
+  margin-top: 10px;
+  text-align: center;
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+}
+
+.vp-doc .template-note {
+  padding: 14px 16px;
+  border-left: 4px solid var(--fc-accent);
+  border-radius: 12px;
+  background: var(--fc-accent-soft);
+}

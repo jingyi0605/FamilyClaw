@@ -7,10 +7,16 @@
     "build:user-app:ios": "npm --prefix ./apps/user-app run build:ios",
     "build:user-app:android": "npm --prefix ./apps/user-app run build:android",
     "build:user-app:harmony": "npm --prefix ./apps/user-app run build:harmony",
+    "docs:dev": "vitepress dev docs/Documentation",
+    "docs:build": "vitepress build docs/Documentation",
+    "docs:preview": "vitepress preview docs/Documentation",
     "typecheck": "npm run typecheck:user-app",
     "typecheck:user-app": "npm --prefix ./apps/user-app run typecheck"
   },
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "devDependencies": {
+    "vitepress": "1.6.4"
+  }
 }
