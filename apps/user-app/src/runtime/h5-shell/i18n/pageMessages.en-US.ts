@@ -1822,4 +1822,13 @@
   'settings.versionManagement.releaseCard.fallbackSummaryUnavailable': 'No summary available yet.',
   'settings.versionManagement.releaseCard.publishedAt': 'Published: {date}',
   'settings.versionManagement.releaseCard.noLinkHint': 'No update notes available.',
+
+  // ── RN mobile page additions ──
+  'login.brandTitle': 'Your smart home starts here',
+  'login.brandDesc': 'Warm, intelligent, and secure — making every family day smoother',
+  'login.footerHint': 'Your data stays on your own family server',
+  'settings.section.appearance': 'Appearance',
+  'settings.section.language': 'Language',
+  'settings.section.about': 'About',
+  'settings.appearance.desc': 'Pick the visual style that suits you best',
 } as const;

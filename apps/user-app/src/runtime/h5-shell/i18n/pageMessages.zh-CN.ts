@@ -1816,4 +1816,13 @@
   'settings.versionManagement.releaseCard.fallbackSummaryUnavailable': '暂无更新摘要',
   'settings.versionManagement.releaseCard.publishedAt': '发布时间：{date}',
   'settings.versionManagement.releaseCard.noLinkHint': '暂无更新说明',
+
+  // ── RN 移动端页面补充 ──
+  'login.brandTitle': '你的智能家庭，从这里开始',
+  'login.brandDesc': '温暖、智能、安全——让每个家庭日常更有序',
+  'login.footerHint': '你的数据只保存在你的家庭服务中',
+  'settings.section.appearance': '外观',
+  'settings.section.language': '语言',
+  'settings.section.about': '关于',
+  'settings.appearance.desc': '选择一个最适合你的视觉风格',
 } as const;
