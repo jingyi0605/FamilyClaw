@@ -12,9 +12,10 @@ from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin.config_service import save_plugin_config_form
 from app.modules.plugin.schemas import PluginConfigUpdateRequest, PluginStateUpdateRequest
 from app.modules.plugin.service import set_household_plugin_enabled
-from app.plugins.builtin.official_weather.models import WeatherDeviceBinding
-from app.plugins.builtin.official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
-from app.plugins.builtin.official_weather.service import (
+from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
+from official_weather.models import WeatherDeviceBinding
+from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
+from official_weather.service import (
     get_weather_device_binding_for_device,
     refresh_weather_device_binding,
 )
@@ -30,7 +31,7 @@ class _FakeWeatherProvider:
 
 class _TimeoutWeatherProvider:
     def fetch_weather(self, *, coordinate, config):  # noqa: ANN001
-        from app.plugins.builtin.official_weather.providers import WeatherProviderError
+        from official_weather.providers import WeatherProviderError
 
         raise WeatherProviderError(
             "weather_provider_timeout",
@@ -74,6 +75,10 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.db.close()
         self._db_helper.close()
 
+    def _sync_official_plugins(self) -> None:
+        sync_persisted_plugins_on_startup(self.db)
+        self.db.flush()
+
     def test_enable_plugin_creates_default_instance_and_weather_device(self) -> None:
         household = create_household(
             self.db,
@@ -86,6 +91,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         household.coordinate_updated_at = "2026-03-18T03:00:00Z"
         self.db.add(household)
         self.db.flush()
+        self._sync_official_plugins()
 
         snapshot = _build_snapshot(
             source_type="met_norway",
@@ -95,7 +101,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         )
 
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(snapshot),
         ):
             set_household_plugin_enabled(
@@ -147,6 +153,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
             HouseholdCreate(name="Pending Weather Home", city="Suzhou", timezone="Asia/Shanghai", locale="zh-CN"),
         )
         self.db.flush()
+        self._sync_official_plugins()
 
         set_household_plugin_enabled(
             self.db,
@@ -185,6 +192,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         household.coordinate_updated_at = "2026-03-18T03:00:00Z"
         self.db.add(household)
         self.db.flush()
+        self._sync_official_plugins()
 
         snapshot = _build_snapshot(
             source_type="met_norway",
@@ -194,7 +202,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         )
 
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(snapshot),
         ):
             set_household_plugin_enabled(
@@ -214,13 +222,13 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         weather_binding = get_weather_device_binding_for_device(self.db, device_id=device.id)
         assert weather_binding is not None
 
-        with patch("app.plugins.builtin.official_weather.service.get_weather_provider") as provider_factory:
+        with patch("official_weather.service.get_weather_provider") as provider_factory:
             refreshed = refresh_weather_device_binding(self.db, weather_binding=weather_binding, force=False)
         self.assertEqual("ready", refreshed.state)
         provider_factory.assert_not_called()
 
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=_TimeoutWeatherProvider(),
         ):
             refreshed = refresh_weather_device_binding(self.db, weather_binding=weather_binding, force=True)
@@ -246,6 +254,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         household.coordinate_updated_at = "2026-03-18T03:00:00Z"
         self.db.add(household)
         self.db.flush()
+        self._sync_official_plugins()
 
         initial_snapshot = _build_snapshot(
             source_type="met_norway",
@@ -275,7 +284,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         )
 
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(initial_snapshot),
         ):
             set_household_plugin_enabled(
@@ -308,7 +317,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         )
 
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(switched_snapshot),
         ):
             refreshed = refresh_weather_device_binding(self.db, weather_binding=weather_binding, force=True)

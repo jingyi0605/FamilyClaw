@@ -3,13 +3,13 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from app.plugins.builtin.official_weather.providers import (
+from official_weather.providers import (
     MetNorwayAdapter,
     OpenWeatherAdapter,
     WeatherApiAdapter,
     WeatherProviderError,
 )
-from app.plugins.builtin.official_weather.schemas import WeatherCoordinate, WeatherProviderConfig
+from official_weather.schemas import WeatherCoordinate, WeatherProviderConfig
 
 
 def _build_met_payload() -> dict:
@@ -120,7 +120,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
+        with patch("official_weather.providers.httpx.Client", return_value=client):
             snapshot = adapter.fetch_weather(
                 coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
                 config=WeatherProviderConfig(),
@@ -147,7 +147,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
+        with patch("official_weather.providers.httpx.Client", return_value=client):
             with self.assertRaises(WeatherProviderError) as ctx:
                 MetNorwayAdapter().fetch_weather(
                     coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
@@ -168,7 +168,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
+        with patch("official_weather.providers.httpx.Client", return_value=client):
             snapshot = adapter.fetch_weather(
                 coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
                 config=WeatherProviderConfig(provider_type="openweather", openweather_api_key="demo-key"),
@@ -207,7 +207,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
+        with patch("official_weather.providers.httpx.Client", return_value=client):
             with self.assertRaises(WeatherProviderError) as ctx:
                 OpenWeatherAdapter().fetch_weather(
                     coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
@@ -229,7 +229,7 @@ class WeatherProviderTests(unittest.TestCase):
         client.__enter__.return_value = client
         client.__exit__.return_value = None
 
-        with patch("app.plugins.builtin.official_weather.providers.httpx.Client", return_value=client):
+        with patch("official_weather.providers.httpx.Client", return_value=client):
             snapshot = adapter.fetch_weather(
                 coordinate=WeatherCoordinate(latitude=39.9042, longitude=116.4074),
                 config=WeatherProviderConfig(provider_type="weatherapi", weatherapi_api_key="demo-key"),

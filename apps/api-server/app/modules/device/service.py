@@ -899,7 +899,24 @@ def _build_device_detail_plugin_tabs(
 
 def _load_binding_capabilities(binding: DeviceBinding) -> dict[str, Any]:
     loaded = load_json(binding.capabilities)
-    return loaded if isinstance(loaded, dict) else {}
+    capabilities = loaded if isinstance(loaded, dict) else {}
+    return _normalize_plugin_binding_capabilities(binding=binding, capabilities=capabilities)
+
+
+def _normalize_plugin_binding_capabilities(
+    *,
+    binding: DeviceBinding,
+    capabilities: dict[str, Any],
+) -> dict[str, Any]:
+    if binding.plugin_id != "official-weather" or binding.platform != "weather":
+        return capabilities
+    try:
+        from official_weather.service import normalize_weather_capabilities_payload
+    except Exception:
+        return capabilities
+
+    normalized = normalize_weather_capabilities_payload(capabilities)
+    return normalized if isinstance(normalized, dict) else capabilities
 
 
 def _load_capability_tags(capabilities: dict[str, Any]) -> list[str]:

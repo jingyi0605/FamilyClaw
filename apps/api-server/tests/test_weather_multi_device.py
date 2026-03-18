@@ -16,12 +16,13 @@ from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
 from app.modules.plugin.dashboard_service import get_home_dashboard, save_member_dashboard_layout
 from app.modules.plugin.schemas import MemberDashboardLayoutItem, MemberDashboardLayoutUpdateRequest, PluginStateUpdateRequest
+from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from app.modules.plugin.service import set_household_plugin_enabled
 from app.modules.region.models import RegionNode
-from app.plugins.builtin.official_weather.providers import WeatherProviderError
-from app.plugins.builtin.official_weather.repository import get_weather_device_binding_for_integration_instance
-from app.plugins.builtin.official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
-from app.plugins.builtin.official_weather.service import refresh_weather_device_binding
+from official_weather.providers import WeatherProviderError
+from official_weather.repository import get_weather_device_binding_for_integration_instance
+from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
+from official_weather.service import refresh_weather_device_binding
 
 
 class _CoordinateAwareWeatherProvider:
@@ -90,6 +91,8 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         self.db.add(household)
         self.db.flush()
         self.household_id = household.id
+        sync_persisted_plugins_on_startup(self.db)
+        self.db.flush()
         self.member = create_member(
             self.db,
             MemberCreate(household_id=household.id, name="天气管理员", role="admin"),
@@ -112,7 +115,7 @@ class WeatherMultiDeviceTests(unittest.TestCase):
             }
         )
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=default_provider,
         ):
             set_household_plugin_enabled(
@@ -169,7 +172,7 @@ class WeatherMultiDeviceTests(unittest.TestCase):
             }
         )
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=region_provider,
         ):
             asyncio.run(
@@ -224,7 +227,7 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         )
 
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=provider,
         ):
             suzhou_refreshed = refresh_weather_device_binding(self.db, weather_binding=suzhou_binding, force=True)
@@ -296,7 +299,7 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         )
 
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=provider,
         ):
             suzhou_refreshed = refresh_weather_device_binding(self.db, weather_binding=suzhou_binding, force=False)

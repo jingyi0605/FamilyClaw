@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 
 
 class WeatherPluginConfigTests(unittest.TestCase):
@@ -36,6 +37,7 @@ class WeatherPluginConfigTests(unittest.TestCase):
                 HouseholdCreate(name="Weather Config Home", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
             )
             self.household_id = household.id
+            sync_persisted_plugins_on_startup(db)
             db.commit()
 
         app.dependency_overrides[get_db] = _override_get_db

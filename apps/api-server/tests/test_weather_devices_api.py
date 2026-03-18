@@ -13,9 +13,10 @@ from app.db.utils import dump_json, new_uuid
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.plugin.schemas import PluginStateUpdateRequest
+from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from app.modules.plugin.service import set_household_plugin_enabled
 from app.modules.region.models import RegionNode
-from app.plugins.builtin.official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
+from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
 
 
 class _FakeWeatherProvider:
@@ -99,6 +100,8 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
             db.add(household)
             db.flush()
             self.household_id = household.id
+            sync_persisted_plugins_on_startup(db)
+            db.flush()
 
             self._insert_region_node(
                 db,
@@ -120,7 +123,7 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
             )
 
             with patch(
-                "app.plugins.builtin.official_weather.service.get_weather_provider",
+                "official_weather.service.get_weather_provider",
                 return_value=_FakeWeatherProvider(_build_snapshot()),
             ):
                 set_household_plugin_enabled(
@@ -165,7 +168,7 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
         self.assertEqual("official-weather", created_payload["plugin_id"])
 
         with patch(
-            "app.plugins.builtin.official_weather.service.get_weather_provider",
+            "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(_build_snapshot(source_type="weatherapi", updated_at="2026-03-18T04:00:00Z")),
         ):
             candidates_response = self.client.post(
