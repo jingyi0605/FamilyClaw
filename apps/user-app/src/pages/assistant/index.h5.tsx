@@ -66,6 +66,77 @@ function formatRelativeTime(value: string, locale: string) {
   return date.toLocaleDateString(normalizedLocale);
 }
 
+function formatMessageTime(value: string, locale: string) {
+  const lowerLocale = locale.toLowerCase();
+  const normalizedLocale = lowerLocale.startsWith('en') ? 'en-US' : lowerLocale.startsWith('zh-tw') ? 'zh-TW' : 'zh-CN';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const now = new Date();
+  const isToday = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  if (isToday) {
+    return date.toLocaleTimeString(normalizedLocale, { hour: '2-digit', minute: '2-digit' });
+  }
+  const isYesterday = new Date(now);
+  isYesterday.setDate(isYesterday.getDate() - 1);
+  const wasYesterday = date.getFullYear() === isYesterday.getFullYear()
+    && date.getMonth() === isYesterday.getMonth()
+    && date.getDate() === isYesterday.getDate();
+  if (wasYesterday) {
+    return getPageMessage(locale, 'assistant.time.yesterday') + ' ' + date.toLocaleTimeString(normalizedLocale, { hour: '2-digit', minute: '2-digit' });
+  }
+  return date.toLocaleDateString(normalizedLocale, {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function normalizeContent(content: string): string {
+  if (!content) return '';
+  return content
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^[\s\t]*\n/gm, '\n')
+    .replace(/\n[\s\t]*$/gm, '\n')
+    .trim();
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function renderMarkdown(text: string): string {
+  if (!text) return '';
+  let result = escapeHtml(text);
+  result = result.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const langAttr = lang ? ` data-lang="${lang}"` : '';
+    return `<pre class="md-code-block"${langAttr}><code>${code.trim()}</code></pre>`;
+  });
+  result = result.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
+  result = result.replace(/^### (.+)$/gm, '<h4 class="md-heading md-heading--h4">$1</h4>');
+  result = result.replace(/^## (.+)$/gm, '<h3 class="md-heading md-heading--h3">$1</h3>');
+  result = result.replace(/^# (.+)$/gm, '<h2 class="md-heading md-heading--h2">$1</h2>');
+  result = result.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  result = result.replace(/\*\*(.+?)\*\*/g, '<strong class="md-bold">$1</strong>');
+  result = result.replace(/\*(.+?)\*/g, '<em class="md-italic">$1</em>');
+  result = result.replace(/~~(.+?)~~/g, '<del class="md-strikethrough">$1</del>');
+  result = result.replace(/^\s*[-*+]\s+(.+)$/gm, '<li class="md-list-item">$1</li>');
+  result = result.replace(/(<li[^>]*>.*?<\/li>\n?)+/g, match => `<ul class="md-list">${match}</ul>`);
+  result = result.replace(/^\s*\d+\.\s+(.+)$/gm, '<li class="md-list-item md-list-item--ordered">$1</li>');
+  result = result.replace(/(<li[^>]*--ordered[^>]*>.*?<\/li>\n?)+/g, match => `<ol class="md-list md-list--ordered">${match}</ol>`);
+  result = result.replace(/\n\n/g, '</p><p class="md-paragraph">');
+  result = result.replace(/\n/g, '<br/>');
+  return `<p class="md-paragraph">${result}</p>`;
+}
+
 function formatLocalizedList(items: string[], locale: string) {
   const normalizedLocale = locale.toLowerCase().startsWith('en') ? 'en-US' : locale.toLowerCase().startsWith('zh-tw') ? 'zh-TW' : 'zh-CN';
   if (typeof Intl.ListFormat === 'function') {
@@ -1226,10 +1297,18 @@ function AssistantPageContent() {
                     </div>
                     <div className="message__content-wrapper">
                       <div className="message__bubble">
-                        <p className="message__content">{message.content || (message.status === 'pending' ? t('assistant.message.preparingReply') : '')}</p>
+                        <div
+                          className="message__content"
+                          dangerouslySetInnerHTML={{
+                            __html: renderMarkdown(normalizeContent(message.content || (message.status === 'pending' ? t('assistant.message.preparingReply') : ''))),
+                          }}
+                        />
                         {message.degraded ? <span className="message__memory-tag">⚠️ {t('assistant.message.responseDegraded')}</span> : null}
                         {message.status === 'streaming' ? <span className="message__memory-tag">⏳ {t('assistant.message.generating')}</span> : null}
                         {message.status === 'failed' ? <span className="message__memory-tag">❌ {t('assistant.message.turnFailed')}</span> : null}
+                        {message.created_at ? (
+                          <div className="message__time">{formatMessageTime(message.created_at, locale)}</div>
+                        ) : null}
                       </div>
                       {renderMessageActions(message)}
                       {message.role === 'assistant' && message.status !== 'pending' ? (

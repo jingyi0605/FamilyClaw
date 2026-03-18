@@ -402,6 +402,7 @@
 
   'ai.capability.qaGeneration': 'Family Q&A generation',
   'ai.capability.text': 'Text',
+  'ai.capability.intentRecognition': 'Intent recognition',
   'ai.capability.vision': 'Vision understanding',
   'ai.capability.audioGeneration': 'Audio generation',
   'ai.capability.audioRecognition': 'Audio recognition',
@@ -1130,6 +1131,7 @@
   'plugins.status.enabled': 'Enabled',
   'plugins.status.disabled': 'Disabled',
   'plugins.operationFailed': 'Operation failed',
+  'plugins.themePack.disableInUse': 'This theme plugin is currently in use. Switch to another theme before disabling it.',
   'plugins.empty.none': 'No plugins to show',
   'plugins.empty.noneDesc': 'No plugins have been registered for this household yet.',
   'plugins.empty.filtered': 'No matching plugins',
@@ -1269,6 +1271,7 @@
   'assistant.time.justNow': 'Just now',
   'assistant.time.minutesAgo': '{count} minutes ago',
   'assistant.time.hoursAgo': '{count} hours ago',
+  'assistant.time.yesterday': 'Yesterday',
   'assistant.action.status.pendingConfirmation': 'Waiting for confirmation',
   'assistant.action.status.completed': 'Completed',
   'assistant.action.status.dismissed': 'Dismissed',

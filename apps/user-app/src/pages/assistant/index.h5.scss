@@ -129,6 +129,94 @@
   border-bottom-left-radius: var(--radius-sm);
 }
 
+.message__content {
+  word-break: break-word;
+  line-height: 1.6;
+}
+
+.message__time {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-top: var(--spacing-xs);
+  text-align: right;
+  opacity: 0.8;
+}
+
+/* Markdown 样式 */
+.md-paragraph {
+  margin: 0;
+  &:not(:last-child) {
+    margin-bottom: var(--spacing-xs);
+  }
+}
+
+.md-heading {
+  margin: var(--spacing-sm) 0 var(--spacing-xs);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.md-heading--h2 {
+  font-size: 1.25em;
+}
+
+.md-heading--h3 {
+  font-size: 1.15em;
+}
+
+.md-heading--h4 {
+  font-size: 1.05em;
+}
+
+.md-bold {
+  font-weight: 600;
+}
+
+.md-italic {
+  font-style: italic;
+}
+
+.md-strikethrough {
+  text-decoration: line-through;
+}
+
+.md-inline-code {
+  background: var(--bg-surface-secondary);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.9em;
+}
+
+.md-code-block {
+  background: var(--bg-surface-secondary);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  margin: var(--spacing-sm) 0;
+
+  code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.85em;
+    line-height: 1.5;
+    white-space: pre;
+  }
+}
+
+.md-list {
+  margin: var(--spacing-xs) 0;
+  padding-left: var(--spacing-lg);
+}
+
+.md-list--ordered {
+  list-style-type: decimal;
+}
+
+.md-list-item {
+  margin: var(--spacing-xs) 0;
+  line-height: 1.5;
+}
+
 .message__memory-tag {
   gap: var(--spacing-xs);
   margin-top: var(--spacing-xs);
