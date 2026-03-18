@@ -58,6 +58,71 @@ OFFICIAL_WEATHER_PLUGIN_ID = "official-weather"
 OFFICIAL_WEATHER_DEFAULT_CARD_KEY = "weather-default"
 OFFICIAL_WEATHER_DEVICE_CARD_KEY_PREFIX = "weather-device-"
 OFFICIAL_WEATHER_CARD_REF_PREFIX = f"plugin:{OFFICIAL_WEATHER_PLUGIN_ID}:home:weather-"
+BUILTIN_DASHBOARD_TEXT_DEFAULTS: dict[str, str] = {
+    "home.familyStatus": "家庭状态",
+    "home.dashboardOverview": "首页总览",
+    "home.keyMetrics": "关键指标",
+    "home.builtinSummary": "内置聚合摘要",
+    "home.roomStatus": "房间状态",
+    "home.currentSpaceActivity": "当前空间活跃度",
+    "home.memberStatus": "成员状态",
+    "home.currentAtHomeAndActivity": "当前在家与活动",
+    "home.recentEvents": "最近事件",
+    "home.systemInsightsAndReminders": "系统洞察与提醒",
+    "home.quickActions": "快捷操作",
+    "home.systemControlledNavigation": "系统内受控跳转",
+    "home.contextUnavailable": "家庭上下文暂不可用。",
+    "home.privacySummary": "隐私：{value}",
+    "home.automationSummary": "自动化：{value}",
+    "home.quietHoursSummary": "安静时段：{start}-{end}",
+    "home.quietHoursDisabled": "安静时段未开启",
+    "home.pendingRemindersSummary": "待处理提醒：{count}",
+    "home.roomOccupancySummary": "{room_type} · {occupant_count} 人",
+    "home.roomDevicesOnlineSummary": "{online}/{total} 设备在线",
+    "home.membersAtHome": "在家成员",
+    "home.activeRooms": "活跃房间",
+    "home.devicesOnline": "在线设备",
+    "home.alerts": "待处理提醒",
+    "home.eventStatus.done": "已完成",
+    "home.eventStatus.pending": "待处理",
+    "home.quickAction.assistant.label": "对话",
+    "home.quickAction.assistant.description": "打开助手会话",
+    "home.quickAction.memories.label": "记忆",
+    "home.quickAction.memories.description": "查看家庭记忆",
+    "home.quickAction.settings.label": "设置",
+    "home.quickAction.settings.description": "进入设置页",
+    "home.quickAction.family.label": "家庭",
+    "home.quickAction.family.description": "查看家庭成员与房间",
+    "home.homeMode.home": "居家模式",
+    "home.homeMode.away": "离家模式",
+    "home.homeMode.night": "夜间模式",
+    "home.homeMode.sleep": "睡眠模式",
+    "home.homeMode.custom": "自定义模式",
+    "home.homeMode.default": "未设置",
+    "home.assistantStatus.healthy": "连接健康",
+    "home.assistantStatus.degraded": "部分降级",
+    "home.assistantStatus.offline": "连接离线",
+    "home.assistantStatus.default": "状态未知",
+    "home.privacyMode.balanced": "平衡保护",
+    "home.privacyMode.strict": "严格保护",
+    "home.privacyMode.care": "关怀优先",
+    "home.privacyMode.default": "未设置",
+    "home.automationLevel.manual": "手动优先",
+    "home.automationLevel.assisted": "辅助自动",
+    "home.automationLevel.automatic": "自动优先",
+    "home.automationLevel.default": "未设置",
+    "home.memberPresence.home": "在家",
+    "home.memberPresence.away": "外出",
+    "home.memberPresence.unknown": "未知",
+    "home.memberPresence.default": "未知",
+}
+BUILTIN_QUICK_ACTION_SPECS = (
+    ("assistant", "/pages/assistant/index"),
+    ("memories", "/pages/memories/index"),
+    ("settings", "/pages/settings/index"),
+    ("family", "/pages/family/index"),
+)
+
 
 
 def build_plugin_dashboard_card_ref(*, plugin_id: str, placement: str, card_key: str) -> str:
@@ -311,6 +376,12 @@ def _build_builtin_home_cards(
     household_id: str,
 ) -> tuple[list[HomeDashboardCardRead], list[str]]:
     warnings: list[str] = []
+    household = get_household_or_404(db, household_id)
+    locale_messages = _load_household_plugin_locale_messages(
+        db,
+        household_id=household_id,
+        locale_id=household.locale,
+    )
     context = None
     reminders = None
 
@@ -324,21 +395,61 @@ def _build_builtin_home_cards(
     except Exception as exc:
         warnings.append(f"内置卡片 reminder 聚合失败：{exc}")
 
-    weather_message = "家庭上下文暂不可用。"
+    weather_message = _resolve_builtin_dashboard_text(locale_messages, "home.contextUnavailable")
     weather_highlights: list[str] = []
     if context is not None:
-        weather_message = f"{_format_home_mode(context.home_mode)}，{_format_home_assistant_status(context.home_assistant_status)}。"
+        weather_message = (
+            f"{_format_home_mode(locale_messages, context.home_mode)}，"
+            f"{_format_home_assistant_status(locale_messages, context.home_assistant_status)}。"
+        )
         weather_highlights = [
-            f"隐私：{_format_privacy_mode(context.privacy_mode)}",
-            f"自动化：{_format_automation_level(context.automation_level)}",
+            _resolve_builtin_dashboard_text(
+                locale_messages,
+                "home.privacySummary",
+                value=_format_privacy_mode(locale_messages, context.privacy_mode),
+            ),
+            _resolve_builtin_dashboard_text(
+                locale_messages,
+                "home.automationSummary",
+                value=_format_automation_level(locale_messages, context.automation_level),
+            ),
             (
-                f"安静时段：{context.quiet_hours_start}-{context.quiet_hours_end}"
+                _resolve_builtin_dashboard_text(
+                    locale_messages,
+                    "home.quietHoursSummary",
+                    start=context.quiet_hours_start,
+                    end=context.quiet_hours_end,
+                )
                 if context.quiet_hours_enabled
-                else "安静时段未开启"
+                else _resolve_builtin_dashboard_text(locale_messages, "home.quietHoursDisabled")
             ),
         ]
     if reminders is not None:
-        weather_highlights.append(f"待处理提醒：{reminders.pending_runs}")
+        weather_highlights.append(
+            _resolve_builtin_dashboard_text(
+                locale_messages,
+                "home.pendingRemindersSummary",
+                count=reminders.pending_runs,
+            )
+        )
+
+    quick_action_items = [
+        {
+            "label": _resolve_builtin_dashboard_text(locale_messages, f"home.quickAction.{action_key}.label"),
+            "description": _resolve_builtin_dashboard_text(locale_messages, f"home.quickAction.{action_key}.description"),
+            "action_key": action_key,
+        }
+        for action_key, _ in BUILTIN_QUICK_ACTION_SPECS
+    ]
+    quick_actions = [
+        HomeDashboardCardActionRead(
+            action_key=action_key,
+            action_type="navigate",
+            label=_resolve_builtin_dashboard_text(locale_messages, f"home.quickAction.{action_key}.label"),
+            target=target,
+        )
+        for action_key, target in BUILTIN_QUICK_ACTION_SPECS
+    ]
 
     cards = [
         HomeDashboardCardRead(
@@ -347,8 +458,8 @@ def _build_builtin_home_cards(
             template_type="insight",
             size="half",
             state="ready",
-            title="家庭状态",
-            subtitle="首页总览",
+            title=_resolve_builtin_dashboard_text(locale_messages, "home.familyStatus"),
+            subtitle=_resolve_builtin_dashboard_text(locale_messages, "home.dashboardOverview"),
             payload={
                 "message": weather_message,
                 "tone": "info" if context is not None and not context.degraded else "warning",
@@ -362,9 +473,9 @@ def _build_builtin_home_cards(
             template_type="status_list",
             size="full",
             state="ready",
-            title="关键指标",
-            subtitle="内置聚合摘要",
-            payload={"items": _build_builtin_stats_items(context, reminders)},
+            title=_resolve_builtin_dashboard_text(locale_messages, "home.keyMetrics"),
+            subtitle=_resolve_builtin_dashboard_text(locale_messages, "home.builtinSummary"),
+            payload={"items": _build_builtin_stats_items(locale_messages, context, reminders)},
             actions=[],
         ),
         HomeDashboardCardRead(
@@ -373,14 +484,24 @@ def _build_builtin_home_cards(
             template_type="status_list",
             size="half",
             state="empty" if context is None or not context.room_occupancy else "ready",
-            title="房间状态",
-            subtitle="当前空间活跃度",
+            title=_resolve_builtin_dashboard_text(locale_messages, "home.roomStatus"),
+            subtitle=_resolve_builtin_dashboard_text(locale_messages, "home.currentSpaceActivity"),
             payload={
                 "items": [
                     {
                         "title": room.name,
-                        "subtitle": f"{room.room_type} · {room.occupant_count} 人",
-                        "value": f"{room.online_device_count}/{room.device_count} 设备在线",
+                        "subtitle": _resolve_builtin_dashboard_text(
+                            locale_messages,
+                            "home.roomOccupancySummary",
+                            room_type=room.room_type,
+                            occupant_count=room.occupant_count,
+                        ),
+                        "value": _resolve_builtin_dashboard_text(
+                            locale_messages,
+                            "home.roomDevicesOnlineSummary",
+                            online=room.online_device_count,
+                            total=room.device_count,
+                        ),
                         "tone": "success" if room.occupant_count > 0 or room.online_device_count > 0 else "neutral",
                     }
                     for room in (context.room_occupancy[:4] if context is not None else [])
@@ -394,14 +515,14 @@ def _build_builtin_home_cards(
             template_type="status_list",
             size="half",
             state="empty" if context is None or not context.member_states else "ready",
-            title="成员状态",
-            subtitle="当前在家与活动",
+            title=_resolve_builtin_dashboard_text(locale_messages, "home.memberStatus"),
+            subtitle=_resolve_builtin_dashboard_text(locale_messages, "home.currentAtHomeAndActivity"),
             payload={
                 "items": [
                     {
                         "title": member_state.name,
                         "subtitle": member_state.role,
-                        "value": _format_member_presence(member_state.presence),
+                        "value": _format_member_presence(locale_messages, member_state.presence),
                         "tone": "success" if member_state.presence == "home" else "neutral",
                     }
                     for member_state in (context.member_states[:4] if context is not None else [])
@@ -415,9 +536,9 @@ def _build_builtin_home_cards(
             template_type="timeline",
             size="half",
             state="empty" if _is_builtin_events_empty(context, reminders) else "ready",
-            title="最近事件",
-            subtitle="系统洞察与提醒",
-            payload={"items": _build_builtin_event_items(context, reminders)},
+            title=_resolve_builtin_dashboard_text(locale_messages, "home.recentEvents"),
+            subtitle=_resolve_builtin_dashboard_text(locale_messages, "home.systemInsightsAndReminders"),
+            payload={"items": _build_builtin_event_items(locale_messages, context, reminders)},
             actions=[],
         ),
         HomeDashboardCardRead(
@@ -426,22 +547,10 @@ def _build_builtin_home_cards(
             template_type="action_group",
             size="half",
             state="ready",
-            title="快捷操作",
-            subtitle="系统内受控跳转",
-            payload={
-                "items": [
-                    {"label": "对话", "description": "打开助手会话", "action_key": "assistant"},
-                    {"label": "记忆", "description": "查看家庭记忆", "action_key": "memories"},
-                    {"label": "设置", "description": "进入设置页", "action_key": "settings"},
-                    {"label": "家庭", "description": "查看家庭成员与房间", "action_key": "family"},
-                ],
-            },
-            actions=[
-                HomeDashboardCardActionRead(action_key="assistant", action_type="navigate", label="对话", target="/pages/assistant/index"),
-                HomeDashboardCardActionRead(action_key="memories", action_type="navigate", label="记忆", target="/pages/memories/index"),
-                HomeDashboardCardActionRead(action_key="settings", action_type="navigate", label="设置", target="/pages/settings/index"),
-                HomeDashboardCardActionRead(action_key="family", action_type="navigate", label="家庭", target="/pages/family/index"),
-            ],
+            title=_resolve_builtin_dashboard_text(locale_messages, "home.quickActions"),
+            subtitle=_resolve_builtin_dashboard_text(locale_messages, "home.systemControlledNavigation"),
+            payload={"items": quick_action_items},
+            actions=quick_actions,
         ),
     ]
     return cards, warnings
@@ -1308,6 +1417,24 @@ def _resolve_plugin_dashboard_text(
         return f"{humanized or plugin_name} 暂无数据"
     return humanized or plugin_name
 
+def _resolve_builtin_dashboard_text(
+    locale_messages: dict[str, str],
+    key: str,
+    **kwargs: Any,
+) -> str:
+    message = locale_messages.get(key)
+    if not isinstance(message, str) or not message.strip():
+        message = BUILTIN_DASHBOARD_TEXT_DEFAULTS.get(key, key)
+    template = message.strip()
+    if not kwargs:
+        return template
+    try:
+        return template.format(**kwargs)
+    except Exception:
+        return template
+
+
+
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
     if value is None or not value.strip():
@@ -1318,20 +1445,40 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return None
 
 
-def _build_builtin_stats_items(context: Any, reminders: Any) -> list[dict[str, Any]]:
+def _build_builtin_stats_items(
+    locale_messages: dict[str, str],
+    context: Any,
+    reminders: Any,
+) -> list[dict[str, Any]]:
     return [
-        {"title": "在家成员", "value": len(context.member_states) if context is not None else 0, "tone": "info"},
         {
-            "title": "活跃房间",
+            "title": _resolve_builtin_dashboard_text(locale_messages, "home.membersAtHome"),
+            "value": len(context.member_states) if context is not None else 0,
+            "tone": "info",
+        },
+        {
+            "title": _resolve_builtin_dashboard_text(locale_messages, "home.activeRooms"),
             "value": len([item for item in (context.room_occupancy if context is not None else []) if item.occupant_count > 0 or item.online_device_count > 0]),
             "tone": "success",
         },
-        {"title": "在线设备", "value": context.device_summary.active if context is not None else 0, "tone": "info"},
-        {"title": "待处理提醒", "value": reminders.pending_runs if reminders is not None else 0, "tone": "warning"},
+        {
+            "title": _resolve_builtin_dashboard_text(locale_messages, "home.devicesOnline"),
+            "value": context.device_summary.active if context is not None else 0,
+            "tone": "info",
+        },
+        {
+            "title": _resolve_builtin_dashboard_text(locale_messages, "home.alerts"),
+            "value": reminders.pending_runs if reminders is not None else 0,
+            "tone": "warning",
+        },
     ]
 
 
-def _build_builtin_event_items(context: Any, reminders: Any) -> list[dict[str, Any]]:
+def _build_builtin_event_items(
+    locale_messages: dict[str, str],
+    context: Any,
+    reminders: Any,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if context is not None:
         items.extend(
@@ -1348,7 +1495,10 @@ def _build_builtin_event_items(context: Any, reminders: Any) -> list[dict[str, A
             {
                 "title": item.title,
                 "timestamp": item.latest_run_planned_at or item.next_trigger_at or "",
-                "description": "已完成" if item.latest_ack_action == "done" else "待处理",
+                "description": _resolve_builtin_dashboard_text(
+                    locale_messages,
+                    "home.eventStatus.done" if item.latest_ack_action == "done" else "home.eventStatus.pending",
+                ),
                 "tone": "warning",
             }
             for item in reminders.items[:3]
@@ -1360,43 +1510,34 @@ def _is_builtin_events_empty(context: Any, reminders: Any) -> bool:
     return ((context is None or not context.insights) and (reminders is None or not reminders.items))
 
 
-def _format_home_mode(value: str) -> str:
-    return {
-        "home": "居家模式",
-        "away": "离家模式",
-        "night": "夜间模式",
-        "sleep": "睡眠模式",
-        "custom": "自定义模式",
-    }.get(value, "未设置")
+def _format_home_mode(locale_messages: dict[str, str], value: str) -> str:
+    key = f"home.homeMode.{value}" if value in {"home", "away", "night", "sleep", "custom"} else "home.homeMode.default"
+    return _resolve_builtin_dashboard_text(locale_messages, key)
 
 
-def _format_home_assistant_status(value: str) -> str:
-    return {
-        "healthy": "连接健康",
-        "degraded": "部分降级",
-        "offline": "连接离线",
-    }.get(value, "状态未知")
+def _format_home_assistant_status(locale_messages: dict[str, str], value: str) -> str:
+    key = (
+        f"home.assistantStatus.{value}"
+        if value in {"healthy", "degraded", "offline"}
+        else "home.assistantStatus.default"
+    )
+    return _resolve_builtin_dashboard_text(locale_messages, key)
 
 
-def _format_privacy_mode(value: str) -> str:
-    return {
-        "balanced": "平衡保护",
-        "strict": "严格保护",
-        "care": "关怀优先",
-    }.get(value, "未设置")
+def _format_privacy_mode(locale_messages: dict[str, str], value: str) -> str:
+    key = f"home.privacyMode.{value}" if value in {"balanced", "strict", "care"} else "home.privacyMode.default"
+    return _resolve_builtin_dashboard_text(locale_messages, key)
 
 
-def _format_automation_level(value: str) -> str:
-    return {
-        "manual": "手动优先",
-        "assisted": "辅助自动",
-        "automatic": "自动优先",
-    }.get(value, "未设置")
+def _format_automation_level(locale_messages: dict[str, str], value: str) -> str:
+    key = (
+        f"home.automationLevel.{value}"
+        if value in {"manual", "assisted", "automatic"}
+        else "home.automationLevel.default"
+    )
+    return _resolve_builtin_dashboard_text(locale_messages, key)
 
 
-def _format_member_presence(value: str) -> str:
-    return {
-        "home": "在家",
-        "away": "外出",
-        "unknown": "未知",
-    }.get(value, "未知")
+def _format_member_presence(locale_messages: dict[str, str], value: str) -> str:
+    key = f"home.memberPresence.{value}" if value in {"home", "away", "unknown"} else "home.memberPresence.default"
+    return _resolve_builtin_dashboard_text(locale_messages, key)

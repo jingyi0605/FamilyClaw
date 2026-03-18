@@ -3,6 +3,7 @@ import unittest
 
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.ai_gateway.models import AiProviderProfile
+from app.plugins.builtin.ai_provider_glm.driver import _prepare_request as prepare_glm_request
 from app.plugins.builtin.ai_provider_openrouter.driver import _prepare_request as prepare_openrouter_request
 from app.plugins.builtin.ai_provider_siliconflow.driver import _prepare_request as prepare_siliconflow_request
 
@@ -48,6 +49,98 @@ class AiProviderBuiltinDriverSpecialsTests(unittest.TestCase):
         self.assertEqual(False, prepared_extra_config["default_request_body"]["enable_thinking"])
         self.assertEqual(128, prepared_extra_config["default_request_body"]["thinking_budget"])
         self.assertEqual(128, prepared_extra_config["max_tokens"])
+
+    def test_glm_driver_applies_fast_task_defaults_for_glm5(self) -> None:
+        profile = self._build_profile(
+            provider_code="family-glm-main",
+            base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+            extra_config={
+                "adapter_code": "glm-coding-plan",
+                "model_name": "glm-5",
+                "temperature": 0.2,
+                "max_tokens": 512,
+            },
+        )
+
+        prepared_profile, prepared_payload = prepare_glm_request(
+            profile,
+            "text",
+            {
+                "task_type": "conversation_intent_detection",
+                "temperature": 0.1,
+                "max_tokens": 768,
+            },
+        )
+        prepared_extra_config = json.loads(prepared_profile.extra_config_json or "{}")
+
+        self.assertEqual(
+            {
+                "task_type": "conversation_intent_detection",
+                "temperature": 0.1,
+                "max_tokens": 768,
+            },
+            prepared_payload,
+        )
+        self.assertEqual(0.1, prepared_extra_config["temperature"])
+        self.assertEqual(256, prepared_extra_config["max_tokens"])
+        self.assertEqual({"type": "disabled"}, prepared_extra_config["default_request_body"]["thinking"])
+
+    def test_glm_driver_syncs_task_level_sampling_for_non_fast_task(self) -> None:
+        profile = self._build_profile(
+            provider_code="family-glm-main",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+            extra_config={
+                "adapter_code": "glm",
+                "model_name": "glm-4-flash",
+                "temperature": 0.2,
+                "max_tokens": 512,
+            },
+        )
+
+        prepared_profile, _prepared_payload = prepare_glm_request(
+            profile,
+            "text",
+            {
+                "task_type": "free_chat",
+                "temperature": 0.7,
+                "max_tokens": 768,
+            },
+        )
+        prepared_extra_config = json.loads(prepared_profile.extra_config_json or "{}")
+
+        self.assertEqual(0.7, prepared_extra_config["temperature"])
+        self.assertEqual(768, prepared_extra_config["max_tokens"])
+        self.assertNotIn("default_request_body", prepared_extra_config)
+
+    def test_glm_driver_keeps_stream_payload_without_task_type_untouched(self) -> None:
+        profile = self._build_profile(
+            provider_code="family-glm-main",
+            base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+            extra_config={
+                "adapter_code": "glm-coding-plan",
+                "model_name": "glm-5",
+                "temperature": 0.2,
+                "max_tokens": 512,
+            },
+        )
+
+        prepared_profile, prepared_payload = prepare_glm_request(
+            profile,
+            "text",
+            {
+                "temperature": 0.7,
+                "max_tokens": 768,
+            },
+        )
+
+        self.assertIs(profile, prepared_profile)
+        self.assertEqual(
+            {
+                "temperature": 0.7,
+                "max_tokens": 768,
+            },
+            prepared_payload,
+        )
 
     @staticmethod
     def _build_profile(
