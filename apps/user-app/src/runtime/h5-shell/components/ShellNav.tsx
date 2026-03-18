@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import Taro from '@tarojs/taro';
+import { useEffect, useState, type ReactNode } from 'react';
+import Taro, { useRouter } from '@tarojs/taro';
 import {
   BookOpenText,
   Building2,
@@ -49,13 +49,22 @@ export function ShellNav(props: { collapsed: boolean; onToggleCollapse: () => vo
   const { actor, logout } = useAuthContext();
   const { currentHousehold, households, setCurrentHouseholdId } = useHouseholdContext();
   const { t } = useI18n();
+  const router = useRouter();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const currentPath = useMemo(() => {
+  const [currentPath, setCurrentPath] = useState(() => {
     if (typeof window === 'undefined') {
       return '/';
     }
     return normalizePath(window.location.pathname);
-  }, []);
+  });
+
+  // 响应路由变化更新当前路径
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    setCurrentPath(normalizePath(window.location.pathname));
+  }, [router.path]);
 
   return (
     <aside className={`shell-nav ${props.collapsed ? 'shell-nav--collapsed' : ''}`}>
@@ -94,7 +103,13 @@ export function ShellNav(props: { collapsed: boolean; onToggleCollapse: () => vo
               type="button"
               className={`shell-nav__link ${isActive ? 'shell-nav__link--active' : ''}`}
               title={label}
-              onClick={() => void Taro.reLaunch({ url: item.url })}
+              onClick={() => {
+                // 如果已经是当前页面，不做任何操作
+                if (isActive) {
+                  return;
+                }
+                void Taro.redirectTo({ url: item.url });
+              }}
             >
               <span className="shell-nav__link-icon">{item.icon}</span>
               <span className="shell-nav__link-label">{label}</span>

@@ -9,8 +9,11 @@ import {
   Bot,
   CalendarClock,
   CheckCircle2,
+  CloudRain,
   CloudSun,
   ClipboardList,
+  Droplets,
+  Gauge,
   GripVertical,
   Home,
   Info,
@@ -141,6 +144,10 @@ function isBuiltinCard(card: HomeDashboardCardRead) {
   return card.source_type === 'builtin' && card.card_ref.startsWith('builtin:');
 }
 
+function isWeatherDashboardCard(card: HomeDashboardCardRead) {
+  return card.payload.card_kind === 'weather';
+}
+
 function getPayloadItems(card: HomeDashboardCardRead): DashboardPayloadItem[] {
   return Array.isArray(card.payload.items) ? card.payload.items.filter(item => typeof item === 'object' && item !== null) as DashboardPayloadItem[] : [];
 }
@@ -153,6 +160,18 @@ function getPayloadText(value: unknown, fallback = '') {
     return String(value);
   }
   return fallback;
+}
+
+function getPayloadNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function formatWeatherNumber(value: number | null, unit?: string) {
+  if (value === null) {
+    return null;
+  }
+  const normalized = Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, '');
+  return unit ? `${normalized} ${unit}` : normalized;
 }
 
 function resolveActionByKey(card: HomeDashboardCardRead, actionKey: string | undefined) {
@@ -225,6 +244,62 @@ function getWeatherDetailIcon(detail: string) {
     return <ClipboardList size={16} />;
   }
   return <Info size={16} />;
+}
+
+function getWeatherConditionIcon(card: HomeDashboardCardRead) {
+  if (card.state === 'error') {
+    return <TriangleAlert size={48} />;
+  }
+
+  const conditionCode = getPayloadText(card.payload.condition_code).toLowerCase();
+  if (conditionCode.includes('rain') || conditionCode.includes('drizzle')) {
+    return <CloudRain size={48} />;
+  }
+  if (conditionCode.includes('clear') || conditionCode.includes('sun')) {
+    return <Sun size={48} className="text-warning" />;
+  }
+  if (conditionCode.includes('wind')) {
+    return <Wind size={48} />;
+  }
+  return <CloudSun size={48} />;
+}
+
+function buildWeatherForecastText(card: HomeDashboardCardRead, t: (key: ShellMessageKey) => string) {
+  const forecast = typeof card.payload.forecast_6h === 'object' && card.payload.forecast_6h !== null
+    ? card.payload.forecast_6h as Record<string, unknown>
+    : null;
+  if (!forecast) {
+    return null;
+  }
+
+  const conditionText = getPayloadText(forecast.condition_text);
+  const minTemperature = formatWeatherNumber(getPayloadNumber(forecast.min_temperature), '°C');
+  const maxTemperature = formatWeatherNumber(getPayloadNumber(forecast.max_temperature), '°C');
+  const range = [minTemperature, maxTemperature].filter(Boolean).join(' ~ ');
+  if (conditionText && range) {
+    return `${conditionText} · ${range}`;
+  }
+  if (conditionText) {
+    return conditionText;
+  }
+  if (range) {
+    return range;
+  }
+  return t('home.weather.noData');
+}
+
+function buildWeatherDetailItems(card: HomeDashboardCardRead, t: (key: ShellMessageKey) => string) {
+  const humidity = formatWeatherNumber(getPayloadNumber(card.payload.humidity), '%');
+  const windSpeed = formatWeatherNumber(getPayloadNumber(card.payload.wind_speed), 'm/s');
+  const precipitation = formatWeatherNumber(getPayloadNumber(card.payload.precipitation_next_1h), 'mm');
+  const pressure = formatWeatherNumber(getPayloadNumber(card.payload.pressure), 'hPa');
+
+  return [
+    humidity ? { key: 'humidity', label: t('home.weather.humidity'), value: humidity, icon: <Droplets size={16} /> } : null,
+    windSpeed ? { key: 'wind', label: t('home.weather.windSpeed'), value: windSpeed, icon: <Wind size={16} /> } : null,
+    precipitation ? { key: 'precipitation', label: t('home.weather.precipitationNext1h'), value: precipitation, icon: <CloudRain size={16} /> } : null,
+    pressure ? { key: 'pressure', label: t('home.weather.pressure'), value: pressure, icon: <Gauge size={16} /> } : null,
+  ].filter(Boolean) as Array<{ key: string; label: string; value: string; icon: ReactNode }>;
 }
 
 function splitHighlight(detail: string) {
@@ -434,6 +509,63 @@ function BuiltinWeatherCard({ card, t }: { card: HomeDashboardCardRead; t: (key:
   );
 }
 
+function PluginWeatherCard({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  const location = getPayloadText(card.payload.location, card.title);
+  const conditionText = getPayloadText(card.payload.condition_text, getPayloadText(card.payload.message, t('home.weather.noData')));
+  const temperature = formatWeatherNumber(getPayloadNumber(card.payload.temperature), '°C') ?? t('home.weather.noData');
+  const updatedAt = getPayloadText(card.payload.updated_at);
+  const forecastText = buildWeatherForecastText(card, t);
+  const detailItems = buildWeatherDetailItems(card, t);
+  const statusMessage = getPayloadText(card.payload.message);
+
+  return (
+    <Card className={`dashboard-card weather-card ${getStateToneClass(card.state)}`}>
+      <div className="weather-card__header-copy">
+        <span className="weather-card__eyebrow">{location}</span>
+        <span className="weather-card__kind">{card.subtitle ?? ''}</span>
+      </div>
+      <div className="weather-card__main">
+        <div className="weather-card__icon-area">
+          <span className="weather-icon-animated weather-icon-animated--static">
+            <span className="weather-sun weather-sun--card">{getWeatherConditionIcon(card)}</span>
+          </span>
+        </div>
+        <div className="weather-card__summary">
+          <span className="weather-temp-value">{temperature}</span>
+          <span className="weather-temp-desc">{conditionText}</span>
+        </div>
+      </div>
+      <DashboardCardState card={card} t={t} />
+      {statusMessage && card.state !== 'ready' ? (
+        <p className="dashboard-card__hint">{statusMessage}</p>
+      ) : null}
+      {detailItems.length > 0 ? (
+        <div className="weather-card__details">
+          {detailItems.map(detail => (
+            <div key={detail.key} className="weather-detail weather-detail--metric">
+              <span className="weather-detail__icon">{detail.icon}</span>
+              <span className="weather-detail__label">{detail.label}</span>
+              <strong className="weather-detail__value">{detail.value}</strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="weather-card__forecast">
+        {forecastText ? (
+          <div className="weather-forecast-item weather-forecast-item--wide">
+            <span className="weather-forecast-day">{t('home.weather.forecast6h')}</span>
+            <span className="weather-forecast-temp">{forecastText}</span>
+          </div>
+        ) : null}
+        <div className="weather-forecast-item weather-forecast-item--wide">
+          <span className="weather-forecast-day">{t('home.weather.updated')}</span>
+          <span className="weather-forecast-temp">{formatRelativeTime(updatedAt)}</span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function BuiltinStatsCard({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
   const items = getPayloadItems(card);
 
@@ -618,6 +750,10 @@ function BuiltinDashboardCardPanel({ card, t }: { card: HomeDashboardCardRead; t
 }
 
 function DashboardCardPanel({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
+  if (isWeatherDashboardCard(card)) {
+    return <PluginWeatherCard card={card} t={t} />;
+  }
+
   if (isBuiltinCard(card)) {
     return <BuiltinDashboardCardPanel card={card} t={t} />;
   }
