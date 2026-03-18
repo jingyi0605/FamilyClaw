@@ -662,6 +662,114 @@ class AiConfigCenterTests(unittest.TestCase):
         assert plan.primary_provider is not None
         self.assertEqual(skill_provider.id, plan.primary_provider.provider_profile_id)
 
+    def test_intent_recognition_binding_accepts_text_provider_and_falls_back_to_text_route(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Intent Binding Home", city="Hangzhou", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        route_provider = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                provider_code="intent-route-provider",
+                display_name="Intent Route Provider",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://api.openai.com/v1",
+                api_version=None,
+                secret_ref="OPENAI_API_KEY",
+                enabled=True,
+                supported_capabilities=["text"],
+                privacy_level="public_cloud",
+                latency_budget_ms=15000,
+                cost_policy={},
+                extra_config={"adapter_code": "chatgpt", "model_name": "glm-4.5"},
+            ),
+        )
+        bound_provider = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                provider_code="intent-bound-provider",
+                display_name="Intent Bound Provider",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                api_version=None,
+                secret_ref="DASHSCOPE_API_KEY",
+                enabled=True,
+                supported_capabilities=["text"],
+                privacy_level="public_cloud",
+                latency_budget_ms=8000,
+                cost_policy={},
+                extra_config={"adapter_code": "qwen", "model_name": "qwen2.5-14b-instruct"},
+            ),
+        )
+        agent = create_agent(
+            self.db,
+            household_id=household.id,
+            payload=AgentCreate(
+                display_name="Intent Butler",
+                agent_type="butler",
+                self_identity="I route intents quickly",
+                role_summary="Handle intent detection and chat",
+                personality_traits=["calm"],
+                service_focus=["问答"],
+                default_entry=True,
+            ),
+        )
+        self.db.flush()
+
+        upsert_capability_route(
+            self.db,
+            AiCapabilityRouteUpsert(
+                capability="text",
+                household_id=household.id,
+                primary_provider_profile_id=route_provider.id,
+                fallback_provider_profile_ids=[],
+                routing_mode="primary_then_fallback",
+                timeout_ms=15000,
+                max_retry_count=0,
+                allow_remote=True,
+                prompt_policy={},
+                response_policy={},
+                enabled=True,
+            ),
+        )
+        upsert_agent_runtime_policy(
+            self.db,
+            household_id=household.id,
+            agent_id=agent.id,
+            payload=AgentRuntimePolicyUpsert(
+                conversation_enabled=True,
+                default_entry=True,
+                routing_tags=["qa"],
+                memory_scope=None,
+                model_bindings=[{"capability": "intent_recognition", "provider_profile_id": bound_provider.id}],
+                agent_skill_model_bindings=[],
+            ),
+        )
+        self.db.flush()
+
+        bound_plan = build_invocation_plan(
+            self.db,
+            capability="intent_recognition",
+            household_id=household.id,
+            agent_id=agent.id,
+            request_payload={"request_context": {"effective_agent_id": agent.id}},
+        )
+        route_plan = build_invocation_plan(
+            self.db,
+            capability="intent_recognition",
+            household_id=household.id,
+            request_payload={"request_context": {}},
+        )
+
+        assert bound_plan.primary_provider is not None
+        assert route_plan.primary_provider is not None
+        self.assertEqual(bound_provider.id, bound_plan.primary_provider.provider_profile_id)
+        self.assertEqual(route_provider.id, route_plan.primary_provider.provider_profile_id)
+
     def test_butler_bootstrap_requires_provider_first(self) -> None:
         household = create_household(
             self.db,

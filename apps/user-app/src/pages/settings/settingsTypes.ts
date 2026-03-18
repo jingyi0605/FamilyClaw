@@ -68,7 +68,7 @@ export type AiProviderField = {
   options: AiProviderFieldOption[];
 };
 
-export type AiCapability = 'text' | 'vision' | 'audio_generation' | 'audio_recognition' | 'image_generation';
+export type AiCapability = 'text' | 'intent_recognition' | 'vision' | 'audio_generation' | 'audio_recognition' | 'image_generation';
 export type AiProviderModelType = 'llm' | 'embedding' | 'vision' | 'speech' | 'image';
 
 export type AiProviderAdapter = {

@@ -72,6 +72,8 @@ def invoke_llm(
     variables: dict[str, Any],
     *,
     household_id: str | None = None,
+    agent_id: str | None = None,
+    plugin_id: str | None = None,
     conversation_history: list[dict] | None = None,
     request_context: dict[str, Any] | None = None,
     timeout_ms_override: int | None = None,
@@ -114,6 +116,8 @@ def invoke_llm(
         AiGatewayInvokeRequest(
             capability=task.capability,
             household_id=household_id,
+            agent_id=agent_id,
+            plugin_id=plugin_id,
             payload={
                 "task_type": task_type,
                 "messages": messages,
@@ -144,6 +148,8 @@ async def ainvoke_llm(
     variables: dict[str, Any],
     *,
     household_id: str | None = None,
+    agent_id: str | None = None,
+    plugin_id: str | None = None,
     conversation_history: list[dict] | None = None,
     request_context: dict[str, Any] | None = None,
     timeout_ms_override: int | None = None,
@@ -157,6 +163,8 @@ async def ainvoke_llm(
         AiGatewayInvokeRequest(
             capability=task.capability,
             household_id=household_id,
+            agent_id=agent_id,
+            plugin_id=plugin_id,
             payload={
                 "task_type": task_type,
                 "messages": messages,

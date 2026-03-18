@@ -5,7 +5,11 @@ from typing import cast
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.ai_gateway import repository as ai_gateway_repository
 from app.modules.ai_gateway.schemas import AiCapability
-from app.modules.ai_gateway.service import AiGatewayConfigurationError, get_household_ai_provider_plugin_for_profile
+from app.modules.ai_gateway.service import (
+    AiGatewayConfigurationError,
+    get_household_ai_provider_plugin_for_profile,
+    provider_supports_capability,
+)
 from app.modules.agent import repository
 from app.modules.agent.models import (
     FamilyAgent,
@@ -815,7 +819,7 @@ def _validate_model_binding_provider(
         raise AiGatewayConfigurationError("Agent 模型绑定不能使用已禁用的提供商档案")
 
     supported_capabilities = load_json(provider_row.supported_capabilities_json) or []
-    if capability not in supported_capabilities:
+    if not provider_supports_capability(capability, supported_capabilities):
         raise AiGatewayConfigurationError("Agent 模型绑定引用的提供商不支持对应能力")
 
     plugin = get_household_ai_provider_plugin_for_profile(

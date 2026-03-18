@@ -8,6 +8,7 @@ import {
   buildRoutePayload,
   buildUpdateProviderPayload,
   getProviderAdapterCode,
+  providerSupportsCapability,
   toProviderFormState,
 } from '../../setup/setupAiConfig';
 import { settingsApi } from '../settingsApi';
@@ -27,7 +28,7 @@ import { getLocalizedAdapterMeta, sortCapabilities } from './aiProviderCatalog';
 
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
 const AI_PROVIDER_MODEL_TYPES: AiProviderModelType[] = ['llm', 'embedding', 'vision', 'speech', 'image'];
-const AI_CAPABILITIES: AiCapability[] = ['text', 'vision', 'audio_generation', 'audio_recognition', 'image_generation'];
+const AI_CAPABILITIES: AiCapability[] = ['text', 'intent_recognition', 'vision', 'audio_generation', 'audio_recognition', 'image_generation'];
 
 function normalizeProviderFieldDefaultValue(value: unknown): string | number | boolean | null {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -139,7 +140,7 @@ export function AiProviderConfigPanel(props: {
   );
 
   const visibleProviders = useMemo(
-    () => providers.filter(item => !capabilityFilter || capabilityFilter.some(capability => item.supported_capabilities.includes(capability))),
+    () => providers.filter(item => !capabilityFilter || capabilityFilter.some(capability => providerSupportsCapability(item, capability))),
     [capabilityFilter, providers],
   );
 

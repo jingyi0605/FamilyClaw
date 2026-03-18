@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, model_validator
 
 AiCapability = Literal[
     "text",
+    "intent_recognition",
     "vision",
     "audio_generation",
     "audio_recognition",

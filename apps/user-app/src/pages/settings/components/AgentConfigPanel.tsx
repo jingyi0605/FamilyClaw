@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useI18n } from '../../../runtime';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel } from '../../assistant/assistant.agents';
 import { Card } from '../../family/base';
-import { getCapabilityLabel, getProviderModelName, parseTags, stringifyTags } from '../../setup/setupAiConfig';
+import { getCapabilityLabel, getProviderModelName, parseTags, providerSupportsCapability, stringifyTags } from '../../setup/setupAiConfig';
 import { SettingsDialog, SettingsEmptyState, SettingsPanelCard } from './SettingsSharedBlocks';
 import { settingsApi } from '../settingsApi';
 import type {
@@ -16,7 +16,7 @@ import type {
   PluginRegistryItem,
 } from '../settingsTypes';
 
-const AI_CAPABILITIES: AiCapability[] = ['text', 'vision', 'audio_generation', 'audio_recognition', 'image_generation'];
+const AI_CAPABILITIES: AiCapability[] = ['text', 'intent_recognition', 'vision', 'audio_generation', 'audio_recognition', 'image_generation'];
 
 type ModelBindingFormState = Record<AiCapability, string>;
 type AgentSkillBindingFormState = Record<string, ModelBindingFormState>;
@@ -24,6 +24,7 @@ type AgentSkillBindingFormState = Record<string, ModelBindingFormState>;
 function buildEmptyModelBindingForm(): ModelBindingFormState {
   return {
     text: '',
+    intent_recognition: '',
     vision: '',
     audio_generation: '',
     audio_recognition: '',
@@ -155,7 +156,7 @@ export function AgentConfigPanel(props: {
     () => Object.fromEntries(
       AI_CAPABILITIES.map(capability => [
         capability,
-        enabledProviders.filter(item => item.supported_capabilities.includes(capability)),
+        enabledProviders.filter(item => providerSupportsCapability(item, capability)),
       ]),
     ) as Record<AiCapability, AiProviderProfile[]>,
     [enabledProviders],

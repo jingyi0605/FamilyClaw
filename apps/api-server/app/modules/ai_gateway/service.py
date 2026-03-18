@@ -31,6 +31,19 @@ class AiGatewayNotFoundError(LookupError):
     pass
 
 
+def get_capability_resolution_order(capability: AiCapability) -> tuple[AiCapability, ...]:
+    if capability == "intent_recognition":
+        return ("intent_recognition", "text")
+    return (capability,)
+
+
+def provider_supports_capability(
+    capability: AiCapability,
+    supported_capabilities: list[str] | tuple[str, ...],
+) -> bool:
+    return any(candidate in supported_capabilities for candidate in get_capability_resolution_order(capability))
+
+
 def list_provider_profiles(
     db: Session,
     *,
@@ -43,7 +56,7 @@ def list_provider_profiles(
     profiles = [_to_provider_profile_read(row, plugin=_resolve_profile_plugin(row, plugin_map=plugin_map)) for row in rows]
     if capability is None:
         return profiles
-    return [profile for profile in profiles if capability in profile.supported_capabilities]
+    return [profile for profile in profiles if provider_supports_capability(capability, profile.supported_capabilities)]
 
 
 def list_provider_adapters_for_household(
@@ -253,23 +266,24 @@ def resolve_capability_route(
     capability: AiCapability,
     household_id: str | None = None,
 ) -> AiCapabilityRouteRead | None:
-    if household_id is not None:
-        household_route = repository.get_capability_route(
-            db,
-            capability=capability,
-            household_id=household_id,
-        )
-        if household_route is not None:
-            return _to_capability_route_read(household_route)
+    for candidate_capability in get_capability_resolution_order(capability):
+        if household_id is not None:
+            household_route = repository.get_capability_route(
+                db,
+                capability=candidate_capability,
+                household_id=household_id,
+            )
+            if household_route is not None:
+                return _to_capability_route_read(household_route)
 
-    global_route = repository.get_capability_route(
-        db,
-        capability=capability,
-        household_id=None,
-    )
-    if global_route is None:
-        return None
-    return _to_capability_route_read(global_route)
+        global_route = repository.get_capability_route(
+            db,
+            capability=candidate_capability,
+            household_id=None,
+        )
+        if global_route is not None:
+            return _to_capability_route_read(global_route)
+    return None
 
 
 def log_model_call(db: Session, payload: AiModelCallLogCreate) -> AiModelCallLogRead:
@@ -343,7 +357,7 @@ def _validate_capability_route(db: Session, payload: AiCapabilityRouteUpsert) ->
             )
 
         supported_capabilities = load_json(provider_row.supported_capabilities_json) or []
-        if payload.capability not in supported_capabilities:
+        if not provider_supports_capability(payload.capability, supported_capabilities):
             raise AiGatewayConfigurationError("供应商档案不支持当前 capability")
 
         if not payload.allow_remote and provider_row.privacy_level != "local_only":

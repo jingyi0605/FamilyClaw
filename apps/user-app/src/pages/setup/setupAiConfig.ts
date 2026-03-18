@@ -11,6 +11,7 @@ import type {
 
 export const AI_CAPABILITY_OPTIONS = [
   { value: 'text', labelKey: 'ai.capability.text' },
+  { value: 'intent_recognition', labelKey: 'ai.capability.intentRecognition' },
   { value: 'vision', labelKey: 'ai.capability.vision' },
   { value: 'audio_generation', labelKey: 'ai.capability.audioGeneration' },
   { value: 'audio_recognition', labelKey: 'ai.capability.audioRecognition' },
@@ -45,6 +46,11 @@ export function stringifyTags(values: string[]) {
 export function getProviderModelName(provider: AiProviderProfile) {
   const raw = provider.extra_config?.model_name;
   return typeof raw === 'string' && raw.trim() ? raw.trim() : provider.api_version;
+}
+
+export function providerSupportsCapability(provider: Pick<AiProviderProfile, 'supported_capabilities'>, capability: AiCapability) {
+  return provider.supported_capabilities.includes(capability)
+    || (capability === 'intent_recognition' && provider.supported_capabilities.includes('text'));
 }
 
 export function getProviderAdapterCode(provider: AiProviderProfile) {

@@ -236,6 +236,7 @@ register(
         output_model=ConversationIntentDetectionOutput,
         temperature=0.1,
         max_tokens=256,
+        capability="intent_recognition",
     )
 )
 
