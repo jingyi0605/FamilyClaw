@@ -88,6 +88,23 @@
    - 插件市场安装：`data/plugins/<trusted_level>/marketplace/<household_id>/<plugin_id>/<version>`
 4. 这轮先收口新挂载和新安装，不偷偷迁移历史数据库记录，避免读操作带副作用。
 
+#### 2.3.5 启动自动恢复挂载和安装实例
+
+1. 在 `app.main` 的启动阶段增加一次同步，把 `data/plugins` 里的真实目录重新对齐到数据库。
+2. 官方插件：
+   - 扫描 `data/plugins/official/*/manifest.json`
+   - 对现有每个家庭补齐或更新 `plugin_mounts`
+   - 官方来源受控，允许按“所有家庭都可用”的方式自动补齐
+3. 第三方手工插件：
+   - 扫描 `data/plugins/third_party/manual/<household_id>/<plugin_id>/manifest.json`
+   - 目录层级必须能反推出 `household_id` 和 `plugin_id`
+   - 只恢复或补齐 `plugin_mounts`，已有 `enabled` 不改，新补记录默认保持保守状态
+4. 市场插件：
+   - 扫描 `data/plugins/<trusted_level>/marketplace/<household_id>/<plugin_id>/<version>/manifest.json`
+   - 只恢复已安装实例和对应挂载，不调用下载、解压、checksum 校验这些安装步骤
+   - 如果 `source_id` 无法从现有 source / snapshot / install task 唯一反推，就记日志跳过，不猜
+5. 整个恢复流程只做“把磁盘状态同步回数据库”，不负责偷偷启用第三方插件，也不把恢复和安装混成同一条链路。
+
 ## 3. 组件和接口
 
 ### 3.1 现有 builtin 修复范围

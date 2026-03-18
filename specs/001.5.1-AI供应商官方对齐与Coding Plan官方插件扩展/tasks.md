@@ -250,6 +250,32 @@
   - 对应需求：`requirements.md` 需求 3、需求 5、需求 6
   - 对应设计：`design.md` 2.3.4、4.1
 
+- [x] 3.5 启动时自动恢复 `data/plugins` 里的插件挂载和市场实例
+  - 状态：DONE
+  - 这一部到底做什么：服务启动时扫描 `apps/api-server/data/plugins`，把官方插件、第三方手工插件和插件市场已安装目录重新同步回数据库记录。
+  - 做完你能看到什么：只要插件文件还在 `data/plugins`，重启服务后就能自动补齐挂载记录，市场插件也能恢复已安装实例，不需要重新安装。
+  - 先依赖什么：3.4
+  - 开始前先看：
+    - `docs/开发设计规范/20260317-插件启用禁用统一规则.md`
+    - `apps/api-server/app/main.py`
+    - `apps/api-server/app/modules/plugin/service.py`
+    - `apps/api-server/app/modules/plugin_marketplace/service.py`
+  - 主要改哪里：
+    - `apps/api-server/app/modules/plugin/startup_sync_service.py`
+    - `apps/api-server/app/main.py`
+    - `apps/api-server/tests/test_plugin_startup_sync.py`
+  - 这一部先不做什么：不重新下载插件、不重跑解压校验、不自动改第三方和市场插件的启停状态。
+  - 怎么算完成：
+    1. 官方插件会在启动时自动发现并补齐到现有家庭的挂载记录。
+    2. 第三方手工插件会按目录层级恢复 `plugin_mounts` 记录，并保留已有 `enabled` 状态。
+    3. 市场插件只恢复已安装实例，不会把恢复流程做成重新安装。
+  - 怎么验证：
+    - `tests.test_plugin_startup_sync`
+    - `tests.test_plugin_mounts`
+    - `tests.test_plugin_marketplace_service`
+  - 对应需求：`requirements.md` 需求 5、需求 6
+  - 对应设计：`design.md` 2.3.4、4.1、6.2
+
 ---
 
 ## 阶段 4：测试、验收和收口
@@ -277,8 +303,8 @@
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 7.1、7.2、7.3、7.4
 
-- [ ] 4.2 最终检查并收口 Spec
-  - 状态：TODO
+- [x] 4.2 最终检查并收口 Spec
+  - 状态：DONE
   - 这一部到底做什么：确认需求、设计、任务和验证证据已经对上，把这份 Spec 从“计划”收口到“已交付”。
   - 做完你能看到什么：后续接手的人能直接看懂这次到底改了什么、怎么验收、剩什么风险。
   - 先依赖什么：4.1

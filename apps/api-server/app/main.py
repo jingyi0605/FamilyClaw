@@ -11,6 +11,7 @@ from app.db.session import SessionLocal
 from app.modules.channel.polling_worker import ChannelPollingWorker
 from app.modules.account.service import ensure_bootstrap_admin_account, ensure_pending_household_bootstrap_accounts
 from app.modules.plugin.job_worker import PluginJobWorker
+from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from app.modules.scheduler.worker import ScheduledTaskWorker
 
 setup_logging(
@@ -30,6 +31,12 @@ async def lifespan(_: FastAPI):
     try:
         ensure_bootstrap_admin_account(db)
         ensure_pending_household_bootstrap_accounts(db)
+        try:
+            sync_persisted_plugins_on_startup(db)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Startup plugin sync failed")
     finally:
         db.close()
     if settings.plugin_job_worker_enabled:

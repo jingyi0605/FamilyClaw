@@ -38,11 +38,16 @@
   - 官方插件手工挂载：`apps/api-server/data/plugins/official/...`
   - 第三方插件手工挂载：`apps/api-server/data/plugins/third_party/manual/...`
   - 插件市场安装：`apps/api-server/data/plugins/<trusted_level>/marketplace/...`
+- 已补启动自动恢复：
+  - 官方插件会在服务启动时自动发现并补齐到现有家庭挂载记录
+  - 第三方手工插件会从 `data/plugins/third_party/manual/...` 恢复 `plugin_mounts`
+  - 市场插件只恢复已安装实例，不会重跑下载安装流程
 - 已补验证：
   - `python -m unittest tests.test_provider_runtime_async_stream`
   - `python -m unittest tests.test_ai_provider_official_plugins`
   - `python -m unittest tests.test_ai_config_center.AiConfigCenterTests.test_provider_adapter_registry_aligns_official_defaults`
   - `python -m py_compile` 覆盖本次改动的后端实现与测试文件
+  - `python -m unittest tests.test_plugin_startup_sync`
   - `python -m unittest tests.test_plugin_mounts`
   - `python -m unittest tests.test_plugin_marketplace_service`
   - `python -m unittest tests.test_plugin_runs`
@@ -51,3 +56,4 @@
   - 未挂载时，后端会拒绝创建对应 provider profile
   - 旧 builtin provider 仍保留，和新官方插件路径可以共存
   - 新挂载和新安装的插件文件已经统一落到 `data/plugins`，后续 Docker 只需要把 `data/` 挂到外部
+  - 服务重启后，只要 `data/plugins` 里的插件目录还在，挂载记录和市场已安装实例就会自动恢复
