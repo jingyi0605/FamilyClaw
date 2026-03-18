@@ -1,0 +1,51 @@
+{
+  "id": "builtin.provider.siliconflow",
+  "name": "SiliconFlow",
+  "version": "1.0.0",
+  "types": ["ai-provider"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {
+    "ai_provider": "driver.build_driver"
+  },
+  "capabilities": {
+    "ai_provider": {
+      "adapter_code": "siliconflow",
+      "display_name": "SiliconFlow",
+      "field_schema": [
+        { "key": "display_name", "label": "Display Name", "field_type": "text", "required": true, "placeholder": "SiliconFlow Main", "options": [] },
+        { "key": "provider_code", "label": "Provider Code", "field_type": "text", "required": true, "placeholder": "family-siliconflow-main", "options": [] },
+        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "https://api.siliconflow.cn/v1", "help_text": "Defaults to the common official endpoint. Change it only when you use a proxy or gateway.", "default_value": "https://api.siliconflow.cn/v1", "options": [] },
+        { "key": "secret_ref", "label": "Secret Reference", "field_type": "secret", "required": true, "placeholder": "SILICONFLOW_API_KEY", "options": [] },
+        { "key": "model_name", "label": "Model Name", "field_type": "text", "required": true, "placeholder": "Qwen/Qwen2.5-72B-Instruct", "default_value": "Qwen/Qwen2.5-72B-Instruct", "options": [] },
+        {
+          "key": "privacy_level",
+          "label": "Privacy Level",
+          "field_type": "select",
+          "required": true,
+          "default_value": "public_cloud",
+          "options": [
+            { "label": "Public Cloud", "value": "public_cloud" },
+            { "label": "Private Cloud", "value": "private_cloud" }
+          ]
+        },
+        { "key": "latency_budget_ms", "label": "Latency Budget (ms)", "field_type": "number", "required": false, "placeholder": "15000", "options": [] }
+      ],
+      "supported_model_types": ["llm", "embedding", "vision", "speech", "image"],
+      "llm_workflow": "openai_chat_completions",
+      "runtime_capability": {
+        "transport_type": "openai_compatible",
+        "api_family": "openai_chat_completions",
+        "default_privacy_level": "public_cloud",
+        "default_supported_capabilities": ["text", "vision", "audio_generation", "audio_recognition", "image_generation"]
+      }
+    }
+  },
+  "compatibility": {
+    "provider_profile_schema_version": 1,
+    "transport_type": "openai_compatible",
+    "api_family": "openai_chat_completions",
+    "description": "Aggregator-style endpoint for switching across hosted model families."
+  }
+}

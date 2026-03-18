@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.plugin.service import (
+    _REPORTED_PLUGIN_REGISTRY_ISSUES,
     PluginManifestValidationError,
     disable_plugin,
     discover_plugin_manifests,
@@ -40,8 +41,8 @@ class PluginManifestTests(unittest.TestCase):
         )
 
         self.assertEqual("health-basic-reader", manifest.id)
-        self.assertEqual(["connector", "memory-ingestor"], manifest.types)
-        self.assertEqual("app.plugins.builtin.health_basic.ingestor.transform", manifest.entrypoints.memory_ingestor)
+        self.assertEqual(["integration"], manifest.types)
+        self.assertEqual("app.plugins.builtin.health_basic.integration.sync", manifest.entrypoints.integration)
 
     def test_load_locale_pack_manifest_without_entrypoints(self) -> None:
         manifest = load_plugin_manifest(
@@ -52,7 +53,103 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(["locale-pack"], manifest.types)
         self.assertEqual(1, len(manifest.locales))
         self.assertEqual("zh-TW", manifest.locales[0].id)
-        self.assertIsNone(manifest.entrypoints.connector)
+        self.assertIsNone(manifest.entrypoints.integration)
+
+    def test_manifest_accepts_ai_provider_driver_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "driver-ai-provider",
+                        "name": "Driver AI Provider",
+                        "version": "0.1.0",
+                        "types": ["ai-provider"],
+                        "permissions": [],
+                        "risk_level": "low",
+                        "triggers": [],
+                        "entrypoints": {"ai_provider": "plugin.driver.build_driver"},
+                        "capabilities": {
+                            "ai_provider": {
+                                "adapter_code": "driver-ai-provider",
+                                "display_name": "Driver AI Provider",
+                                "field_schema": [
+                                    {
+                                        "key": "secret_ref",
+                                        "label": "API Key",
+                                        "field_type": "secret",
+                                        "required": True,
+                                        "options": [],
+                                    }
+                                ],
+                                "supported_model_types": ["llm"],
+                                "llm_workflow": "openai_chat_completions",
+                                "runtime_capability": {
+                                    "transport_type": "openai_compatible",
+                                    "api_family": "openai_chat_completions",
+                                    "default_privacy_level": "public_cloud",
+                                    "default_supported_capabilities": ["text"],
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        self.assertEqual(["ai-provider"], manifest.types)
+        self.assertEqual("plugin.driver.build_driver", manifest.entrypoints.ai_provider)
+
+    def test_manifest_rejects_ai_provider_without_driver_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-ai-provider",
+                        "name": "Broken AI Provider",
+                        "version": "0.1.0",
+                        "types": ["ai-provider"],
+                        "permissions": [],
+                        "risk_level": "low",
+                        "triggers": [],
+                        "entrypoints": {},
+                        "capabilities": {
+                            "ai_provider": {
+                                "adapter_code": "broken-ai-provider",
+                                "display_name": "Broken AI Provider",
+                                "field_schema": [
+                                    {
+                                        "key": "secret_ref",
+                                        "label": "API Key",
+                                        "field_type": "secret",
+                                        "required": True,
+                                        "options": [],
+                                    }
+                                ],
+                                "supported_model_types": ["llm"],
+                                "llm_workflow": "openai_chat_completions",
+                                "runtime_capability": {
+                                    "transport_type": "openai_compatible",
+                                    "api_family": "openai_chat_completions",
+                                    "default_privacy_level": "public_cloud",
+                                    "default_supported_capabilities": ["text"],
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("ai_provider", str(context.exception))
 
     def test_reject_manifest_missing_required_field(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -61,12 +158,12 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-plugin",
-                        "name": "鍧忔彃浠?,
-                        "types": ["connector"],
+                        "name": "Broken Plugin",
+                        "types": ["integration"],
                         "permissions": ["device.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
-                        "entrypoints": {"connector": "app.plugins.demo.connector.sync"},
+                        "entrypoints": {"integration": "app.plugins.demo.connector.sync"},
                     },
                     ensure_ascii=False,
                 ),
@@ -85,13 +182,13 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "region-context-plugin",
-                        "name": "鍦板尯涓婁笅鏂囨彃浠?,
+                        "name": "Region Context Plugin",
                         "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["region.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
-                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "entrypoints": {"integration": "plugin.integration.sync"},
                         "capabilities": {
                             "context_reads": {"household_region_context": True},
                             "region_provider": {
@@ -121,7 +218,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "jp-region-provider",
-                        "name": "鏃ユ湰鍦板尯鎻愪緵鏂?,
+                        "name": "Japan Region Provider",
                         "version": "0.1.0",
                         "types": ["region-provider"],
                         "permissions": ["region.read"],
@@ -188,7 +285,7 @@ class PluginManifestTests(unittest.TestCase):
                                         "bot_token": {
                                             "widget": "password",
                                             "placeholder": "123456:ABC",
-                                            "help_text": "鏈哄櫒浜轰护鐗?,
+                                            "help_text": "Bot token",
                                         }
                                     },
                                 },
@@ -236,13 +333,13 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-config-widget-plugin",
-                        "name": "鍧忛厤缃彃浠?,
+                        "name": "Broken Config Plugin",
                         "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["device.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
-                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "entrypoints": {"integration": "plugin.integration.sync"},
                         "config_specs": [
                             {
                                 "scope_type": "plugin",
@@ -295,11 +392,11 @@ class PluginManifestTests(unittest.TestCase):
                         "id": "broken-config-scope-plugin",
                         "name": "鍧忎綔鐢ㄥ煙鎻掍欢",
                         "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["device.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
-                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "entrypoints": {"integration": "plugin.integration.sync"},
                         "config_specs": [
                             {
                                 "scope_type": "plugin",
@@ -316,7 +413,7 @@ class PluginManifestTests(unittest.TestCase):
                             },
                             {
                                 "scope_type": "plugin",
-                                "title": "閰嶇疆浜?,
+                                "title": "Config Two",
                                 "schema_version": 1,
                                 "config_schema": {
                                     "fields": [
@@ -415,16 +512,16 @@ class PluginManifestTests(unittest.TestCase):
                         "id": "schedule-template-plugin",
                         "name": "璁″垝妯℃澘鎻掍欢",
                         "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["health.read"],
                         "risk_level": "low",
                         "triggers": ["manual", "schedule"],
-                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "entrypoints": {"integration": "plugin.integration.sync"},
                         "schedule_templates": [
                             {
                                 "code": "daily-check",
                                 "name": "姣忔棩宸℃",
-                                "description": "姣忓ぉ甯垜鐪嬩竴娆?,
+                                "description": "Check once per day",
                                 "default_definition": {
                                     "trigger_type": "schedule",
                                     "schedule_type": "daily",
@@ -451,13 +548,13 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-schedule-template-plugin",
-                        "name": "鍧忔ā鏉挎彃浠?,
+                        "name": "Broken Template Plugin",
                         "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["health.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
-                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "entrypoints": {"integration": "plugin.integration.sync"},
                         "schedule_templates": [
                             {
                                 "code": "daily-check",
@@ -474,7 +571,7 @@ class PluginManifestTests(unittest.TestCase):
             with self.assertRaises(PluginManifestValidationError) as context:
                 load_plugin_manifest(manifest_path)
 
-        self.assertIn("triggers 蹇呴』鍖呭惈 schedule", str(context.exception))
+        self.assertIn("声明计划任务模板前，triggers 必须包含 schedule", str(context.exception))
 
     def test_reject_runtime_region_provider_without_required_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -507,7 +604,7 @@ class PluginManifestTests(unittest.TestCase):
             with self.assertRaises(PluginManifestValidationError) as context:
                 load_plugin_manifest(manifest_path)
 
-        self.assertIn("鑷冲皯瑕佸０鏄庝竴涓?country_code", str(context.exception))
+        self.assertIn("地区 provider 运行时至少要声明一个 country_code", str(context.exception))
 
     def test_discover_builtin_manifests(self) -> None:
         manifests = discover_plugin_manifests(self.builtin_root)
@@ -544,11 +641,11 @@ class PluginManifestTests(unittest.TestCase):
                         "id": "valid-plugin",
                         "name": "有效插件",
                         "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["health.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
-                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "entrypoints": {"integration": "plugin.integration.sync"},
                     },
                     ensure_ascii=False,
                 ),
@@ -560,26 +657,28 @@ class PluginManifestTests(unittest.TestCase):
             (invalid_dir / "manifest.json").write_text(
                 json.dumps(
                     {
-                        "id": "open_xiaoai_speaker",
+                        "id": "broken-plugin",
                         "name": "坏插件",
-                        "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["health.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
-                        "entrypoints": {"connector": "plugin.connector.sync"},
+                        "entrypoints": {"integration": "plugin.integration.sync"},
                     },
                     ensure_ascii=False,
                 ),
                 encoding="utf-8",
             )
 
-            with self.assertLogs("app.modules.plugin.service", level="ERROR") as log_context:
+            _REPORTED_PLUGIN_REGISTRY_ISSUES.clear()
+            with patch("app.modules.plugin.service.logger.error") as mock_logger_error:
                 snapshot = list_registered_plugins(root)
 
         self.assertEqual(["valid-plugin"], [item.id for item in snapshot.items])
-        self.assertIn("已从注册表发现结果中跳过", "\n".join(log_context.output))
-        self.assertIn("open_xiaoai_speaker", "\n".join(log_context.output))
+        mock_logger_error.assert_called_once()
+        logged_message = mock_logger_error.call_args.args[0]
+        self.assertIn("插件 manifest 无效，已从注册表发现结果中跳过", logged_message)
+        self.assertIn("invalid_plugin", logged_message)
 
     def test_disable_and_enable_plugin_persists_state(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -611,7 +710,7 @@ class PluginManifestTests(unittest.TestCase):
         result = execute_plugin(
             PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": "mom"},
             ),
             root_dir=self.builtin_root,
@@ -628,7 +727,7 @@ class PluginManifestTests(unittest.TestCase):
         result = execute_plugin(
             PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": "mom"},
             ),
             root_dir=self.builtin_root,
@@ -648,7 +747,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "channel-runtime-plugin",
-                        "name": "閫氶亾杩愯鏃舵彃浠?,
+                        "name": "Channel Runtime Plugin",
                         "version": "0.1.0",
                         "types": ["channel"],
                         "permissions": ["channel.receive", "channel.send"],
@@ -716,14 +815,14 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "demo-third-party-plugin",
-                        "name": "绗笁鏂规紨绀烘彃浠?,
+                        "name": "Third Party Demo Plugin",
                         "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["health.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
                         "entrypoints": {
-                            "connector": "plugin.connector.sync"
+                            "integration": "plugin.integration.sync"
                         },
                     },
                     ensure_ascii=False,
@@ -731,12 +830,12 @@ class PluginManifestTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (package_dir / "__init__.py").write_text("", encoding="utf-8")
-            (package_dir / "connector.py").write_text(
+            (package_dir / "integration.py").write_text(
                 "def sync(payload=None):\n"
                 "    data = payload or {}\n"
                 "    return {\n"
                 "        'source': 'demo-third-party-plugin',\n"
-                "        'mode': 'connector',\n"
+                "        'mode': 'integration',\n"
                 "        'echo': data,\n"
                 "        'records': []\n"
                 "    }\n",
@@ -746,7 +845,7 @@ class PluginManifestTests(unittest.TestCase):
             result = execute_plugin(
                 PluginExecutionRequest(
                     plugin_id="demo-third-party-plugin",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={"member_id": "member-001"},
                 ),
                 root_dir=plugin_root,
@@ -768,7 +867,7 @@ class PluginManifestTests(unittest.TestCase):
 
     def test_execute_plugin_returns_timeout_error_for_runner(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            plugin_root = self._create_third_party_connector_plugin(Path(tempdir), plugin_id="runner-timeout-plugin")
+            plugin_root = self._create_third_party_integration_plugin(Path(tempdir), plugin_id="runner-timeout-plugin")
 
             with patch("app.modules.plugin.executors.subprocess.run") as mock_run:
                 mock_run.side_effect = subprocess.TimeoutExpired(cmd=[sys.executable], timeout=1)
@@ -776,7 +875,7 @@ class PluginManifestTests(unittest.TestCase):
                 result = execute_plugin(
                     PluginExecutionRequest(
                         plugin_id="runner-timeout-plugin",
-                        plugin_type="connector",
+                        plugin_type="integration",
                         payload={},
                     ),
                     root_dir=plugin_root,
@@ -795,7 +894,7 @@ class PluginManifestTests(unittest.TestCase):
 
     def test_execute_plugin_returns_invalid_output_error_for_runner(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            plugin_root = self._create_third_party_connector_plugin(Path(tempdir), plugin_id="runner-invalid-json-plugin")
+            plugin_root = self._create_third_party_integration_plugin(Path(tempdir), plugin_id="runner-invalid-json-plugin")
 
             with patch("app.modules.plugin.executors.subprocess.run") as mock_run:
                 mock_run.return_value = subprocess.CompletedProcess(
@@ -808,7 +907,7 @@ class PluginManifestTests(unittest.TestCase):
                 result = execute_plugin(
                     PluginExecutionRequest(
                         plugin_id="runner-invalid-json-plugin",
-                        plugin_type="connector",
+                        plugin_type="integration",
                         payload={},
                     ),
                     root_dir=plugin_root,
@@ -826,7 +925,7 @@ class PluginManifestTests(unittest.TestCase):
 
     def test_execute_plugin_returns_dependency_missing_error_for_runner(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            plugin_root = self._create_third_party_connector_plugin(Path(tempdir), plugin_id="runner-missing-dependency-plugin")
+            plugin_root = self._create_third_party_integration_plugin(Path(tempdir), plugin_id="runner-missing-dependency-plugin")
 
             with patch("app.modules.plugin.executors.subprocess.run") as mock_run:
                 mock_run.return_value = subprocess.CompletedProcess(
@@ -839,7 +938,7 @@ class PluginManifestTests(unittest.TestCase):
                 result = execute_plugin(
                     PluginExecutionRequest(
                         plugin_id="runner-missing-dependency-plugin",
-                        plugin_type="connector",
+                        plugin_type="integration",
                         payload={},
                     ),
                     root_dir=plugin_root,
@@ -859,10 +958,10 @@ class PluginManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             plugin_root = self._create_third_party_sync_plugin(Path(tempdir), plugin_id="third-party-sync-plugin")
 
-            connector_result = execute_plugin(
+            integration_result = execute_plugin(
                 PluginExecutionRequest(
                     plugin_id="third-party-sync-plugin",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={"member_id": "member-001"},
                 ),
                 root_dir=plugin_root,
@@ -875,18 +974,18 @@ class PluginManifestTests(unittest.TestCase):
                 ),
             )
 
-            self.assertTrue(connector_result.success)
+            self.assertTrue(integration_result.success)
 
-    def _create_third_party_connector_plugin(self, root: Path, *, plugin_id: str) -> Path:
+    def _create_third_party_integration_plugin(self, root: Path, *, plugin_id: str) -> Path:
         return self._create_third_party_plugin(
             root,
             plugin_id=plugin_id,
-            connector_body=(
+            integration_body=(
                 "def sync(payload=None):\n"
                 "    data = payload or {}\n"
                 "    return {\n"
                 "        'source': '" + plugin_id + "',\n"
-                "        'mode': 'connector',\n"
+                "        'mode': 'integration',\n"
                 "        'echo': data,\n"
                 "        'records': []\n"
                 "    }\n"
@@ -897,12 +996,11 @@ class PluginManifestTests(unittest.TestCase):
         return self._create_third_party_plugin(
             root,
             plugin_id=plugin_id,
-            plugin_types=["connector", "memory-ingestor"],
+            plugin_types=["integration"],
             entrypoints={
-                "connector": "plugin.connector.sync",
-                "memory_ingestor": "plugin.ingestor.transform",
+                "integration": "plugin.integration.sync",
             },
-            connector_body=(
+            integration_body=(
                 "def sync(payload=None):\n"
                 "    data = payload or {}\n"
                 "    member_id = data.get('member_id', 'member-001')\n"
@@ -950,7 +1048,7 @@ class PluginManifestTests(unittest.TestCase):
         plugin_id: str,
         plugin_types: list[str] | None = None,
         entrypoints: dict[str, str] | None = None,
-        connector_body: str | None = None,
+        integration_body: str | None = None,
         ingestor_body: str | None = None,
     ) -> Path:
         plugin_root = root / plugin_id
@@ -961,19 +1059,19 @@ class PluginManifestTests(unittest.TestCase):
             "id": plugin_id,
             "name": f"{plugin_id}-name",
             "version": "0.1.0",
-            "types": plugin_types or ["connector"],
+            "types": plugin_types or ["integration"],
             "permissions": ["health.read"],
             "risk_level": "low",
             "triggers": ["manual"],
-            "entrypoints": entrypoints or {"connector": "plugin.connector.sync"},
+            "entrypoints": entrypoints or {"integration": "plugin.integration.sync"},
         }
         (plugin_root / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False),
             encoding="utf-8",
         )
         (package_dir / "__init__.py").write_text("", encoding="utf-8")
-        if connector_body is not None:
-            (package_dir / "connector.py").write_text(connector_body, encoding="utf-8")
+        if integration_body is not None:
+            (package_dir / "integration.py").write_text(integration_body, encoding="utf-8")
         if ingestor_body is not None:
             (package_dir / "ingestor.py").write_text(ingestor_body, encoding="utf-8")
         return plugin_root
@@ -986,7 +1084,7 @@ class PluginManifestTests(unittest.TestCase):
             result = execute_plugin(
                 PluginExecutionRequest(
                     plugin_id="health-basic-reader",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={},
                 ),
                 root_dir=self.builtin_root,
@@ -995,7 +1093,7 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual("plugin_execution_failed", result.error_code)
-        self.assertIn("宸茬鐢?, result.error_message or "")
+        self.assertIn("已禁用", result.error_message or "")
 
     def test_reject_locale_pack_manifest_without_locales(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -1004,7 +1102,7 @@ class PluginManifestTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "broken-locale-pack",
-                        "name": "鍧忚瑷€鍖?,
+                        "name": "Broken Locale Pack",
                         "version": "0.1.0",
                         "types": ["locale-pack"],
                         "permissions": [],
@@ -1019,7 +1117,7 @@ class PluginManifestTests(unittest.TestCase):
             with self.assertRaises(PluginManifestValidationError) as context:
                 load_plugin_manifest(manifest_path)
 
-        self.assertIn("鑷冲皯瑕佸０鏄庝竴涓?locale", str(context.exception))
+        self.assertIn("locale-pack 插件至少要声明一个 locale", str(context.exception))
 
     def test_execute_plugin_returns_failure_when_handler_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -1032,12 +1130,12 @@ class PluginManifestTests(unittest.TestCase):
                         "id": "broken-runtime-plugin",
                         "name": "杩愯澶辫触鎻掍欢",
                         "version": "0.1.0",
-                        "types": ["connector"],
+                        "types": ["integration"],
                         "permissions": ["health.read"],
                         "risk_level": "low",
                         "triggers": ["manual"],
                         "entrypoints": {
-                            "connector": "app.plugins.builtin.health_basic.connector.fail_sync"
+                            "integration": "app.plugins.builtin.health_basic.integration.fail_sync"
                         },
                     },
                     ensure_ascii=False,
@@ -1048,7 +1146,7 @@ class PluginManifestTests(unittest.TestCase):
             result = execute_plugin(
                 PluginExecutionRequest(
                     plugin_id="broken-runtime-plugin",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={},
                 ),
                 root_dir=root,
@@ -1058,7 +1156,7 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual("plugin_execution_failed", result.error_code)
         self.assertIn("demo plugin failure", result.error_message or "")
 
-    def test_registered_plugins_include_theme_and_ai_provider_virtual_entries(self) -> None:
+    def test_registered_plugins_include_theme_and_real_ai_provider_entries(self) -> None:
         registry = list_registered_plugins(self.builtin_root)
 
         theme_plugin = next(item for item in registry.items if item.id == "builtin.theme.chun-he-jing-ming")
@@ -1070,7 +1168,15 @@ class PluginManifestTests(unittest.TestCase):
         ai_provider_plugin = next(item for item in registry.items if item.id == "builtin.provider.chatgpt")
         self.assertEqual(["ai-provider"], ai_provider_plugin.types)
         self.assertEqual("1.0.0", ai_provider_plugin.installed_version)
+        self.assertEqual(
+            (self.builtin_root / "ai_provider_chatgpt" / "manifest.json").resolve(),
+            Path(ai_provider_plugin.manifest_path).resolve(),
+        )
         self.assertEqual("chatgpt", ai_provider_plugin.capabilities.ai_provider.adapter_code)
+        self.assertEqual(
+            "app.modules.ai_gateway.provider_driver.build_openai_compatible_driver",
+            ai_provider_plugin.entrypoints.ai_provider,
+        )
         self.assertEqual(
             "openai_chat_completions",
             ai_provider_plugin.compatibility["api_family"],
@@ -1082,12 +1188,12 @@ class PluginManifestTests(unittest.TestCase):
 
         health_plugin = next(item for item in registry.items if item.id == "health-basic-reader")
         self.assertTrue(health_plugin.enabled)
-        self.assertIn("connector", health_plugin.types)
+        self.assertIn("integration", health_plugin.types)
 
         success_result = execute_plugin(
             PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": "dad"},
             ),
             root_dir=self.builtin_root,
@@ -1098,14 +1204,14 @@ class PluginManifestTests(unittest.TestCase):
         failure_result = execute_plugin(
             PluginExecutionRequest(
                 plugin_id="not-exists-plugin",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={},
             ),
             root_dir=self.builtin_root,
         )
         self.assertFalse(failure_result.success)
         self.assertEqual("plugin_execution_failed", failure_result.error_code)
-        self.assertIn("鎻掍欢涓嶅瓨鍦?, failure_result.error_message or "")
+        self.assertIn("插件不存在", failure_result.error_message or "")
 
 
 class PluginEffectiveStateTests(unittest.TestCase):
@@ -1131,7 +1237,7 @@ class PluginEffectiveStateTests(unittest.TestCase):
     def test_household_override_can_disable_builtin_plugin(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="鐘舵€佸搴?, city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+            HouseholdCreate(name="State Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
         )
         self.db.flush()
 
@@ -1149,7 +1255,7 @@ class PluginEffectiveStateTests(unittest.TestCase):
         self.assertTrue(updated.base_enabled)
         self.assertFalse(updated.enabled)
         self.assertEqual(False, updated.household_enabled)
-        self.assertIn("褰撳墠瀹跺涵", updated.disabled_reason or "")
+        self.assertIn("当前家庭已停用该插件", updated.disabled_reason or "")
 
         snapshot = list_registered_plugins_for_household(
             self.db,
@@ -1164,7 +1270,7 @@ class PluginEffectiveStateTests(unittest.TestCase):
     def test_effective_enabled_uses_base_and_household_state(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="鐘舵€佸悎骞跺搴?, city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+            HouseholdCreate(name="Merged State Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
         )
         self.db.flush()
         disable_plugin("health-basic-reader", root_dir=self.builtin_root, state_file=self.state_file)
@@ -1182,7 +1288,7 @@ class PluginEffectiveStateTests(unittest.TestCase):
         self.assertFalse(updated.base_enabled)
         self.assertEqual(True, updated.household_enabled)
         self.assertFalse(updated.enabled)
-        self.assertIn("鍩虹鐘舵€?, updated.disabled_reason or "")
+        self.assertIn("基础状态", updated.disabled_reason or "")
 
     def test_household_override_can_disable_virtual_ai_provider_plugin(self) -> None:
         household = create_household(
@@ -1214,4 +1320,5 @@ class PluginEffectiveStateTests(unittest.TestCase):
         plugin = next(item for item in snapshot.items if item.id == "builtin.provider.chatgpt")
         self.assertFalse(plugin.enabled)
         self.assertEqual(False, plugin.household_enabled)
+
 

@@ -1,0 +1,51 @@
+{
+  "id": "builtin.provider.kimi",
+  "name": "Kimi",
+  "version": "1.0.0",
+  "types": ["ai-provider"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {
+    "ai_provider": "app.modules.ai_gateway.provider_driver.build_openai_compatible_driver"
+  },
+  "capabilities": {
+    "ai_provider": {
+      "adapter_code": "kimi",
+      "display_name": "Kimi",
+      "field_schema": [
+        { "key": "display_name", "label": "Display Name", "field_type": "text", "required": true, "placeholder": "Kimi Main", "options": [] },
+        { "key": "provider_code", "label": "Provider Code", "field_type": "text", "required": true, "placeholder": "family-kimi-main", "options": [] },
+        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "https://api.moonshot.cn/v1", "help_text": "Defaults to the common official endpoint. Change it only when you use a proxy or gateway.", "default_value": "https://api.moonshot.cn/v1", "options": [] },
+        { "key": "secret_ref", "label": "Secret Reference", "field_type": "secret", "required": true, "placeholder": "KIMI_API_KEY", "options": [] },
+        { "key": "model_name", "label": "Model Name", "field_type": "text", "required": true, "placeholder": "moonshot-v1-8k", "default_value": "moonshot-v1-8k", "options": [] },
+        {
+          "key": "privacy_level",
+          "label": "Privacy Level",
+          "field_type": "select",
+          "required": true,
+          "default_value": "public_cloud",
+          "options": [
+            { "label": "Public Cloud", "value": "public_cloud" },
+            { "label": "Private Cloud", "value": "private_cloud" }
+          ]
+        },
+        { "key": "latency_budget_ms", "label": "Latency Budget (ms)", "field_type": "number", "required": false, "placeholder": "15000", "options": [] }
+      ],
+      "supported_model_types": ["llm", "vision"],
+      "llm_workflow": "openai_chat_completions",
+      "runtime_capability": {
+        "transport_type": "openai_compatible",
+        "api_family": "openai_chat_completions",
+        "default_privacy_level": "public_cloud",
+        "default_supported_capabilities": ["text", "vision"]
+      }
+    }
+  },
+  "compatibility": {
+    "provider_profile_schema_version": 1,
+    "transport_type": "openai_compatible",
+    "api_family": "openai_chat_completions",
+    "description": "Moonshot compatible endpoint for long-context LLM conversations."
+  }
+}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.modules.plugin.schemas import PluginRegistryItem
-from app.modules.ai_gateway.provider_adapter_registry import list_provider_adapters as list_registered_provider_adapters
+from app.modules.plugin.service import list_registered_plugins
 from app.modules.ai_gateway.schemas import (
     AiProviderAdapterRead,
     AiProviderFieldOptionRead,
@@ -10,8 +10,8 @@ from app.modules.ai_gateway.schemas import (
 
 
 def list_provider_adapters() -> list[AiProviderAdapterRead]:
-    rows = list_registered_provider_adapters()
-    return _build_adapter_reads(rows)
+    snapshot = list_registered_plugins()
+    return list_provider_adapters_from_plugins(snapshot.items)
 
 
 def list_provider_adapters_from_plugins(plugin_items: list[PluginRegistryItem]) -> list[AiProviderAdapterRead]:

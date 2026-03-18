@@ -239,14 +239,6 @@ def _invoke_openai_compatible(
             **request_body,
         }
 
-    _apply_provider_specific_defaults(
-        request_body=request_body,
-        provider_profile=provider_profile,
-        model_name=model_name,
-        capability=capability,
-        payload=payload,
-    )
-
     request_headers = {
         "Content-Type": "application/json",
     }
@@ -255,12 +247,6 @@ def _invoke_openai_compatible(
     custom_headers = extra_config.get("headers")
     if isinstance(custom_headers, dict):
         request_headers.update({str(key): str(value) for key, value in custom_headers.items()})
-
-    _apply_provider_specific_headers(
-        request_headers=request_headers,
-        provider_profile=provider_profile,
-        extra_config=extra_config,
-    )
 
     try:
         effective_timeout_ms = _resolve_effective_timeout_ms(
@@ -404,26 +390,12 @@ async def _ainvoke_openai_compatible(
             **request_body,
         }
 
-    _apply_provider_specific_defaults(
-        request_body=request_body,
-        provider_profile=provider_profile,
-        model_name=model_name,
-        capability=capability,
-        payload=payload,
-    )
-
     request_headers = {"Content-Type": "application/json"}
     if api_key:
         request_headers["Authorization"] = f"Bearer {api_key}"
     custom_headers = extra_config.get("headers")
     if isinstance(custom_headers, dict):
         request_headers.update({str(key): str(value) for key, value in custom_headers.items()})
-
-    _apply_provider_specific_headers(
-        request_headers=request_headers,
-        provider_profile=provider_profile,
-        extra_config=extra_config,
-    )
 
     effective_timeout_ms = _resolve_effective_timeout_ms(
         provider_profile=provider_profile,
@@ -551,14 +523,6 @@ async def _stream_openai_compatible(
         }
 
     # 应用供应商特定默认值（如关闭硅基流动 Qwen 的 think 模式）
-    _apply_provider_specific_defaults(
-        request_body=request_body,
-        provider_profile=provider_profile,
-        model_name=model_name,
-        capability="text",
-        payload=payload,
-    )
-
     logger.info(
         "[Stream] Calling provider=%s model=%s request_id=%s trace_id=%s session_id=%s channel=%s endpoint=%s body_keys=%s",
         provider_profile.provider_code,
@@ -577,12 +541,6 @@ async def _stream_openai_compatible(
     custom_headers = extra_config.get("headers")
     if isinstance(custom_headers, dict):
         request_headers.update({str(key): str(value) for key, value in custom_headers.items()})
-
-    _apply_provider_specific_headers(
-        request_headers=request_headers,
-        provider_profile=provider_profile,
-        extra_config=extra_config,
-    )
 
     effective_timeout_ms = _resolve_effective_timeout_ms(
         provider_profile=provider_profile,
@@ -799,12 +757,6 @@ async def _stream_anthropic_messages(
         "x-api-key": api_key,
         "anthropic-version": str(extra_config.get("anthropic_version") or "2023-06-01"),
     }
-    _apply_provider_specific_headers(
-        request_headers=request_headers,
-        provider_profile=provider_profile,
-        extra_config=extra_config,
-    )
-
     effective_timeout_ms = _resolve_effective_timeout_ms(
         provider_profile=provider_profile,
         extra_config=extra_config,
@@ -1230,12 +1182,6 @@ def _post_json(
     timeout_ms: int | None,
     honor_timeout_override: bool = False,
 ) -> dict[str, object]:
-    _apply_provider_specific_headers(
-        request_headers=request_headers,
-        provider_profile=provider_profile,
-        extra_config=extra_config,
-    )
-
     try:
         effective_timeout_ms = _resolve_effective_timeout_ms(
             provider_profile=provider_profile,
@@ -1305,61 +1251,6 @@ def _default_max_tokens_for_capability(capability: AiCapability) -> int:
     if capability == "audio_generation":
         return 512
     return 256
-
-
-def _apply_provider_specific_defaults(
-    *,
-    request_body: dict[str, object],
-    provider_profile: AiProviderProfile,
-    model_name: str,
-    capability: AiCapability,
-    payload: Mapping[str, object],
-) -> None:
-    base_url = (provider_profile.base_url or "").lower()
-    normalized_model_name = model_name.lower()
-
-    is_siliconflow = "siliconflow.cn" in base_url
-    # SiliconFlow 文档里 Qwen3 / Qwen3.5 / DeepSeek 等模型都支持 enable_thinking。
-    # 之前把 Qwen3.5 排除掉了，结果请求体里没有这个字段，模型会先走长思考再吐最终内容，
-    # 流式场景下看起来就像长时间卡住。
-    is_qwen3_thinking = (
-        "qwen3-" in normalized_model_name or
-        normalized_model_name.endswith("qwen3") or
-        "/qwen3" in normalized_model_name
-    ) and "qwen3-235b" not in normalized_model_name
-    is_qwen35_thinking = "qwen3.5-" in normalized_model_name or "/qwen3.5" in normalized_model_name
-    is_deepseek_r1 = "deepseek-r1" in normalized_model_name
-    is_thinking_model = is_qwen3_thinking or is_qwen35_thinking or is_deepseek_r1
-
-    if is_siliconflow and is_thinking_model:
-        # 只对支持 thinking 的模型强制关闭思考模式，避免先长时间空转再吐字
-        request_body["enable_thinking"] = False
-        request_body.setdefault("thinking_budget", 128)
-        if capability == "text":
-            text_task_kind = _resolve_text_task_kind(payload)
-            max_tokens_ceiling = 128 if text_task_kind in {"scene_explanation", "reminder_copywriting"} else 256
-            request_body["max_tokens"] = min(
-                _read_int_value(request_body.get("max_tokens"), max_tokens_ceiling),
-                max_tokens_ceiling,
-            )
-
-
-def _apply_provider_specific_headers(
-    *,
-    request_headers: dict[str, str],
-    provider_profile: AiProviderProfile,
-    extra_config: dict[str, object],
-) -> None:
-    _ = provider_profile
-    adapter_code = str(extra_config.get("adapter_code") or "").strip().lower()
-
-    if adapter_code == "openrouter":
-        site_url = str(extra_config.get("site_url") or "").strip()
-        app_name = str(extra_config.get("app_name") or "").strip()
-        if site_url:
-            request_headers.setdefault("HTTP-Referer", site_url)
-        if app_name:
-            request_headers.setdefault("X-Title", app_name)
 
 
 def _resolve_effective_timeout_ms(

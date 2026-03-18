@@ -1,337 +1,142 @@
 # 03-manifest字段规范
 
-## 文档元数据
+这份文档只保留稳定规则，不复制一大坨容易漂移的字段大表。
 
-- 文档目的：把 `manifest.json` 里哪些字段是正式入口、哪些约束是硬规则、哪些细节应该去别处查，说清楚。
-- 当前版本：v1.6
-- 关联文档：`docs/开发者文档/插件开发/zh-CN/00-文档使用与维护原则.md`、`docs/开发者文档/插件开发/zh-CN/11-插件配置接入说明.md`、`specs/004.2.3-插件配置协议与动态表单/docs/README.md`、`apps/api-server/app/modules/plugin/schemas.py`
-- 修改记录：
-  - `2026-03-13`：创建首版 manifest 字段规范。
-  - `2026-03-14`：补充 `locale-pack`、地区上下文和 `schedule_templates` 规则。
-  - `2026-03-16`：补充 `channel`、`region-provider`、正式配置协议入口，并改成“稳定规则 + 事实来源引用”写法。
-  - `2026-03-17`：补充 `theme-pack`、`ai-provider`、版本治理字段边界和统一启停规则引用。
-  - `2026-03-18`：补充 `region-provider` 坐标节点契约、统一 `household_context.coordinate` 结构和“禁止按 city 猜点”的边界。
-
-这份文档只保留稳定规则，不复制一大坨会频繁变化的字段表。
-
-需要看当前可运行的精确字段形状、配置样例、接口样例时，直接看这些事实来源：
+精确字段形状看代码事实来源：
 
 - `apps/api-server/app/modules/plugin/schemas.py`
-- `specs/004.2.3-插件配置协议与动态表单/docs/20260316-manifest-示例.md`
-- `specs/004.2.3-插件配置协议与动态表单/docs/20260316-api-示例.md`
 
-## 0. 2026-03-17 最新边界
+## 1. 最小 manifest 该有什么
 
-这份文档现在要按 `004.5` 的结果理解，不要再按旧口径把主题和 AI 供应商排除在正式插件类型之外。
+每个插件至少要声明：
 
-先记住三件事：
+- `id`
+- `name`
+- `version`
+- `api_version`
+- `types`
+- `permissions`
+- `entrypoints`
+- `capabilities`
 
-1. 正式插件类型现在是 9 类，不是旧文档里偶尔出现的 7 类。
-2. 插件是否可用只认统一状态：`enabled` 和 `disabled_reason`。
-3. 版本治理字段要分清谁声明、谁生成：
-   - `manifest.json` 负责声明：`version`、`compatibility`
-   - 统一插件注册结果负责补充：`installed_version`、`update_state`
+如果需要配置，再加：
 
-插件启停规则统一看：
+- `config_specs`
 
-- `docs/开发设计规范/20260317-插件启用禁用统一规则.md`
+## 2. `types` 只能写什么
 
-## 1. 先说边界
+### 普通插件类型
 
-`manifest.json` 负责声明三件事：
+- `integration`
+- `action`
+- `agent-skill`
+- `channel`
+- `region-provider`
+- `ai-provider`
+- `locale-pack`
+- `theme-pack`
 
-- 这个插件是什么
-- 这个插件有哪些正式入口
-- 这个插件需要哪些运行时声明
+### 独占槽位
 
-它不负责这几件事：
+- `memory_engine`
+- `memory_provider`
+- `context_engine`
 
-- 不替代后台任务模型
-- 不替代页面实现
-- 不替代配置实例持久化
-
-对外执行现在默认先创建 `plugin_job`，而不是因为你写了入口函数，就让接口同步把插件跑完。
-
-## 2. 第一版最小示例
-
-```json
-{
-  "id": "health-basic-reader",
-  "name": "健康基础数据插件",
-  "version": "0.1.0",
-  "types": ["connector", "memory-ingestor"],
-  "permissions": [
-    "health.read",
-    "memory.write.observation"
-  ],
-  "risk_level": "low",
-  "triggers": ["manual", "schedule"],
-  "entrypoints": {
-    "connector": "app.plugins.builtin.health_basic.connector.sync",
-    "memory_ingestor": "app.plugins.builtin.health_basic.ingestor.transform"
-  },
-  "description": "读取健康原始数据，并转成标准 Observation。",
-  "vendor": {
-    "name": "FamilyClaw 官方示例",
-    "contact": "https://github.com/FamilyClaw"
-  }
-}
-```
-
-如果插件需要正式配置，再补 `config_specs`。如果插件需要读家庭地区上下文，再补 `capabilities.context_reads.household_region_context=true`。
-
-## 3. 字段逐项说明
-
-### `id`
-
-- 必填
-- 类型：`string`
-- 规则：只能包含小写字母、数字和中划线
-- 建议：直接把它当目录名、注册表主键和仓库 slug 的基础
-
-### `name`
-
-- 必填
-- 类型：`string`
-- 规则：去掉首尾空格后不能为空
-- 建议：写人能看懂的展示名，不要写内部代号
-
-### `version`
-
-- 必填
-- 类型：`string`
-- 规则：去掉首尾空格后不能为空
-- 建议：用 semver，比如 `0.1.0`
-
-`version` 是插件声明版本，不是“当前设备上实际安装版本”的别名。
-
-这轮最小版本治理里要分清：
-
-- `version`：插件声明自己是什么版本
-- `installed_version`：统一注册结果里看到的已安装版本
-- `update_state`：统一注册结果里计算出来的更新状态
-
-不要把 `installed_version` 或 `update_state` 反向写回 `manifest.json`。
-
-### `types`
-
-- 必填
-- 类型：`string[]`
-- 规则：至少 1 个；不能重复；只能使用当前正式支持的类型
-
-当前已经正式进入体系的类型有：
+不要再写：
 
 - `connector`
 - `memory-ingestor`
+
+## 3. `entrypoints` 怎么看
+
+当前正式执行入口 key 主要有：
+
+- `integration`
 - `action`
-- `agent-skill`
-- `locale-pack`
+- `agent_skill`
 - `channel`
-- `region-provider`
-- `theme-pack`
-- `ai-provider`
+- `region_provider`
+- `ai_provider`
+- `memory_engine`
+- `memory_provider`
+- `context_engine`
 
-这里不要再写死成“只有 5 类”或者“只有 4 类”。
+### 对 `ai-provider` 的特殊说明
 
-边界也别搞混：
+`ai-provider` 现在已经是“声明 + driver”的正式插件类型。
 
-- `locale-pack` 负责注册语言资源，不走 worker 执行链
-- `channel` 负责通讯平台进出站接入
-- `region-provider` 负责地区目录能力，不是普通同步插件换个名字
-- `theme-pack` 负责主题资源和主题元数据接入，是正式插件类型，但不是执行类插件
-- `ai-provider` 负责 AI 供应商能力声明和配置元数据接入，是正式插件类型，但不是普通动作插件
+必须满足：
 
-### `permissions`
+- 声明 `entrypoints.ai_provider`
+- 在 `capabilities.ai_provider` 里写供应商声明
+- builtin AI 供应商使用真实 manifest，不再使用虚拟条目
 
-- 必填
-- 类型：`string[]`
-- 规则：允许空数组；不能有空字符串；不能重复
-- 建议：只声明运行所需的最小权限
+不要再把 `ai-provider` 设计成“只有静态元数据、没有执行边界”的类型。
 
-### `risk_level`
+## 4. `capabilities` 讲什么
 
-- 必填
-- 类型：`string`
-- 允许值：`low` / `medium` / `high`
+`capabilities` 用来声明正式能力边界，比如：
 
-### `triggers`
-
-- 必填
-- 类型：`string[]`
-- 规则：允许空数组；不能有空字符串；不能重复
-- 第一版常用值：`manual`、`schedule`、`agent`
-
-这里的 `schedule` 只表示“允许被计划任务系统调用”，不表示“插件自己接管调度器”。
-
-### `schedule_templates`
-
-- 选填
-- 类型：`object[]`
-- 用途：给计划任务页面提供推荐模板，不会自动给任何家庭建任务
-
-只要声明了 `schedule_templates`，`triggers` 就必须包含 `schedule`。
-
-### `entrypoints`
-
-- 对可执行插件必填
-- 类型：`object`
-- 规则：值必须是“模块路径 + 函数名”，而且能被真实 import 到
-- 规则：声明了什么可执行类型，这里就必须给对应入口
-
-当前常见 key：
-
-- `connector`
-- `memory_ingestor` 或 `memory-ingestor`
-- `action`
-- `agent_skill` 或 `agent-skill`
-- `channel`
-- `region_provider` 或 `region-provider`
-
-文档里统一推荐写下划线 key，因为运行时最终也会归一到下划线。
-
-### `locales`
-
-- 只有 `locale-pack` 插件可用
-- 类型：`object[]`
-- 规则：声明了 `locale-pack` 就至少要有 1 个 locale
-
-### `capabilities`
-
-- 选填
-- 类型：`object`
-- 用途：声明插件要读取哪些受控上下文，或者把自己挂成正式扩展能力
-
-当前这轮已经正式可用的能力声明：
-
-- `context_reads.household_region_context`
+- `integration.*`
+- `channel.*`
 - `region_provider.*`
+- `ai_provider.*`
 
-如果是通道插件，平台能力相关声明继续写在通道插件自己的正式字段里，不要再把通道字段散落到页面常量里。
+槽位型插件额外声明：
 
-如果你声明了 `context_reads.household_region_context=true`，还要记住一件事：
+- `slot_name`
+- `exclusive`
+- `fallback_required`
+- `input_contract_version`
+- `output_contract_version`
 
-- 运行时给你的不是“只有地区名字”的老结构，而是带统一 `coordinate` 的 `household_context`
-- 你应该直接消费 `household_context.coordinate`
-- 不要再从 `city`、`display_name` 或别的文本字段去猜天气查询点
+### 对 `integration` 的补充提醒
 
-### `region-provider` 运行时补充约束
+现在已经落地、而且插件作者需要真的写出来的字段，不止 `domains` 和 `instance_model` 这几个老名字。
 
-如果插件要作为正式 `region-provider` 运行，除了 manifest 声明本身，还要满足这几个节点契约：
+如果是持续状态型插件，至少把下面这些能力边界想清楚：
 
-- 标准地区节点现在可选返回：
-  - `latitude`
-  - `longitude`
-  - `coordinate_precision`
-  - `coordinate_source`
-  - `coordinate_updated_at`
-- 坐标字段是可选的，但一旦给了经纬度，就必须同时给出精度和来源。
-- 缺坐标不会让旧 provider 直接失效，但上层家庭上下文里的 `coordinate` 会变成 `unavailable`。
-- 如果 provider 自己实现 `build_snapshot`，建议把代表坐标保留到 `representative_coordinate`，这样 provider 临时不可用时，旧绑定还能继续用快照坐标。
+- `instance_model`
+  - 当前常见模型是 `multi_instance`
+- `refresh_mode`
+- `supports_discovery`
+- `supports_actions`
+- `supports_cards`
+- `entity_types`
+- `default_cache_ttl_seconds`
+- `max_stale_seconds`
 
-### `config_specs`
+如果插件启用后要自动帮当前家庭建一个默认实例，还应该声明：
 
-- 选填
-- 类型：`object[]`
-- 用途：声明正式插件配置协议
+- `auto_create_default_instance`
+- `default_instance_display_name`
+- `default_instance_config`
 
-每一项至少包含：
+如果插件会为多台设备或多个实例动态产出卡片，`dashboard_cards` 里还应该声明：
 
-- `scope_type`
-- `schema_version`
-- `config_schema`
-- `ui_schema`
+- 固定卡片用 `card_key`
+- 动态多卡片用 `card_key_prefix`
 
-这轮只支持两个正式作用域：
+天气插件现在就是这个模式：
 
-- `plugin`
-- `channel_account`
+- 默认实例自动创建
+- 同一个插件允许多地区实例
+- 每个天气设备都可以产出自己的卡片快照
 
-这里故意不把完整字段类型表、widget 表、显示条件表再抄一遍。那些会变，直接看：
+## 5. 版本字段和兼容字段怎么理解
 
-- `docs/开发者文档/插件开发/zh-CN/11-插件配置接入说明.md`
-- `specs/004.2.3-插件配置协议与动态表单/docs/README.md`
-- `apps/api-server/app/modules/plugin/schemas.py`
+当前插件系统里，下面这些字段是正式边界：
 
-稳定规则只有这几条：
+- `version`
+- `installed_version`
+- `compatibility`
+- `update_state`
 
-1. 字段定义只保留一份来源，也就是插件 manifest。
-2. 没有 `config_specs` 的旧插件仍然可以继续展示、启停、执行。
-3. secret 字段读取时绝不回显明文。
+其中：
 
-### `description`
+- `version` 是插件声明版本
+- `installed_version` 是当前实际安装版本
+- `compatibility` 用于承载兼容性说明
+- `update_state` 用于承载最小升级状态
 
-- 选填，但强烈建议填写
-- 类型：`string`
-- 建议写清楚：
-  - 这个插件解决什么问题
-  - 它读什么数据，或者执行什么动作
-  - 它明确不做什么
-
-### `vendor`
-
-- 选填，但强烈建议填写
-- 类型：`object`
-- 建议至少有：`name`、`contact`
-
-## 4. 类型和入口最小对照
-
-| 类型 | 推荐模块 | 推荐函数 | 说明 |
-| --- | --- | --- | --- |
-| `connector` | `connector.py` | `sync` | 读取外部原始数据 |
-| `memory-ingestor` | `ingestor.py` | `transform` | 原始记录转标准记忆 |
-| `action` | `executor.py` | `run` | 执行动作 |
-| `agent-skill` | `skill.py` | `run` | 暴露给 Agent 的受控能力 |
-| `channel` | `channel.py` | `handle` | 处理通道平台进出站 |
-| `region-provider` | `region_provider.py` | `handle` | 提供地区目录能力 |
-| `locale-pack` | `locales/*.json` | 无 | 注册界面语言和文案资源 |
-| `theme-pack` | 资源清单或主题模块 | 无 | 注册主题资源和主题元数据 |
-| `ai-provider` | provider 描述模块或清单 | 无 | 注册 AI 供应商元数据和配置能力 |
-
-## 5. 跟现有实现直接相关的硬约束
-
-这些不是建议，是不满足就会出问题：
-
-1. `id` 不能重复。
-2. `manifest.json` 顶层必须是对象。
-3. 可执行插件的 `entrypoints` 必须能定位到真实可调用函数。
-4. `types` 里每一种可执行能力都必须有对应入口。
-5. `locale-pack` 至少要声明一个 `locales` 项。
-6. 如果插件要被计划任务系统引用，`triggers` 里必须显式包含 `schedule`。
-7. 如果声明了 `schedule_templates`，`triggers` 里也必须包含 `schedule`。
-8. 如果插件要读家庭地区上下文，必须显式声明 `capabilities.context_reads.household_region_context=true`。
-9. 如果插件要作为地区 provider 运行，必须显式声明 `types=["region-provider"]` 和完整的 `capabilities.region_provider`。
-10. 如果插件声明了 `config_specs`，后端会按正式协议校验，不符合协议会直接报错。
-11. 没有配置协议的旧插件，不会因为这次新增 `config_specs` 被判成非法插件。
-12. 如果你是 `region-provider`，节点一旦返回坐标，就要保证经纬度、精度、来源一起完整返回。
-13. 如果你读取 `household_region_context`，就必须消费统一 `coordinate`，不要再用 `city` 文本做 geocoding 猜测。
-
-## 6. 第一版先不要写进 manifest 的东西
-
-这些东西现在看起来高级，实际上会把边界搞烂：
-
-- 远程安装地址
-- 自动下载脚本
-- 沙箱策略配置
-- 全量签名验证字段
-- 市场页面布局元数据
-- 前端页面组件名
-- 一整份从后端复制出来的字段表
-
-一句话：先把正式运行声明写清楚，不要把未来可能有、现在还没落地的开放平台概念硬塞进去。
-
-## 7. 开发者提交前自检
-
-1. `id` 是否满足字符规则？
-2. `types` 是否只用了当前正式支持的类型？
-3. 如果是可执行插件，`entrypoints` 是否每一项都能 import 到真实函数？
-4. `permissions` 是否最小化，而不是乱申请？
-5. `risk_level` 是否和插件真实风险匹配？
-6. 如果用了 `config_specs`，字段定义是否只保留在 manifest，而不是再去页面里写一份常量？
-7. 如果用了 secret 字段，是否确认读取不回显、清空走正式语义？
-8. 如果要给计划任务系统用，`triggers` 里是不是已经明确写了 `schedule`？
-9. 如果是 `channel`，是不是按正式配置协议声明了 `channel_account` 作用域，而不是把字段继续写死在页面？
-10. 有没有偷偷依赖远程安装、远程执行、沙箱、签名平台？
-11. 如果是 `region-provider`，节点坐标是不是满足“有经纬度就必须有精度和来源”？
-12. 如果读了 `household_region_context`，是不是已经直接用 `coordinate`，而不是从 `city` 文本反推位置？
-
-这些都过了，再去准备注册表和联调材料。
+不要再把版本治理理解成“只有一个 `version` 字符串”。

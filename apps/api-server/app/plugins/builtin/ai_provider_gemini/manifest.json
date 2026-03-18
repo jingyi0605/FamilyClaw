@@ -1,0 +1,51 @@
+{
+  "id": "builtin.provider.gemini",
+  "name": "Gemini",
+  "version": "1.0.0",
+  "types": ["ai-provider"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {
+    "ai_provider": "app.modules.ai_gateway.provider_driver.build_gemini_generate_content_driver"
+  },
+  "capabilities": {
+    "ai_provider": {
+      "adapter_code": "gemini",
+      "display_name": "Gemini",
+      "field_schema": [
+        { "key": "display_name", "label": "Display Name", "field_type": "text", "required": true, "placeholder": "Gemini Main", "options": [] },
+        { "key": "provider_code", "label": "Provider Code", "field_type": "text", "required": true, "placeholder": "family-gemini-main", "options": [] },
+        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "https://generativelanguage.googleapis.com/v1beta", "help_text": "Defaults to the official native endpoint. Change it only when you use a proxy or gateway.", "default_value": "https://generativelanguage.googleapis.com/v1beta", "options": [] },
+        { "key": "secret_ref", "label": "Secret Reference", "field_type": "secret", "required": true, "placeholder": "GEMINI_API_KEY", "options": [] },
+        { "key": "model_name", "label": "Model Name", "field_type": "text", "required": true, "placeholder": "gemini-2.0-flash", "default_value": "gemini-2.0-flash", "options": [] },
+        {
+          "key": "privacy_level",
+          "label": "Privacy Level",
+          "field_type": "select",
+          "required": true,
+          "default_value": "public_cloud",
+          "options": [
+            { "label": "Public Cloud", "value": "public_cloud" },
+            { "label": "Private Cloud", "value": "private_cloud" }
+          ]
+        },
+        { "key": "latency_budget_ms", "label": "Latency Budget (ms)", "field_type": "number", "required": false, "placeholder": "15000", "options": [] }
+      ],
+      "supported_model_types": ["llm", "embedding", "vision", "speech", "image"],
+      "llm_workflow": "gemini_generate_content",
+      "runtime_capability": {
+        "transport_type": "native_sdk",
+        "api_family": "gemini_generate_content",
+        "default_privacy_level": "public_cloud",
+        "default_supported_capabilities": ["text", "vision", "audio_generation", "audio_recognition", "image_generation"]
+      }
+    }
+  },
+  "compatibility": {
+    "provider_profile_schema_version": 1,
+    "transport_type": "native_sdk",
+    "api_family": "gemini_generate_content",
+    "description": "Google Gemini GenerateContent API with its native multimodal workflow."
+  }
+}

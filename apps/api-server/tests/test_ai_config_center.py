@@ -2,6 +2,8 @@
 import unittest
 from pathlib import Path
 import json
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
@@ -83,7 +85,7 @@ class AiConfigCenterTests(unittest.TestCase):
         self._db_helper.close()
         self._tempdir.cleanup()
 
-    def test_provider_adapter_registry_exposes_core_adapters(self) -> None:
+    def test_provider_adapter_catalog_exposes_builtin_ai_provider_plugins(self) -> None:
         adapters = list_provider_adapters()
 
         adapter_codes = {item.adapter_code for item in adapters}
@@ -95,7 +97,7 @@ class AiConfigCenterTests(unittest.TestCase):
         self.assertIn("model_name", field_keys)
         self.assertIn("secret_ref", field_keys)
 
-    def test_provider_adapter_registry_aligns_official_defaults(self) -> None:
+    def test_provider_adapter_catalog_aligns_builtin_defaults(self) -> None:
         adapters = {item.adapter_code: item for item in list_provider_adapters()}
 
         minimax = adapters["minimax"]
@@ -118,7 +120,7 @@ class AiConfigCenterTests(unittest.TestCase):
         byteplus_coding_defaults = {field.key: field.default_value for field in byteplus_coding.field_schema}
         self.assertEqual("https://ark.ap-southeast.bytepluses.com/api/coding/v3", byteplus_coding_defaults["base_url"])
 
-    def test_create_siliconflow_qwen_provider_sets_disable_thinking_default(self) -> None:
+    def test_create_siliconflow_qwen_provider_does_not_write_vendor_defaults_into_profile(self) -> None:
         provider = create_provider_profile(
             self.db,
             AiProviderProfileCreate(
@@ -137,8 +139,7 @@ class AiConfigCenterTests(unittest.TestCase):
                 },
             ),
         )
-        self.assertEqual(False, provider.extra_config["default_request_body"]["enable_thinking"])
-        self.assertEqual(128, provider.extra_config["default_request_body"]["thinking_budget"])
+        self.assertNotIn("default_request_body", provider.extra_config)
 
     def test_runtime_policy_default_entry_stays_unique(self) -> None:
         household = create_household(
@@ -670,6 +671,54 @@ class AiConfigCenterTests(unittest.TestCase):
 
         with self.assertRaisesRegex(Exception, "AI"):
             start_butler_bootstrap_session(self.db, household_id=household.id)
+
+
+class AiProviderAdapterCatalogTests(unittest.TestCase):
+    def test_list_provider_adapters_reads_from_registered_plugins(self) -> None:
+        fake_capability = SimpleNamespace(
+            adapter_code="fake-provider",
+            display_name="Fake Provider",
+            field_schema=[
+                {
+                    "key": "secret_ref",
+                    "label": "Secret Ref",
+                    "field_type": "secret",
+                    "required": True,
+                    "options": [],
+                }
+            ],
+            supported_model_types=["llm"],
+            llm_workflow="openai_chat_completions",
+            runtime_capability={
+                "transport_type": "openai_compatible",
+                "api_family": "openai_chat_completions",
+                "default_privacy_level": "public_cloud",
+                "default_supported_capabilities": ["text"],
+            },
+        )
+        fake_plugin = SimpleNamespace(
+            id="builtin.provider.fake-provider",
+            name="Fake Provider",
+            types=["ai-provider"],
+            compatibility={"description": "fake plugin adapter"},
+            capabilities=SimpleNamespace(ai_provider=fake_capability),
+        )
+
+        with patch(
+            "app.modules.ai_gateway.provider_config_service.list_registered_plugins",
+            return_value=SimpleNamespace(items=[fake_plugin]),
+            create=True,
+        ):
+            with patch(
+                "app.modules.ai_gateway.provider_config_service.list_registered_provider_adapters",
+                side_effect=AssertionError("legacy provider registry should not be used"),
+                create=True,
+            ):
+                adapters = list_provider_adapters()
+
+        self.assertEqual(1, len(adapters))
+        self.assertEqual("fake-provider", adapters[0].adapter_code)
+        self.assertEqual("builtin.provider.fake-provider", adapters[0].plugin_id)
 
 
 if __name__ == "__main__":

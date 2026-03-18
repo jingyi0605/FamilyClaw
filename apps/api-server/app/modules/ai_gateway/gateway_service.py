@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.modules.ai_gateway import repository
 from app.modules.ai_gateway.models import AiProviderProfile
+from app.modules.ai_gateway.provider_driver import resolve_ai_provider_driver_for_profile
 from app.modules.ai_gateway.provider_runtime import (
     ProviderRuntimeError,
     build_template_fallback_output,
@@ -240,8 +241,12 @@ def invoke_capability(
             )
             continue
 
-        adapter = get_provider_adapter(provider_row.transport_type)
-        if adapter is None:
+        driver = resolve_ai_provider_driver_for_profile(
+            db,
+            provider_profile=provider_row,
+            household_id=plan.household_id,
+        )
+        if driver is None:
             attempts.append(
                 _write_attempt_log(
                     db,
@@ -250,14 +255,14 @@ def invoke_capability(
                     masked_fields=prepared_payload.masked_fields,
                     status="failed",
                     latency_ms=0,
-                    error_code="adapter_unavailable",
+                    error_code="driver_unavailable",
                     fallback_used=index > 0,
                 )
             )
             continue
 
         try:
-            result = adapter.invoke(
+            result = driver.invoke(
                 capability=plan.capability,
                 provider_profile=provider_row,
                 payload=prepared_payload.payload,
@@ -454,8 +459,12 @@ async def ainvoke_capability(
             )
             continue
 
-        adapter = get_provider_adapter(provider_row.transport_type)
-        if adapter is None:
+        driver = resolve_ai_provider_driver_for_profile(
+            db,
+            provider_profile=provider_row,
+            household_id=plan.household_id,
+        )
+        if driver is None:
             attempts.append(
                 _write_attempt_log(
                     db,
@@ -464,14 +473,14 @@ async def ainvoke_capability(
                     masked_fields=prepared_payload.masked_fields,
                     status="failed",
                     latency_ms=0,
-                    error_code="adapter_unavailable",
+                    error_code="driver_unavailable",
                     fallback_used=index > 0,
                 )
             )
             continue
 
         try:
-            result = await adapter.ainvoke(
+            result = await driver.ainvoke(
                 capability=plan.capability,
                 provider_profile=provider_row,
                 payload=prepared_payload.payload,

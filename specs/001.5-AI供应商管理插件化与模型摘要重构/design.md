@@ -1,6 +1,20 @@
 # 设计文档 - AI供应商管理插件化与模型摘要重构
 
-状态：Blocked
+状态：Historical
+
+## 2026-03-18 历史说明
+
+这份设计文档只记录第一轮页面插件化和动态表单改造的历史设计。
+
+如果你现在要设计：
+
+- 宿主与 `ai-provider` 插件的最终边界
+- `provider driver contract`
+- `provider_adapter_registry.py` / `provider_runtime.py` 的迁移路径
+
+请改看：
+
+- `specs/004.8.1-AI供应商彻底插件化迁移/design.md`
 
 ## 1. 概述
 

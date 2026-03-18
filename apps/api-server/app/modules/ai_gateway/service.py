@@ -360,52 +360,8 @@ def _normalize_provider_extra_config(
     api_family: str | None,
     base_url: str | None,
 ) -> dict[str, object]:
-    normalized = dict(extra_config or {})
-    if not _should_disable_thinking_by_default(
-        extra_config=normalized,
-        transport_type=transport_type,
-        api_family=api_family,
-        base_url=base_url,
-    ):
-        return normalized
-
-    default_request_body = normalized.get("default_request_body")
-    if not isinstance(default_request_body, dict):
-        default_request_body = {}
-
-    if "enable_thinking" not in default_request_body:
-        default_request_body["enable_thinking"] = False
-    if "thinking_budget" not in default_request_body:
-        default_request_body["thinking_budget"] = 128
-
-    normalized["default_request_body"] = default_request_body
-    return normalized
-
-
-def _should_disable_thinking_by_default(
-    *,
-    extra_config: dict[str, object],
-    transport_type: str | None,
-    api_family: str | None,
-    base_url: str | None,
-) -> bool:
-    transport = str(transport_type or "").strip().lower()
-    api_family_value = str(api_family or "").strip().lower()
-    adapter_code = str(extra_config.get("adapter_code") or "").strip().lower()
-    model_name = str(extra_config.get("model_name") or extra_config.get("default_model") or "").strip().lower()
-    base_url_value = str(base_url or "").strip().lower()
-
-    if transport != "openai_compatible" and api_family_value != "openai_chat_completions":
-        return False
-    if adapter_code != "siliconflow" and "siliconflow.cn" not in base_url_value:
-        return False
-
-    is_qwen3_thinking = (
-        "qwen3-" in model_name or model_name.endswith("qwen3") or "/qwen3" in model_name
-    ) and "qwen3-235b" not in model_name
-    is_qwen35_thinking = "qwen3.5-" in model_name or "/qwen3.5" in model_name
-    is_deepseek_r1 = "deepseek-r1" in model_name
-    return is_qwen3_thinking or is_qwen35_thinking or is_deepseek_r1
+    _ = transport_type, api_family, base_url
+    return dict(extra_config or {})
 
 
 def _to_provider_profile_read(

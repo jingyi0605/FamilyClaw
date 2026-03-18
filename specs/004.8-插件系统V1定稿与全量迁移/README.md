@@ -2,6 +2,23 @@
 
 状态：Draft
 
+## 2026-03-18 子 Spec 说明
+
+`004.8` 继续作为插件系统 V1 的父级总 Spec。
+
+从今天开始，AI 供应商这条子线由下面这份新主 Spec 继续展开：
+
+- `specs/004.8.1-AI供应商彻底插件化迁移/`
+
+如果你现在要处理：
+
+- AI 供应商彻底插件化迁移
+- 宿主与 `ai-provider` 插件边界
+- `provider driver contract`
+- AI Gateway 核心去硬编码
+
+请不要只停留在 `004.8`，而是直接进入 `004.8.1`。
+
 ## 这次要解决什么问题
 
 插件系统现在最大的问题不是“能不能继续加功能”，而是边界还没彻底收口：
@@ -45,6 +62,15 @@
 - 收口宿主插件核心：类型体系、运行时、实例模型、标准 DTO、槽位型能力
 - 全量迁移现有内置插件和官方插件
 
+## 关联子 Spec
+
+- `specs/004.8.2-语言包完全插件化改造/`
+  - 只处理 `apps/api-server + apps/user-app` 的语言包完全插件化
+  - 覆盖内置语言插件、远端语言插件、H5/RN 统一运行时和安装同步
+- `specs/004.8.3-主题包完全插件化改造/`
+  - 只处理 `apps/api-server + apps/user-app` 的主题包完全插件化
+  - 覆盖内置主题插件、远端主题插件、H5/RN 统一运行时和安装同步
+
 ## 明确不做
 
 - 不在这次里做插件市场商业化能力
@@ -58,3 +84,5 @@
 2. [design.md](/C:/Code/FamilyClaw/specs/004.8-插件系统V1定稿与全量迁移/design.md)
 3. [tasks.md](/C:/Code/FamilyClaw/specs/004.8-插件系统V1定稿与全量迁移/tasks.md)
 4. [docs/README.md](/C:/Code/FamilyClaw/specs/004.8-插件系统V1定稿与全量迁移/docs/README.md)
+5. [004.8.2-语言包完全插件化改造](/C:/Code/FamilyClaw/specs/004.8.2-语言包完全插件化改造/requirements.md)
+6. [004.8.3-主题包完全插件化改造](/C:/Code/FamilyClaw/specs/004.8.3-主题包完全插件化改造/requirements.md)

@@ -1,0 +1,52 @@
+{
+  "id": "builtin.provider.claude",
+  "name": "Claude",
+  "version": "1.0.0",
+  "types": ["ai-provider"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {
+    "ai_provider": "app.modules.ai_gateway.provider_driver.build_anthropic_messages_driver"
+  },
+  "capabilities": {
+    "ai_provider": {
+      "adapter_code": "claude",
+      "display_name": "Claude",
+      "field_schema": [
+        { "key": "display_name", "label": "Display Name", "field_type": "text", "required": true, "placeholder": "Claude Main", "options": [] },
+        { "key": "provider_code", "label": "Provider Code", "field_type": "text", "required": true, "placeholder": "family-claude-main", "options": [] },
+        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "https://api.anthropic.com/v1", "help_text": "Defaults to the official native endpoint. Change it only when you use a proxy or gateway.", "default_value": "https://api.anthropic.com/v1", "options": [] },
+        { "key": "secret_ref", "label": "Secret Reference", "field_type": "secret", "required": true, "placeholder": "ANTHROPIC_API_KEY", "options": [] },
+        { "key": "model_name", "label": "Model Name", "field_type": "text", "required": true, "placeholder": "claude-3-7-sonnet-latest", "default_value": "claude-3-7-sonnet-latest", "options": [] },
+        {
+          "key": "privacy_level",
+          "label": "Privacy Level",
+          "field_type": "select",
+          "required": true,
+          "default_value": "public_cloud",
+          "options": [
+            { "label": "Public Cloud", "value": "public_cloud" },
+            { "label": "Private Cloud", "value": "private_cloud" }
+          ]
+        },
+        { "key": "latency_budget_ms", "label": "Latency Budget (ms)", "field_type": "number", "required": false, "placeholder": "15000", "options": [] },
+        { "key": "anthropic_version", "label": "Anthropic Version", "field_type": "text", "required": false, "placeholder": "2023-06-01", "default_value": "2023-06-01", "options": [] }
+      ],
+      "supported_model_types": ["llm", "vision"],
+      "llm_workflow": "anthropic_messages",
+      "runtime_capability": {
+        "transport_type": "native_sdk",
+        "api_family": "anthropic_messages",
+        "default_privacy_level": "public_cloud",
+        "default_supported_capabilities": ["text", "vision"]
+      }
+    }
+  },
+  "compatibility": {
+    "provider_profile_schema_version": 1,
+    "transport_type": "native_sdk",
+    "api_family": "anthropic_messages",
+    "description": "Anthropic Messages API with its native LLM workflow."
+  }
+}

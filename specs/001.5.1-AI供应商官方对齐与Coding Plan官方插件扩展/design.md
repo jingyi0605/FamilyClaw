@@ -1,6 +1,22 @@
 # 设计文档 - AI供应商官方对齐与 Coding Plan 官方插件扩展
 
-状态：Draft
+状态：Historical
+
+## 2026-03-18 历史说明
+
+这份设计文档保留的是“旧内置供应商 + 阶段性官方插件扩展”的过渡设计。
+
+它不再定义：
+
+- `ai-provider` 的最终执行边界
+- 供应商 driver contract
+- AI Gateway 核心去硬编码的目标结构
+
+这些内容统一改由：
+
+- `specs/004.8.1-AI供应商彻底插件化迁移/design.md`
+
+继续定义。
 
 ## 1. 概述
 
@@ -23,7 +39,7 @@
 ### 1.3 技术约束
 
 - 当前插件系统已经正式支持 `ai-provider`，不能再假装这是未来能力。
-- `ai-provider` 属于非执行型插件，新增插件必须以 manifest 能力描述为主，不靠额外执行入口撑起来。
+- 当时这个阶段仍把 `ai-provider` 当作以 manifest 描述为主的过渡实现；当前最终边界请以 `004.8.1` 为准。
 - 新增 3 家 Coding Plan 必须通过 `plugin_mounts` 和 `source_type=official` 接入，不写回 builtin provider 注册表。
 - 旧的 14 家内置供应商短期内继续保留 builtin / virtual manifest 方案，本次只修问题，不做整批迁移。
 

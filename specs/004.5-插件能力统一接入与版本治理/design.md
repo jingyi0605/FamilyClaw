@@ -2,6 +2,23 @@
 
 状态：Draft
 
+## 2026-03-18 AI 供应商边界说明
+
+这份设计文档继续负责 AI 供应商纳入统一插件系统的大边界。
+
+但下面这些内容已经改由 `004.8.1` 单独展开：
+
+- 宿主与 `ai-provider` 插件的最终边界
+- `provider driver contract`
+- `provider_adapter_registry.py` / `provider_runtime.py` 的迁移路径
+- AI 供应商兼容层退场标准
+
+当前请以：
+
+- `specs/004.8.1-AI供应商彻底插件化迁移/design.md`
+
+作为 AI 供应商彻底插件化的主设计来源。
+
 ## 1. 概述
 
 ### 1.1 目标

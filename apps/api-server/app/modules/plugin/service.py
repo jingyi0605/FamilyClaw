@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import logging
 import json
 from pathlib import Path
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+import sys
 from typing import Any, cast
 
 from pydantic import ValidationError
@@ -16,10 +18,6 @@ from app.core.blocking import BlockingCallPolicy, run_blocking_db
 from app.core.config import settings
 from app.core.config import BASE_DIR
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
-from app.modules.ai_gateway.provider_adapter_registry import (
-    PROVIDER_ADAPTER_REGISTRY_PATH,
-    list_provider_adapters as list_registered_provider_adapters,
-)
 from app.modules.audit.service import write_audit_log
 # NOTE: get_household_or_404 延迟导入，避免循环依赖 (household → region → plugin → household)
 from app.modules.memory.service import upsert_plugin_observation_memory
@@ -265,7 +263,7 @@ def load_plugin_manifest(manifest_path: str | Path) -> PluginManifest:
         raise PluginManifestValidationError(f"manifest 路径不是文件: {path}")
 
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
         raise PluginManifestValidationError(f"manifest JSON 解析失败: {path}: {exc.msg}") from exc
 
@@ -302,7 +300,7 @@ def _build_registry_item_from_manifest(
         declared_version=manifest.version,
         installed_version=manifest.version,
     )
-    return PluginRegistryItem.model_validate(
+    item = PluginRegistryItem.model_validate(
         {
             "id": manifest.id,
             "name": manifest.name,
@@ -331,6 +329,11 @@ def _build_registry_item_from_manifest(
             "version_governance": version_governance.model_dump(mode="json"),
         }
     )
+    if "ai-provider" in item.types and item.entrypoints.ai_provider is not None:
+        from app.modules.ai_gateway.provider_driver import prime_ai_provider_driver_cache
+
+        prime_ai_provider_driver_cache(item)
+    return item
 
 
 def list_registered_plugins(
@@ -831,10 +834,27 @@ def set_household_plugin_enabled(
         row.updated_at = now
     db.flush()
     sync_household_plugin_region_providers(db, household_id)
-    if plugin_id == "official-weather" and payload.enabled:
-        from app.modules.weather.service import ensure_default_weather_device
+    if payload.enabled:
+        integration_capability = current.capabilities.integration
+        if integration_capability is not None and integration_capability.auto_create_default_instance:
+            from app.modules.integration.service import (
+                ensure_default_integration_instance,
+                sync_plugin_managed_integration_instance,
+            )
 
-        ensure_default_weather_device(db, household_id=household_id, plugin_id=plugin_id)
+            default_instance = ensure_default_integration_instance(
+                db,
+                household_id=household_id,
+                plugin=current,
+                updated_by=updated_by,
+            )
+            if default_instance is not None and not integration_capability.supports_discovery:
+                sync_plugin_managed_integration_instance(
+                    db,
+                    plugin=current,
+                    instance=default_instance,
+                    sync_scope="device_sync",
+                )
     return get_household_plugin(
         db,
         household_id=household_id,
@@ -1061,7 +1081,6 @@ def _discover_registry_manifest_entries(root_dir: str | Path) -> list[tuple[Path
         manifest_entries,
         [
             *_build_theme_registry_entries(),
-            *_build_ai_provider_registry_entries(),
         ],
         root=root,
     )
@@ -1152,45 +1171,6 @@ def _build_theme_registry_entries() -> list[tuple[Path, PluginManifest]]:
     return entries
 
 
-def _build_ai_provider_registry_entries() -> list[tuple[Path, PluginManifest]]:
-    entries: list[tuple[Path, PluginManifest]] = []
-    for item in list_registered_provider_adapters():
-        manifest = _build_virtual_manifest_or_log(
-            payload={
-                "id": item["plugin_id"],
-                "name": item["plugin_name"],
-                "version": item.get("plugin_version") or "1.0.0",
-                "types": ["ai-provider"],
-                "permissions": [],
-                "risk_level": "low",
-                "triggers": [],
-                "entrypoints": {},
-                "capabilities": {
-                    "ai_provider": {
-                        "adapter_code": item["adapter_code"],
-                        "display_name": item["display_name"],
-                        "field_schema": item["field_schema"],
-                        "supported_model_types": item.get("supported_model_types", []),
-                        "llm_workflow": item.get("llm_workflow", item["api_family"]),
-                        "runtime_capability": {
-                            "transport_type": item["transport_type"],
-                            "api_family": item["api_family"],
-                            "default_privacy_level": item["default_privacy_level"],
-                            "default_supported_capabilities": item["default_supported_capabilities"],
-                        },
-                    }
-                },
-                "compatibility": item.get("compatibility"),
-            },
-            source_path=PROVIDER_ADAPTER_REGISTRY_PATH,
-            source_label="ai_provider_registry",
-        )
-        if manifest is None:
-            continue
-        entries.append((PROVIDER_ADAPTER_REGISTRY_PATH, manifest))
-    return entries
-
-
 def resolve_plugin_execution_context(
     db: Session,
     *,
@@ -1247,7 +1227,7 @@ def _execute_registered_plugin(
         executor = get_executor(execution_backend)
         runtime_request = PluginExecutionRequest.model_validate(
             {
-                **request.model_dump(mode="json"),
+                **request.model_dump(exclude={"payload", "execution_backend"}),
                 "payload": _merge_plugin_payload_with_runtime_context(request.payload, runtime_context),
                 "execution_backend": execution_backend,
             }
@@ -1737,7 +1717,7 @@ def ingest_plugin_raw_records_to_memory(
         db,
         household_id=household_id,
         plugin_id=plugin_id,
-        plugin_type="memory-ingestor",
+        plugin_type="integration",
         root_dir=root_dir,
         state_file=state_file,
     )
@@ -1748,31 +1728,26 @@ def ingest_plugin_raw_records_to_memory(
         runner_config=runner_config,
     )
 
-    memory_request = PluginExecutionRequest(
-        plugin_id=plugin_id,
-        plugin_type="memory-ingestor",
-        payload={
-            "records": [item.model_dump(mode="json") for item in raw_records],
-        },
-        trigger="memory-ingestion",
-        execution_backend=plugin.execution_backend,
-    )
-    backend = resolve_execution_backend(plugin, memory_request)
-    executor = get_executor(backend)
+    transform = _load_plugin_observation_transform(plugin)
+    if transform is None:
+        return []
+
     try:
-        observation_candidates = executor.execute(plugin, memory_request)
-    except PluginRunnerError as exc:
-        raise PluginExecutionError(str(exc)) from exc
+        observation_candidates = transform(
+            {
+                "records": [item.model_dump(mode="json") for item in raw_records],
+            }
+        )
     except (ModuleNotFoundError, AttributeError, TypeError, ValueError) as exc:
         raise PluginExecutionError(str(exc)) from exc
 
     if not isinstance(observation_candidates, list):
-        raise PluginExecutionError("memory-ingestor 必须返回列表")
+        raise PluginExecutionError("observation transform 必须返回列表")
 
     written_cards = []
     for observation in observation_candidates:
         if not isinstance(observation, dict):
-            raise PluginExecutionError("memory-ingestor 返回项必须是对象")
+            raise PluginExecutionError("observation transform 返回项必须是对象")
         source_raw_record_id = observation.get("source_record_ref")
         if not isinstance(source_raw_record_id, str) or not source_raw_record_id.strip():
             raise PluginExecutionError("Observation 缺少 source_record_ref")
@@ -1787,6 +1762,45 @@ def ingest_plugin_raw_records_to_memory(
         )
         written_cards.append(card.model_dump(mode="json"))
     return written_cards
+
+
+def _load_plugin_observation_transform(plugin: PluginRegistryItem):
+    integration_entrypoint = plugin.entrypoints.integration
+    if integration_entrypoint is None:
+        return None
+    module_path, separator, _ = integration_entrypoint.rpartition(".")
+    if not separator or not module_path:
+        return None
+    package_path, package_separator, _ = module_path.rpartition(".")
+    if not package_separator or not package_path:
+        return None
+    try:
+        with _plugin_runtime_import_path(plugin):
+            return load_entrypoint_callable(f"{package_path}.ingestor.transform")
+    except (ModuleNotFoundError, AttributeError, TypeError, ValueError):
+        return None
+
+
+@contextmanager
+def _plugin_runtime_import_path(plugin: PluginRegistryItem):
+    plugin_root = plugin.runner_config.plugin_root if plugin.runner_config is not None else None
+    if not plugin_root:
+        yield
+        return
+
+    resolved_root = str(Path(plugin_root).resolve())
+    inserted = False
+    if resolved_root not in sys.path:
+        sys.path.insert(0, resolved_root)
+        inserted = True
+    try:
+        yield
+    finally:
+        if inserted:
+            try:
+                sys.path.remove(resolved_root)
+            except ValueError:
+                pass
 
 
 def _sync_plugin_dashboard_cards(

@@ -7,10 +7,18 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-PluginType = Literal["connector", "memory-ingestor", "action", "agent-skill", "channel", "region-provider"]
+PluginType = Literal[
+    "integration",
+    "action",
+    "agent-skill",
+    "channel",
+    "region-provider",
+    "memory_engine",
+    "memory_provider",
+    "context_engine",
+]
 PluginManifestType = Literal[
-    "connector",
-    "memory-ingestor",
+    "integration",
     "action",
     "agent-skill",
     "channel",
@@ -18,6 +26,9 @@ PluginManifestType = Literal[
     "region-provider",
     "theme-pack",
     "ai-provider",
+    "memory_engine",
+    "memory_provider",
+    "context_engine",
 ]
 RiskLevel = Literal["low", "medium", "high"]
 PluginSourceType = Literal["builtin", "official", "third_party"]
@@ -46,7 +57,7 @@ PluginJobNotificationType = Literal["state_changed", "failed", "waiting_response
 PluginJobNotificationChannel = Literal["websocket", "in_app"]
 PluginJobResponseAction = Literal["retry", "confirm", "cancel", "provide_input"]
 PluginJobActorType = Literal["member", "admin", "system"]
-PluginConfigScopeType = Literal["plugin", "channel_account", "device"]
+PluginConfigScopeType = Literal["plugin", "integration_instance", "channel_account", "device"]
 PluginConfigFieldType = Literal["string", "text", "integer", "number", "boolean", "enum", "multi_enum", "secret", "json"]
 PluginConfigWidgetType = Literal["input", "password", "textarea", "switch", "select", "multi_select", "json_editor"]
 PluginConfigVisibilityOperator = Literal["equals", "not_equals", "in", "truthy"]
@@ -65,12 +76,14 @@ DASHBOARD_CARD_LIST_TEMPLATE_TYPES = {"status_list", "timeline", "action_group"}
 DASHBOARD_CARD_KEY_ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789-_")
 
 ENTRYPOINT_KEY_BY_TYPE: dict[PluginType, str] = {
-    "connector": "connector",
-    "memory-ingestor": "memory_ingestor",
+    "integration": "integration",
     "action": "action",
     "agent-skill": "agent_skill",
     "channel": "channel",
     "region-provider": "region_provider",
+    "memory_engine": "memory_engine",
+    "memory_provider": "memory_provider",
+    "context_engine": "context_engine",
 }
 NON_EXECUTABLE_PLUGIN_TYPES = {"locale-pack", "theme-pack", "ai-provider"}
 
@@ -91,14 +104,27 @@ def _normalize_text_list(values: list[str], *, field_name: str) -> list[str]:
 
 
 class PluginManifestEntrypoints(BaseModel):
-    connector: str | None = None
-    memory_ingestor: str | None = None
+    integration: str | None = None
     action: str | None = None
     agent_skill: str | None = None
     channel: str | None = None
     region_provider: str | None = None
+    ai_provider: str | None = None
+    memory_engine: str | None = None
+    memory_provider: str | None = None
+    context_engine: str | None = None
 
-    @field_validator("connector", "memory_ingestor", "action", "agent_skill", "channel", "region_provider")
+    @field_validator(
+        "integration",
+        "action",
+        "agent_skill",
+        "channel",
+        "region_provider",
+        "ai_provider",
+        "memory_engine",
+        "memory_provider",
+        "context_engine",
+    )
     @classmethod
     def validate_entrypoint(cls, value: str | None) -> str | None:
         if value is None:
@@ -186,6 +212,58 @@ class PluginManifestAiProviderSpec(BaseModel):
     @classmethod
     def validate_supported_model_types(cls, value: list[str]) -> list[str]:
         return _normalize_text_list(value, field_name="supported_model_types")
+
+
+class PluginManifestIntegrationSpec(BaseModel):
+    domains: list[str] = Field(default_factory=list)
+    instance_model: str = Field(min_length=1, max_length=64)
+    refresh_mode: Literal["polling", "event_driven", "manual"] = "polling"
+    supports_discovery: bool = False
+    supports_actions: bool = False
+    supports_cards: bool = False
+    auto_create_default_instance: bool = False
+    default_instance_display_name: str | None = Field(default=None, max_length=100)
+    default_instance_config: dict[str, Any] = Field(default_factory=dict)
+    entity_types: list[str] = Field(default_factory=list)
+    default_cache_ttl_seconds: int = Field(default=300, ge=0, le=86400)
+    max_stale_seconds: int = Field(default=3600, ge=0, le=604800)
+
+    @field_validator("domains", "entity_types")
+    @classmethod
+    def validate_text_lists(cls, value: list[str]) -> list[str]:
+        return _normalize_text_list(value, field_name="integration_list")
+
+    @field_validator("instance_model")
+    @classmethod
+    def validate_instance_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("instance_model 不能为空")
+        return normalized
+
+    @field_validator("default_instance_display_name")
+    @classmethod
+    def validate_default_instance_display_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("default_instance_display_name 不能为空")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_stale_window(self) -> "PluginManifestIntegrationSpec":
+        if self.max_stale_seconds < self.default_cache_ttl_seconds:
+            raise ValueError("max_stale_seconds 不能小于 default_cache_ttl_seconds")
+        return self
+
+
+class PluginManifestSlotSpec(BaseModel):
+    slot_name: Literal["memory_engine", "memory_provider", "context_engine"]
+    exclusive: bool = True
+    fallback_required: bool = True
+    input_contract_version: int = Field(default=1, ge=1)
+    output_contract_version: int = Field(default=1, ge=1)
 
 
 class PluginManifestChannelConfigField(BaseModel):
@@ -287,10 +365,14 @@ class PluginManifestChannelSpec(BaseModel):
 
 class PluginManifestCapabilities(BaseModel):
     context_reads: PluginManifestContextReads = Field(default_factory=PluginManifestContextReads)
+    integration: PluginManifestIntegrationSpec | None = None
     channel: PluginManifestChannelSpec | None = None
     region_provider: PluginManifestRegionProviderSpec | None = None
     theme_pack: PluginManifestThemePackSpec | None = None
     ai_provider: PluginManifestAiProviderSpec | None = None
+    memory_engine: PluginManifestSlotSpec | None = None
+    memory_provider: PluginManifestSlotSpec | None = None
+    context_engine: PluginManifestSlotSpec | None = None
     device_detail_tabs: list["PluginManifestDeviceDetailTabSpec"] = Field(default_factory=list)
 
 
@@ -318,6 +400,7 @@ class PluginManifestDashboardCardSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     card_key: str = Field(min_length=1, max_length=64)
+    card_key_prefix: str | None = Field(default=None, max_length=64)
     placement: PluginDashboardCardPlacement
     template_type: PluginDashboardCardTemplateType
     size: PluginDashboardCardSize
@@ -328,9 +411,11 @@ class PluginManifestDashboardCardSpec(BaseModel):
     max_items: int | None = Field(default=None, ge=1, le=20)
     allowed_actions: list[PluginDashboardCardActionType] = Field(default_factory=list)
 
-    @field_validator("card_key")
+    @field_validator("card_key", "card_key_prefix")
     @classmethod
-    def validate_card_key(cls, value: str) -> str:
+    def validate_card_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip()
         if not normalized:
             raise ValueError("card_key 不能为空")
@@ -758,6 +843,7 @@ class PluginManifest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=100)
     version: str = Field(min_length=1, max_length=32)
+    api_version: int = Field(default=1, ge=1)
     types: list[PluginManifestType] = Field(min_length=1)
     permissions: list[str] = Field(default_factory=list)
     risk_level: RiskLevel = "low"
@@ -875,13 +961,27 @@ class PluginManifest(BaseModel):
             raise ValueError("只有 locale-pack 插件才能声明 locales")
         if self.schedule_templates and "schedule" not in self.triggers:
             raise ValueError("声明计划任务模板前，triggers 必须包含 schedule")
+        self._validate_integration_capability()
         self._validate_channel_capability()
         self._validate_config_specs()
         self._validate_region_provider_capability()
         self._validate_theme_pack_capability()
         self._validate_ai_provider_capability()
+        self._validate_slot_capabilities()
         self._validate_device_detail_tabs()
         return self
+
+    def _validate_integration_capability(self) -> None:
+        spec = self.capabilities.integration
+        if spec is None:
+            return
+
+        if "integration" not in self.types:
+            raise ValueError("声明 capabilities.integration 时，types 必须包含 integration")
+        if self.entrypoints.integration is None:
+            raise ValueError("integration 插件必须声明 entrypoints.integration")
+        if not spec.domains:
+            raise ValueError("integration 插件至少要声明一个 domain")
 
     def _validate_channel_capability(self) -> None:
         spec = self.capabilities.channel
@@ -948,6 +1048,8 @@ class PluginManifest(BaseModel):
 
         if "ai-provider" not in self.types:
             raise ValueError("声明 capabilities.ai_provider 时，types 必须包含 ai-provider")
+        if self.entrypoints.ai_provider is None:
+            raise ValueError("ai-provider 插件必须声明 entrypoints.ai_provider")
         if not spec.field_schema:
             raise ValueError("ai-provider 插件至少要声明一个 field_schema 字段")
         if not spec.supported_model_types:
@@ -973,12 +1075,26 @@ class PluginManifest(BaseModel):
         if not self.config_specs:
             return
 
-        allowed_scope_types = {"plugin", "channel_account", "device"}
+        allowed_scope_types = {"plugin", "integration_instance", "channel_account", "device"}
         for item in self.config_specs:
             if item.scope_type not in allowed_scope_types:
                 raise ValueError(f"不支持的 config scope_type: {item.scope_type}")
             if item.scope_type == "channel_account" and "channel" not in self.types:
                 raise ValueError("只有 channel 插件才能声明 channel_account 作用域配置")
+            if item.scope_type == "integration_instance" and "integration" not in self.types:
+                raise ValueError("只有 integration 插件才能声明 integration_instance 作用域配置")
+
+    def _validate_slot_capabilities(self) -> None:
+        for slot_name in ("memory_engine", "memory_provider", "context_engine"):
+            spec = getattr(self.capabilities, slot_name)
+            if spec is None:
+                if slot_name in self.types:
+                    raise ValueError(f"{slot_name} 插件必须声明 capabilities.{slot_name}")
+                continue
+            if slot_name not in self.types:
+                raise ValueError(f"声明 capabilities.{slot_name} 时，types 必须包含 {slot_name}")
+            if spec.slot_name != slot_name:
+                raise ValueError(f"capabilities.{slot_name}.slot_name 必须等于 {slot_name}")
 
 
 class PluginRegistryStateEntry(BaseModel):
@@ -1154,8 +1270,20 @@ class HomeDashboardCardActionRead(BaseModel):
 
 
 class PluginDashboardCardSnapshotEnvelope(BaseModel):
+    title: str | None = Field(default=None, max_length=100)
+    subtitle: str | None = Field(default=None, max_length=255)
     payload: dict[str, Any] = Field(default_factory=dict)
     actions: list[HomeDashboardCardActionRead] = Field(default_factory=list)
+
+    @field_validator("title", "subtitle")
+    @classmethod
+    def validate_snapshot_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("快照标题字段不能为空")
+        return normalized
 
     @field_validator("actions")
     @classmethod
@@ -1173,6 +1301,8 @@ class PluginDashboardCardSnapshotEnvelope(BaseModel):
 class PluginDashboardCardSnapshotUpsert(BaseModel):
     card_key: str = Field(min_length=1, max_length=64)
     placement: PluginDashboardCardPlacement = "home"
+    title: str | None = Field(default=None, max_length=100)
+    subtitle: str | None = Field(default=None, max_length=255)
     payload: dict[str, Any] = Field(default_factory=dict)
     actions: list[HomeDashboardCardActionRead] = Field(default_factory=list)
     generated_at: str | None = None
@@ -1213,6 +1343,8 @@ class PluginDashboardCardSnapshotRead(BaseModel):
     card_key: str
     placement: PluginDashboardCardPlacement
     state: PluginDashboardCardSnapshotState
+    title: str | None = None
+    subtitle: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     actions: list[HomeDashboardCardActionRead] = Field(default_factory=list)
     error_code: str | None = None
@@ -1535,7 +1667,7 @@ class PluginSyncPipelineResult(BaseModel):
     written_memory_cards: list[dict[str, Any]] = Field(default_factory=list)
 
 
-AgentCallablePluginType = Literal["connector", "agent-skill"]
+AgentCallablePluginType = Literal["integration", "agent-skill"]
 
 
 class AgentPluginInvokeRequest(BaseModel):
