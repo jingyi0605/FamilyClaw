@@ -1393,7 +1393,6 @@ export const PAGE_MESSAGES_EN_US = {
   'settings.integrations.modal.devices.roomFilterAll': 'All rooms',
   'settings.integrations.modal.devices.domainFilter': 'Entity domain',
   'settings.integrations.modal.devices.domainFilterAll': 'All entity domains',
-  'settings.integrations.modal.devices.domainFilterHint': 'Current candidate data is not stable enough for real HA integration categories, so this filter temporarily uses the primary entity domain.',
   'settings.integrations.modal.devices.noFilterResult': 'No candidate devices match the current filters.',
   'settings.integrations.preview.title': 'Devices synced by "{name}"',
   'settings.integrations.preview.desc': 'This area is now read-only. Device control and management no longer live in settings.',

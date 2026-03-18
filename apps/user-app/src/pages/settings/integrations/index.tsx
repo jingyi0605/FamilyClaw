@@ -1022,9 +1022,6 @@ function SettingsIntegrationsContent() {
                   total: deviceCandidates.length,
                 })}
               </div>
-              <div className="integration-status__detail">
-                {page('settings.integrations.modal.devices.domainFilterHint')}
-              </div>
               <div className="family-device-filters">
                 <label className="family-device-filters__item">
                   <span className="family-device-filters__label">{page('settings.integrations.modal.devices.roomFilter')}</span>
