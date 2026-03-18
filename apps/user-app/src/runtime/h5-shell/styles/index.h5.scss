@@ -7747,6 +7747,10 @@ body::before {
   width: min(860px, 92vw);
 }
 
+.ai-provider-select-modal-overlay {
+  left: calc(var(--nav-width) + var(--app-main-gutter));
+}
+
 .ai-provider-select-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -8228,6 +8232,10 @@ body::before {
   }
 }
 
+.app-layout--nav-collapsed .ai-provider-select-modal-overlay {
+  left: calc(60px + var(--app-main-gutter));
+}
+
 @media (max-width: 1100px) {
   .ai-provider-workspace {
     grid-template-columns: 1fr;
@@ -8235,6 +8243,12 @@ body::before {
 
   .ai-provider-list-panel {
     position: static;
+  }
+}
+
+@media (max-width: 768px) {
+  .ai-provider-select-modal-overlay {
+    left: 0;
   }
 }
 

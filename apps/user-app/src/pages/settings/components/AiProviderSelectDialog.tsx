@@ -24,7 +24,7 @@ export function AiProviderSelectDialog(props: {
   }
 
   return (
-    <div className="member-modal-overlay" onClick={onClose}>
+    <div className="member-modal-overlay ai-provider-select-modal-overlay" onClick={onClose}>
       <div className="member-modal ai-provider-select-modal" onClick={event => event.stopPropagation()}>
         <div className="member-modal__header">
           <div>
