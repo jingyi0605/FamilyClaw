@@ -137,6 +137,7 @@ export function SettingsNav(props: { activeKey: SettingsNavKey }) {
           );
         })}
       </div>
+      <div className="settings-tabs__scroll-hint" />
     </nav>
   );
 }

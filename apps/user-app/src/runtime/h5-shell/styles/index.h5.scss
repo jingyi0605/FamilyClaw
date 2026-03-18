@@ -4127,8 +4127,16 @@ input, select, textarea {
 
 /* 设置页横向标签样式 */
 .settings-tabs {
+  position: relative;
   display: flex;
+  flex-direction: column;
   margin-bottom: var(--spacing-lg);
+}
+
+.settings-tabs__scroll {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
@@ -4136,10 +4144,44 @@ input, select, textarea {
   &::-webkit-scrollbar { display: none; }
 }
 
-.settings-tabs__scroll {
-  display: flex;
-  gap: var(--spacing-xs);
-  min-width: min-content;
+.settings-tabs__scroll-hint {
+  display: none;
+  height: 3px;
+  margin-top: 8px;
+  background: var(--border-light);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.settings-tabs__scroll-hint::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 0;
+  height: 100%;
+  background: var(--brand-primary);
+  border-radius: 2px;
+  transform: translateX(-50%);
+  animation: scrollHintPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes scrollHintPulse {
+  0%, 100% {
+    width: 0;
+    opacity: 0.3;
+  }
+  50% {
+    width: 60%;
+    opacity: 1;
+  }
+}
+
+@media (max-width: 1000px) {
+  .settings-tabs__scroll-hint {
+    display: block;
+  }
 }
 
 .settings-tab {
@@ -4155,6 +4197,7 @@ input, select, textarea {
   border-bottom: 2px solid transparent;
   white-space: nowrap;
   cursor: pointer;
+  flex-shrink: 0;
   transition: all var(--transition);
 }
 
