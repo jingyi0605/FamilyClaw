@@ -101,15 +101,16 @@ def _build_builtin_provider_plugins() -> list[dict[str, Any]]:
             model_default="moonshot-v1-8k",
             supported_model_types=["llm", "vision"],
         ),
-        _build_openai_compatible_provider(
+        _build_native_provider(
             adapter_code="minimax",
             display_name="MiniMax",
-            description="Keeps the setup surface minimal for everyday use.",
-            base_url="https://api.minimax.chat/v1",
+            description="MiniMax 官方推荐优先走 Anthropic Messages 兼容端点。",
+            base_url="https://api.minimax.io/anthropic",
             secret_placeholder="MINIMAX_API_KEY",
-            model_placeholder="MiniMax-Text-01",
-            model_default="MiniMax-Text-01",
-            supported_model_types=["llm", "speech", "image"],
+            model_placeholder="MiniMax-M2.5",
+            model_default="MiniMax-M2.5",
+            supported_model_types=["llm"],
+            api_family="anthropic_messages",
         ),
         _build_native_provider(
             adapter_code="claude",
@@ -183,7 +184,7 @@ def _build_builtin_provider_plugins() -> list[dict[str, Any]]:
             adapter_code="doubao-coding",
             display_name="Doubao Coding",
             description="Dedicated coding and planning model entry on the Ark endpoint.",
-            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
             secret_placeholder="ARK_API_KEY",
             model_placeholder="doubao-seed-code-250615",
             model_default="doubao-seed-code-250615",
@@ -193,7 +194,7 @@ def _build_builtin_provider_plugins() -> list[dict[str, Any]]:
             adapter_code="byteplus",
             display_name="BytePlus ModelArk",
             description="BytePlus compatible endpoint for overseas environments.",
-            base_url="https://ark.byteintl.com/api/v3",
+            base_url="https://ark.ap-southeast.bytepluses.com/api/v3",
             secret_placeholder="BYTEPLUS_API_KEY",
             model_placeholder="doubao-1.5-pro-32k",
             model_default="doubao-1.5-pro-32k",
@@ -203,7 +204,7 @@ def _build_builtin_provider_plugins() -> list[dict[str, Any]]:
             adapter_code="byteplus-coding",
             display_name="BytePlus Coding",
             description="Separate coding-oriented model entry on the BytePlus endpoint.",
-            base_url="https://ark.byteintl.com/api/v3",
+            base_url="https://ark.ap-southeast.bytepluses.com/api/coding/v3",
             secret_placeholder="BYTEPLUS_API_KEY",
             model_placeholder="doubao-seed-code",
             model_default="doubao-seed-code",
@@ -349,6 +350,7 @@ def _build_native_provider(
     model_placeholder: str,
     model_default: str,
     supported_model_types: list[str],
+    api_family: str | None = None,
     extra_fields: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     fields = [
@@ -377,7 +379,7 @@ def _build_native_provider(
     ]
     if extra_fields:
         fields.extend(extra_fields)
-    api_family = "anthropic_messages" if adapter_code == "claude" else "gemini_generate_content"
+    resolved_api_family = api_family or ("anthropic_messages" if adapter_code == "claude" else "gemini_generate_content")
     return {
         "plugin_id": f"builtin.provider.{adapter_code}",
         "plugin_name": display_name,
@@ -386,15 +388,15 @@ def _build_native_provider(
         "display_name": display_name,
         "description": description,
         "transport_type": "native_sdk",
-        "api_family": api_family,
+        "api_family": resolved_api_family,
         "default_privacy_level": "public_cloud",
         "default_supported_capabilities": ["qa_generation", "qa_structured_answer"],
         "supported_model_types": supported_model_types,
-        "llm_workflow": api_family,
+        "llm_workflow": resolved_api_family,
         "field_schema": fields,
         "compatibility": _build_plugin_compatibility(
             transport_type="native_sdk",
-            api_family=api_family,
+            api_family=resolved_api_family,
             description=description,
         ),
     }

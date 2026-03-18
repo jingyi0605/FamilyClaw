@@ -70,7 +70,8 @@ class Settings(BaseSettings):
     plugin_marketplace_official_branch: str = "main"
     plugin_marketplace_official_entry_root: str = "plugins"
     plugin_marketplace_github_token: str | None = None
-    plugin_marketplace_install_root: str = str((BASE_DIR / "data" / "plugin-marketplace").resolve())
+    plugin_storage_root: str = str((BASE_DIR / "data" / "plugins").resolve())
+    plugin_marketplace_install_root: str = str((BASE_DIR / "data" / "plugins").resolve())
     scheduler_worker_enabled: bool = True
     scheduler_worker_poll_interval_seconds: float = 1.0
     scheduler_worker_batch_size: int = 100

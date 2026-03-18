@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
@@ -24,6 +25,10 @@ from app.modules.plugin.service import (
 
 
 class PluginMountTests(unittest.TestCase):
+    @staticmethod
+    def _plugin_storage_root() -> Path:
+        return Path(settings.plugin_storage_root).resolve()
+
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
@@ -66,6 +71,11 @@ class PluginMountTests(unittest.TestCase):
 
             self.assertEqual("third-party-sync-plugin", created.plugin_id)
             self.assertEqual("subprocess_runner", created.execution_backend)
+            self.assertTrue(Path(created.plugin_root).resolve().is_relative_to(self._plugin_storage_root()))
+            self.assertIn(
+                str((self._plugin_storage_root() / "third_party" / "manual" / household.id).resolve()),
+                str(Path(created.plugin_root).resolve()),
+            )
 
             mounted = list_plugin_mounts(self.db, household_id=household.id)
             self.assertEqual(1, len(mounted))
@@ -116,7 +126,8 @@ class PluginMountTests(unittest.TestCase):
             )
             self.db.flush()
 
-            (plugin_root / "manifest.json").write_text(
+            mounted_manifest_path = Path(list_plugin_mounts(self.db, household_id=household.id)[0].manifest_path)
+            mounted_manifest_path.write_text(
                 json.dumps(
                     {
                         "id": "third_party_sync_plugin",
@@ -135,12 +146,14 @@ class PluginMountTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertLogs("app.modules.plugin.service", level="ERROR") as log_context:
+            with patch("app.modules.plugin.service.logger.error") as log_error:
                 snapshot = list_registered_plugins_for_household(self.db, household_id=household.id)
 
         self.assertNotIn("third-party-sync-plugin", [item.id for item in snapshot.items])
-        self.assertIn("已跳过挂载插件", "\n".join(log_context.output))
-        self.assertIn("third_party_sync_plugin", "\n".join(log_context.output))
+        log_error.assert_called_once()
+        message = log_error.call_args.args[0]
+        self.assertIn("家庭插件 manifest 无效", message)
+        self.assertIn("third-party-sync-plugin", message)
 
     def _create_third_party_plugin(self, root: Path, *, plugin_id: str) -> Path:
         plugin_root = root / plugin_id
@@ -151,7 +164,7 @@ class PluginMountTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "绗笁鏂规彃浠?,
+                    "name": "第三方插件",
                     "version": "0.1.0",
                     "types": ["connector", "memory-ingestor"],
                     "permissions": ["health.read", "memory.write.observation"],

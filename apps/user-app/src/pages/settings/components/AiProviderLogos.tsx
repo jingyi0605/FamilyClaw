@@ -164,7 +164,6 @@ export function DoubaoLogo(props: IconProps) {
       <circle cx="12" cy="13" r="3" fill="white" />
       <circle cx="20" cy="13" r="3" fill="white" />
       <path
-        fill="white"
         d="M10 20c0 0 3 4 6 4s6-4 6-4"
         stroke="white"
         strokeWidth="2"

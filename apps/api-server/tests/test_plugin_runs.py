@@ -424,7 +424,8 @@ class PluginRunTests(unittest.TestCase):
 
         self.assertEqual("failed", result.run.status)
         self.assertEqual("plugin_disabled", result.run.error_code)
-        self.assertIn("褰撳墠瀹跺涵鍋滅敤", result.run.error_message or "")
+        self.assertIn("当前家庭", result.run.error_message or "")
+        self.assertIn("停用", result.run.error_message or "")
 
     def _create_third_party_sync_plugin(self, root: Path, *, plugin_id: str) -> Path:
         plugin_root = root / plugin_id

@@ -222,7 +222,7 @@ export function AiProviderConfigPanel(props: {
       setError('');
       try {
         const [adapterRows, providerRows, routeRows, registrySnapshot] = await Promise.all([
-          settingsApi.listAiProviderAdapters(),
+          settingsApi.listAiProviderAdapters(householdId),
           settingsApi.listHouseholdAiProviders(householdId),
           settingsApi.listHouseholdAiRoutes(householdId),
           settingsApi.listRegisteredPlugins(householdId),

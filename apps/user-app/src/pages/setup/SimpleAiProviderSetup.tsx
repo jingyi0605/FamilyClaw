@@ -112,7 +112,7 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
       setError('');
       try {
         const [adapterRows, providerRows, routeRows] = await Promise.all([
-          setupApi.listAiProviderAdapters(),
+          setupApi.listAiProviderAdapters(props.householdId),
           setupApi.listHouseholdAiProviders(props.householdId),
           setupApi.listHouseholdAiRoutes(props.householdId),
         ]);

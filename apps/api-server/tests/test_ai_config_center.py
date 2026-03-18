@@ -49,28 +49,28 @@ class AiConfigCenterTests(unittest.TestCase):
                     region_code="110000",
                     parent_region_code=None,
                     admin_level="province",
-                    name="鍖椾含甯?,
-                    full_name="鍖椾含甯?,
+                    name="Beijing",
+                    full_name="Beijing",
                     path_codes=["110000"],
-                    path_names=["鍖椾含甯?],
+                    path_names=["Beijing"],
                 ),
                 RegionCatalogImportItem(
                     region_code="110100",
                     parent_region_code="110000",
                     admin_level="city",
-                    name="鍖椾含甯?,
-                    full_name="鍖椾含甯?/ 鍖椾含甯?,
+                    name="Beijing City",
+                    full_name="Beijing / Beijing City",
                     path_codes=["110000", "110100"],
-                    path_names=["鍖椾含甯?, "鍖椾含甯?],
+                    path_names=["Beijing", "Beijing City"],
                 ),
                 RegionCatalogImportItem(
                     region_code="110105",
                     parent_region_code="110100",
                     admin_level="district",
-                    name="鏈濋槼鍖?,
-                    full_name="鍖椾含甯?/ 鍖椾含甯?/ 鏈濋槼鍖?,
+                    name="Chaoyang",
+                    full_name="Beijing / Beijing City / Chaoyang",
                     path_codes=["110000", "110100", "110105"],
-                    path_names=["鍖椾含甯?, "鍖椾含甯?, "鏈濋槼鍖?],
+                    path_names=["Beijing", "Beijing City", "Chaoyang"],
                 ),
             ],
             source_version="test-v1",
@@ -94,12 +94,35 @@ class AiConfigCenterTests(unittest.TestCase):
         self.assertIn("model_name", field_keys)
         self.assertIn("secret_ref", field_keys)
 
+    def test_provider_adapter_registry_aligns_official_defaults(self) -> None:
+        adapters = {item.adapter_code: item for item in list_provider_adapters()}
+
+        minimax = adapters["minimax"]
+        minimax_defaults = {field.key: field.default_value for field in minimax.field_schema}
+        self.assertEqual("native_sdk", minimax.transport_type)
+        self.assertEqual("anthropic_messages", minimax.api_family)
+        self.assertEqual("https://api.minimax.io/anthropic", minimax_defaults["base_url"])
+        self.assertEqual("MiniMax-M2.5", minimax_defaults["model_name"])
+        self.assertEqual(["llm"], minimax.supported_model_types)
+
+        doubao_coding = adapters["doubao-coding"]
+        doubao_coding_defaults = {field.key: field.default_value for field in doubao_coding.field_schema}
+        self.assertEqual("https://ark.cn-beijing.volces.com/api/coding/v3", doubao_coding_defaults["base_url"])
+
+        byteplus = adapters["byteplus"]
+        byteplus_defaults = {field.key: field.default_value for field in byteplus.field_schema}
+        self.assertEqual("https://ark.ap-southeast.bytepluses.com/api/v3", byteplus_defaults["base_url"])
+
+        byteplus_coding = adapters["byteplus-coding"]
+        byteplus_coding_defaults = {field.key: field.default_value for field in byteplus_coding.field_schema}
+        self.assertEqual("https://ark.ap-southeast.bytepluses.com/api/coding/v3", byteplus_coding_defaults["base_url"])
+
     def test_create_siliconflow_qwen_provider_sets_disable_thinking_default(self) -> None:
         provider = create_provider_profile(
             self.db,
             AiProviderProfileCreate(
                 provider_code="family-siliconflow-main",
-                display_name="SiliconFlow 涓绘ā鍨?,
+                display_name="SiliconFlow Main",
                 transport_type="openai_compatible",
                 api_family="openai_chat_completions",
                 base_url="https://api.siliconflow.cn/v1",
@@ -136,11 +159,11 @@ class AiConfigCenterTests(unittest.TestCase):
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="涓荤瀹朵竴鍙?,
+                display_name="Butler One",
                 agent_type="butler",
-                self_identity="鎴戞槸涓荤瀹朵竴鍙?,
+                self_identity="I am Butler One",
                 role_summary="璐熻矗瀹跺涵浜嬪姟",
-                personality_traits=["绋?],
+                personality_traits=["calm"],
                 service_focus=["闂瓟"],
                 default_entry=False,
             ),
@@ -149,11 +172,11 @@ class AiConfigCenterTests(unittest.TestCase):
             self.db,
             household_id=household.id,
             payload=AgentCreate(
-                display_name="涓荤瀹朵簩鍙?,
+                display_name="Butler Two",
                 agent_type="butler",
-                self_identity="鎴戞槸涓荤瀹朵簩鍙?,
+                self_identity="I am Butler Two",
                 role_summary="璐熻矗瀹跺涵浜嬪姟",
-                personality_traits=["绋?],
+                personality_traits=["steady"],
                 service_focus=["鎻愰啋"],
                 default_entry=False,
             ),
@@ -223,7 +246,7 @@ class AiConfigCenterTests(unittest.TestCase):
             self.db,
             AiProviderProfileCreate(
                 provider_code="family-chatgpt-main",
-                display_name="瀹跺涵涓绘ā鍨?,
+                display_name="Household Main Model",
                 transport_type="openai_compatible",
                 api_family="openai_chat_completions",
                 base_url="https://api.openai.com/v1",
@@ -263,8 +286,8 @@ class AiConfigCenterTests(unittest.TestCase):
             payload=AgentCreate(
                 display_name="灏忕埅绠″",
                 agent_type="butler",
-                self_identity="鎴戞槸瀹跺涵涓荤瀹?,
-                role_summary="璐熻矗瀹跺涵闂瓟鍜屾彁閱?,
+                self_identity="I am the household butler",
+                role_summary="Handle household Q&A and reminders",
                 personality_traits=["缁嗗績"],
                 service_focus=["瀹跺涵闂瓟", "鎻愰啋"],
                 default_entry=True,
@@ -411,7 +434,7 @@ class AiConfigCenterTests(unittest.TestCase):
         )
         self.db.flush()
 
-        with self.assertRaisesRegex(Exception, "璇峰厛瀹屾垚 AI 渚涘簲鍟嗛厤缃?):
+        with self.assertRaisesRegex(Exception, "AI"):
             start_butler_bootstrap_session(self.db, household_id=household.id)
 
 

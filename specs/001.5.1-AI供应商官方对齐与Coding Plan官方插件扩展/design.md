@@ -78,6 +78,16 @@
    - Kimi Coding Plan：Anthropic Messages
    - GLM Coding Plan：OpenAI compatible
 
+#### 2.3.4 插件安装目录持久化收口
+
+1. `settings.plugin_storage_root` 和 `settings.plugin_marketplace_install_root` 默认都指向 `BASE_DIR/data/plugins`。
+2. `register_plugin_mount(...)` 在写入挂载记录前，先把不受管的插件目录复制到受管目录，再把数据库里的 `plugin_root`、`manifest_path`、`working_dir` 改成受管路径。
+3. 目录布局统一为：
+   - 官方插件手工挂载：`data/plugins/official/<plugin_dir_name>`
+   - 第三方插件手工挂载：`data/plugins/third_party/manual/<household_id>/<plugin_id>`
+   - 插件市场安装：`data/plugins/<trusted_level>/marketplace/<household_id>/<plugin_id>/<version>`
+4. 这轮先收口新挂载和新安装，不偷偷迁移历史数据库记录，避免读操作带副作用。
+
 ## 3. 组件和接口
 
 ### 3.1 现有 builtin 修复范围
@@ -169,6 +179,10 @@
 4. `provider_runtime` 描述“实际请求怎么发出去”。
 
 这四层不能再混成一坨。
+
+补一条和持久化有关的边界：
+
+5. `data/plugins` 描述“插件源码最终落在哪个持久化目录里”，它服务的是插件挂载和市场安装，不直接参与 AI 配置语义。
 
 ### 4.2 状态流转
 

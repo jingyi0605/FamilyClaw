@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import logging
 import json
 from pathlib import Path
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
@@ -491,6 +492,86 @@ def _resolve_manifest_path(plugin_root: str, manifest_path: str | None) -> Path:
     return path
 
 
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _get_plugin_storage_root() -> Path:
+    return Path(settings.plugin_storage_root).resolve()
+
+
+def _copy_plugin_tree(*, source_root: Path, target_root: Path) -> None:
+    if target_root.exists():
+        shutil.rmtree(target_root)
+    target_root.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_root, target_root)
+
+
+def _resolve_managed_plugin_root(
+    *,
+    household_id: str,
+    source_type: PluginSourceType,
+    source_root: Path,
+    manifest: PluginManifest,
+) -> Path:
+    storage_root = _get_plugin_storage_root()
+    if _path_is_within(source_root, storage_root):
+        return source_root
+    if source_type == "official":
+        return (storage_root / "official" / source_root.name).resolve()
+    return (storage_root / "third_party" / "manual" / household_id / manifest.id).resolve()
+
+
+def _map_managed_working_dir(
+    *,
+    source_root: Path,
+    target_root: Path,
+    working_dir: str | None,
+) -> str | None:
+    normalized = _normalize_optional_path(working_dir)
+    if normalized is None:
+        return None
+    working_path = Path(normalized).resolve()
+    if not _path_is_within(working_path, source_root):
+        return normalized
+    relative_working_dir = working_path.relative_to(source_root)
+    return str((target_root / relative_working_dir).resolve())
+
+
+def _prepare_managed_mount_paths(
+    *,
+    household_id: str,
+    payload: PluginMountCreate,
+    manifest: PluginManifest,
+    manifest_path: Path,
+) -> tuple[Path, Path, str | None]:
+    source_root = Path(payload.plugin_root).resolve()
+    source_manifest_path = manifest_path.resolve()
+    target_root = _resolve_managed_plugin_root(
+        household_id=household_id,
+        source_type=payload.source_type,
+        source_root=source_root,
+        manifest=manifest,
+    )
+    if target_root == source_root:
+        return source_root, source_manifest_path, _normalize_optional_path(payload.working_dir)
+    if not _path_is_within(source_manifest_path, source_root):
+        raise PluginManifestValidationError("manifest_path 必须位于 plugin_root 目录内，才能托管到 data/plugins。")
+    _copy_plugin_tree(source_root=source_root, target_root=target_root)
+    relative_manifest_path = source_manifest_path.relative_to(source_root)
+    target_manifest_path = (target_root / relative_manifest_path).resolve()
+    target_working_dir = _map_managed_working_dir(
+        source_root=source_root,
+        target_root=target_root,
+        working_dir=payload.working_dir,
+    )
+    return target_root, target_manifest_path, target_working_dir
+
+
 def _normalize_optional_path(value: str | None) -> str | None:
     if value is None:
         return None
@@ -853,6 +934,12 @@ def register_plugin_mount(
     if repository.get_plugin_mount(db, household_id=household_id, plugin_id=manifest.id) is not None:
         raise PluginManifestValidationError(f"插件已经挂载: {manifest.id}")
     _validate_region_provider_mount_conflicts(db, household_id=household_id, manifest=manifest, skip_plugin_id=None)
+    managed_plugin_root, managed_manifest_path, managed_working_dir = _prepare_managed_mount_paths(
+        household_id=household_id,
+        payload=payload,
+        manifest=manifest,
+        manifest_path=manifest_path,
+    )
 
     row = PluginMount(
         id=new_uuid(),
@@ -860,10 +947,10 @@ def register_plugin_mount(
         plugin_id=manifest.id,
         source_type=payload.source_type,
         execution_backend=payload.execution_backend,
-        manifest_path=str(manifest_path),
-        plugin_root=str(Path(payload.plugin_root).resolve()),
+        manifest_path=str(managed_manifest_path),
+        plugin_root=str(managed_plugin_root),
         python_path=payload.python_path.strip(),
-        working_dir=_normalize_optional_path(payload.working_dir),
+        working_dir=managed_working_dir,
         timeout_seconds=payload.timeout_seconds,
         stdout_limit_bytes=payload.stdout_limit_bytes,
         stderr_limit_bytes=payload.stderr_limit_bytes,

@@ -20,3 +20,34 @@
 - 改现有 14 家 builtin 供应商前，先看官方核查报告。
 - 新增 3 家 Coding Plan 插件前，先看 Coding Plan 对照文档。
 - 如果代码实现和这两份文档冲突，以官方文档为准，同时更新本目录下的记录，不要把错实现硬说成“项目约定”。
+
+## 2026-03-18 验证记录
+
+- 已修正 builtin 默认配置对齐项：
+  - `minimax` 改为 `native_sdk + anthropic_messages`
+  - `doubao-coding` 切到 `/api/coding/v3`
+  - `byteplus` / `byteplus-coding` 切到 `ark.ap-southeast.bytepluses.com`
+- 已补齐流式调用：
+  - `anthropic_messages` SSE
+  - `gemini_generate_content` SSE
+- 已新增官方插件：
+  - `ai_provider_bailian_coding_plan`
+  - `ai_provider_kimi_coding_plan`
+  - `ai_provider_glm_coding_plan`
+- 已收口插件目录：
+  - 官方插件手工挂载：`apps/api-server/data/plugins/official/...`
+  - 第三方插件手工挂载：`apps/api-server/data/plugins/third_party/manual/...`
+  - 插件市场安装：`apps/api-server/data/plugins/<trusted_level>/marketplace/...`
+- 已补验证：
+  - `python -m unittest tests.test_provider_runtime_async_stream`
+  - `python -m unittest tests.test_ai_provider_official_plugins`
+  - `python -m unittest tests.test_ai_config_center.AiConfigCenterTests.test_provider_adapter_registry_aligns_official_defaults`
+  - `python -m py_compile` 覆盖本次改动的后端实现与测试文件
+  - `python -m unittest tests.test_plugin_mounts`
+  - `python -m unittest tests.test_plugin_marketplace_service`
+  - `python -m unittest tests.test_plugin_runs`
+- 人工验收结论：
+  - 官方插件挂载后，家庭维度 provider adapter 列表可以看到新增 Coding Plan 供应商
+  - 未挂载时，后端会拒绝创建对应 provider profile
+  - 旧 builtin provider 仍保留，和新官方插件路径可以共存
+  - 新挂载和新安装的插件文件已经统一落到 `data/plugins`，后续 Docker 只需要把 `data/` 挂到外部

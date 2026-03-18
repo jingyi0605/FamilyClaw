@@ -89,8 +89,8 @@
 
 ## 阶段 2：修现有 builtin 供应商和流式能力
 
-- [ ] 2.1 先按报告修掉现有 builtin 供应商的错误默认配置
-  - 状态：TODO
+- [x] 2.1 先按报告修掉现有 builtin 供应商的错误默认配置
+  - 状态：DONE
   - 这一部到底做什么：优先修 `minimax`、`doubao-coding`、`byteplus`、`byteplus-coding` 的默认地址、协议族和请求端点拼接。
   - 做完你能看到什么：这些供应商的默认配置不再和官方文档打架。
   - 先依赖什么：1.3
@@ -111,8 +111,8 @@
   - 对应需求：`requirements.md` 需求 1
   - 对应设计：`design.md` 2.3.1、3.1
 
-- [ ] 2.2 补齐 `claude` 和 `gemini` 的流式实现
-  - 状态：TODO
+- [x] 2.2 补齐 `claude` 和 `gemini` 的流式实现
+  - 状态：DONE
   - 这一部到底做什么：补上真实流式链路，不再让这两家只有非流式实现。
   - 做完你能看到什么：这两家的流式能力真正可用。
   - 先依赖什么：2.1
@@ -134,8 +134,8 @@
 
 ### 阶段检查
 
-- [ ] 2.3 确认现有 builtin 供应商修复已经站稳
-  - 状态：TODO
+- [x] 2.3 确认现有 builtin 供应商修复已经站稳
+  - 状态：DONE
   - 这一部到底做什么：把 P0 / P1 修复和流式能力一起做回归，确认没有引入兼容性回退。
   - 做完你能看到什么：旧供应商的主链路稳定，新供应商开发可以继续往前走。
   - 先依赖什么：2.1、2.2
@@ -158,8 +158,8 @@
 
 ## 阶段 3：新增 3 家 Coding Plan 官方插件
 
-- [ ] 3.1 创建百炼、Kimi、GLM 三家官方 `ai-provider` 插件 manifest
-  - 状态：TODO
+- [x] 3.1 创建百炼、Kimi、GLM 三家官方 `ai-provider` 插件 manifest
+  - 状态：DONE
   - 这一部到底做什么：按官方插件方式新增 3 个独立 manifest，并写入字段 schema、协议族、默认地址和文案。
   - 做完你能看到什么：系统里出现 3 个可挂载的官方 `ai-provider` 插件。
   - 先依赖什么：2.3
@@ -180,8 +180,8 @@
   - 对应需求：`requirements.md` 需求 3、需求 4
   - 对应设计：`design.md` 2.3.2、3.2、3.3、3.4、6.1
 
-- [ ] 3.2 打通家庭挂载、创建配置和执行前校验
-  - 状态：TODO
+- [x] 3.2 打通家庭挂载、创建配置和执行前校验
+  - 状态：DONE
   - 这一部到底做什么：让家庭只有在挂载并启用对应官方插件后，才能创建和使用这 3 家供应商配置。
   - 做完你能看到什么：新增供应商真正服从统一插件边界。
   - 先依赖什么：3.1
@@ -204,8 +204,8 @@
 
 ### 阶段检查
 
-- [ ] 3.3 确认新旧两套路径没有互相打架
-  - 状态：TODO
+- [x] 3.3 确认新旧两套路径没有互相打架
+  - 状态：DONE
   - 这一部到底做什么：检查旧 builtin provider 和新增官方插件 provider 能不能共存，且不会互相覆盖或误判。
   - 做完你能看到什么：新路径能用，旧路径没被打坏。
   - 先依赖什么：3.1、3.2
@@ -224,12 +224,38 @@
   - 对应需求：`requirements.md` 需求 3、需求 5、需求 6
   - 对应设计：`design.md` 2.3.2、4.1、4.2、6.1、6.2
 
+- [x] 3.4 收口插件安装目录到 `data/plugins`
+  - 状态：DONE
+  - 这一部到底做什么：把官方插件、第三方插件手工挂载和插件市场安装的新落盘路径统一收口到 `apps/api-server/data/plugins`，避免源码目录、临时目录和运行目录混在一起。
+  - 做完你能看到什么：新挂载或新安装的插件，不再散落在 `app/plugins` 或旧的 `plugin-marketplace` 目录下，而是统一落到 `data/plugins` 下面。
+  - 先依赖什么：3.2、3.3
+  - 开始前先看：
+    - `design.md` 2.3.4
+    - `apps/api-server/app/modules/plugin/service.py`
+    - `apps/api-server/app/modules/plugin_marketplace/service.py`
+  - 主要改哪里：
+    - `apps/api-server/app/core/config.py`
+    - `apps/api-server/app/modules/plugin/service.py`
+    - `apps/api-server/app/modules/plugin_marketplace/service.py`
+    - 相关插件挂载 / 市场安装测试文件
+  - 这一部先不做什么：不自动迁移历史数据库里的旧路径记录，不在读取时偷偷改库。
+  - 怎么算完成：
+    1. 新挂载和新安装都会落到 `data/plugins`
+    2. Docker 后续只要把 `data/` 挂到外部，就能保住插件文件
+  - 怎么验证：
+    - `tests.test_plugin_mounts`
+    - `tests.test_ai_provider_official_plugins`
+    - `tests.test_plugin_marketplace_service`
+    - `tests.test_plugin_runs`
+  - 对应需求：`requirements.md` 需求 3、需求 5、需求 6
+  - 对应设计：`design.md` 2.3.4、4.1
+
 ---
 
 ## 阶段 4：测试、验收和收口
 
-- [ ] 4.1 补齐测试和人工验收记录
-  - 状态：TODO
+- [x] 4.1 补齐测试和人工验收记录
+  - 状态：DONE
   - 这一部到底做什么：把 builtin 修复、流式能力和 3 家新插件的验证证据补完整。
   - 做完你能看到什么：这次改造不是“理论完成”，而是有证据的完成。
   - 先依赖什么：3.3

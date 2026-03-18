@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sys
 import tarfile
 import tempfile
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -75,6 +77,13 @@ MARKETPLACE_INVALID_SUMMARY = "插件市场条目校验失败"
 PLUGIN_MARKETPLACE_UNCONFIGURED_ERROR_CODE = "plugin_marketplace_not_configured"
 
 
+@dataclass(slots=True)
+class MarketplaceRepoAccess:
+    repo_url: str
+    repo_provider: str | None
+    api_base_url: str | None
+
+
 class PluginMarketplaceServiceError(ValueError):
     def __init__(
         self,
@@ -107,6 +116,46 @@ class PluginMarketplaceServiceError(ValueError):
 
 def _get_client(client: GitHubMarketplaceClient | None = None) -> GitHubMarketplaceClient:
     return client or build_github_marketplace_client()
+
+
+def _resolve_repo_provider(
+    *,
+    repo_url: str,
+    explicit_provider: str | None,
+    client: GitHubMarketplaceClient,
+    field_name: str,
+) -> str:
+    try:
+        repo = client.parse_repo_url(repo_url, repo_provider=explicit_provider)
+    except GitHubMarketplaceClientError as exc:
+        raise PluginMarketplaceServiceError(
+            exc.detail,
+            error_code=exc.error_code,
+            field=field_name,
+            status_code=exc.status_code,
+        ) from exc
+    return repo.provider
+
+
+def _get_source_primary_access(
+    *,
+    repo_url: str,
+    repo_provider: str | None,
+    api_base_url: str | None,
+) -> MarketplaceRepoAccess:
+    return MarketplaceRepoAccess(
+        repo_url=repo_url,
+        repo_provider=repo_provider,
+        api_base_url=api_base_url,
+    )
+
+
+def _get_source_effective_access(source: PluginMarketplaceSource) -> MarketplaceRepoAccess:
+    return MarketplaceRepoAccess(
+        repo_url=source.mirror_repo_url or source.repo_url,
+        repo_provider=source.mirror_repo_provider or source.repo_provider,
+        api_base_url=source.mirror_api_base_url or source.api_base_url,
+    )
 
 
 def _normalize_relative_path(value: str, *, field_name: str) -> str:
@@ -147,11 +196,19 @@ def _load_json_or_default(payload: str | None, *, fallback: Any) -> Any:
 
 def _to_source_read(row: PluginMarketplaceSource) -> MarketplaceSourceRead:
     raw_error = _load_json_or_default(row.last_sync_error_json, fallback=None)
+    effective_access = _get_source_effective_access(row)
     return MarketplaceSourceRead(
         source_id=row.source_id,
         market_id=row.market_id,
         name=row.name,
+        owner=row.owner,
         repo_url=row.repo_url,
+        repo_provider=row.repo_provider,
+        api_base_url=row.api_base_url,
+        mirror_repo_url=row.mirror_repo_url,
+        mirror_repo_provider=row.mirror_repo_provider,
+        mirror_api_base_url=row.mirror_api_base_url,
+        effective_repo_url=effective_access.repo_url,
         branch=row.branch,
         entry_root=row.entry_root,
         trusted_level=row.trusted_level,
@@ -309,16 +366,41 @@ def _build_repository_metrics(
     *,
     repo_url: str,
     client: GitHubMarketplaceClient,
+    repo_provider: str | None = None,
+    api_base_url: str | None = None,
 ) -> MarketplaceRepositoryMetrics:
     availability = MarketplaceRepositoryMetricAvailability()
     fetched_at = utc_now_iso()
-    metadata = client.get_repository_metadata(repo_url=repo_url) or {}
-    views = client.get_repository_views(repo_url=repo_url) or {}
+    metadata = client.get_repository_metadata(
+        repo_url=repo_url,
+        repo_provider=repo_provider,
+        api_base_url=api_base_url,
+    ) or {}
+    views = client.get_repository_views(
+        repo_url=repo_url,
+        repo_provider=repo_provider,
+        api_base_url=api_base_url,
+    ) or {}
 
-    stargazers_count = metadata.get("stargazers_count") if isinstance(metadata, dict) else None
-    forks_count = metadata.get("forks_count") if isinstance(metadata, dict) else None
-    subscribers_count = metadata.get("subscribers_count") if isinstance(metadata, dict) else None
-    open_issues_count = metadata.get("open_issues_count") if isinstance(metadata, dict) else None
+    stargazers_count = None
+    forks_count = None
+    subscribers_count = None
+    open_issues_count = None
+    if isinstance(metadata, dict):
+        stargazers_count = metadata.get("stargazers_count")
+        if not isinstance(stargazers_count, int):
+            stargazers_count = metadata.get("star_count")
+        if not isinstance(stargazers_count, int):
+            stargazers_count = metadata.get("stars_count")
+        forks_count = metadata.get("forks_count")
+        if not isinstance(forks_count, int):
+            forks_count = metadata.get("forks")
+        subscribers_count = metadata.get("subscribers_count")
+        if not isinstance(subscribers_count, int):
+            subscribers_count = metadata.get("watchers_count")
+        open_issues_count = metadata.get("open_issues_count")
+        if not isinstance(open_issues_count, int):
+            open_issues_count = metadata.get("open_issues")
 
     availability.stargazers_count = isinstance(stargazers_count, int)
     availability.forks_count = isinstance(forks_count, int)
@@ -344,9 +426,16 @@ def _build_repository_metrics_or_none(
     *,
     repo_url: str,
     client: GitHubMarketplaceClient,
+    repo_provider: str | None = None,
+    api_base_url: str | None = None,
 ) -> MarketplaceRepositoryMetrics | None:
     try:
-        return _build_repository_metrics(repo_url=repo_url, client=client)
+        return _build_repository_metrics(
+            repo_url=repo_url,
+            client=client,
+            repo_provider=repo_provider,
+            api_base_url=api_base_url,
+        )
     except GitHubMarketplaceClientError:
         return MarketplaceRepositoryMetrics(
             fetched_at=utc_now_iso(),
@@ -510,11 +599,17 @@ def _require_snapshot(
 def _load_marketplace_manifest(
     *,
     client: GitHubMarketplaceClient,
-    repo_url: str,
+    access: MarketplaceRepoAccess,
     branch: str,
 ) -> MarketplaceManifest:
     try:
-        payload = client.get_file_json(repo_url=repo_url, path=MARKETPLACE_MANIFEST_FILE_NAME, ref=branch)
+        payload = client.get_file_json(
+            repo_url=access.repo_url,
+            path=MARKETPLACE_MANIFEST_FILE_NAME,
+            ref=branch,
+            repo_provider=access.repo_provider,
+            api_base_url=access.api_base_url,
+        )
         return MarketplaceManifest.model_validate(payload)
     except GitHubMarketplaceClientError as exc:
         raise PluginMarketplaceServiceError(
@@ -541,12 +636,25 @@ def ensure_builtin_marketplace_source(
 
     branch = settings.plugin_marketplace_official_branch.strip() or "main"
     entry_root = settings.plugin_marketplace_official_entry_root.strip() or "plugins"
+    marketplace_client = _get_client(client)
+    repo_provider = _resolve_repo_provider(
+        repo_url=settings.plugin_marketplace_official_repo_url.strip(),
+        explicit_provider=None,
+        client=marketplace_client,
+        field_name="repo_provider",
+    )
     now = utc_now_iso()
     row = PluginMarketplaceSource(
         source_id=BUILTIN_MARKETPLACE_SOURCE_ID,
         market_id=None,
         name="官方插件市场",
+        owner=None,
         repo_url=settings.plugin_marketplace_official_repo_url.strip(),
+        repo_provider=repo_provider,
+        api_base_url=None,
+        mirror_repo_url=None,
+        mirror_repo_provider=None,
+        mirror_api_base_url=None,
         branch=branch,
         entry_root=entry_root,
         trusted_level="official",
@@ -559,15 +667,19 @@ def ensure_builtin_marketplace_source(
     )
     repository.add_marketplace_source(db, row)
 
-    marketplace_client = _get_client(client)
     try:
-        manifest = _load_marketplace_manifest(client=marketplace_client, repo_url=row.repo_url, branch=row.branch)
+        manifest = _load_marketplace_manifest(
+            client=marketplace_client,
+            access=_get_source_effective_access(row),
+            branch=row.branch,
+        )
     except PluginMarketplaceServiceError:
         db.flush()
         return row
 
     row.market_id = manifest.market_id
     row.name = manifest.name
+    row.owner = manifest.owner
     row.entry_root = manifest.entry_root
     row.updated_at = utc_now_iso()
     db.flush()
@@ -591,8 +703,31 @@ def add_marketplace_source(
     client: GitHubMarketplaceClient | None = None,
 ) -> MarketplaceSourceRead:
     marketplace_client = _get_client(client)
+    repo_provider = _resolve_repo_provider(
+        repo_url=payload.repo_url,
+        explicit_provider=payload.repo_provider,
+        client=marketplace_client,
+        field_name="repo_provider",
+    )
+    mirror_provider = None
+    if payload.mirror_repo_url is not None:
+        mirror_provider = _resolve_repo_provider(
+            repo_url=payload.mirror_repo_url,
+            explicit_provider=payload.mirror_repo_provider,
+            client=marketplace_client,
+            field_name="mirror_repo_provider",
+        )
+    metadata_access = MarketplaceRepoAccess(
+        repo_url=payload.mirror_repo_url or payload.repo_url,
+        repo_provider=mirror_provider or repo_provider,
+        api_base_url=payload.mirror_api_base_url or payload.api_base_url,
+    )
     try:
-        metadata = marketplace_client.get_repository_metadata(repo_url=payload.repo_url)
+        metadata = marketplace_client.get_repository_metadata(
+            repo_url=metadata_access.repo_url,
+            repo_provider=metadata_access.repo_provider,
+            api_base_url=metadata_access.api_base_url,
+        )
     except GitHubMarketplaceClientError as exc:
         raise PluginMarketplaceServiceError(
             exc.detail,
@@ -602,8 +737,15 @@ def add_marketplace_source(
         ) from exc
 
     branch = (payload.branch or (metadata or {}).get("default_branch") or "main").strip()
-    manifest = _load_marketplace_manifest(client=marketplace_client, repo_url=payload.repo_url, branch=branch)
+    manifest = _load_marketplace_manifest(client=marketplace_client, access=metadata_access, branch=branch)
     entry_root = payload.entry_root or manifest.entry_root
+    if manifest.trusted_level != "third_party":
+        raise PluginMarketplaceServiceError(
+            "手动添加的市场源必须声明为 third_party，不能伪装成官方市场。",
+            error_code="market_repo_structure_invalid",
+            field="repo_url",
+            status_code=400,
+        )
 
     existing = repository.get_marketplace_source_by_repo(
         db,
@@ -624,7 +766,13 @@ def add_marketplace_source(
         source_id=new_uuid(),
         market_id=manifest.market_id,
         name=manifest.name,
+        owner=manifest.owner,
         repo_url=payload.repo_url,
+        repo_provider=repo_provider,
+        api_base_url=payload.api_base_url,
+        mirror_repo_url=payload.mirror_repo_url,
+        mirror_repo_provider=mirror_provider,
+        mirror_api_base_url=payload.mirror_api_base_url,
         branch=branch,
         entry_root=entry_root,
         trusted_level="third_party",
@@ -648,13 +796,14 @@ def sync_marketplace_source(
 ) -> MarketplaceSourceSyncResultRead:
     source = _require_source(db, source_id=source_id)
     marketplace_client = _get_client(client)
+    access = _get_source_effective_access(source)
     source.last_sync_status = "syncing"
     source.last_sync_error_json = None
     source.updated_at = utc_now_iso()
     db.flush()
 
     try:
-        manifest = _load_marketplace_manifest(client=marketplace_client, repo_url=source.repo_url, branch=source.branch)
+        manifest = _load_marketplace_manifest(client=marketplace_client, access=access, branch=source.branch)
         if manifest.repo_url != source.repo_url:
             raise PluginMarketplaceServiceError(
                 "市场仓库 market.json 里的 repo_url 和当前源地址不一致。",
@@ -667,11 +816,19 @@ def sync_marketplace_source(
                 error_code="market_repo_structure_invalid",
                 status_code=400,
             )
+        if manifest.trusted_level != source.trusted_level:
+            raise PluginMarketplaceServiceError(
+                "市场仓库 market.json 里的 trusted_level 和当前源配置不一致。",
+                error_code="market_repo_structure_invalid",
+                status_code=400,
+            )
 
         directory_items = marketplace_client.list_directory(
-            repo_url=source.repo_url,
+            repo_url=access.repo_url,
             path=source.entry_root,
             ref=source.branch,
+            repo_provider=access.repo_provider,
+            api_base_url=access.api_base_url,
         )
     except GitHubMarketplaceClientError as exc:
         source.last_sync_status = "failed"
@@ -718,7 +875,13 @@ def sync_marketplace_source(
         sync_status: MarketplaceEntrySyncStatus = "ready"
 
         try:
-            raw_entry = marketplace_client.get_file_json(repo_url=source.repo_url, path=entry_path, ref=source.branch)
+            raw_entry = marketplace_client.get_file_json(
+                repo_url=access.repo_url,
+                path=entry_path,
+                ref=source.branch,
+                repo_provider=access.repo_provider,
+                api_base_url=access.api_base_url,
+            )
             entry_model = MarketplaceEntry.model_validate(raw_entry)
             if entry_model.plugin_id != plugin_id:
                 raise PluginMarketplaceServiceError(
@@ -762,6 +925,7 @@ def sync_marketplace_source(
 
     source.market_id = manifest.market_id
     source.name = manifest.name
+    source.owner = manifest.owner
     source.last_sync_status = "success"
     source.last_sync_error_json = None
     source.last_synced_at = synced_at
@@ -975,7 +1139,7 @@ def _validate_manifest_consistency(
     manifest_path: Path,
     entry: MarketplaceEntry,
     installed_version: str,
-) -> tuple[Path, Path]:
+) -> None:
     manifest = load_plugin_manifest(manifest_path)
     if manifest.id != entry.plugin_id:
         raise PluginMarketplaceServiceError(
@@ -993,6 +1157,72 @@ def _validate_manifest_consistency(
         raise PluginMarketplaceServiceError(
             "manifest.json 里的风险等级和市场条目不一致。",
             error_code="manifest_mismatch",
+            status_code=409,
+        )
+    if sorted(manifest.permissions) != sorted(entry.permissions):
+        raise PluginMarketplaceServiceError(
+            "manifest.json 里的权限声明和市场条目不一致。",
+            error_code="manifest_mismatch",
+            status_code=409,
+        )
+    plugin_root = manifest_path.parent.resolve()
+    readme_path = _resolve_child_path(plugin_root, entry.install.readme_path, field_name="install.readme_path")
+    requirements_path = _resolve_child_path(
+        plugin_root,
+        entry.install.requirements_path,
+        field_name="install.requirements_path",
+    )
+    if not readme_path.exists():
+        raise PluginMarketplaceServiceError(
+            "插件源码仓库缺少 README.md。",
+            error_code="install_target_invalid",
+            status_code=409,
+        )
+    if not requirements_path.exists():
+        raise PluginMarketplaceServiceError(
+            "插件源码仓库缺少 requirements.txt。",
+            error_code="install_target_invalid",
+            status_code=409,
+        )
+
+
+def _resolve_version_artifact_url(
+    *,
+    client: GitHubMarketplaceClient,
+    entry: MarketplaceEntry,
+    version_entry,
+) -> str:
+    if version_entry.artifact_url:
+        return version_entry.artifact_url
+    if version_entry.artifact_type != "source_archive":
+        raise PluginMarketplaceServiceError(
+            "release_asset 缺少 artifact_url，当前无法下载。",
+            error_code="market_repo_structure_invalid",
+            field="versions",
+            status_code=400,
+        )
+    try:
+        return client.build_source_archive_url(repo_url=entry.source_repo, git_ref=version_entry.git_ref)
+    except GitHubMarketplaceClientError as exc:
+        raise PluginMarketplaceServiceError(
+            exc.detail,
+            error_code=exc.error_code,
+            field="versions",
+            status_code=exc.status_code,
+        ) from exc
+
+
+def _validate_artifact_checksum(*, content: bytes, checksum: str | None) -> None:
+    if checksum is None:
+        return
+    normalized_checksum = checksum.strip().lower()
+    if normalized_checksum.startswith("sha256:"):
+        normalized_checksum = normalized_checksum.removeprefix("sha256:")
+    actual_checksum = hashlib.sha256(content).hexdigest()
+    if actual_checksum != normalized_checksum:
+        raise PluginMarketplaceServiceError(
+            "插件产物校验失败，checksum 不匹配。",
+            error_code="artifact_checksum_mismatch",
             status_code=409,
         )
 
@@ -1022,36 +1252,20 @@ def _require_version_compatible(
         field="target_version",
         status_code=409,
     )
-    if sorted(manifest.permissions) != sorted(entry.permissions):
-        raise PluginMarketplaceServiceError(
-            "manifest.json 里的权限声明和市场条目不一致。",
-            error_code="manifest_mismatch",
-            status_code=409,
-        )
-    plugin_root = manifest_path.parent.resolve()
-    readme_path = _resolve_child_path(plugin_root, entry.install.readme_path, field_name="install.readme_path")
-    requirements_path = _resolve_child_path(
-        plugin_root,
-        entry.install.requirements_path,
-        field_name="install.requirements_path",
-    )
-    if not readme_path.exists():
-        raise PluginMarketplaceServiceError(
-            "插件源码仓库缺少 README.md。",
-            error_code="install_target_invalid",
-            status_code=409,
-        )
-    if not requirements_path.exists():
-        raise PluginMarketplaceServiceError(
-            "插件源码仓库缺少 requirements.txt。",
-            error_code="install_target_invalid",
-            status_code=409,
-        )
-    return readme_path, requirements_path
 
 
 def _get_install_root() -> Path:
     return Path(settings.plugin_marketplace_install_root).resolve()
+
+
+def _get_marketplace_install_target_root(
+    *,
+    trusted_level: str,
+    household_id: str,
+    plugin_id: str,
+    version: str,
+) -> Path:
+    return (_get_install_root() / trusted_level / "marketplace" / household_id / plugin_id / version).resolve()
 
 
 def create_marketplace_install_task(
@@ -1105,6 +1319,12 @@ def create_marketplace_install_task(
         version=version_entry.version,
         min_app_version=version_entry.min_app_version,
     )
+    marketplace_client = _get_client(client)
+    artifact_url = _resolve_version_artifact_url(
+        client=marketplace_client,
+        entry=entry,
+        version_entry=version_entry,
+    )
     now = utc_now_iso()
     task = PluginMarketplaceInstallTask(
         id=new_uuid(),
@@ -1119,7 +1339,7 @@ def create_marketplace_install_task(
         error_message=None,
         source_repo=entry.source_repo,
         market_repo=source.repo_url,
-        artifact_url=version_entry.artifact_url,
+        artifact_url=artifact_url,
         plugin_root=None,
         manifest_path=None,
         created_at=now,
@@ -1130,7 +1350,6 @@ def create_marketplace_install_task(
     repository.add_marketplace_install_task(db, task)
     db.flush()
 
-    marketplace_client = _get_client(client)
     try:
         _set_install_task_stage(
             task,
@@ -1138,13 +1357,14 @@ def create_marketplace_install_task(
             installed_version=version_entry.version,
             source_repo=entry.source_repo,
             market_repo=source.repo_url,
-            artifact_url=version_entry.artifact_url,
+            artifact_url=artifact_url,
         )
         db.flush()
 
         _set_install_task_stage(task, stage="downloading")
         db.flush()
-        content = marketplace_client.download_binary(version_entry.artifact_url)
+        content = marketplace_client.download_binary(artifact_url)
+        _validate_artifact_checksum(content=content, checksum=version_entry.checksum)
 
         _set_install_task_stage(task, stage="validating")
         db.flush()
@@ -1161,8 +1381,12 @@ def create_marketplace_install_task(
 
             _set_install_task_stage(task, stage="installing")
             db.flush()
-            install_root = _get_install_root()
-            target_root = install_root / payload.household_id / payload.plugin_id / version_entry.version
+            target_root = _get_marketplace_install_target_root(
+                trusted_level=source.trusted_level,
+                household_id=payload.household_id,
+                plugin_id=payload.plugin_id,
+                version=version_entry.version,
+            )
             if target_root.exists():
                 shutil.rmtree(target_root)
             target_root.parent.mkdir(parents=True, exist_ok=True)
@@ -1345,9 +1569,15 @@ def _switch_marketplace_instance_version(
     target_root: Path | None = None
     target_manifest_path: Path | None = None
     marketplace_client = _get_client(client)
+    artifact_url = _resolve_version_artifact_url(
+        client=marketplace_client,
+        entry=entry,
+        version_entry=target_version_entry,
+    )
 
     try:
-        content = marketplace_client.download_binary(target_version_entry.artifact_url)
+        content = marketplace_client.download_binary(artifact_url)
+        _validate_artifact_checksum(content=content, checksum=target_version_entry.checksum)
         with tempfile.TemporaryDirectory(prefix="plugin-marketplace-version-switch-") as temp_dir:
             extracted_root = Path(temp_dir).resolve()
             _extract_archive_bytes(content=content, destination=extracted_root)
@@ -1359,8 +1589,12 @@ def _switch_marketplace_instance_version(
                 installed_version=target_version_entry.version,
             )
 
-            install_root = _get_install_root()
-            target_root = install_root / instance.household_id / instance.plugin_id / target_version_entry.version
+            target_root = _get_marketplace_install_target_root(
+                trusted_level=source.trusted_level,
+                household_id=instance.household_id,
+                plugin_id=instance.plugin_id,
+                version=target_version_entry.version,
+            )
             if target_root.exists():
                 shutil.rmtree(target_root)
             target_root.parent.mkdir(parents=True, exist_ok=True)

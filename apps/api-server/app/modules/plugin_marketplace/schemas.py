@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.plugin.schemas import PluginConfigState, PluginVersionGovernanceRead
 
 
+MarketplaceRepoProvider = Literal["github", "gitlab", "gitee", "gitea"]
 MarketplaceTrustedLevel = Literal["official", "third_party"]
 MarketplaceSyncStatus = Literal["idle", "syncing", "success", "failed"]
 MarketplaceEntrySyncStatus = Literal["ready", "invalid"]
@@ -44,14 +46,24 @@ def _normalize_text_list(values: list[str], *, field_name: str) -> list[str]:
     return result
 
 
-def validate_github_repo_url(value: str) -> str:
-    normalized = _normalize_text(value, field_name="repo_url")
-    if not normalized.startswith("https://github.com/"):
-        raise ValueError("repo_url 必须是 https://github.com/ 开头的 GitHub 仓库地址")
-    segments = [segment for segment in normalized.removeprefix("https://github.com/").split("/") if segment]
+def validate_http_url(value: str, *, field_name: str) -> str:
+    normalized = _normalize_text(value, field_name=field_name)
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{field_name} 必须是合法的 http/https 地址")
+    path = parsed.path.rstrip("/")
+    if not path:
+        raise ValueError(f"{field_name} 必须包含路径")
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+def validate_repository_url(value: str, *, field_name: str) -> str:
+    normalized = validate_http_url(value, field_name=field_name)
+    parsed = urlparse(normalized)
+    segments = [segment for segment in parsed.path.split("/") if segment]
     if len(segments) < 2:
-        raise ValueError("repo_url 必须包含 owner 和 repo")
-    return f"https://github.com/{segments[0]}/{segments[1]}"
+        raise ValueError(f"{field_name} 必须包含仓库路径")
+    return normalized
 
 
 class MarketplacePublisher(BaseModel):
@@ -88,7 +100,7 @@ class MarketplaceVersionEntry(BaseModel):
     version: str = Field(min_length=1, max_length=50)
     git_ref: str = Field(min_length=1, max_length=255)
     artifact_type: MarketplaceArtifactType
-    artifact_url: str = Field(min_length=1, max_length=1000)
+    artifact_url: str | None = Field(default=None, max_length=1000)
     checksum: str | None = Field(default=None, max_length=255)
     published_at: str | None = None
     min_app_version: str | None = Field(default=None, max_length=50)
@@ -99,6 +111,18 @@ class MarketplaceVersionEntry(BaseModel):
         if value is None:
             return None
         return _normalize_text(value, field_name="version")
+
+    @model_validator(mode="after")
+    def validate_artifact_fields(self) -> "MarketplaceVersionEntry":
+        if self.artifact_type == "release_asset" and self.artifact_url is None:
+            raise ValueError("release_asset 必须提供 artifact_url")
+        if self.checksum is not None:
+            normalized_checksum = self.checksum.lower()
+            if normalized_checksum.startswith("sha256:"):
+                normalized_checksum = normalized_checksum.removeprefix("sha256:")
+            if len(normalized_checksum) != 64 or any(char not in "0123456789abcdef" for char in normalized_checksum):
+                raise ValueError("checksum 目前只支持 sha256 十六进制摘要")
+        return self
 
 
 class MarketplaceEntryInstallSpec(BaseModel):
@@ -173,7 +197,7 @@ class MarketplaceEntry(BaseModel):
     @field_validator("source_repo")
     @classmethod
     def validate_source_repo(cls, value: str) -> str:
-        return validate_github_repo_url(value)
+        return validate_repository_url(value, field_name="source_repo")
 
     @field_validator("categories", "permissions")
     @classmethod
@@ -216,18 +240,37 @@ class MarketplaceManifest(BaseModel):
     @field_validator("repo_url")
     @classmethod
     def validate_repo_url(cls, value: str) -> str:
-        return validate_github_repo_url(value)
+        return validate_repository_url(value, field_name="repo_url")
 
 
 class MarketplaceSourceCreateRequest(BaseModel):
     repo_url: str = Field(min_length=1, max_length=255)
     branch: str | None = Field(default=None, max_length=100)
     entry_root: str | None = Field(default=None, max_length=255)
+    repo_provider: MarketplaceRepoProvider | None = None
+    api_base_url: str | None = Field(default=None, max_length=1000)
+    mirror_repo_url: str | None = Field(default=None, max_length=255)
+    mirror_repo_provider: MarketplaceRepoProvider | None = None
+    mirror_api_base_url: str | None = Field(default=None, max_length=1000)
 
     @field_validator("repo_url")
     @classmethod
     def validate_repo_url(cls, value: str) -> str:
-        return validate_github_repo_url(value)
+        return validate_repository_url(value, field_name="repo_url")
+
+    @field_validator("api_base_url", "mirror_api_base_url")
+    @classmethod
+    def validate_optional_http_url(cls, value: str | None, info) -> str | None:
+        if value is None:
+            return None
+        return validate_http_url(value, field_name=info.field_name)
+
+    @field_validator("mirror_repo_url")
+    @classmethod
+    def validate_optional_repo_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_repository_url(value, field_name="mirror_repo_url")
 
     @field_validator("branch", "entry_root")
     @classmethod
@@ -236,12 +279,25 @@ class MarketplaceSourceCreateRequest(BaseModel):
             return None
         return _normalize_text(value, field_name="source")
 
+    @model_validator(mode="after")
+    def validate_mirror_fields(self) -> "MarketplaceSourceCreateRequest":
+        if self.mirror_repo_url is None and (self.mirror_repo_provider is not None or self.mirror_api_base_url is not None):
+            raise ValueError("只有提供 mirror_repo_url 时才能声明镜像源配置")
+        return self
+
 
 class MarketplaceSourceRead(BaseModel):
     source_id: str
     market_id: str | None = None
     name: str
+    owner: str | None = None
     repo_url: str
+    repo_provider: MarketplaceRepoProvider
+    api_base_url: str | None = None
+    mirror_repo_url: str | None = None
+    mirror_repo_provider: MarketplaceRepoProvider | None = None
+    mirror_api_base_url: str | None = None
+    effective_repo_url: str
     branch: str
     entry_root: str
     trusted_level: MarketplaceTrustedLevel
