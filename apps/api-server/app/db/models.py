@@ -31,6 +31,7 @@ from app.modules.conversation.models import (
 )
 from app.modules.device.models import Device, DeviceBinding, DeviceEntityFavorite
 from app.modules.family_qa.models import QaQueryLog
+from app.modules.household import lifecycle as household_lifecycle  # noqa: F401
 from app.modules.household.models import Household
 from app.modules.integration.models import IntegrationDiscovery, IntegrationInstance
 from app.modules.member.models import Member, MemberPreference
