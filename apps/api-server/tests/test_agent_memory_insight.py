@@ -76,7 +76,7 @@ class AgentMemoryInsightTests(unittest.TestCase):
                 household_id=household.id,
                 request=PluginExecutionRequest(
                     plugin_id="homeassistant",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={
                         **build_homeassistant_sync_payload(
                             household_id=household.id,
@@ -93,7 +93,7 @@ class AgentMemoryInsightTests(unittest.TestCase):
             household_id=household.id,
             request=PluginExecutionRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": member.id},
             ),
             root_dir=self.builtin_root,
@@ -145,4 +145,5 @@ class AgentMemoryInsightTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

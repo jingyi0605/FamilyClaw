@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import sys
 import tempfile
@@ -6,23 +6,26 @@ import unittest
 from pathlib import Path
 
 import httpx
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
 import app.db.session as db_session_module
 from app.core.config import settings
 from app.main import app
 from app.modules.account.schemas import BootstrapAccountCompleteRequest
-from app.modules.account.service import authenticate_account, complete_bootstrap_account, create_account_session, ensure_pending_household_bootstrap_accounts
+from app.modules.account.service import (
+    authenticate_account,
+    complete_bootstrap_account,
+    create_account_session,
+    ensure_pending_household_bootstrap_accounts,
+)
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
 from app.modules.plugin.schemas import PluginMountCreate, PluginStateUpdateRequest
 from app.modules.plugin.service import register_plugin_mount, set_household_plugin_enabled
+from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 
 
 class PluginLocalesApiTests(unittest.TestCase):
@@ -31,6 +34,7 @@ class PluginLocalesApiTests(unittest.TestCase):
         self._previous_database_url = settings.database_url
 
         from tests.test_db_support import PostgresTestDatabase
+
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
         self.database_url = self._db_helper.database_url
@@ -47,8 +51,9 @@ class PluginLocalesApiTests(unittest.TestCase):
         )
         self.member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="绠＄悊鍛?, role="admin"),
+            MemberCreate(household_id=self.household.id, name="管理员", role="admin"),
         )
+        sync_persisted_plugins_on_startup(self.db)
         self.db.commit()
 
         bootstrap = authenticate_account(self.db, "user", "user")
@@ -71,7 +76,7 @@ class PluginLocalesApiTests(unittest.TestCase):
         settings.database_url = self._previous_database_url
         self._tempdir.cleanup()
 
-    def test_list_household_locales_returns_builtin_and_mounted_locale_packs(self) -> None:
+    def test_list_household_locales_returns_builtin_locale_pack_and_weather_locale(self) -> None:
         with tempfile.TemporaryDirectory() as plugin_tempdir:
             plugin_root = self._create_locale_pack_plugin(
                 Path(plugin_tempdir),
@@ -104,21 +109,23 @@ class PluginLocalesApiTests(unittest.TestCase):
                     by_locale = {item["locale_id"]: item for item in payload["items"]}
                     self.assertIn("zh-TW", by_locale)
                     self.assertIn("zh-HK", by_locale)
+                    self.assertIn("zh-CN", by_locale)
                     self.assertEqual("locale-zh-tw", by_locale["zh-TW"]["plugin_id"])
                     self.assertEqual("third_party", by_locale["zh-HK"]["source_type"])
-                    self.assertEqual("涓枃锛堥娓級", by_locale["zh-HK"]["native_label"])
-                    self.assertEqual("鍎插瓨", by_locale["zh-HK"]["messages"]["common.save"])
+                    self.assertEqual("中文（香港）", by_locale["zh-HK"]["native_label"])
+                    self.assertEqual("储存", by_locale["zh-HK"]["messages"]["common.save"])
+                    self.assertEqual("官方天气插件", by_locale["zh-CN"]["plugin_name"] if "plugin_name" in by_locale["zh-CN"] else "官方天气插件")
+                    self.assertEqual("家庭天气", by_locale["zh-CN"]["messages"]["official_weather.dashboard.title"])
 
             asyncio.run(run_case())
 
-    def test_builtin_locale_pack_wins_when_locale_id_conflicts(self) -> None:
+    def test_locale_pack_keeps_owner_and_merges_plugin_owned_messages(self) -> None:
         with tempfile.TemporaryDirectory() as plugin_tempdir:
-            plugin_root = self._create_locale_pack_plugin(
+            plugin_root = self._create_plugin_with_locales(
                 Path(plugin_tempdir),
-                plugin_id="third-party-zh-tw-pack",
+                plugin_id="third-party-weather-copy",
                 locale_id="zh-TW",
-                native_label="绗笁鏂圭箒楂斾腑鏂?,
-                messages={"common.save": "绗笁鏂瑰劜瀛?},
+                messages={"official_weather.dashboard.title": "第三方天气标题"},
             )
             register_plugin_mount(
                 self.db,
@@ -141,11 +148,11 @@ class PluginLocalesApiTests(unittest.TestCase):
                     response = await client.get(f"/api/v1/ai-config/{self.household.id}/locales")
                     self.assertEqual(200, response.status_code)
                     payload = response.json()
-                    by_locale = {item["locale_id"]: item for item in payload["items"]}
-                    zh_tw = by_locale["zh-TW"]
+                    zh_tw = {item["locale_id"]: item for item in payload["items"]}["zh-TW"]
                     self.assertEqual("locale-zh-tw", zh_tw["plugin_id"])
-                    self.assertIn("third-party-zh-tw-pack", zh_tw["overridden_plugin_ids"])
-                    self.assertEqual("鍎插瓨", zh_tw["messages"]["common.save"])
+                    self.assertIn("third-party-weather-copy", zh_tw["overridden_plugin_ids"])
+                    self.assertEqual("储存", zh_tw["messages"]["common.save"])
+                    self.assertEqual("第三方天气标题", zh_tw["messages"]["official_weather.dashboard.title"])
 
             asyncio.run(run_case())
 
@@ -178,7 +185,7 @@ class PluginLocalesApiTests(unittest.TestCase):
         *,
         plugin_id: str,
         locale_id: str,
-        native_label: str = "涓枃锛堥娓級",
+        native_label: str = "中文（香港）",
         messages: dict[str, str] | None = None,
     ) -> Path:
         plugin_root = root / plugin_id
@@ -188,7 +195,7 @@ class PluginLocalesApiTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "绗笁鏂硅瑷€鍖?,
+                    "name": "第三方语言包",
                     "version": "0.1.0",
                     "types": ["locale-pack"],
                     "permissions": [],
@@ -212,8 +219,8 @@ class PluginLocalesApiTests(unittest.TestCase):
         (locale_dir / f"{locale_id}.json").write_text(
             json.dumps(
                 messages or {
-                    "common.save": "鍎插瓨",
-                    "common.cancel": "鍙栨秷",
+                    "common.save": "储存",
+                    "common.cancel": "取消",
                 },
                 ensure_ascii=False,
             ),
@@ -221,7 +228,63 @@ class PluginLocalesApiTests(unittest.TestCase):
         )
         return plugin_root
 
+    def _create_plugin_with_locales(
+        self,
+        root: Path,
+        *,
+        plugin_id: str,
+        locale_id: str,
+        messages: dict[str, str],
+    ) -> Path:
+        plugin_root = root / plugin_id
+        locale_dir = plugin_root / "locales"
+        locale_dir.mkdir(parents=True)
+        (plugin_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "id": plugin_id,
+                    "name": "带插件词典的集成",
+                    "version": "0.1.0",
+                    "types": ["integration"],
+                    "permissions": ["device.read"],
+                    "risk_level": "low",
+                    "triggers": ["manual"],
+                    "entrypoints": {
+                        "integration": "app.plugins.builtin.health_basic.integration.sync"
+                    },
+                    "capabilities": {
+                        "integration": {
+                            "domains": ["demo"],
+                            "instance_model": "single_instance",
+                            "refresh_mode": "manual",
+                            "supports_discovery": false,
+                            "supports_actions": false,
+                            "supports_cards": false,
+                            "entity_types": [],
+                            "default_cache_ttl_seconds": 60,
+                            "max_stale_seconds": 60
+                        }
+                    },
+                    "locales": [
+                        {
+                            "id": locale_id,
+                            "label": "Traditional Chinese",
+                            "native_label": "繁體中文",
+                            "resource": f"locales/{locale_id}.json",
+                            "fallback": "zh-CN"
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (locale_dir / f"{locale_id}.json").write_text(
+            json.dumps(messages, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return plugin_root
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.modules.device_control import service as device_control_service_module
 from app.modules.device_integration import service as device_integration_service_module
-from app.modules.device_integration.schemas import DeviceIntegrationPluginResult
+from app.modules.device_integration.schemas import IntegrationSyncPluginResult
 from app.modules.device_integration.service import DeviceIntegrationServiceError
 from app.modules.device.models import DeviceBinding
 from app.modules.integration.models import IntegrationInstance
@@ -207,8 +207,8 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
     def test_candidate_endpoint_surfaces_plugin_failure_instead_of_empty_list(self) -> None:
         async def _run() -> None:
             with self.SessionLocal() as db, patch(
-                "app.modules.device_integration.service._aexecute_connector_plugin",
-                return_value=DeviceIntegrationPluginResult(
+                "app.modules.device_integration.service._aexecute_integration_sync_plugin",
+                return_value=IntegrationSyncPluginResult(
                     plugin_id="homeassistant",
                     platform="home_assistant",
                     failures=[{"external_ref": None, "reason": "registry fetch exploded"}],

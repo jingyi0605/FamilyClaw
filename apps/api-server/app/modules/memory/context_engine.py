@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app.api.dependencies import ActorContext
 from app.db.utils import utc_now_iso
 from app.modules.context.service import get_context_overview
@@ -10,9 +12,55 @@ from app.modules.memory.schemas import (
     MemoryQueryRequest,
 )
 from app.modules.member import service as member_service
+from app.modules.plugin.slot_service import invoke_slot_plugin
 
 
 def build_memory_context_bundle(
+    db,
+    *,
+    household_id: str,
+    actor: ActorContext,
+    requester_member_id: str | None = None,
+    question: str | None = None,
+    capability: str = "family_qa",
+) -> MemoryContextBundleRead:
+    return invoke_slot_plugin(
+        db,
+        household_id=household_id,
+        slot_name="context_engine",
+        operation="build_context_bundle",
+        payload={
+            "household_id": household_id,
+            "requester_member_id": requester_member_id,
+            "question": question,
+            "capability": capability,
+            "actor": _build_actor_snapshot(actor),
+        },
+        output_model=MemoryContextBundleRead,
+        fallback=lambda: _build_default_memory_context_bundle(
+            db,
+            household_id=household_id,
+            actor=actor,
+            requester_member_id=requester_member_id,
+            question=question,
+            capability=capability,
+        ),
+    )
+
+
+def _build_actor_snapshot(actor: ActorContext) -> dict[str, Any]:
+    return {
+        "role": actor.role,
+        "actor_type": actor.actor_type,
+        "actor_id": actor.actor_id,
+        "account_type": actor.account_type,
+        "account_id": actor.account_id,
+        "member_id": actor.member_id,
+        "member_role": actor.member_role,
+    }
+
+
+def _build_default_memory_context_bundle(
     db,
     *,
     household_id: str,

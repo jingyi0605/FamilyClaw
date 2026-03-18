@@ -1,8 +1,6 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -32,6 +30,7 @@ from .schemas import (
 from .service import (
     PluginServiceError,
     get_household_plugin,
+    list_registered_plugin_locales_for_household,
     list_registered_plugins_for_household,
     require_available_household_plugin,
 )
@@ -1298,26 +1297,14 @@ def _load_household_plugin_locale_messages(
     household_id: str,
     locale_id: str,
 ) -> dict[str, str]:
-    messages: dict[str, str] = {}
-    snapshot = list_registered_plugins_for_household(db, household_id=household_id)
-    for plugin in snapshot.items:
-        if not plugin.enabled or "locale-pack" not in plugin.types:
-            continue
-        manifest_dir = Path(plugin.manifest_path).resolve().parent
-        for locale_spec in plugin.locales:
-            if locale_spec.id != locale_id:
-                continue
-            resource_path = manifest_dir / locale_spec.resource
-            try:
-                raw_payload = json.loads(resource_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if not isinstance(raw_payload, dict):
-                continue
-            for key, value in raw_payload.items():
-                if isinstance(key, str) and isinstance(value, str):
-                    messages[key] = value
-    return messages
+    locale_list = list_registered_plugin_locales_for_household(
+        db,
+        household_id=household_id,
+    )
+    for item in locale_list.items:
+        if item.locale_id == locale_id:
+            return dict(item.messages)
+    return {}
 
 
 def _resolve_plugin_dashboard_text(

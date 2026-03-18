@@ -33,7 +33,6 @@ from app.api.v1.endpoints.scheduled_tasks import router as scheduled_tasks_route
 from app.api.v1.endpoints.scheduled_tasks import run_router as scheduled_task_runs_router
 from app.api.v1.endpoints.scheduled_tasks import draft_router as scheduled_task_drafts_router
 from app.api.v1.endpoints.system import router as system_router
-from app.api.v1.endpoints.weather import router as weather_router
 from app.api.v1.endpoints.voiceprints import router as voiceprints_router
 
 router = APIRouter()
@@ -70,5 +69,4 @@ router.include_router(scheduled_tasks_router)
 router.include_router(scheduled_task_runs_router)
 router.include_router(scheduled_task_drafts_router)
 router.include_router(system_router)
-router.include_router(weather_router)
 router.include_router(voiceprints_router)

@@ -87,7 +87,7 @@ def _dispatch_plugin_job(db: Session, *, run: ScheduledTaskRun):
         household_id=run.household_id,
         request=PluginExecutionRequest(
             plugin_id=run.target_ref_id,
-            plugin_type="connector",
+            plugin_type="integration",
             payload={
                 "scheduled_task_definition_id": run.task_definition_id,
                 "scheduled_task_run_id": run.id,

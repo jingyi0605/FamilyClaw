@@ -40,6 +40,7 @@ from app.modules.plugin.schemas import (
     PluginExecutionResult,
     PluginJobCreate,
     PluginJobRead,
+    PluginManifestLocaleSpec,
     PluginLocaleListRead,
     PluginLocaleRead,
     PluginMountCreate,
@@ -895,8 +896,42 @@ def list_registered_plugin_locales_for_household(
     )
     items_by_locale_id: dict[str, PluginLocaleRead] = {}
 
+    contributions_by_locale_id: dict[
+        str,
+        list[tuple[PluginRegistryItem, PluginManifestLocaleSpec, dict[str, str]]],
+    ] = {}
+    for plugin, locale_spec, messages in _iter_enabled_plugin_locale_contributions(snapshot):
+        contributions_by_locale_id.setdefault(locale_spec.id, []).append((plugin, locale_spec, messages))
+
+    for locale_id, contributions in contributions_by_locale_id.items():
+        owner_plugin, owner_locale = _select_locale_owner(contributions)
+        merged_messages = _merge_locale_messages(contributions)
+        overridden_plugin_ids = _build_overridden_locale_plugin_ids(
+            contributions,
+            owner_plugin_id=owner_plugin.id,
+        )
+        items_by_locale_id[locale_id] = PluginLocaleRead(
+            plugin_id=owner_plugin.id,
+            locale_id=locale_id,
+            label=owner_locale.label,
+            native_label=owner_locale.native_label,
+            fallback=owner_locale.fallback,
+            source_type=owner_plugin.source_type,
+            messages=merged_messages,
+            overridden_plugin_ids=overridden_plugin_ids,
+        )
+
+    items = list(items_by_locale_id.values())
+    items.sort(key=lambda item: (item.locale_id, -LOCALE_SOURCE_PRIORITY[item.source_type], item.plugin_id))
+    return PluginLocaleListRead(household_id=household_id, items=items)
+
+
+def _iter_enabled_plugin_locale_contributions(
+    snapshot: PluginRegistrySnapshot,
+) -> list[tuple[PluginRegistryItem, PluginManifestLocaleSpec, dict[str, str]]]:
+    items: list[tuple[PluginRegistryItem, PluginManifestLocaleSpec, dict[str, str]]] = []
     for plugin in snapshot.items:
-        if not plugin.enabled or "locale-pack" not in plugin.types:
+        if not plugin.enabled or not plugin.locales:
             continue
 
         manifest_dir = Path(plugin.manifest_path).resolve().parent
@@ -909,38 +944,50 @@ def list_registered_plugin_locales_for_household(
             )
             if messages is None:
                 continue
+            items.append((plugin, locale_spec, messages))
+    return items
 
-            candidate = PluginLocaleRead(
-                plugin_id=plugin.id,
-                locale_id=locale_spec.id,
-                label=locale_spec.label,
-                native_label=locale_spec.native_label,
-                fallback=locale_spec.fallback,
-                source_type=plugin.source_type,
-                messages=messages,
-            )
 
-            existing = items_by_locale_id.get(candidate.locale_id)
-            if existing is None:
-                items_by_locale_id[candidate.locale_id] = candidate
-                continue
+def _select_locale_owner(
+    contributions: list[tuple[PluginRegistryItem, PluginManifestLocaleSpec, dict[str, str]]],
+) -> tuple[PluginRegistryItem, PluginManifestLocaleSpec]:
+    preferred = [item for item in contributions if "locale-pack" in item[0].types]
+    candidates = preferred or contributions
+    owner_plugin, owner_locale, _ = min(
+        candidates,
+        key=lambda item: (-LOCALE_SOURCE_PRIORITY[item[0].source_type], item[0].id),
+    )
+    return owner_plugin, owner_locale
 
-            existing_priority = LOCALE_SOURCE_PRIORITY[existing.source_type]
-            candidate_priority = LOCALE_SOURCE_PRIORITY[candidate.source_type]
-            if candidate_priority > existing_priority or (
-                candidate_priority == existing_priority and candidate.plugin_id < existing.plugin_id
-            ):
-                candidate.overridden_plugin_ids = [
-                    *existing.overridden_plugin_ids,
-                    existing.plugin_id,
-                ]
-                items_by_locale_id[candidate.locale_id] = candidate
-            else:
-                existing.overridden_plugin_ids.append(candidate.plugin_id)
 
-    items = list(items_by_locale_id.values())
-    items.sort(key=lambda item: (item.locale_id, -LOCALE_SOURCE_PRIORITY[item.source_type], item.plugin_id))
-    return PluginLocaleListRead(household_id=household_id, items=items)
+def _merge_locale_messages(
+    contributions: list[tuple[PluginRegistryItem, PluginManifestLocaleSpec, dict[str, str]]],
+) -> dict[str, str]:
+    ordered = list(contributions)
+    ordered.sort(key=lambda item: item[0].id, reverse=True)
+    ordered.sort(key=lambda item: LOCALE_SOURCE_PRIORITY[item[0].source_type])
+
+    merged: dict[str, str] = {}
+    for _, _, messages in ordered:
+        merged.update(messages)
+    return merged
+
+
+def _build_overridden_locale_plugin_ids(
+    contributions: list[tuple[PluginRegistryItem, PluginManifestLocaleSpec, dict[str, str]]],
+    *,
+    owner_plugin_id: str,
+) -> list[str]:
+    ordered = sorted(
+        contributions,
+        key=lambda item: (-LOCALE_SOURCE_PRIORITY[item[0].source_type], item[0].id),
+    )
+    overridden: list[str] = []
+    for plugin, _, _ in ordered:
+        if plugin.id == owner_plugin_id or plugin.id in overridden:
+            continue
+        overridden.append(plugin.id)
+    return overridden
 
 
 def register_plugin_mount(

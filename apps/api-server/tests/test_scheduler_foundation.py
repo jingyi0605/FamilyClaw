@@ -67,22 +67,27 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             HouseholdCreate(name="Scheduler Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
         )
+        self.household_id = self.household.id
         self.admin_member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="绠＄悊鍛?, role="admin"),
+            MemberCreate(household_id=self.household.id, name="管理员", role="admin"),
         )
+        self.admin_member_id = self.admin_member.id
         self.user_member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="鏅€氭垚鍛?, role="adult"),
+            MemberCreate(household_id=self.household.id, name="普通成员", role="adult"),
         )
+        self.user_member_id = self.user_member.id
         self.child_member = create_member(
             self.db,
-            MemberCreate(household_id=self.household.id, name="灏忔湅鍙?, role="child"),
+            MemberCreate(household_id=self.household.id, name="小朋友", role="child"),
         )
+        self.child_member_id = self.child_member.id
         self.elder_member = create_member(
             self.db,
             MemberCreate(household_id=self.household.id, name="闀胯緢", role="elder"),
         )
+        self.elder_member_id = self.elder_member.id
         self.living_room = create_room(
             self.db,
             household_id=self.household.id,
@@ -90,6 +95,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             room_type="living_room",
             privacy_level="public",
         )
+        self.living_room_id = self.living_room.id
         self.db.commit()
         self.agent = create_agent(
             self.db,
@@ -102,6 +108,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 created_by="test",
             ),
         )
+        self.agent_id = self.agent.id
         self.db.commit()
         self.admin_account, _ = create_household_account_with_binding(
             self.db,
@@ -171,9 +178,20 @@ class SchedulerFoundationTests(unittest.TestCase):
         settings.database_url = self._previous_database_url
         self._tempdir.cleanup()
 
+    def _release_test_db_session(self) -> None:
+        self.db.commit()
+        self.db.close()
+
+    def _reopen_test_db_session(self) -> None:
+        self.db = self.SessionLocal()
+
     def test_scheduler_tables_exist(self) -> None:
-        inspector = inspect(self.engine)
-        table_names = set(inspector.get_table_names())
+        self._release_test_db_session()
+        try:
+            inspector = inspect(self.engine)
+            table_names = set(inspector.get_table_names())
+        finally:
+            self._reopen_test_db_session()
         self.assertTrue(
             {"scheduled_task_definitions", "scheduled_task_runs", "scheduled_task_deliveries"}.issubset(table_names)
         )
@@ -183,7 +201,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="household",
                 code="family-daily-sync",
                 name="鍏ㄥ鏅氶棿鍚屾",
@@ -199,11 +217,11 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="member",
-                owner_member_id=self.user_member.id,
+                owner_member_id=self.user_member_id,
                 code="member-heartbeat-check",
-                name="鎴愬憳鐘舵€佹鏌?,
+                name="成员状态检查",
                 trigger_type="heartbeat",
                 heartbeat_interval_seconds=1800,
                 target_type="agent_reminder",
@@ -216,7 +234,7 @@ class SchedulerFoundationTests(unittest.TestCase):
         self.assertEqual("household", household_task.owner_scope)
         self.assertIsNone(household_task.owner_member_id)
         self.assertEqual("member", member_task.owner_scope)
-        self.assertEqual(self.user_member.id, member_task.owner_member_id)
+        self.assertEqual(self.user_member_id, member_task.owner_member_id)
         self.assertEqual("2026-03-14T13:00:00Z", household_task.next_run_at)
         self.assertEqual("2026-03-14T12:30:00Z", member_task.next_heartbeat_at)
 
@@ -226,7 +244,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 self.db,
                 actor=self.user_actor,
                 payload=ScheduledTaskDefinitionCreate(
-                    household_id=self.household.id,
+                    household_id=self.household_id,
                     owner_scope="household",
                     code="blocked-household-task",
                     name="涓嶈鎴愬姛",
@@ -242,9 +260,9 @@ class SchedulerFoundationTests(unittest.TestCase):
                 self.db,
                 actor=self.user_actor,
                 payload=ScheduledTaskDefinitionCreate(
-                    household_id=self.household.id,
+                    household_id=self.household_id,
                     owner_scope="member",
-                    owner_member_id=self.admin_member.id,
+                    owner_member_id=self.admin_member_id,
                     code="blocked-other-member-task",
                     name="涓嶈鎴愬姛",
                     trigger_type="heartbeat",
@@ -259,7 +277,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="household",
                 code="due-schedule-task",
                 name="鍒扮偣浠诲姟",
@@ -275,9 +293,9 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="member",
-                owner_member_id=self.user_member.id,
+                owner_member_id=self.user_member_id,
                 code="due-heartbeat-task",
                 name="鍒扮偣宸℃",
                 trigger_type="heartbeat",
@@ -317,7 +335,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="household",
                 code="plugin-schedule-task",
                 name="鎻掍欢鍚屾浠诲姟",
@@ -352,7 +370,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="household",
                 code="plugin-schedule-homeassistant",
                 name="HA 璁″垝鍚屾",
@@ -371,11 +389,11 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.user_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="member",
-                owner_member_id=self.user_member.id,
+                owner_member_id=self.user_member_id,
                 code="self-private-task",
-                name="鑷繁鐨勪换鍔?,
+                name="自己的任务",
                 trigger_type="heartbeat",
                 heartbeat_interval_seconds=600,
                 target_type="agent_reminder",
@@ -386,11 +404,11 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="member",
-                owner_member_id=self.admin_member.id,
+                owner_member_id=self.admin_member_id,
                 code="admin-private-task",
-                name="绠＄悊鍛樼鏈変换鍔?,
+                name="管理员私有任务",
                 trigger_type="heartbeat",
                 heartbeat_interval_seconds=900,
                 target_type="agent_reminder",
@@ -401,7 +419,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="household",
                 code="household-public-task",
                 name="瀹跺涵鍏叡浠诲姟",
@@ -414,6 +432,7 @@ class SchedulerFoundationTests(unittest.TestCase):
         )
         self.db.commit()
 
+        self._release_test_db_session()
         transport = httpx.ASGITransport(app=app)
 
         async def run_case() -> None:
@@ -421,7 +440,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 client.cookies.set(settings.auth_session_cookie_name, self.user_session_token)
                 response = await client.get(
                     "/api/v1/scheduled-tasks",
-                    params={"household_id": self.household.id},
+                    params={"household_id": self.household_id},
                 )
                 self.assertEqual(200, response.status_code)
                 items = response.json()
@@ -430,9 +449,13 @@ class SchedulerFoundationTests(unittest.TestCase):
                 self.assertIn(household_task.id, returned_ids)
                 self.assertNotIn(other_task.id, returned_ids)
 
-        asyncio.run(run_case())
+        try:
+            asyncio.run(run_case())
+        finally:
+            self._reopen_test_db_session()
 
     def test_scheduled_task_api_rejects_non_admin_household_task_create(self) -> None:
+        self._release_test_db_session()
         transport = httpx.ASGITransport(app=app)
 
         async def run_case() -> None:
@@ -441,7 +464,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 response = await client.post(
                     "/api/v1/scheduled-tasks",
                     json={
-                        "household_id": self.household.id,
+                        "household_id": self.household_id,
                         "owner_scope": "household",
                         "code": "api-blocked-household",
                         "name": "瀹跺涵浠诲姟",
@@ -454,18 +477,22 @@ class SchedulerFoundationTests(unittest.TestCase):
                 )
                 self.assertEqual(403, response.status_code)
 
-        asyncio.run(run_case())
+        try:
+            asyncio.run(run_case())
+        finally:
+            self._reopen_test_db_session()
 
     def test_scheduled_task_full_chain_reaches_plugin_job_and_query_endpoints(self) -> None:
         transport = httpx.ASGITransport(app=app)
 
         async def run_case() -> None:
+            self._release_test_db_session()
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 client.cookies.set(settings.auth_session_cookie_name, self.admin_session_token)
                 create_response = await client.post(
                     "/api/v1/scheduled-tasks",
                     json={
-                        "household_id": self.household.id,
+                        "household_id": self.household_id,
                         "owner_scope": "household",
                         "code": "api-plugin-chain-task",
                         "name": "璁″垝鍚屾浠诲姟",
@@ -478,38 +505,46 @@ class SchedulerFoundationTests(unittest.TestCase):
                 )
                 self.assertEqual(201, create_response.status_code)
                 task_id = create_response.json()["id"]
-                task_row = self._get_task_model(task_id)
-                task_row.next_run_at = "2026-03-14T12:01:00Z"
-                self.db.add(task_row)
-                self.db.commit()
+            self._reopen_test_db_session()
 
-                runs = process_due_schedule_tick(self.db, now_iso="2026-03-14T12:01:00Z")
-                self.db.commit()
-                self.assertEqual(1, len(runs))
+            task_row = self._get_task_model(task_id)
+            task_row.next_run_at = "2026-03-14T12:01:00Z"
+            self.db.add(task_row)
+            self.db.commit()
 
-                dispatched = dispatch_task_run(self.db, task_run_id=runs[0].id)
-                self.db.commit()
-                self.assertEqual("succeeded", dispatched.status)
-                self.assertIsNotNone(dispatched.target_run_id)
+            runs = process_due_schedule_tick(self.db, now_iso="2026-03-14T12:01:00Z")
+            self.db.commit()
+            self.assertEqual(1, len(runs))
 
+            dispatched = dispatch_task_run(self.db, task_run_id=runs[0].id)
+            self.db.commit()
+            self.assertEqual("succeeded", dispatched.status)
+            self.assertIsNotNone(dispatched.target_run_id)
+            dispatched_run_id = dispatched.id
+            plugin_job_id = dispatched.target_run_id
+
+            self._release_test_db_session()
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                client.cookies.set(settings.auth_session_cookie_name, self.admin_session_token)
                 run_response = await client.get(
                     "/api/v1/scheduled-task-runs",
-                    params={"household_id": self.household.id, "task_definition_id": task_id},
+                    params={"household_id": self.household_id, "task_definition_id": task_id},
                 )
                 self.assertEqual(200, run_response.status_code)
                 run_items = run_response.json()
                 self.assertEqual(1, len(run_items))
-                self.assertEqual(dispatched.id, run_items[0]["id"])
-                self.assertEqual(dispatched.target_run_id, run_items[0]["target_run_id"])
+                self.assertEqual(dispatched_run_id, run_items[0]["id"])
+                self.assertEqual(plugin_job_id, run_items[0]["target_run_id"])
 
                 plugin_job_response = await client.get(
-                    f"/api/v1/plugin-jobs/{dispatched.target_run_id}",
-                    params={"household_id": self.household.id},
+                    f"/api/v1/plugin-jobs/{plugin_job_id}",
+                    params={"household_id": self.household_id},
                 )
                 self.assertEqual(200, plugin_job_response.status_code)
                 job_detail = plugin_job_response.json()
                 self.assertEqual(task_id, job_detail["job"]["source_task_definition_id"])
-                self.assertEqual(dispatched.id, job_detail["job"]["source_task_run_id"])
+                self.assertEqual(dispatched_run_id, job_detail["job"]["source_task_run_id"])
+            self._reopen_test_db_session()
 
         asyncio.run(run_case())
 
@@ -518,7 +553,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             plugin_root = self._create_third_party_schedule_plugin(Path(plugin_tempdir), plugin_id="third-party-schedule-plugin")
             register_plugin_mount(
                 self.db,
-                household_id=self.household.id,
+                household_id=self.household_id,
                 payload=PluginMountCreate(
                     source_type="third_party",
                     plugin_root=str(plugin_root),
@@ -533,7 +568,7 @@ class SchedulerFoundationTests(unittest.TestCase):
                 self.db,
                 actor=self.admin_actor,
                 payload=ScheduledTaskDefinitionCreate(
-                    household_id=self.household.id,
+                    household_id=self.household_id,
                     owner_scope="household",
                     code="duplicate-window-task",
                     name="閲嶅绐楀彛浠诲姟",
@@ -555,7 +590,7 @@ class SchedulerFoundationTests(unittest.TestCase):
 
             update_plugin_mount(
                 self.db,
-                household_id=self.household.id,
+                household_id=self.household_id,
                 plugin_id="third-party-schedule-plugin",
                 payload=PluginMountUpdate(enabled=False),
             )
@@ -566,7 +601,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             task_row = self._get_task_model(task.id)
             self.assertEqual(task.id, dispatched.task_definition_id)
             self.assertEqual("failed", dispatched.status)
-            self.assertEqual("scheduled_task_dispatch_failed", dispatched.error_code)
+            self.assertEqual("plugin_disabled", dispatched.error_code)
             self.assertEqual("invalid_dependency", task_row.status)
 
     def test_heartbeat_rule_evaluator_supports_insight_presence_and_device_summary(self) -> None:
@@ -577,7 +612,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             elder_care_watch_enabled=True,
         )
         self._add_device(name="闂ㄩ攣", status="offline", controllable=1)
-        self._mark_member_presence(self.child_member.id, status="home")
+        self._mark_member_presence(self.child_member_id, status="home")
         self.db.commit()
 
         insight_task = self._create_heartbeat_task(
@@ -657,12 +692,12 @@ class SchedulerFoundationTests(unittest.TestCase):
 
     def test_agent_reminder_dispatch_creates_delivery_record(self) -> None:
         self._setup_context(guest_mode_enabled=False, quiet_hours_enabled=False)
-        self._mark_member_presence(self.child_member.id, status="home")
+        self._mark_member_presence(self.child_member_id, status="home")
         reminder_task = self._create_heartbeat_task(
             code="agent-reminder-task",
             rule_type="presence",
             rule_config={"condition": "role_present", "role": "child"},
-            target_ref_id=self.agent.id,
+            target_ref_id=self.agent_id,
         )
         self.db.commit()
 
@@ -681,17 +716,17 @@ class SchedulerFoundationTests(unittest.TestCase):
         self.assertEqual(reminder_task.id, dispatched.task_definition_id)
         self.assertEqual("succeeded", dispatched.status)
         self.assertEqual("agent", delivery.recipient_type)
-        self.assertEqual(self.agent.id, delivery.recipient_ref)
+        self.assertEqual(self.agent_id, delivery.recipient_ref)
         self.assertEqual("delivered", delivery.status)
 
     def test_heartbeat_cooldown_suppresses_repeated_agent_reminder(self) -> None:
         self._setup_context(guest_mode_enabled=False, quiet_hours_enabled=False)
-        self._mark_member_presence(self.child_member.id, status="home")
+        self._mark_member_presence(self.child_member_id, status="home")
         self._create_heartbeat_task(
             code="cooldown-reminder-task",
             rule_type="presence",
             rule_config={"condition": "role_present", "role": "child"},
-            target_ref_id=self.agent.id,
+            target_ref_id=self.agent_id,
             cooldown_seconds=3600,
         )
         self.db.commit()
@@ -714,7 +749,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="household",
                 code="failing-system-notice-task",
                 name="澶辫触浠诲姟",
@@ -745,6 +780,7 @@ class SchedulerFoundationTests(unittest.TestCase):
         self.assertEqual("error", task_row.status)
 
     def test_conversation_draft_can_be_created_and_confirmed(self) -> None:
+        self._release_test_db_session()
         transport = httpx.ASGITransport(app=app)
 
         async def run_case() -> None:
@@ -753,8 +789,8 @@ class SchedulerFoundationTests(unittest.TestCase):
                 draft_response = await client.post(
                     "/api/v1/scheduled-task-drafts/from-conversation",
                     json={
-                        "household_id": self.household.id,
-                        "text": "姣忓ぉ鏅氫笂涔濈偣鎻愰啋鎴戝悆鑽?,
+                        "household_id": self.household_id,
+                        "text": "每天晚上九点提醒我吃药",
                     },
                 )
                 self.assertEqual(200, draft_response.status_code)
@@ -776,12 +812,16 @@ class SchedulerFoundationTests(unittest.TestCase):
                 self.assertEqual(200, task_response.status_code)
                 task = task_response.json()
                 self.assertEqual("member", task["owner_scope"])
-                self.assertEqual(self.user_member.id, task["owner_member_id"])
+                self.assertEqual(self.user_member_id, task["owner_member_id"])
                 self.assertEqual("21:00", task["schedule_expr"])
 
-        asyncio.run(run_case())
+        try:
+            asyncio.run(run_case())
+        finally:
+            self._reopen_test_db_session()
 
     def test_conversation_draft_missing_fields_requires_followup(self) -> None:
+        self._release_test_db_session()
         transport = httpx.ASGITransport(app=app)
 
         async def run_case() -> None:
@@ -790,8 +830,8 @@ class SchedulerFoundationTests(unittest.TestCase):
                 draft_response = await client.post(
                     "/api/v1/scheduled-task-drafts/from-conversation",
                     json={
-                        "household_id": self.household.id,
-                        "text": "鎻愰啋鎴戝悆鑽?,
+                        "household_id": self.household_id,
+                        "text": "提醒我吃药",
                     },
                 )
                 self.assertEqual(200, draft_response.status_code)
@@ -807,25 +847,29 @@ class SchedulerFoundationTests(unittest.TestCase):
                 result = confirm_response.json()
                 self.assertTrue(result["task_id"])
 
-        asyncio.run(run_case())
+        try:
+            asyncio.run(run_case())
+        finally:
+            self._reopen_test_db_session()
 
     def test_stage3_checkpoint_rule_to_agent_and_draft_to_task_chains(self) -> None:
         transport = httpx.ASGITransport(app=app)
 
         async def run_agent_chain() -> None:
+            self._release_test_db_session()
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 client.cookies.set(settings.auth_session_cookie_name, self.admin_session_token)
                 create_response = await client.post(
                     "/api/v1/scheduled-tasks",
                     json={
-                        "household_id": self.household.id,
+                        "household_id": self.household_id,
                         "owner_scope": "household",
                         "code": "stage3-agent-reminder-checkpoint",
                         "name": "鍎跨鍦ㄥ鎻愰啋",
                         "trigger_type": "heartbeat",
                         "heartbeat_interval_seconds": 60,
                         "target_type": "agent_reminder",
-                        "target_ref_id": self.agent.id,
+                        "target_ref_id": self.agent_id,
                         "rule_type": "presence",
                         "rule_config": {"condition": "role_present", "role": "child"},
                         "cooldown_seconds": 3600,
@@ -834,9 +878,10 @@ class SchedulerFoundationTests(unittest.TestCase):
                 )
                 self.assertEqual(201, create_response.status_code)
                 task_id = create_response.json()["id"]
+            self._reopen_test_db_session()
 
             self._setup_context(guest_mode_enabled=False, quiet_hours_enabled=False)
-            self._mark_member_presence(self.child_member.id, status="home")
+            self._mark_member_presence(self.child_member_id, status="home")
 
             task_row = self._get_task_model(task_id)
             task_row.next_heartbeat_at = "2026-03-14T12:01:00Z"
@@ -850,16 +895,18 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db.commit()
             self.assertEqual("succeeded", dispatched.status)
 
+            self._release_test_db_session()
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 client.cookies.set(settings.auth_session_cookie_name, self.admin_session_token)
                 runs_response = await client.get(
                     "/api/v1/scheduled-task-runs",
-                    params={"household_id": self.household.id, "task_definition_id": task_id},
+                    params={"household_id": self.household_id, "task_definition_id": task_id},
                 )
                 self.assertEqual(200, runs_response.status_code)
                 run_items = runs_response.json()
                 self.assertEqual(1, len(run_items))
                 self.assertEqual("succeeded", run_items[0]["status"])
+            self._reopen_test_db_session()
 
             self._setup_context(guest_mode_enabled=False, quiet_hours_enabled=False)
             task_row = self._get_task_model(task_id)
@@ -883,13 +930,14 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.assertEqual("suppressed", suppressed_runs[0].status)
 
         async def run_draft_chain() -> None:
+            self._release_test_db_session()
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 client.cookies.set(settings.auth_session_cookie_name, self.user_session_token)
                 draft_response = await client.post(
                     "/api/v1/scheduled-task-drafts/from-conversation",
                     json={
-                        "household_id": self.household.id,
-                        "text": "姣忓ぉ鏅氫笂涔濈偣鎻愰啋鎴戝悆鑽?,
+                        "household_id": self.household_id,
+                        "text": "每天晚上九点提醒我吃药",
                     },
                 )
                 self.assertEqual(200, draft_response.status_code)
@@ -905,11 +953,12 @@ class SchedulerFoundationTests(unittest.TestCase):
 
                 list_response = await client.get(
                     "/api/v1/scheduled-tasks",
-                    params={"household_id": self.household.id},
+                    params={"household_id": self.household_id},
                 )
                 self.assertEqual(200, list_response.status_code)
                 returned_ids = {item["id"] for item in list_response.json()}
                 self.assertIn(confirmed_task_id, returned_ids)
+            self._reopen_test_db_session()
 
         asyncio.run(run_agent_chain())
         asyncio.run(run_draft_chain())
@@ -926,7 +975,7 @@ class SchedulerFoundationTests(unittest.TestCase):
     ) -> None:
         upsert_context_config(
             self.db,
-            household_id=self.household.id,
+            household_id=self.household_id,
             payload=ContextConfigUpsert(
                 guest_mode_enabled=guest_mode_enabled,
                 quiet_hours_enabled=quiet_hours_enabled,
@@ -943,9 +992,9 @@ class SchedulerFoundationTests(unittest.TestCase):
         ingest_presence_event(
             self.db,
             PresenceEventCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 member_id=member_id,
-                room_id=self.living_room.id if status == "home" else None,
+                room_id=self.living_room_id if status == "home" else None,
                 source_type="sensor",
                 source_ref=f"presence-{member_id}",
                 confidence=0.95,
@@ -958,8 +1007,8 @@ class SchedulerFoundationTests(unittest.TestCase):
         self.db.add(
             Device(
                 id=new_uuid(),
-                household_id=self.household.id,
-                room_id=self.living_room.id,
+                household_id=self.household_id,
+                room_id=self.living_room_id,
                 name=name,
                 device_type="lock",
                 vendor="demo",
@@ -983,7 +1032,7 @@ class SchedulerFoundationTests(unittest.TestCase):
             self.db,
             actor=self.admin_actor,
             payload=ScheduledTaskDefinitionCreate(
-                household_id=self.household.id,
+                household_id=self.household_id,
                 owner_scope="household",
                 code=code,
                 name=code,
@@ -1016,23 +1065,24 @@ class SchedulerFoundationTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": plugin_id,
-                    "name": "绗笁鏂硅鍒掓彃浠?,
+                    "name": "第三方计划插件",
                     "version": "0.1.0",
-                    "types": ["connector"],
+                    "types": ["integration"],
                     "permissions": ["health.read"],
                     "risk_level": "low",
                     "triggers": ["manual", "schedule"],
-                    "entrypoints": {"connector": "plugin.connector.sync"},
+                    "entrypoints": {"integration": "plugin.integration.sync"},
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
-        (package_dir / "connector.py").write_text(
+        (package_dir / "integration.py").write_text(
             "def sync(payload=None):\n"
             "    data = payload or {}\n"
             "    return {'source': 'third-party-schedule-plugin', 'records': [], 'echo': data}\n",
             encoding="utf-8",
         )
         return plugin_root
+
 

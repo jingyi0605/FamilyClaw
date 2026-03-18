@@ -373,7 +373,7 @@ def run_agent_plugin_memory_checkpoint(
         household_id=household_id,
         request=PluginExecutionRequest(
             plugin_id=payload.plugin_id,
-            plugin_type="connector",
+            plugin_type="integration",
             payload=payload.payload,
             trigger=payload.trigger,
         ),
@@ -418,7 +418,7 @@ async def arun_agent_plugin_memory_checkpoint(
         household_id=household_id,
         request=PluginExecutionRequest(
             plugin_id=payload.plugin_id,
-            plugin_type="connector",
+            plugin_type="integration",
             payload=payload.payload,
             trigger=payload.trigger,
         ),

@@ -4,8 +4,10 @@ import json
 import os
 import subprocess
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from importlib import import_module
 from pathlib import Path
+import sys
 from typing import cast
 
 from app.core.config import BASE_DIR
@@ -38,8 +40,9 @@ class InProcessPluginExecutor(PluginExecutor):
 
     def execute(self, plugin: PluginRegistryItem, request: PluginExecutionRequest):
         entrypoint_path = get_entrypoint_path(plugin, request.plugin_type)
-        handler = load_entrypoint_callable(entrypoint_path)
-        return handler(request.payload)
+        with _plugin_runtime_import_path(plugin):
+            handler = load_entrypoint_callable(entrypoint_path)
+            return handler(request.payload)
 
 
 class SubprocessRunnerPluginExecutor(PluginExecutor):
@@ -113,7 +116,7 @@ def resolve_execution_backend(plugin: PluginRegistryItem, request: PluginExecuti
         return request.execution_backend
     if plugin.execution_backend is not None:
         return plugin.execution_backend
-    if plugin.source_type == "builtin":
+    if plugin.source_type in {"builtin", "official"}:
         return "in_process"
     return "subprocess_runner"
 
@@ -139,7 +142,12 @@ def load_entrypoint_callable(entrypoint_path: str):
 
 
 def _build_pythonpath(plugin_root: str) -> str:
-    path_items = [str(BASE_DIR), str(Path(plugin_root).resolve())]
+    resolved_root = Path(plugin_root).resolve()
+    path_items = [
+        str(BASE_DIR),
+        str(resolved_root.parent),
+        str(resolved_root),
+    ]
     existing = os.environ.get("PYTHONPATH")
     if existing:
         path_items.append(existing)
@@ -151,3 +159,27 @@ def _trim_output(content: str, byte_limit: int) -> str:
     if len(encoded) <= byte_limit:
         return content
     return encoded[:byte_limit].decode("utf-8", errors="ignore")
+
+
+@contextmanager
+def _plugin_runtime_import_path(plugin: PluginRegistryItem):
+    plugin_root = plugin.runner_config.plugin_root if plugin.runner_config is not None else None
+    if not plugin_root:
+        yield
+        return
+
+    resolved_root = Path(plugin_root).resolve()
+    candidate_paths = [str(resolved_root.parent), str(resolved_root)]
+    inserted_paths: list[str] = []
+    for candidate in candidate_paths:
+        if candidate not in sys.path:
+            sys.path.insert(0, candidate)
+            inserted_paths.append(candidate)
+    try:
+        yield
+    finally:
+        for candidate in reversed(inserted_paths):
+            try:
+                sys.path.remove(candidate)
+            except ValueError:
+                pass

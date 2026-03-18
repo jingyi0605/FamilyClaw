@@ -83,7 +83,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
             agent_id=agent.id,
             request=AgentPluginInvokeRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": member.id},
             ),
             actor=actor,
@@ -96,7 +96,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
         self.assertEqual(agent.id, result.agent_id)
         self.assertEqual("绗ㄧ", result.agent_name)
         self.assertEqual("health-basic-reader", result.plugin_id)
-        self.assertEqual("connector", result.plugin_type)
+        self.assertEqual("integration", result.plugin_type)
         self.assertTrue(result.queued)
         self.assertEqual("queued", result.job_status)
         self.assertIsNotNone(result.job_id)
@@ -113,7 +113,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
         details = json.loads(audit_row.details or "{}")
         self.assertEqual(agent.id, details["agent_id"])
         self.assertEqual("health-basic-reader", details["plugin_id"])
-        self.assertEqual("connector", details["plugin_type"])
+        self.assertEqual("integration", details["plugin_type"])
 
     def test_invoke_agent_plugin_returns_failure_when_plugin_disabled(self) -> None:
         household = create_household(
@@ -156,7 +156,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
             agent_id=agent.id,
             request=AgentPluginInvokeRequest(
                 plugin_id="health-basic-reader",
-                plugin_type="connector",
+                plugin_type="integration",
                 payload={"member_id": member.id},
             ),
             actor=actor,
@@ -167,7 +167,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual("agent_plugin_invoke_failed", result.error_code)
-        self.assertIn("褰撳墠瀹跺涵鍋滅敤", result.error_message or "")
+        self.assertIn("当前家庭停用", result.error_message or "")
 
         audit_stmt = select(AuditLog).where(
             AuditLog.action == "agent.plugin.invoke",
@@ -212,7 +212,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tempdir:
-            plugin_root = self._create_third_party_connector_plugin(Path(tempdir), plugin_id="third-party-agent-plugin")
+            plugin_root = self._create_third_party_integration_plugin(Path(tempdir), plugin_id="third-party-agent-plugin")
             register_plugin_mount(
                 self.db,
                 household_id=household.id,
@@ -232,7 +232,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
                 agent_id=agent.id,
                 request=AgentPluginInvokeRequest(
                     plugin_id="third-party-agent-plugin",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={"member_id": member.id},
                 ),
                 actor=actor,
@@ -278,7 +278,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tempdir:
-            plugin_root = self._create_third_party_connector_plugin(Path(tempdir), plugin_id="third-party-agent-plugin")
+            plugin_root = self._create_third_party_integration_plugin(Path(tempdir), plugin_id="third-party-agent-plugin")
             register_plugin_mount(
                 self.db,
                 household_id=household.id,
@@ -305,7 +305,7 @@ class AgentPluginBridgeTests(unittest.TestCase):
                 agent_id=agent.id,
                 request=AgentPluginInvokeRequest(
                     plugin_id="third-party-agent-plugin",
-                    plugin_type="connector",
+                    plugin_type="integration",
                     payload={"member_id": member.id},
                 ),
                 actor=actor,
@@ -314,9 +314,9 @@ class AgentPluginBridgeTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual("agent_plugin_invoke_failed", result.error_code)
-        self.assertIn("褰撳墠瀹跺涵鍋滅敤", result.error_message or "")
+        self.assertIn("当前家庭停用", result.error_message or "")
 
-    def _create_third_party_connector_plugin(self, root: Path, *, plugin_id: str) -> Path:
+    def _create_third_party_integration_plugin(self, root: Path, *, plugin_id: str) -> Path:
         plugin_root = root / plugin_id
         package_dir = plugin_root / "plugin"
         package_dir.mkdir(parents=True)
@@ -327,17 +327,17 @@ class AgentPluginBridgeTests(unittest.TestCase):
                     "id": plugin_id,
                     "name": "绗笁鏂?Agent 鎻掍欢",
                     "version": "0.1.0",
-                    "types": ["connector"],
+                    "types": ["integration"],
                     "permissions": ["health.read"],
                     "risk_level": "low",
                     "triggers": ["agent"],
-                    "entrypoints": {"connector": "plugin.connector.sync"},
+                    "entrypoints": {"integration": "plugin.integration.sync"},
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
-        (package_dir / "connector.py").write_text(
+        (package_dir / "integration.py").write_text(
             "def sync(payload=None):\n"
             "    data = payload or {}\n"
             "    return {'source': 'third-party-agent-plugin', 'echo': data, 'records': []}\n",
@@ -348,4 +348,5 @@ class AgentPluginBridgeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
