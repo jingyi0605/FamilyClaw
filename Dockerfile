@@ -4,12 +4,18 @@ FROM node:20-bookworm-slim AS user-app-builder
 
 WORKDIR /workspace
 
+# 先复制根目录的 package 文件用于安装 workspaces
+COPY package.json package-lock.json ./
 COPY packages ./packages
-COPY apps/user-app ./apps/user-app
 
-WORKDIR /workspace/apps/user-app
+# 配置 npm 镜像并安装根目录依赖（包括 workspaces）
 RUN npm config set registry https://registry.npmmirror.com \
-    && npm ci --legacy-peer-deps && npm run build:h5
+    && npm ci --legacy-peer-deps --ignore-scripts
+
+# 复制 apps/user-app 并安装其依赖，然后构建
+COPY apps/user-app ./apps/user-app
+WORKDIR /workspace/apps/user-app
+RUN npm ci --legacy-peer-deps && npm run build:h5
 
 
 FROM python:3.11-bookworm AS runtime
