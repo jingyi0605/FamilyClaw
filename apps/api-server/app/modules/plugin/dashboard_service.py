@@ -54,6 +54,10 @@ DEFAULT_HOME_LAYOUT_CARD_REFS = (
     "builtin:events",
     "builtin:quick-actions",
 )
+OFFICIAL_WEATHER_PLUGIN_ID = "official-weather"
+OFFICIAL_WEATHER_DEFAULT_CARD_KEY = "weather-default"
+OFFICIAL_WEATHER_DEVICE_CARD_KEY_PREFIX = "weather-device-"
+OFFICIAL_WEATHER_CARD_REF_PREFIX = f"plugin:{OFFICIAL_WEATHER_PLUGIN_ID}:home:weather-"
 
 
 def build_plugin_dashboard_card_ref(*, plugin_id: str, placement: str, card_key: str) -> str:
@@ -534,8 +538,126 @@ def _build_plugin_home_cards(
                 )
             )
 
+    weather_cards, weather_warnings = _build_official_weather_home_cards(
+        db,
+        household_id=household_id,
+        enabled_plugin_ids={plugin.id for plugin in snapshot.items if plugin.enabled},
+    )
+    cards.extend(weather_cards)
+    warnings.extend(weather_warnings)
     cards.sort(key=lambda item: item.card_ref)
     return cards, warnings
+
+
+def _build_official_weather_home_cards(
+    db: Session,
+    *,
+    household_id: str,
+    enabled_plugin_ids: set[str],
+) -> tuple[list[HomeDashboardCardRead], list[str]]:
+    if OFFICIAL_WEATHER_PLUGIN_ID not in enabled_plugin_ids:
+        return [], []
+
+    from app.modules.weather.service import (
+        WEATHER_DEFAULT_BINDING_TYPE,
+        list_weather_card_snapshots,
+        list_weather_device_binding_reads,
+    )
+
+    warnings: list[str] = []
+    try:
+        bindings = list_weather_device_binding_reads(db, household_id=household_id)
+        snapshots = {
+            item.device_id: item
+            for item in list_weather_card_snapshots(db, household_id=household_id)
+        }
+    except Exception as exc:
+        return [], [f"官方天气卡片聚合失败：{exc}"]
+
+    cards: list[HomeDashboardCardRead] = []
+    for binding in bindings:
+        snapshot = snapshots.get(binding.device_id)
+        if snapshot is None:
+            warnings.append(f"官方天气卡片缺少快照：{binding.device_id}")
+            cards.append(
+                HomeDashboardCardRead(
+                    card_ref=_build_official_weather_card_ref(
+                        device_id=binding.device_id,
+                        binding_type=binding.binding_type,
+                    ),
+                    source_type="plugin",
+                    template_type="insight",
+                    size="half",
+                    state="error",
+                    title=binding.display_name,
+                    subtitle=_build_official_weather_card_subtitle(binding.binding_type),
+                    payload={
+                        "card_kind": "weather",
+                        "location": binding.display_name,
+                        "message": "天气卡片暂不可用",
+                    },
+                    actions=[],
+                )
+            )
+            continue
+
+        payload = dict(snapshot.payload)
+        payload["card_kind"] = "weather"
+        payload["device_id"] = binding.device_id
+        payload["binding_type"] = binding.binding_type
+        cards.append(
+            HomeDashboardCardRead(
+                card_ref=_build_official_weather_card_ref(
+                    device_id=binding.device_id,
+                    binding_type=binding.binding_type,
+                ),
+                source_type="plugin",
+                template_type="insight",
+                size="half",
+                state=_resolve_official_weather_home_card_state(snapshot.state),
+                title=binding.display_name,
+                subtitle=_build_official_weather_card_subtitle(binding.binding_type),
+                payload=payload,
+                actions=[],
+            )
+        )
+
+    cards.sort(
+        key=lambda item: (
+            0 if item.card_ref.endswith(OFFICIAL_WEATHER_DEFAULT_CARD_KEY) else 1,
+            item.title,
+            item.card_ref,
+        )
+    )
+    return cards, warnings
+
+
+def _build_official_weather_card_ref(*, device_id: str, binding_type: str) -> str:
+    if binding_type == "default_household":
+        card_key = OFFICIAL_WEATHER_DEFAULT_CARD_KEY
+    else:
+        card_key = f"{OFFICIAL_WEATHER_DEVICE_CARD_KEY_PREFIX}{device_id}"
+    return build_plugin_dashboard_card_ref(
+        plugin_id=OFFICIAL_WEATHER_PLUGIN_ID,
+        placement="home",
+        card_key=card_key,
+    )
+
+
+def _build_official_weather_card_subtitle(binding_type: str) -> str:
+    if binding_type == "default_household":
+        return "家庭默认天气"
+    return "附加地区天气"
+
+
+def _resolve_official_weather_home_card_state(snapshot_state: str) -> str:
+    if snapshot_state == "ready":
+        return "ready"
+    if snapshot_state == "stale":
+        return "stale"
+    if snapshot_state == "pending_coordinate":
+        return "empty"
+    return "error"
 
 
 def _normalize_member_layout(
@@ -631,6 +753,12 @@ def _build_default_home_order(available_cards: dict[str, HomeDashboardCardRead])
             order_map[card_ref] = index * 10
 
     next_order = (len(order_map) + 1) * 10
+    for card_ref in sorted(available_cards):
+        if card_ref in order_map or not card_ref.startswith(OFFICIAL_WEATHER_CARD_REF_PREFIX):
+            continue
+        order_map[card_ref] = next_order
+        next_order += 10
+
     for card_ref in sorted(available_cards):
         if card_ref in order_map:
             continue

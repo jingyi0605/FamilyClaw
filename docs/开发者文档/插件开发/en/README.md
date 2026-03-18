@@ -3,13 +3,14 @@
 ## Document Metadata
 
 - Purpose: serve as the English entry point for plugin developer documentation, organized around stable rules first and fast-changing references later.
-- Current version: v1.3
+- Current version: v1.4
 - Related documents: `docs/开发者文档/插件开发/README.md`, `docs/开发者文档/插件开发/zh-CN/README.md`
 - Change log:
   - `2026-03-13`: created the English entry.
   - `2026-03-13`: switched to numbered reading order and added document metadata.
   - `2026-03-14`: added the scheduled-task API and OpenAPI guide.
   - `2026-03-16`: reorganized the reading order into stable rules and fast-changing references, and added plugin configuration integration guidance.
+  - `2026-03-18`: added household region-coordinate boundaries, including the `region-provider` coordinate contract and the unified `coordinate` runtime result.
 
 This directory stores the English plugin developer documentation.
 
@@ -44,6 +45,13 @@ Keep one boundary in mind:
 - the repository already implements built-in same-process plugins
 - the recommended target path for third-party plugins is `main service + same-container subprocess runner + plugin-owned venv`
 - the public execution path already moved to “create a background job first, then let workers execute plugins”
+
+If your change touches either of these areas, read `03` and `05` first before touching code:
+
+- `region-provider` node payloads
+- `household_region_context` consumption
+
+Since `2026-03-18`, household region context now carries a formal unified `coordinate` result. Upper-layer plugins should consume that object directly instead of guessing coordinates from `city` text.
 
 ## What To Read First
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -26,6 +26,11 @@ class RegionNode(Base):
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     imported_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    coordinate_precision: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    coordinate_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    coordinate_updated_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     extra: Mapped[str | None] = mapped_column(Text, nullable=True)
 

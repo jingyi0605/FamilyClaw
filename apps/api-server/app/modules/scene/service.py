@@ -843,7 +843,7 @@ def _build_scene_explanation(
         response = invoke_capability(
             db,
             AiGatewayInvokeRequest(
-                capability="scene_explanation",
+                capability="text",
                 household_id=household_id,
                 payload={
                     "scene_name": template.name,
@@ -874,7 +874,7 @@ async def _abuild_scene_explanation(
         response = await ainvoke_capability(
             db,
             AiGatewayInvokeRequest(
-                capability="scene_explanation",
+                capability="text",
                 household_id=household_id,
                 payload={
                     "scene_name": template.name,

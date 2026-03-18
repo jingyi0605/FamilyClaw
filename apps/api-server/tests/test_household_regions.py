@@ -1,39 +1,32 @@
-﻿import tempfile
 import unittest
-from pathlib import Path
 
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.orm import Session, sessionmaker
+from fastapi import HTTPException
+from sqlalchemy import inspect
+from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
 from app.api.dependencies import ActorContext
 from app.api.v1.endpoints.households import (
     create_household_endpoint,
-    get_household_endpoint,
-    update_household_endpoint,
+    update_household_coordinate_endpoint,
 )
-from app.api.v1.endpoints.regions import list_region_catalog_endpoint, search_region_catalog_endpoint
-from app.core.config import settings
-from app.modules.household.schemas import HouseholdCreate, HouseholdUpdate
-from app.modules.household.service import create_household, get_household_setup_status
+from app.modules.household.schemas import HouseholdCoordinateUpsert, HouseholdCreate
+from app.modules.household.service import build_household_read, create_household, get_household_or_404
+from app.modules.region.providers import BUILTIN_CN_MAINLAND_PROVIDER, CnMainlandRegionProvider, region_provider_registry
 from app.modules.region.schemas import RegionCatalogImportItem, RegionSelection
 from app.modules.region.service import import_region_catalog, resolve_household_region_context
+from tests.test_db_support import PostgresTestDatabase
 
 
 class HouseholdRegionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._tempdir = tempfile.TemporaryDirectory()
-        self._previous_database_url = settings.database_url
-
-        from tests.test_db_support import PostgresTestDatabase
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
-        self.database_url = self._db_helper.database_url
         self.engine = self._db_helper.engine
-        self.SessionLocal = self._db_helper.SessionLocal
-        self.db: Session = self.SessionLocal()
+        self.db: Session = self._db_helper.SessionLocal()
+        self._original_builtin_provider = region_provider_registry.get(BUILTIN_CN_MAINLAND_PROVIDER)
+        region_provider_registry.register(CnMainlandRegionProvider())
+
         import_region_catalog(
             self.db,
             items=[
@@ -41,42 +34,53 @@ class HouseholdRegionTests(unittest.TestCase):
                     region_code="110000",
                     parent_region_code=None,
                     admin_level="province",
-                    name="鍖椾含甯?,
-                    full_name="鍖椾含甯?,
+                    name="Beijing",
+                    full_name="Beijing",
                     path_codes=["110000"],
-                    path_names=["鍖椾含甯?],
+                    path_names=["Beijing"],
                 ),
                 RegionCatalogImportItem(
                     region_code="110100",
                     parent_region_code="110000",
                     admin_level="city",
-                    name="鍖椾含甯?,
-                    full_name="鍖椾含甯?/ 鍖椾含甯?,
+                    name="Beijing City",
+                    full_name="Beijing / Beijing City",
                     path_codes=["110000", "110100"],
-                    path_names=["鍖椾含甯?, "鍖椾含甯?],
+                    path_names=["Beijing", "Beijing City"],
                 ),
                 RegionCatalogImportItem(
                     region_code="110105",
                     parent_region_code="110100",
                     admin_level="district",
-                    name="鏈濋槼鍖?,
-                    full_name="鍖椾含甯?/ 鍖椾含甯?/ 鏈濋槼鍖?,
+                    name="Chaoyang",
+                    full_name="Beijing / Beijing City / Chaoyang",
                     path_codes=["110000", "110100", "110105"],
-                    path_names=["鍖椾含甯?, "鍖椾含甯?, "鏈濋槼鍖?],
+                    path_names=["Beijing", "Beijing City", "Chaoyang"],
+                    latitude=39.9219,
+                    longitude=116.4436,
+                    coordinate_precision="district",
+                    coordinate_source="provider_builtin",
+                    coordinate_updated_at="2026-03-18T00:00:00Z",
                 ),
                 RegionCatalogImportItem(
                     region_code="110108",
                     parent_region_code="110100",
                     admin_level="district",
-                    name="娴锋穩鍖?,
-                    full_name="鍖椾含甯?/ 鍖椾含甯?/ 娴锋穩鍖?,
+                    name="Haidian",
+                    full_name="Beijing / Beijing City / Haidian",
                     path_codes=["110000", "110100", "110108"],
-                    path_names=["鍖椾含甯?, "鍖椾含甯?, "娴锋穩鍖?],
+                    path_names=["Beijing", "Beijing City", "Haidian"],
+                    latitude=39.9593,
+                    longitude=116.2985,
+                    coordinate_precision="district",
+                    coordinate_source="provider_builtin",
+                    coordinate_updated_at="2026-03-18T00:00:00Z",
                 ),
             ],
-            source_version="test-v1",
+            source_version="household-test-v1",
         )
         self.db.commit()
+
         self.admin_actor = ActorContext(
             role="admin",
             actor_type="admin",
@@ -84,51 +88,33 @@ class HouseholdRegionTests(unittest.TestCase):
             account_type="system",
             is_authenticated=True,
         )
-        self.member_actor = ActorContext(
-            role="member",
-            actor_type="member",
-            actor_id="member-001",
-            account_type="household",
-            household_id="placeholder",
-            is_authenticated=True,
-        )
 
     def tearDown(self) -> None:
         self.db.close()
+        if self._original_builtin_provider is not None:
+            region_provider_registry.register(self._original_builtin_provider)
         self._db_helper.close()
-        self._tempdir.cleanup()
 
-    def test_region_tables_exist(self) -> None:
+    def test_migration_adds_coordinate_columns(self) -> None:
         inspector = inspect(self.engine)
-        table_names = set(inspector.get_table_names())
-        self.assertTrue({"region_nodes", "household_regions"}.issubset(table_names))
+        household_columns = {column["name"] for column in inspector.get_columns("households")}
+        region_columns = {column["name"] for column in inspector.get_columns("region_nodes")}
 
-    def test_region_catalog_endpoints_return_expected_nodes(self) -> None:
-        provinces = list_region_catalog_endpoint(
-            provider_code="builtin.cn-mainland",
-            country_code="CN",
-            parent_region_code=None,
-            admin_level="province",
-            db=self.db,
-            _actor=self.member_actor,
+        self.assertTrue(
+            {"latitude", "longitude", "coordinate_source", "coordinate_precision", "coordinate_updated_at"}.issubset(
+                household_columns
+            )
         )
-        districts = search_region_catalog_endpoint(
-            provider_code="builtin.cn-mainland",
-            country_code="CN",
-            keyword="娴锋穩",
-            admin_level="district",
-            parent_region_code=None,
-            db=self.db,
-            _actor=self.member_actor,
+        self.assertTrue(
+            {"latitude", "longitude", "coordinate_source", "coordinate_precision", "coordinate_updated_at"}.issubset(
+                region_columns
+            )
         )
 
-        self.assertEqual(["鍖椾含甯?], [item.name for item in provinces])
-        self.assertEqual(["娴锋穩鍖?], [item.name for item in districts])
-
-    def test_household_endpoints_return_structured_region_and_city_projection(self) -> None:
+    def test_region_binding_returns_region_representative_coordinate(self) -> None:
         created = create_household_endpoint(
             HouseholdCreate(
-                name="鍦板尯瀹跺涵",
+                name="Region Household",
                 timezone="Asia/Shanghai",
                 locale="zh-CN",
                 region_selection=RegionSelection(
@@ -140,26 +126,18 @@ class HouseholdRegionTests(unittest.TestCase):
             db=self.db,
             actor=self.admin_actor,
         )
-        self.member_actor = ActorContext(
-            role="member",
-            actor_type="member",
-            actor_id="member-001",
-            account_type="household",
-            household_id=created.id,
-            is_authenticated=True,
-        )
-        fetched = get_household_endpoint(created.id, db=self.db, actor=self.member_actor)
 
-        self.assertEqual("鍖椾含甯?鏈濋槼鍖?, created.city)
         self.assertEqual("configured", created.region.status)
-        self.assertEqual("110105", created.region.region_code)
-        self.assertEqual("鏈濋槼鍖?, fetched.region.district.name if fetched.region.district else None)
+        self.assertTrue(created.region.coordinate.available)
+        self.assertEqual("region_representative", created.region.coordinate.source_type)
+        self.assertEqual(39.9219, created.region.coordinate.latitude)
+        self.assertEqual("Chaoyang", created.region.district.name if created.region.district else None)
 
-    def test_update_household_region_changes_projection(self) -> None:
+    def test_confirmed_household_coordinate_overrides_region_coordinate(self) -> None:
         household = create_household(
             self.db,
             HouseholdCreate(
-                name="鍙洿鏂板搴?,
+                name="Exact Coordinate Household",
                 timezone="Asia/Shanghai",
                 locale="zh-CN",
                 region_selection=RegionSelection(
@@ -171,53 +149,62 @@ class HouseholdRegionTests(unittest.TestCase):
         )
         self.db.commit()
 
-        updated = update_household_endpoint(
+        update_household_coordinate_endpoint(
             household.id,
-            HouseholdUpdate(
-                region_selection=RegionSelection(
-                    provider_code="builtin.cn-mainland",
-                    country_code="CN",
-                    region_code="110108",
-                )
+            HouseholdCoordinateUpsert(
+                latitude=39.9001,
+                longitude=116.4012,
+                coordinate_source="manual_browser",
+                confirmed=True,
             ),
             db=self.db,
             actor=self.admin_actor,
         )
 
-        self.assertEqual("鍖椾含甯?娴锋穩鍖?, updated.city)
-        self.assertEqual("110108", updated.region.region_code)
-        self.assertEqual("娴锋穩鍖?, updated.region.district.name if updated.region.district else None)
+        refreshed = build_household_read(self.db, get_household_or_404(self.db, household.id))
 
-    def test_new_household_setup_requires_formal_region(self) -> None:
+        self.assertIsNotNone(refreshed.coordinate_override)
+        assert refreshed.coordinate_override is not None
+        self.assertEqual("manual_browser", refreshed.coordinate_override.coordinate_source)
+        self.assertEqual("household_exact", refreshed.region.coordinate.source_type)
+        self.assertEqual(39.9001, refreshed.region.coordinate.latitude)
+        self.assertEqual("110105", refreshed.region.coordinate.region_code)
+
+    def test_unconfirmed_household_coordinate_is_rejected(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="鏃у叆鍙ｅ搴?, city="鍖椾含", timezone="Asia/Shanghai", locale="zh-CN"),
+            HouseholdCreate(
+                name="Pending Coordinate Household",
+                timezone="Asia/Shanghai",
+                locale="zh-CN",
+            ),
         )
         self.db.commit()
 
-        before_status = get_household_setup_status(self.db, household.id)
-        self.assertEqual("family_profile", before_status.current_step)
+        with self.assertRaises(HTTPException) as context:
+            update_household_coordinate_endpoint(
+                household.id,
+                HouseholdCoordinateUpsert(
+                    latitude=39.9001,
+                    longitude=116.4012,
+                    coordinate_source="manual_browser",
+                    confirmed=False,
+                ),
+                db=self.db,
+                actor=self.admin_actor,
+            )
 
-        update_household_endpoint(
-            household.id,
-            HouseholdUpdate(
-                region_selection=RegionSelection(
-                    provider_code="builtin.cn-mainland",
-                    country_code="CN",
-                    region_code="110105",
-                )
-            ),
-            db=self.db,
-            actor=self.admin_actor,
-        )
-        after_status = get_household_setup_status(self.db, household.id)
+        self.assertEqual("coordinate_unconfirmed", context.exception.detail["error_code"])
 
-        self.assertEqual("first_member", after_status.current_step)
-
-    def test_resolve_household_region_context_returns_unconfigured_for_legacy_household(self) -> None:
+    def test_legacy_household_returns_unconfigured_and_unavailable_coordinate(self) -> None:
         household = create_household(
             self.db,
-            HouseholdCreate(name="鏃у搴?, city="鍖椾含", timezone="Asia/Shanghai", locale="zh-CN"),
+            HouseholdCreate(
+                name="Legacy Household",
+                city="Legacy City",
+                timezone="Asia/Shanghai",
+                locale="zh-CN",
+            ),
         )
         self.db.commit()
 
@@ -225,8 +212,9 @@ class HouseholdRegionTests(unittest.TestCase):
 
         self.assertEqual("unconfigured", context.status)
         self.assertEqual("household_region_unconfigured", context.error_code)
+        self.assertEqual("unavailable", context.coordinate.source_type)
+        self.assertFalse(context.coordinate.available)
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -29,6 +29,7 @@ from app.modules.device.plugin_config_bridge import (
     load_device_scope_legacy_payloads,
     sync_device_scope_legacy_fields,
 )
+from app.modules.weather.schemas import WEATHER_PROVIDER_DEFAULT_TYPE
 
 
 PLUGIN_SCOPE_KEY = "default"
@@ -150,6 +151,7 @@ def save_plugin_config_form(
         next_data[field_key] = value
 
     field_errors, values, secret_fields, state = _build_view_payload(
+        plugin_id=plugin.id,
         config_spec=config_spec,
         stored_data=next_data,
         stored_secret_data=next_secret_data,
@@ -244,6 +246,7 @@ def get_integration_instance_plugin_config_form(
     )
     stored_data, stored_secret_data = _load_config_instance_payload(instance)
     field_errors, values, secret_fields, state = _build_view_payload(
+        plugin_id=plugin.id,
         config_spec=config_spec,
         stored_data=stored_data,
         stored_secret_data=stored_secret_data,
@@ -320,6 +323,7 @@ def save_integration_instance_plugin_config_form(
         next_data[field_key] = value
 
     field_errors, view_values, secret_fields, state = _build_view_payload(
+        plugin_id=plugin.id,
         config_spec=config_spec,
         stored_data=next_data,
         stored_secret_data=next_secret_data,
@@ -500,6 +504,7 @@ def _build_plugin_config_form(
         scope_context=scope_context,
     )
     field_errors, values, secret_fields, state = _build_view_payload(
+        plugin_id=plugin.id,
         config_spec=config_spec,
         stored_data=stored_data,
         stored_secret_data=stored_secret_data,
@@ -571,6 +576,7 @@ def _load_config_payloads(
 
 def _build_view_payload(
     *,
+    plugin_id: str,
     config_spec: PluginManifestConfigSpec,
     stored_data: dict[str, Any],
     stored_secret_data: dict[str, Any],
@@ -597,6 +603,13 @@ def _build_view_payload(
             values[field.key] = actual_value
         _validate_field_value(field, actual_value, has_value=has_value, field_errors=field_errors)
 
+    _apply_plugin_specific_validation(
+        plugin_id=plugin_id,
+        values=values,
+        secret_fields=secret_fields,
+        field_errors=field_errors,
+    )
+
     if not has_persisted_record:
         state: PluginConfigState = "unconfigured"
     elif field_errors:
@@ -604,6 +617,22 @@ def _build_view_payload(
     else:
         state = "configured"
     return field_errors, values, secret_fields, state
+
+
+def _apply_plugin_specific_validation(
+    *,
+    plugin_id: str,
+    values: dict[str, Any],
+    secret_fields: dict[str, Any],
+    field_errors: dict[str, str],
+) -> None:
+    if plugin_id != "official-weather":
+        return
+    provider_type = values.get("provider_type", WEATHER_PROVIDER_DEFAULT_TYPE)
+    if provider_type == "openweather" and not secret_fields.get("openweather_api_key", {}).get("has_value"):
+        field_errors["openweather_api_key"] = "切换到 OpenWeather 时必须填写 API Key"
+    if provider_type == "weatherapi" and not secret_fields.get("weatherapi_api_key", {}).get("has_value"):
+        field_errors["weatherapi_api_key"] = "切换到 WeatherAPI 时必须填写 API Key"
 
 
 def _validate_field_value(

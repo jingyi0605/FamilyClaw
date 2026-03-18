@@ -3,12 +3,13 @@
 ## Document Metadata
 
 - Purpose: explain how plugins integrate with FamilyClaw today, with the focus on stable runtime paths and clear boundaries instead of copied API details.
-- Current version: v1.5
+- Current version: v1.6
 - Related documents: `docs/开发者文档/插件开发/en/03-manifest-spec.md`, `docs/开发者文档/插件开发/en/11-plugin-configuration-integration.md`, `specs/004.2.3-插件配置协议与动态表单/docs/README.md`, `apps/api-server/app/modules/plugin/service.py`
 - Change log:
   - `2026-03-13`: added the first plugin integration guide.
   - `2026-03-14`: added `locale-pack`, region-context, and scheduled-task boundaries.
   - `2026-03-16`: added formal plugin configuration integration rules and switched to the “stable rules + referenced facts” structure.
+  - `2026-03-18`: added the unified household coordinate structure, the `region-provider` representative-coordinate contract, and the household exact-coordinate write boundary.
 
 This document answers four questions:
 
@@ -129,6 +130,57 @@ If the plugin declares household region-context reads, the system injects contro
 
 If the invocation comes from scheduled tasks, source-tracing fields are also included. They exist for tracing and idempotency support, not for mutating scheduler state.
 
+### 4.1 How To Read `household_context.coordinate`
+
+From this round on, `_system_context.region.household_context` includes a formal unified coordinate result. Upper-layer plugins should not rebuild priority rules by hand anymore.
+
+The structure looks roughly like this:
+
+```json
+{
+  "status": "configured",
+  "provider_code": "builtin.cn-mainland",
+  "region_code": "110105",
+  "display_name": "Beijing Chaoyang District",
+  "coordinate": {
+    "available": true,
+    "latitude": 39.9219,
+    "longitude": 116.4436,
+    "source_type": "household_exact",
+    "precision": "point",
+    "provider_code": "builtin.cn-mainland",
+    "region_code": "110105",
+    "region_path": ["Beijing", "Beijing", "Chaoyang District"],
+    "updated_at": "2026-03-18T09:00:00Z"
+  }
+}
+```
+
+Four hard rules apply:
+
+1. Coordinate priority is already resolved by the system:
+   - household exact coordinate
+   - region representative coordinate
+   - `unavailable`
+2. `coordinate.source_type` has only three formal values:
+   - `household_exact`
+   - `region_representative`
+   - `unavailable`
+3. If `coordinate.available=false`, treat it as no coordinate. Do not geocode from `city` or `display_name`.
+4. If the provider is temporarily unavailable but the binding snapshot already contains a representative coordinate, the system may still return `region_representative`. That is expected.
+
+### 4.2 Browser Or App Location Does Not Auto-Override Household Coordinates
+
+Browser or app location is only a candidate input.
+
+A formal household exact coordinate requires all three:
+
+- explicit user confirmation
+- `PATCH /households/{id}/coordinate`
+- `confirmed=true`
+
+Before that save happens, plugins still see the currently effective `household_context.coordinate`. Candidate location data does not silently override it.
+
 ## 5. What Output Plugins Should Return
 
 ### `connector`
@@ -163,6 +215,20 @@ If the invocation comes from scheduled tasks, source-tracing fields are also inc
 
 - follows the formal region-provider protocol and returns JSON results
 - it is now a formal extension point, not a temporary experiment
+
+If the result is a standard region node, the node may now optionally include five representative-coordinate fields:
+
+- `latitude`
+- `longitude`
+- `coordinate_precision`
+- `coordinate_source`
+- `coordinate_updated_at`
+
+Keep the rules clean:
+
+- older providers stay compatible without coordinates
+- once latitude and longitude are present, precision and source must also be present
+- upper-layer plugins should ultimately consume unified `household_context.coordinate`, not guess coordinates from node names
 
 ## 6. How Formal Plugin Configuration Is Integrated
 
@@ -228,6 +294,7 @@ This guide does not repeat long payload samples. It keeps only the stable catego
 - Agent invokes action plugins
 - high-risk action confirmation
 - unified plugin configuration scope / form / save APIs
+- household exact-coordinate save API: `PATCH /households/{id}/coordinate`
 
 For concrete request and response examples, read:
 

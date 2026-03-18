@@ -3,13 +3,14 @@
 ## Document Metadata
 
 - Purpose: explain which `manifest.json` fields are formal entry points, which rules are stable, and which changing details should be referenced instead of copied.
-- Current version: v1.5
+- Current version: v1.6
 - Related documents: `docs/开发者文档/插件开发/en/00-how-to-use-and-maintain-these-docs.md`, `docs/开发者文档/插件开发/en/11-plugin-configuration-integration.md`, `specs/004.2.3-插件配置协议与动态表单/docs/README.md`, `apps/api-server/app/modules/plugin/schemas.py`
 - Change log:
   - `2026-03-13`: created the first manifest specification.
   - `2026-03-14`: added `locale-pack`, region-context, and `schedule_templates` rules.
   - `2026-03-16`: added `channel`, `region-provider`, the formal configuration protocol entry, and the new “stable rules + referenced facts” structure.
   - `2026-03-17`: added `theme-pack`, `ai-provider`, version-governance boundaries, and the unified enable/disable rule reference.
+  - `2026-03-18`: added the `region-provider` coordinate-node contract, the unified `household_context.coordinate` structure, and the “no city-based guessing” boundary.
 
 This document keeps only stable rules. It does not copy large tables that will change often.
 
@@ -207,6 +208,26 @@ Capabilities formally available in this round:
 
 For channel plugins, keep platform capability declarations in the formal channel plugin fields. Do not push those fields back into page-level constants.
 
+If you declare `context_reads.household_region_context=true`, remember one more boundary:
+
+- runtime input now includes `household_context.coordinate`
+- upper-layer plugins should consume that object directly
+- do not geocode from `city`, `display_name`, or other text fields anymore
+
+### Extra runtime constraints for `region-provider`
+
+If a plugin runs as a formal `region-provider`, the manifest declaration is only the start. Its node payloads must also follow these rules:
+
+- standard region nodes may now optionally return:
+  - `latitude`
+  - `longitude`
+  - `coordinate_precision`
+  - `coordinate_source`
+  - `coordinate_updated_at`
+- coordinates stay optional, but once latitude and longitude are present, precision and source must also be present.
+- missing coordinates do not invalidate older providers; they just lead to `household_context.coordinate.source_type="unavailable"` upstream.
+- if the provider implements `build_snapshot`, it should keep representative coordinates in `representative_coordinate` so existing bindings can still reuse snapshot coordinates during temporary provider outages.
+
 ### `config_specs`
 
 - Optional
@@ -279,6 +300,8 @@ These are not suggestions:
 9. If a plugin runs as a region provider, it must declare `types=["region-provider"]` plus a full `capabilities.region_provider`.
 10. If a plugin declares `config_specs`, the backend validates that formal protocol and rejects invalid manifests.
 11. Older plugins without the configuration protocol must not become invalid just because `config_specs` now exists.
+12. If you are a `region-provider`, any returned coordinate must include latitude, longitude, precision, and source together.
+13. If you read `household_region_context`, consume the unified `coordinate` result instead of geocoding from `city` text.
 
 ## 6. Things That Should Not Go Into Manifest Yet
 
@@ -306,5 +329,7 @@ In short: keep the formal runtime declaration clear. Do not stuff future open-pl
 8. If this plugin should be used by scheduled tasks, did you explicitly declare `schedule`?
 9. If this is a `channel` plugin, did you declare the `channel_account` scope through the formal configuration protocol instead of hardcoding fields in the page?
 10. Are you secretly depending on remote install, remote execution, sandboxing, or a signing platform?
+11. If this is a `region-provider`, do returned coordinates always include latitude, longitude, precision, and source together?
+12. If you read `household_region_context`, are you using `coordinate` directly instead of reverse-geocoding from `city` text?
 
 If these all pass, then prepare the registry and integration materials.

@@ -19,12 +19,14 @@ from app.modules.region.providers import (
     region_provider_registry,
 )
 from app.modules.region.schemas import (
+    HouseholdCoordinateOverrideRead,
     HouseholdRegionErrorRead,
     HouseholdRegionRead,
     RegionCatalogImportItem,
     RegionNodeRead,
     RegionNodeRefRead,
     RegionSelection,
+    ResolvedHouseholdCoordinateRead,
 )
 
 DISTRICT_LEVEL = "district"
@@ -96,6 +98,11 @@ def import_region_catalog(
                 timezone=item.timezone,
                 source_version=source_version,
                 imported_at=imported_at,
+                latitude=item.latitude,
+                longitude=item.longitude,
+                coordinate_precision=item.coordinate_precision,
+                coordinate_source=item.coordinate_source,
+                coordinate_updated_at=item.coordinate_updated_at,
                 enabled=item.enabled,
                 extra=dump_json(item.extra),
             )
@@ -109,6 +116,11 @@ def import_region_catalog(
             existing.timezone = item.timezone
             existing.source_version = source_version
             existing.imported_at = imported_at
+            existing.latitude = item.latitude
+            existing.longitude = item.longitude
+            existing.coordinate_precision = item.coordinate_precision
+            existing.coordinate_source = item.coordinate_source
+            existing.coordinate_updated_at = item.coordinate_updated_at
             existing.enabled = item.enabled
             existing.extra = dump_json(item.extra)
         db.add(existing)
@@ -181,6 +193,22 @@ def has_household_region_binding(db: Session, household_id: str) -> bool:
     return get_household_region_binding(db, household_id) is not None
 
 
+def get_household_coordinate_override(household: Household | None) -> HouseholdCoordinateOverrideRead | None:
+    if household is None:
+        return None
+    if household.latitude is None or household.longitude is None:
+        return None
+    if household.coordinate_source is None or household.coordinate_precision is None or household.coordinate_updated_at is None:
+        return None
+    return HouseholdCoordinateOverrideRead(
+        latitude=household.latitude,
+        longitude=household.longitude,
+        coordinate_source=cast(Any, household.coordinate_source),
+        coordinate_precision=cast(Any, household.coordinate_precision),
+        coordinate_updated_at=household.coordinate_updated_at,
+    )
+
+
 def upsert_household_region(
     db: Session,
     *,
@@ -251,10 +279,24 @@ def upsert_household_region(
     return existing
 
 
-def get_household_region_context(db: Session, household_id: str) -> HouseholdRegionRead:
+def get_household_region_context(
+    db: Session,
+    household_id: str,
+    *,
+    household: Household | None = None,
+) -> HouseholdRegionRead:
+    household = household or db.get(Household, household_id)
     binding = get_household_region_binding(db, household_id)
     if binding is None:
-        return HouseholdRegionRead(status="unconfigured")
+        return HouseholdRegionRead(
+            status="unconfigured",
+            coordinate=_resolve_household_coordinate(
+                db,
+                household=household,
+                binding=None,
+                household_id=household_id,
+            ),
+        )
 
     snapshot = load_json(binding.snapshot) or {}
     provider = _find_provider_for_household(db, provider_code=binding.provider_code, household_id=household_id)
@@ -270,19 +312,140 @@ def get_household_region_context(db: Session, household_id: str) -> HouseholdReg
         district=_to_region_ref(snapshot.get("district")),
         display_name=snapshot.get("display_name") or binding.display_name,
         timezone=snapshot.get("timezone"),
+        coordinate=_resolve_household_coordinate(
+            db,
+            household=household,
+            binding=binding,
+            household_id=household_id,
+        ),
     )
 
 
 def resolve_household_region_context(db: Session, household_id: str) -> HouseholdRegionErrorRead:
+    household = db.get(Household, household_id)
     binding = get_household_region_binding(db, household_id)
+    context = get_household_region_context(db, household_id, household=household)
     if binding is None:
         return HouseholdRegionErrorRead(
-            status="unconfigured",
+            **context.model_dump(),
             error_code="household_region_unconfigured",
             detail="当前家庭还没有配置正式地区",
         )
-    context = get_household_region_context(db, household_id)
+    if context.status == "provider_unavailable" and not context.coordinate.available:
+        return HouseholdRegionErrorRead(
+            **context.model_dump(),
+            error_code="region_provider_unavailable",
+            detail="当前家庭的地区 provider 暂时不可用，无法解析地区代表坐标",
+        )
     return HouseholdRegionErrorRead(**context.model_dump())
+
+
+def _resolve_household_coordinate(
+    db: Session,
+    *,
+    household: Household | None,
+    binding: HouseholdRegionBinding | None,
+    household_id: str,
+) -> ResolvedHouseholdCoordinateRead:
+    exact_coordinate = _build_household_exact_coordinate(household=household, binding=binding)
+    if exact_coordinate is not None:
+        return exact_coordinate
+
+    if binding is None:
+        return ResolvedHouseholdCoordinateRead(
+            available=False,
+            source_type="unavailable",
+        )
+
+    snapshot = load_json(binding.snapshot) or {}
+    snapshot_coordinate = _build_region_coordinate_from_snapshot(binding=binding, snapshot=snapshot)
+    if snapshot_coordinate is not None:
+        return snapshot_coordinate
+
+    provider = _find_provider_for_household(db, provider_code=binding.provider_code, household_id=household_id)
+    if provider is None:
+        return _build_unavailable_coordinate(binding=binding, snapshot=snapshot)
+
+    try:
+        node = provider.resolve(db, region_code=binding.region_code)
+    except RegionProviderExecutionError:
+        return _build_unavailable_coordinate(binding=binding, snapshot=snapshot)
+    if node is None or node.latitude is None or node.longitude is None:
+        return _build_unavailable_coordinate(binding=binding, snapshot=snapshot)
+
+    return ResolvedHouseholdCoordinateRead(
+        available=True,
+        latitude=node.latitude,
+        longitude=node.longitude,
+        source_type="region_representative",
+        precision=node.coordinate_precision,
+        provider_code=binding.provider_code,
+        region_code=binding.region_code,
+        region_path=_extract_region_path(snapshot),
+        updated_at=node.coordinate_updated_at,
+    )
+
+
+def _build_household_exact_coordinate(
+    *,
+    household: Household | None,
+    binding: HouseholdRegionBinding | None,
+) -> ResolvedHouseholdCoordinateRead | None:
+    coordinate = get_household_coordinate_override(household)
+    if coordinate is None:
+        return None
+    return ResolvedHouseholdCoordinateRead(
+        available=True,
+        latitude=coordinate.latitude,
+        longitude=coordinate.longitude,
+        source_type="household_exact",
+        precision=coordinate.coordinate_precision,
+        provider_code=binding.provider_code if binding is not None else None,
+        region_code=binding.region_code if binding is not None else None,
+        region_path=_extract_region_path(load_json(binding.snapshot) or {}) if binding is not None else [],
+        updated_at=coordinate.coordinate_updated_at,
+    )
+
+
+def _build_region_coordinate_from_snapshot(
+    *,
+    binding: HouseholdRegionBinding,
+    snapshot: dict[str, object],
+) -> ResolvedHouseholdCoordinateRead | None:
+    coordinate = snapshot.get("representative_coordinate")
+    if not isinstance(coordinate, dict):
+        return None
+    latitude = coordinate.get("latitude")
+    longitude = coordinate.get("longitude")
+    if not isinstance(latitude, (int, float)) or not isinstance(longitude, (int, float)):
+        return None
+    precision = coordinate.get("coordinate_precision")
+    updated_at = coordinate.get("coordinate_updated_at")
+    return ResolvedHouseholdCoordinateRead(
+        available=True,
+        latitude=float(latitude),
+        longitude=float(longitude),
+        source_type="region_representative",
+        precision=cast(Any, precision) if isinstance(precision, str) else None,
+        provider_code=binding.provider_code,
+        region_code=binding.region_code,
+        region_path=_extract_region_path(snapshot),
+        updated_at=updated_at if isinstance(updated_at, str) else None,
+    )
+
+
+def _build_unavailable_coordinate(
+    *,
+    binding: HouseholdRegionBinding,
+    snapshot: dict[str, object],
+) -> ResolvedHouseholdCoordinateRead:
+    return ResolvedHouseholdCoordinateRead(
+        available=False,
+        source_type="unavailable",
+        provider_code=binding.provider_code,
+        region_code=binding.region_code,
+        region_path=_extract_region_path(snapshot),
+    )
 
 
 def _require_provider(
@@ -381,6 +544,16 @@ def _to_region_ref(value: object | None) -> RegionNodeRefRead | None:
     return RegionNodeRefRead(code=code, name=name)
 
 
+def _extract_region_path(snapshot: dict[str, object]) -> list[str]:
+    path: list[str] = []
+    for key in ("province", "city", "district"):
+        node_ref = _to_region_ref(snapshot.get(key))
+        if node_ref is None:
+            continue
+        path.append(node_ref.name)
+    return path
+
+
 def _to_region_node_read(row: RegionNode) -> RegionNodeRead:
     return RegionNodeRead(
         provider_code=row.provider_code,
@@ -394,4 +567,9 @@ def _to_region_node_read(row: RegionNode) -> RegionNodeRead:
         path_names=load_json(row.path_names) or [],
         timezone=row.timezone,
         source_version=row.source_version,
+        latitude=row.latitude,
+        longitude=row.longitude,
+        coordinate_precision=cast(Any, row.coordinate_precision),
+        coordinate_source=cast(Any, row.coordinate_source),
+        coordinate_updated_at=row.coordinate_updated_at,
     )

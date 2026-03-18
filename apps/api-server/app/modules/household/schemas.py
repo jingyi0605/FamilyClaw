@@ -2,7 +2,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.region.schemas import HouseholdRegionRead, RegionSelection
+from app.modules.region.schemas import (
+    HouseholdCoordinateOverrideRead,
+    HouseholdCoordinateUpdate,
+    HouseholdRegionRead,
+    RegionSelection,
+)
 
 HouseholdSetupLifecycleStatus = Literal["pending", "in_progress", "completed", "blocked"]
 HouseholdSetupStepCode = Literal[
@@ -32,6 +37,7 @@ class HouseholdRead(BaseModel):
     locale: str
     status: str
     region: HouseholdRegionRead
+    coordinate_override: HouseholdCoordinateOverrideRead | None = None
     created_at: str
     updated_at: str
 
@@ -49,6 +55,10 @@ class HouseholdListResponse(BaseModel):
     page: int
     page_size: int
     total: int
+
+
+class HouseholdCoordinateUpsert(HouseholdCoordinateUpdate):
+    pass
 
 
 class HouseholdSetupStatusRead(BaseModel):

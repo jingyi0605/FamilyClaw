@@ -3,13 +3,14 @@
 ## 文档元数据
 
 - 文档目的：把 `manifest.json` 里哪些字段是正式入口、哪些约束是硬规则、哪些细节应该去别处查，说清楚。
-- 当前版本：v1.5
+- 当前版本：v1.6
 - 关联文档：`docs/开发者文档/插件开发/zh-CN/00-文档使用与维护原则.md`、`docs/开发者文档/插件开发/zh-CN/11-插件配置接入说明.md`、`specs/004.2.3-插件配置协议与动态表单/docs/README.md`、`apps/api-server/app/modules/plugin/schemas.py`
 - 修改记录：
   - `2026-03-13`：创建首版 manifest 字段规范。
   - `2026-03-14`：补充 `locale-pack`、地区上下文和 `schedule_templates` 规则。
   - `2026-03-16`：补充 `channel`、`region-provider`、正式配置协议入口，并改成“稳定规则 + 事实来源引用”写法。
   - `2026-03-17`：补充 `theme-pack`、`ai-provider`、版本治理字段边界和统一启停规则引用。
+  - `2026-03-18`：补充 `region-provider` 坐标节点契约、统一 `household_context.coordinate` 结构和“禁止按 city 猜点”的边界。
 
 这份文档只保留稳定规则，不复制一大坨会频繁变化的字段表。
 
@@ -207,6 +208,26 @@
 
 如果是通道插件，平台能力相关声明继续写在通道插件自己的正式字段里，不要再把通道字段散落到页面常量里。
 
+如果你声明了 `context_reads.household_region_context=true`，还要记住一件事：
+
+- 运行时给你的不是“只有地区名字”的老结构，而是带统一 `coordinate` 的 `household_context`
+- 你应该直接消费 `household_context.coordinate`
+- 不要再从 `city`、`display_name` 或别的文本字段去猜天气查询点
+
+### `region-provider` 运行时补充约束
+
+如果插件要作为正式 `region-provider` 运行，除了 manifest 声明本身，还要满足这几个节点契约：
+
+- 标准地区节点现在可选返回：
+  - `latitude`
+  - `longitude`
+  - `coordinate_precision`
+  - `coordinate_source`
+  - `coordinate_updated_at`
+- 坐标字段是可选的，但一旦给了经纬度，就必须同时给出精度和来源。
+- 缺坐标不会让旧 provider 直接失效，但上层家庭上下文里的 `coordinate` 会变成 `unavailable`。
+- 如果 provider 自己实现 `build_snapshot`，建议把代表坐标保留到 `representative_coordinate`，这样 provider 临时不可用时，旧绑定还能继续用快照坐标。
+
 ### `config_specs`
 
 - 选填
@@ -281,6 +302,8 @@
 9. 如果插件要作为地区 provider 运行，必须显式声明 `types=["region-provider"]` 和完整的 `capabilities.region_provider`。
 10. 如果插件声明了 `config_specs`，后端会按正式协议校验，不符合协议会直接报错。
 11. 没有配置协议的旧插件，不会因为这次新增 `config_specs` 被判成非法插件。
+12. 如果你是 `region-provider`，节点一旦返回坐标，就要保证经纬度、精度、来源一起完整返回。
+13. 如果你读取 `household_region_context`，就必须消费统一 `coordinate`，不要再用 `city` 文本做 geocoding 猜测。
 
 ## 6. 第一版先不要写进 manifest 的东西
 
@@ -308,5 +331,7 @@
 8. 如果要给计划任务系统用，`triggers` 里是不是已经明确写了 `schedule`？
 9. 如果是 `channel`，是不是按正式配置协议声明了 `channel_account` 作用域，而不是把字段继续写死在页面？
 10. 有没有偷偷依赖远程安装、远程执行、沙箱、签名平台？
+11. 如果是 `region-provider`，节点坐标是不是满足“有经纬度就必须有精度和来源”？
+12. 如果读了 `household_region_context`，是不是已经直接用 `coordinate`，而不是从 `city` 文本反推位置？
 
 这些都过了，再去准备注册表和联调材料。

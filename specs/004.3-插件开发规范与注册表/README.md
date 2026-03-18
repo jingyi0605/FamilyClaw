@@ -26,6 +26,25 @@
 
 如果你现在是在补插件开发规范，不要再单独发明“主题规范”或“AI 供应商规范”的平行版本，直接按通用插件规范补。
 
+## 2026-03-18 家庭地区坐标上下文补充边界
+
+这轮还有一个很实际的新边界，和 `region-provider`、天气类插件、家庭地区上下文直接相关：
+
+- `region-provider` 返回的标准地区节点现在可以可选补充 5 个代表坐标字段：
+  - `latitude`
+  - `longitude`
+  - `coordinate_precision`
+  - `coordinate_source`
+  - `coordinate_updated_at`
+- 这些坐标字段是可选的，但一旦提供，就必须是成组、合法的坐标信息，不能只给一半。
+- 声明了 `capabilities.context_reads.household_region_context=true` 的插件，会在 `_system_context.region.household_context` 里拿到统一的 `coordinate` 结果。
+- `coordinate.source_type` 只有 3 种正式值：
+  - `household_exact`
+  - `region_representative`
+  - `unavailable`
+- 上层插件不允许再从 `city`、`display_name` 之类的文本去猜地理点。要么用统一 `coordinate`，要么显式处理 `unavailable`。
+- 浏览器或 App 的定位结果只能当候选值，只有用户确认后，才能通过 `PATCH /households/{id}/coordinate` 写成家庭正式坐标。
+
 ## 这份 Spec 解决什么问题
 
 `004.2` 解决了插件系统怎么跑，但还没解决另外两个现实问题：

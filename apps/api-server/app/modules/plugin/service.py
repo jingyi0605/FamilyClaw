@@ -831,6 +831,10 @@ def set_household_plugin_enabled(
         row.updated_at = now
     db.flush()
     sync_household_plugin_region_providers(db, household_id)
+    if plugin_id == "official-weather" and payload.enabled:
+        from app.modules.weather.service import ensure_default_weather_device
+
+        ensure_default_weather_device(db, household_id=household_id, plugin_id=plugin_id)
     return get_household_plugin(
         db,
         household_id=household_id,

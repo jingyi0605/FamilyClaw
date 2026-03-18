@@ -175,7 +175,7 @@ class CnMainlandRegionProvider(RegionProvider):
     def build_snapshot(self, node: RegionNodeRead) -> dict[str, object]:
         path_codes = node.path_codes
         path_names = node.path_names
-        return {
+        snapshot = {
             "provider_code": node.provider_code,
             "country_code": node.country_code,
             "region_code": node.region_code,
@@ -186,6 +186,10 @@ class CnMainlandRegionProvider(RegionProvider):
             "display_name": f"{path_names[0]} {path_names[2]}",
             "timezone": node.timezone,
         }
+        representative_coordinate = _build_snapshot_coordinate(node)
+        if representative_coordinate is not None:
+            snapshot["representative_coordinate"] = representative_coordinate
+        return snapshot
 
 
 def _to_region_node_read(row: RegionNode) -> RegionNodeRead:
@@ -201,6 +205,11 @@ def _to_region_node_read(row: RegionNode) -> RegionNodeRead:
         path_names=load_json(row.path_names) or [],
         timezone=row.timezone,
         source_version=row.source_version,
+        latitude=row.latitude,
+        longitude=row.longitude,
+        coordinate_precision=cast(Any, row.coordinate_precision),
+        coordinate_source=cast(Any, row.coordinate_source),
+        coordinate_updated_at=row.coordinate_updated_at,
     )
 
 
@@ -243,6 +252,11 @@ class JsonFileCnMainlandRegionProvider(RegionProvider):
                     path_names=item.get("path_names", []),
                     timezone=item.get("timezone"),
                     source_version=item.get("source_version"),
+                    latitude=item.get("latitude"),
+                    longitude=item.get("longitude"),
+                    coordinate_precision=cast(Any, item.get("coordinate_precision")),
+                    coordinate_source=cast(Any, item.get("coordinate_source")),
+                    coordinate_updated_at=item.get("coordinate_updated_at"),
                 )
                 for item in raw_items
                 if item.get("enabled", True)
@@ -325,7 +339,7 @@ class JsonFileCnMainlandRegionProvider(RegionProvider):
     def build_snapshot(self, node: RegionNodeRead) -> dict[str, object]:
         path_codes = node.path_codes
         path_names = node.path_names
-        return {
+        snapshot = {
             "provider_code": node.provider_code,
             "country_code": node.country_code,
             "region_code": node.region_code,
@@ -336,6 +350,22 @@ class JsonFileCnMainlandRegionProvider(RegionProvider):
             "display_name": f"{path_names[0]} {path_names[2]}",
             "timezone": node.timezone,
         }
+        representative_coordinate = _build_snapshot_coordinate(node)
+        if representative_coordinate is not None:
+            snapshot["representative_coordinate"] = representative_coordinate
+        return snapshot
+
+
+def _build_snapshot_coordinate(node: RegionNodeRead) -> dict[str, object] | None:
+    if node.latitude is None or node.longitude is None:
+        return None
+    return {
+        "latitude": node.latitude,
+        "longitude": node.longitude,
+        "coordinate_precision": node.coordinate_precision,
+        "coordinate_source": node.coordinate_source,
+        "coordinate_updated_at": node.coordinate_updated_at,
+    }
 
 
 region_provider_registry = RegionProviderRegistry()

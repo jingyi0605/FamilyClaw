@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
 from app.modules.household.schemas import (
     HouseholdCreate,
+    HouseholdCoordinateUpsert,
     HouseholdListResponse,
     HouseholdRead,
     HouseholdSetupStatusRead,
@@ -27,9 +28,11 @@ from app.modules.household.service import (
     get_household_or_404,
     get_household_setup_status,
     list_households,
+    upsert_household_coordinate,
     update_household,
 )
-from app.modules.region.service import RegionServiceError, raise_region_http_error
+from app.modules.region.schemas import HouseholdCoordinateOverrideRead
+from app.modules.region.service import RegionServiceError, get_household_coordinate_override, raise_region_http_error
 
 router = APIRouter(prefix="/households", tags=["households"])
 
@@ -150,3 +153,46 @@ def update_household_endpoint(
 
     db.refresh(household)
     return build_household_read(db, household)
+
+
+@router.patch("/{household_id}/coordinate", response_model=HouseholdCoordinateOverrideRead)
+def update_household_coordinate_endpoint(
+    household_id: str,
+    payload: HouseholdCoordinateUpsert,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> HouseholdCoordinateOverrideRead:
+    household = get_household_or_404(db, household_id)
+    try:
+        household = upsert_household_coordinate(db, household=household, payload=payload)
+    except RegionServiceError as exc:
+        db.rollback()
+        raise raise_region_http_error(exc) from exc
+    write_audit_log(
+        db,
+        household_id=household.id,
+        actor=actor,
+        action="household.coordinate.update",
+        target_type="household",
+        target_id=household.id,
+        result="success",
+        details={
+            "latitude": payload.latitude,
+            "longitude": payload.longitude,
+            "coordinate_source": payload.coordinate_source,
+            "confirmed": payload.confirmed,
+        },
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+    db.refresh(household)
+    coordinate_override = get_household_coordinate_override(household)
+    if coordinate_override is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="household coordinate was not persisted",
+        )
+    return coordinate_override

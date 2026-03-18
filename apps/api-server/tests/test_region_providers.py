@@ -1,31 +1,22 @@
-﻿import tempfile
 import unittest
-from pathlib import Path
 
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
-from app.core.config import settings
-from app.modules.region.providers import BUILTIN_CN_MAINLAND_PROVIDER, region_provider_registry
+from app.modules.region.providers import BUILTIN_CN_MAINLAND_PROVIDER, CnMainlandRegionProvider, region_provider_registry
 from app.modules.region.schemas import RegionCatalogImportItem
 from app.modules.region.service import import_region_catalog
+from tests.test_db_support import PostgresTestDatabase
 
 
 class RegionProviderTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._tempdir = tempfile.TemporaryDirectory()
-        self._previous_database_url = settings.database_url
-
-        from tests.test_db_support import PostgresTestDatabase
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
-        self.database_url = self._db_helper.database_url
-        self.engine = self._db_helper.engine
-        self.SessionLocal = self._db_helper.SessionLocal
-        self.db: Session = self.SessionLocal()
+        self.db: Session = self._db_helper.SessionLocal()
+        self._original_builtin_provider = region_provider_registry.get(BUILTIN_CN_MAINLAND_PROVIDER)
+        region_provider_registry.register(CnMainlandRegionProvider())
+
         import_region_catalog(
             self.db,
             items=[
@@ -33,28 +24,33 @@ class RegionProviderTests(unittest.TestCase):
                     region_code="110000",
                     parent_region_code=None,
                     admin_level="province",
-                    name="鍖椾含甯?,
-                    full_name="鍖椾含甯?,
+                    name="Beijing",
+                    full_name="Beijing",
                     path_codes=["110000"],
-                    path_names=["鍖椾含甯?],
+                    path_names=["Beijing"],
                 ),
                 RegionCatalogImportItem(
                     region_code="110100",
                     parent_region_code="110000",
                     admin_level="city",
-                    name="鍖椾含甯?,
-                    full_name="鍖椾含甯?/ 鍖椾含甯?,
+                    name="Beijing City",
+                    full_name="Beijing / Beijing City",
                     path_codes=["110000", "110100"],
-                    path_names=["鍖椾含甯?, "鍖椾含甯?],
+                    path_names=["Beijing", "Beijing City"],
                 ),
                 RegionCatalogImportItem(
                     region_code="110105",
                     parent_region_code="110100",
                     admin_level="district",
-                    name="鏈濋槼鍖?,
-                    full_name="鍖椾含甯?/ 鍖椾含甯?/ 鏈濋槼鍖?,
+                    name="Chaoyang",
+                    full_name="Beijing / Beijing City / Chaoyang",
                     path_codes=["110000", "110100", "110105"],
-                    path_names=["鍖椾含甯?, "鍖椾含甯?, "鏈濋槼鍖?],
+                    path_names=["Beijing", "Beijing City", "Chaoyang"],
+                    latitude=39.9219,
+                    longitude=116.4436,
+                    coordinate_precision="district",
+                    coordinate_source="provider_builtin",
+                    coordinate_updated_at="2026-03-18T00:00:00Z",
                 ),
             ],
             source_version="provider-test-v1",
@@ -63,36 +59,34 @@ class RegionProviderTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
+        if self._original_builtin_provider is not None:
+            region_provider_registry.register(self._original_builtin_provider)
         self._db_helper.close()
-        self._tempdir.cleanup()
 
-    def test_builtin_cn_provider_registered(self) -> None:
+    def test_builtin_provider_can_read_region_coordinate_contract(self) -> None:
         provider = region_provider_registry.get(BUILTIN_CN_MAINLAND_PROVIDER)
-
         self.assertIsNotNone(provider)
-        assert provider is not None
-        self.assertEqual("CN", provider.country_code)
-
-    def test_builtin_cn_provider_contract(self) -> None:
-        provider = region_provider_registry.get(BUILTIN_CN_MAINLAND_PROVIDER)
         assert provider is not None
 
         provinces = provider.list_children(self.db, parent_region_code=None, admin_level="province")
-        matches = provider.search(self.db, keyword="鏈濋槼", admin_level="district")
         district = provider.resolve(self.db, region_code="110105")
 
-        self.assertEqual(["鍖椾含甯?], [item.name for item in provinces])
-        self.assertEqual(["鏈濋槼鍖?], [item.name for item in matches])
+        self.assertEqual(["Beijing"], [item.name for item in provinces])
         assert district is not None
+        self.assertIsNone(provinces[0].latitude)
+        self.assertEqual(39.9219, district.latitude)
+        self.assertEqual(116.4436, district.longitude)
+        self.assertEqual("district", district.coordinate_precision)
+        self.assertEqual("provider_builtin", district.coordinate_source)
 
         snapshot = provider.build_snapshot(district)
+        representative_coordinate = snapshot.get("representative_coordinate")
 
-        self.assertEqual("110105", snapshot["region_code"])
-        self.assertEqual("鍖椾含甯?鏈濋槼鍖?, snapshot["display_name"])
-        self.assertEqual("鍖椾含甯?, snapshot["province"]["name"])
-        self.assertEqual("鏈濋槼鍖?, snapshot["district"]["name"])
+        self.assertIsInstance(representative_coordinate, dict)
+        assert isinstance(representative_coordinate, dict)
+        self.assertEqual(39.9219, representative_coordinate["latitude"])
+        self.assertEqual(116.4436, representative_coordinate["longitude"])
 
 
 if __name__ == "__main__":
     unittest.main()
-

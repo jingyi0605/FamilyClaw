@@ -95,6 +95,14 @@ class MountedPluginRegionProvider(RegionProvider):
             raise RegionProviderExecutionError(f"地区 provider {self.provider_code} 返回了非法 snapshot")
         payload.setdefault("provider_code", self.provider_code)
         payload.setdefault("country_code", self.country_code)
+        if "representative_coordinate" not in payload and node.latitude is not None and node.longitude is not None:
+            payload["representative_coordinate"] = {
+                "latitude": node.latitude,
+                "longitude": node.longitude,
+                "coordinate_precision": node.coordinate_precision,
+                "coordinate_source": node.coordinate_source,
+                "coordinate_updated_at": node.coordinate_updated_at,
+            }
         return payload
 
     def _invoke(self, *, operation: str, args: dict[str, object]) -> object:

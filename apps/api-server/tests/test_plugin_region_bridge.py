@@ -1,36 +1,30 @@
-﻿import json
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
-from app.core.config import settings
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.plugin.schemas import PluginExecutionRequest, PluginRunnerConfig
 from app.modules.plugin.service import execute_household_plugin, resolve_plugin_household_region_context
+from app.modules.region.providers import BUILTIN_CN_MAINLAND_PROVIDER, CnMainlandRegionProvider, region_provider_registry
 from app.modules.region.schemas import RegionCatalogImportItem, RegionSelection
 from app.modules.region.service import import_region_catalog
+from tests.test_db_support import PostgresTestDatabase
 
 
 class PluginRegionBridgeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._tempdir = tempfile.TemporaryDirectory()
-        self._previous_database_url = settings.database_url
-
-        from tests.test_db_support import PostgresTestDatabase
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
-        self.database_url = self._db_helper.database_url
-        self.engine = self._db_helper.engine
-        self.SessionLocal = self._db_helper.SessionLocal
-        self.db: Session = self.SessionLocal()
+        self.db: Session = self._db_helper.SessionLocal()
+        self._original_builtin_provider = region_provider_registry.get(BUILTIN_CN_MAINLAND_PROVIDER)
+        region_provider_registry.register(CnMainlandRegionProvider())
+
         import_region_catalog(
             self.db,
             items=[
@@ -38,36 +32,41 @@ class PluginRegionBridgeTests(unittest.TestCase):
                     region_code="110000",
                     parent_region_code=None,
                     admin_level="province",
-                    name="鍖椾含甯?,
-                    full_name="鍖椾含甯?,
+                    name="Beijing",
+                    full_name="Beijing",
                     path_codes=["110000"],
-                    path_names=["鍖椾含甯?],
+                    path_names=["Beijing"],
                 ),
                 RegionCatalogImportItem(
                     region_code="110100",
                     parent_region_code="110000",
                     admin_level="city",
-                    name="鍖椾含甯?,
-                    full_name="鍖椾含甯?/ 鍖椾含甯?,
+                    name="Beijing City",
+                    full_name="Beijing / Beijing City",
                     path_codes=["110000", "110100"],
-                    path_names=["鍖椾含甯?, "鍖椾含甯?],
+                    path_names=["Beijing", "Beijing City"],
                 ),
                 RegionCatalogImportItem(
                     region_code="110105",
                     parent_region_code="110100",
                     admin_level="district",
-                    name="鏈濋槼鍖?,
-                    full_name="鍖椾含甯?/ 鍖椾含甯?/ 鏈濋槼鍖?,
+                    name="Chaoyang",
+                    full_name="Beijing / Beijing City / Chaoyang",
                     path_codes=["110000", "110100", "110105"],
-                    path_names=["鍖椾含甯?, "鍖椾含甯?, "鏈濋槼鍖?],
+                    path_names=["Beijing", "Beijing City", "Chaoyang"],
+                    latitude=39.9219,
+                    longitude=116.4436,
+                    coordinate_precision="district",
+                    coordinate_source="provider_builtin",
+                    coordinate_updated_at="2026-03-18T00:00:00Z",
                 ),
             ],
-            source_version="plugin-region-test-v1",
+            source_version="plugin-bridge-test-v1",
         )
         self.household = create_household(
             self.db,
             HouseholdCreate(
-                name="鍦板尯鎻掍欢瀹跺涵",
+                name="Plugin Region Household",
                 timezone="Asia/Shanghai",
                 locale="zh-CN",
                 region_selection=RegionSelection(
@@ -81,13 +80,13 @@ class PluginRegionBridgeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
+        if self._original_builtin_provider is not None:
+            region_provider_registry.register(self._original_builtin_provider)
         self._db_helper.close()
-        self._tempdir.cleanup()
 
-    def test_plugin_can_resolve_household_region_context_through_controlled_entry(self) -> None:
+    def test_plugin_can_resolve_household_region_context(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             plugin_root = self._create_region_reader_plugin(Path(tempdir))
-
             context = resolve_plugin_household_region_context(
                 self.db,
                 household_id=self.household.id,
@@ -99,11 +98,12 @@ class PluginRegionBridgeTests(unittest.TestCase):
         assert context is not None
         self.assertEqual("configured", context.status)
         self.assertEqual("110105", context.region_code)
+        self.assertEqual("region_representative", context.coordinate.source_type)
+        self.assertEqual(39.9219, context.coordinate.latitude)
 
-    def test_execute_household_plugin_injects_region_context_when_manifest_declares_need(self) -> None:
+    def test_execute_household_plugin_injects_coordinate_context(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             plugin_root = self._create_region_reader_plugin(Path(tempdir))
-
             result = execute_household_plugin(
                 self.db,
                 household_id=self.household.id,
@@ -123,12 +123,14 @@ class PluginRegionBridgeTests(unittest.TestCase):
             )
 
         self.assertTrue(result.success)
-        self.assertIsInstance(result.output, dict)
         assert isinstance(result.output, dict)
         system_context = result.output["system_context"]
+        household_context = system_context["region"]["household_context"]
+
         self.assertEqual("region.resolve_household_context", system_context["region"]["entry"])
-        self.assertEqual("110105", system_context["region"]["household_context"]["region_code"])
-        self.assertEqual("鍖椾含甯?鏈濋槼鍖?, system_context["region"]["household_context"]["display_name"])
+        self.assertEqual("110105", household_context["region_code"])
+        self.assertEqual("region_representative", household_context["coordinate"]["source_type"])
+        self.assertEqual(39.9219, household_context["coordinate"]["latitude"])
 
     def _create_region_reader_plugin(self, root: Path) -> Path:
         plugin_root = root / "region-context-reader"
@@ -139,7 +141,7 @@ class PluginRegionBridgeTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": "region-context-reader",
-                    "name": "鍦板尯涓婁笅鏂囪鍙栨彃浠?,
+                    "name": "Region Context Reader",
                     "version": "0.1.0",
                     "types": ["connector"],
                     "permissions": ["region.read"],
@@ -147,16 +149,8 @@ class PluginRegionBridgeTests(unittest.TestCase):
                     "triggers": ["manual", "agent"],
                     "entrypoints": {"connector": "plugin.connector.sync"},
                     "capabilities": {
-                        "context_reads": {
-                            "household_region_context": True
-                        },
-                        "region_provider": {
-                            "provider_code": "plugin.future-region-provider",
-                            "country_codes": ["JP"],
-                            "entrypoint": "plugin.region_provider.build",
-                            "reserved": True
-                        }
-                    }
+                        "context_reads": {"household_region_context": True},
+                    },
                 },
                 ensure_ascii=False,
             ),
@@ -173,4 +167,3 @@ class PluginRegionBridgeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

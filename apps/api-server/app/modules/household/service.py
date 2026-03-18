@@ -3,19 +3,26 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from typing import cast
 
-from app.db.utils import new_uuid
+from app.db.utils import new_uuid, utc_now_iso
 from app.modules.agent.models import FamilyAgent
 from app.modules.ai_gateway.models import AiCapabilityRoute
 from app.modules.household.models import Household
 from app.modules.household.schemas import (
-    HouseholdCreate,
+    HouseholdCoordinateUpsert,
     HouseholdRead,
+    HouseholdCreate,
     HouseholdSetupStatusRead,
     HouseholdSetupStepCode,
     HouseholdUpdate,
 )
 from app.modules.member.models import Member
-from app.modules.region.service import get_household_region_context, has_household_region_binding, upsert_household_region
+from app.modules.region.service import (
+    RegionServiceError,
+    get_household_coordinate_override,
+    get_household_region_context,
+    has_household_region_binding,
+    upsert_household_region,
+)
 
 SETUP_REQUIRED_STEPS: tuple[HouseholdSetupStepCode, ...] = (
     "family_profile",
@@ -23,7 +30,7 @@ SETUP_REQUIRED_STEPS: tuple[HouseholdSetupStepCode, ...] = (
     "provider_setup",
     "first_butler_agent",
 )
-SETUP_REQUIRED_PROVIDER_CAPABILITIES: tuple[str, ...] = ("qa_generation",)
+SETUP_REQUIRED_PROVIDER_CAPABILITIES: tuple[str, ...] = ("text",)
 HISTORICAL_REQUIRED_STEPS: tuple[HouseholdSetupStepCode, ...] = (
     "provider_setup",
     "first_butler_agent",
@@ -207,6 +214,27 @@ def update_household(db: Session, household: Household, payload: HouseholdUpdate
     return household, changed_fields
 
 
+def upsert_household_coordinate(
+    db: Session,
+    *,
+    household: Household,
+    payload: HouseholdCoordinateUpsert,
+) -> Household:
+    if not payload.confirmed:
+        raise RegionServiceError(
+            detail="候选定位结果必须经用户确认后才能保存",
+            error_code="coordinate_unconfirmed",
+            field="confirmed",
+        )
+    household.latitude = payload.latitude
+    household.longitude = payload.longitude
+    household.coordinate_source = payload.coordinate_source
+    household.coordinate_precision = "point"
+    household.coordinate_updated_at = utc_now_iso()
+    db.add(household)
+    return household
+
+
 def build_household_read(db: Session, household: Household) -> HouseholdRead:
     return HouseholdRead(
         id=household.id,
@@ -215,7 +243,8 @@ def build_household_read(db: Session, household: Household) -> HouseholdRead:
         timezone=household.timezone,
         locale=household.locale,
         status=household.status,
-        region=get_household_region_context(db, household.id),
+        region=get_household_region_context(db, household.id, household=household),
+        coordinate_override=get_household_coordinate_override(household),
         created_at=household.created_at,
         updated_at=household.updated_at,
     )
