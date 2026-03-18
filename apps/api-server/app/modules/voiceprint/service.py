@@ -21,6 +21,7 @@ from app.modules.voiceprint.provider import (
     get_default_voiceprint_provider,
 )
 from app.modules.voiceprint.models import MemberVoiceprintProfile, MemberVoiceprintSample, VoiceprintEnrollment
+from app.modules.voiceprint.prompt_types import VoiceprintPromptEnrollmentSnapshot
 from app.modules.voiceprint.schemas import (
     HouseholdVoiceprintMemberSummaryRead,
     HouseholdVoiceprintSummaryRead,
@@ -39,14 +40,26 @@ _ENROLLMENT_SAMPLE_MIN_DURATION_MS = 1000
 _ENROLLMENT_SAMPLE_MAX_DURATION_MS = 8000
 _VOICEPRINT_IDENTIFICATION_LIMIT = 3
 _VOICEPRINT_CONFLICT_SCORE_MARGIN = 0.05
+_VOICEPRINT_ENROLLMENT_EXPIRED_MESSAGE = "这次声纹录入任务已过期，请重新开始。"
+_DEFAULT_ENROLLMENT_PHRASES = (
+    "春眠不觉晓",
+    "明月松间照",
+    "海内存知己",
+    "清风徐徐来",
+    "山高水更长",
+    "此心安处是吾乡",
+)
 
 
 @dataclass(slots=True)
 class VoiceprintEnrollmentProcessResult:
     outcome: str
     enrollment: VoiceprintEnrollment
+    prompt_enrollment: VoiceprintPromptEnrollmentSnapshot | None = None
     sample: MemberVoiceprintSample | None = None
     profile: MemberVoiceprintProfile | None = None
+    sample_id: str | None = None
+    profile_id: str | None = None
     error_code: str | None = None
     error_message: str | None = None
 
@@ -93,6 +106,56 @@ class VoiceprintIdentificationRead:
     candidates: list[VoiceprintIdentificationCandidateRead] = field(default_factory=list)
 
 
+def _is_enrollment_expired(expires_at: str | None) -> bool:
+    if not expires_at:
+        return False
+    try:
+        deadline = datetime.fromisoformat(expires_at)
+    except ValueError:
+        return False
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    return deadline.astimezone(timezone.utc) <= datetime.now(timezone.utc)
+
+
+def _expire_enrollment_if_needed(db: Session, enrollment: VoiceprintEnrollment) -> bool:
+    if enrollment.status not in _PENDING_ENROLLMENT_STATUSES:
+        return False
+    if not _is_enrollment_expired(enrollment.expires_at):
+        return False
+    enrollment.status = "cancelled"
+    enrollment.error_code = "voiceprint_enrollment_expired"
+    enrollment.error_message = _VOICEPRINT_ENROLLMENT_EXPIRED_MESSAGE
+    enrollment.updated_at = utc_now_iso()
+    db.add(enrollment)
+    return True
+
+
+def expire_stale_voiceprint_enrollments(
+    db: Session,
+    *,
+    household_id: str | None = None,
+    terminal_id: str | None = None,
+    member_id: str | None = None,
+    enrollment_id: str | None = None,
+) -> int:
+    filters = [VoiceprintEnrollment.status.in_(_PENDING_ENROLLMENT_STATUSES)]
+    if household_id:
+        filters.append(VoiceprintEnrollment.household_id == household_id)
+    if terminal_id:
+        filters.append(VoiceprintEnrollment.terminal_id == terminal_id)
+    if member_id:
+        filters.append(VoiceprintEnrollment.member_id == member_id)
+    if enrollment_id:
+        filters.append(VoiceprintEnrollment.id == enrollment_id)
+    enrollments = list(db.scalars(select(VoiceprintEnrollment).where(*filters)).all())
+    expired_count = 0
+    for enrollment in enrollments:
+        if _expire_enrollment_if_needed(db, enrollment):
+            expired_count += 1
+    return expired_count
+
+
 def create_voiceprint_enrollment(db: Session, payload: VoiceprintEnrollmentCreate) -> VoiceprintEnrollment:
     member = _get_member_or_404(db, payload.member_id)
     terminal = _get_terminal_or_404(db, payload.terminal_id)
@@ -100,6 +163,13 @@ def create_voiceprint_enrollment(db: Session, payload: VoiceprintEnrollmentCreat
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="member must belong to the same household")
     if terminal.household_id != payload.household_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="terminal must belong to the same household")
+    expired_count = expire_stale_voiceprint_enrollments(
+        db,
+        household_id=payload.household_id,
+        terminal_id=payload.terminal_id,
+    )
+    if expired_count > 0:
+        db.flush()
 
     conflict = db.scalar(
         select(VoiceprintEnrollment).where(
@@ -120,7 +190,11 @@ def create_voiceprint_enrollment(db: Session, payload: VoiceprintEnrollmentCreat
         member_id=payload.member_id,
         terminal_id=payload.terminal_id,
         status="pending",
-        expected_phrase=_normalize_optional_text(payload.expected_phrase),
+        expected_phrase=_resolve_expected_phrase(
+            expected_phrase=payload.expected_phrase,
+            member_id=payload.member_id,
+            terminal_id=payload.terminal_id,
+        ),
         sample_goal=payload.sample_goal,
         sample_count=0,
         expires_at=_build_enrollment_expires_at(),
@@ -533,7 +607,7 @@ def process_voiceprint_enrollment_sample(
         enrollment.error_message = validation_error
         enrollment.updated_at = utc_now_iso()
         db.add(enrollment)
-        return VoiceprintEnrollmentProcessResult(
+        return _build_enrollment_process_result(
             outcome="rejected",
             enrollment=enrollment,
             sample=sample,
@@ -552,7 +626,7 @@ def process_voiceprint_enrollment_sample(
         enrollment.error_message = exc.message
         enrollment.updated_at = utc_now_iso()
         db.add(enrollment)
-        return VoiceprintEnrollmentProcessResult(
+        return _build_enrollment_process_result(
             outcome="failed",
             enrollment=enrollment,
             sample=sample,
@@ -574,7 +648,11 @@ def process_voiceprint_enrollment_sample(
     if enrollment.sample_count < enrollment.sample_goal:
         enrollment.status = "recording"
         db.add(enrollment)
-        return VoiceprintEnrollmentProcessResult(outcome="recorded", enrollment=enrollment, sample=sample)
+        return _build_enrollment_process_result(
+            outcome="recorded",
+            enrollment=enrollment,
+            sample=sample,
+        )
 
     enrollment.status = "processing"
     db.add(enrollment)
@@ -586,6 +664,28 @@ def process_voiceprint_enrollment_sample(
         latest_sample=sample,
     )
     return profile_result
+
+
+def _build_enrollment_process_result(
+    *,
+    outcome: str,
+    enrollment: VoiceprintEnrollment,
+    sample: MemberVoiceprintSample | None = None,
+    profile: MemberVoiceprintProfile | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> VoiceprintEnrollmentProcessResult:
+    return VoiceprintEnrollmentProcessResult(
+        outcome=outcome,
+        enrollment=enrollment,
+        prompt_enrollment=VoiceprintPromptEnrollmentSnapshot.from_enrollment(enrollment),
+        sample=sample,
+        profile=profile,
+        sample_id=sample.id if sample is not None else None,
+        profile_id=profile.id if profile is not None else None,
+        error_code=error_code,
+        error_message=error_message,
+    )
 
 
 def search_voiceprint_profiles_in_household(
@@ -836,6 +936,19 @@ def _build_enrollment_expires_at() -> str:
     return expires_at.astimezone().isoformat()
 
 
+def _resolve_expected_phrase(*, expected_phrase: str | None, member_id: str, terminal_id: str) -> str:
+    normalized_phrase = _normalize_optional_text(expected_phrase)
+    if normalized_phrase:
+        return normalized_phrase
+    return _select_default_expected_phrase(member_id=member_id, terminal_id=terminal_id)
+
+
+def _select_default_expected_phrase(*, member_id: str, terminal_id: str) -> str:
+    stable_seed = f"{member_id}:{terminal_id}"
+    phrase_index = sum(ord(char) for char in stable_seed) % len(_DEFAULT_ENROLLMENT_PHRASES)
+    return _DEFAULT_ENROLLMENT_PHRASES[phrase_index]
+
+
 def _normalize_optional_text(value: str | None) -> str | None:
     if value is None:
         return None
@@ -937,7 +1050,7 @@ def _build_or_update_profile_from_samples(
         enrollment.error_message = "没有可聚合的 embedding，无法生成声纹档案"
         enrollment.updated_at = utc_now_iso()
         db.add(enrollment)
-        return VoiceprintEnrollmentProcessResult(
+        return _build_enrollment_process_result(
             outcome="failed",
             enrollment=enrollment,
             sample=latest_sample,
@@ -958,7 +1071,7 @@ def _build_or_update_profile_from_samples(
         enrollment.error_message = exc.message
         enrollment.updated_at = utc_now_iso()
         db.add(enrollment)
-        return VoiceprintEnrollmentProcessResult(
+        return _build_enrollment_process_result(
             outcome="failed",
             enrollment=enrollment,
             sample=latest_sample,
@@ -1003,7 +1116,7 @@ def _build_or_update_profile_from_samples(
     enrollment.error_message = None
     enrollment.updated_at = utc_now_iso()
     db.add(enrollment)
-    return VoiceprintEnrollmentProcessResult(
+    return _build_enrollment_process_result(
         outcome="completed",
         enrollment=enrollment,
         sample=latest_sample,

@@ -5,6 +5,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from app.db.utils import utc_now_iso
+from app.modules.voiceprint.schemas import PendingVoiceprintEnrollmentRead
 
 VoiceTerminalCapability = Literal[
     "audio_input",
@@ -32,6 +33,7 @@ VoiceGatewayEventType = Literal[
     "playback.receipt",
 ]
 VoiceCommandEventType = Literal[
+    "binding.refresh",
     "session.ready",
     "play.start",
     "play.stop",
@@ -198,6 +200,21 @@ class SessionReadyPayload(_StrictModel):
     lane: str | None = None
 
 
+class BindingRefreshBindingPayload(_StrictModel):
+    household_id: str = Field(min_length=1)
+    terminal_id: str = Field(min_length=1)
+    room_id: str | None = None
+    terminal_name: str = Field(min_length=1)
+    voice_auto_takeover_enabled: bool = False
+    voice_takeover_prefixes: list[str] = Field(default_factory=lambda: ["\u8bf7"])
+    pending_voiceprint_enrollment: PendingVoiceprintEnrollmentRead | None = None
+
+
+class BindingRefreshPayload(_StrictModel):
+    reason: str | None = None
+    binding: BindingRefreshBindingPayload
+
+
 class PlayStartPayload(_StrictModel):
     playback_id: str = Field(min_length=1)
     mode: VoicePlayMode = "tts_text"
@@ -251,7 +268,8 @@ VoiceGatewayPayload = (
     | PlaybackReceiptPayload
 )
 VoiceCommandPayload = (
-    SessionReadyPayload
+    BindingRefreshPayload
+    | SessionReadyPayload
     | PlayStartPayload
     | PlayStopPayload
     | PlayAbortPayload
@@ -272,6 +290,7 @@ _VOICE_GATEWAY_PAYLOAD_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "playback.receipt": TypeAdapter(PlaybackReceiptPayload),
 }
 _VOICE_COMMAND_PAYLOAD_ADAPTERS: dict[str, TypeAdapter[Any]] = {
+    "binding.refresh": TypeAdapter(BindingRefreshPayload),
     "session.ready": TypeAdapter(SessionReadyPayload),
     "play.start": TypeAdapter(PlayStartPayload),
     "play.stop": TypeAdapter(PlayStopPayload),

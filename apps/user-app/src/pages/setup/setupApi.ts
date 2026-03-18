@@ -19,8 +19,8 @@ const coreApi = createCoreApiClient(request);
 
 export const setupApi = {
   ...coreApi,
-  listAiProviderAdapters() {
-    return request<AiProviderAdapter[]>('/ai-config/provider-adapters');
+  listAiProviderAdapters(householdId: string) {
+    return request<AiProviderAdapter[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-adapters`);
   },
   listHouseholdAiProviders(householdId: string) {
     return request<AiProviderProfile[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-profiles`);

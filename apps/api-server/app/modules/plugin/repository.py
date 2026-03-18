@@ -3,6 +3,7 @@ from typing import Any, cast
 from sqlalchemy import Select, select, update
 from sqlalchemy.orm import Session
 
+from app.modules.device.models import Device, DeviceBinding
 from app.modules.plugin.models import (
     MemberDashboardLayout,
     PluginConfigInstance,
@@ -199,6 +200,40 @@ def get_plugin_config_instance_for_integration_instance(
         PluginConfigInstance.scope_type == scope_type,
     )
     return db.scalar(stmt)
+
+
+def get_plugin_config_instance_for_device(
+    db: Session,
+    *,
+    device_id: str,
+    plugin_id: str,
+    scope_type: str = "device",
+) -> PluginConfigInstance | None:
+    stmt: Select[tuple[PluginConfigInstance]] = select(PluginConfigInstance).where(
+        PluginConfigInstance.device_id == device_id,
+        PluginConfigInstance.plugin_id == plugin_id,
+        PluginConfigInstance.scope_type == scope_type,
+    )
+    return db.scalar(stmt)
+
+
+def list_plugin_scope_devices(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+) -> list[Device]:
+    stmt: Select[tuple[Device]] = (
+        select(Device)
+        .join(DeviceBinding, DeviceBinding.device_id == Device.id)
+        .where(
+            Device.household_id == household_id,
+            DeviceBinding.plugin_id == plugin_id,
+        )
+        .distinct()
+        .order_by(Device.updated_at.desc(), Device.id.desc())
+    )
+    return list(db.scalars(stmt).all())
 
 
 def list_plugin_config_instances(

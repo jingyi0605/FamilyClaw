@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 from app.modules.conversation.schemas import ConversationMessageRead, ConversationSessionDetailRead
 from app.modules.voice.conversation_bridge import voice_conversation_bridge
@@ -396,11 +396,143 @@ class VoiceConversationBridgeTests(unittest.TestCase):
         create_session_mock.assert_not_called()
         self.assertEqual("conversation-bound", result.conversation_session_id)
 
+    def test_bridge_appends_voice_identity_debug_log_before_realtime_turn(self) -> None:
+        session_detail = ConversationSessionDetailRead(
+            id="conversation-identity-log",
+            household_id="household-1",
+            requester_member_id="member-1",
+            session_mode="family_chat",
+            active_agent_id=None,
+            active_agent_name=None,
+            active_agent_type=None,
+            title="声纹调试",
+            status="active",
+            last_message_at="2026-03-18T00:00:00+08:00",
+            created_at="2026-03-18T00:00:00+08:00",
+            updated_at="2026-03-18T00:00:00+08:00",
+            message_count=1,
+            latest_message_preview="好的，我记住了。",
+            messages=[
+                ConversationMessageRead(
+                    id="message-assistant-identity-log",
+                    session_id="conversation-identity-log",
+                    request_id="request-identity-log",
+                    seq=1,
+                    role="assistant",
+                    message_type="text",
+                    content="好的，我记住了。",
+                    status="completed",
+                    created_at="2026-03-18T00:00:01+08:00",
+                    updated_at="2026-03-18T00:00:01+08:00",
+                ),
+            ],
+            proposal_batches=[],
+        )
+
+        identity = VoiceIdentityResolution(
+            status="resolved",
+            primary_member_id="member-1",
+            primary_member_name="Alice",
+            primary_member_role="adult",
+            confidence=0.91,
+            reason="voiceprint matched",
+            context_conflict=False,
+            candidates=[
+                {
+                    "member_id": "member-1",
+                    "name": "Alice",
+                    "role": "adult",
+                    "confidence": 0.91,
+                    "current_room_id": "room-living",
+                    "current_room_name": "客厅",
+                    "reasons": ["声纹识别命中"],
+                }
+            ],
+            voiceprint_hint={
+                "provider": "mock",
+                "status": "matched",
+                "member_id": "member-1",
+                "profile_id": "profile-1",
+                "score": 0.91,
+                "threshold": 0.8,
+                "reason": "matched",
+                "candidate_count": 1,
+                "candidates": [
+                    {
+                        "member_id": "member-1",
+                        "profile_id": "profile-1",
+                        "score": 0.91,
+                    }
+                ],
+            },
+        )
+
+        with patch(
+            "app.modules.voice.conversation_bridge.get_active_voice_terminal_conversation_binding",
+            return_value=None,
+        ), patch(
+            "app.modules.voice.conversation_bridge.bind_voice_terminal_conversation",
+            return_value=SimpleNamespace(id="binding-identity-log"),
+        ), patch(
+            "app.modules.voice.conversation_bridge.create_conversation_session",
+            return_value=SimpleNamespace(id="conversation-identity-log"),
+        ), patch(
+            "app.modules.voice.conversation_bridge.append_conversation_debug_log",
+            return_value=True,
+        ) as append_debug_log_mock, patch(
+            "app.modules.voice.conversation_bridge.run_conversation_realtime_turn",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "app.modules.voice.conversation_bridge.record_conversation_turn_source",
+            return_value=SimpleNamespace(id="source-identity-log"),
+        ), patch(
+            "app.modules.voice.conversation_bridge.get_conversation_session_detail",
+            return_value=session_detail,
+        ):
+            result = asyncio.run(
+                voice_conversation_bridge.bridge(
+                    _FakeDbSession(),
+                    session=VoiceSessionState(
+                        session_id="voice-session-identity-log",
+                        terminal_id="terminal-identity-log",
+                        household_id="household-1",
+                    ),
+                    terminal=VoiceTerminalState(
+                        terminal_id="terminal-identity-log",
+                        household_id="household-1",
+                        terminal_code="living-speaker",
+                        name="客厅音箱",
+                        status="online",
+                    ),
+                    transcript_text="帮我打开客厅灯",
+                    identity=identity,
+                )
+            )
+
+        self.assertEqual("conversation-identity-log", result.conversation_session_id)
+        append_debug_log_mock.assert_called_once()
+        kwargs = append_debug_log_mock.call_args.kwargs
+        self.assertEqual("conversation-identity-log", kwargs["session_id"])
+        self.assertEqual("voice.identity.resolved", kwargs["stage"])
+        self.assertEqual("voice", kwargs["source"])
+        self.assertEqual("已完成声纹识别与身份决策。", kwargs["message"])
+        self.assertEqual(ANY, kwargs["request_id"])
+        self.assertEqual("resolved", kwargs["payload"]["identity_status"])
+        self.assertEqual("member-1", kwargs["payload"]["requester_member_id"])
+        self.assertEqual("Alice", kwargs["payload"]["requester_member_name"])
+        self.assertEqual(0.91, kwargs["payload"]["speaker_confidence"])
+        self.assertEqual("matched", kwargs["payload"]["voiceprint_hint"]["status"])
+        self.assertEqual("member-1", kwargs["payload"]["voiceprint_hint"]["member_id"])
+        self.assertEqual(1, len(kwargs["payload"]["candidates"]))
+
 
 class _FakeDbSession:
     def get(self, model, key):
         _ = model
         return SimpleNamespace(id=key, active_agent_id=None)
+
+    def add(self, row):
+        _ = row
 
     def scalar(self, stmt):
         _ = stmt

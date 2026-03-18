@@ -548,7 +548,7 @@ class TranslatorTests(unittest.TestCase):
         )
         return context
 
-    def _build_recognize_result_frame(self, *, text: str) -> str:
+    def _build_recognize_result_frame(self, *, text: str, is_final: bool = True, is_vad_begin: bool = False) -> str:
         return json.dumps(
             {
                 "Event": {
@@ -562,8 +562,8 @@ class TranslatorTests(unittest.TestCase):
                                     "name": "RecognizeResult",
                                 },
                                 "payload": {
-                                    "is_final": True,
-                                    "is_vad_begin": False,
+                                    "is_final": is_final,
+                                    "is_vad_begin": is_vad_begin,
                                     "results": [{"text": text}],
                                 },
                             },

@@ -406,3 +406,302 @@
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文
 
+---
+
+## 补记：2026-03-17 声纹录入卡在准备中的热修
+
+- 现象：前端创建声纹录入任务后，页面一直停在“录入进行中 / 准备中 / 0/3”，但后端和网关都没有后续录音日志。
+- 真正原因：任务虽然已经写进数据库，但在线小爱网关没有及时拿到新的 `pending_voiceprint_enrollment`，现场实际过度依赖 discovery claim poll 的下一轮刷新。
+- 修复做法：
+  - 后端新增 `binding.refresh` 实时命令。
+  - 创建录入、取消录入、录入样本推进、录入失败这几个状态变化点，都会主动把最新 terminal binding 推给在线网关。
+  - 网关收到 `binding.refresh` 后，会直接热更新当前 terminal context 里的 `pending_voiceprint_enrollment`，不再等下一轮轮询。
+- 这次修复明确不做什么：不改前端轮询协议，不改声纹 provider，不再继续堆更多兜底轮询。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m unittest tests.test_voiceprints_api`
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m unittest tests.test_bridge`
+
+---
+
+## 补记：2026-03-17 声纹录入三轮引导流程落地
+
+- 现象：即便上一轮已经修掉了“任务创建后网关无感知”，录入流程本身仍然是半成品。用户只能盯着 0/3、1/3 的进度数字，不知道现在该读什么，也听不到明确节奏提示。
+- 这次真正补上的东西：
+  - 后端在创建 enrollment 时，如果前端没传 `expected_phrase`，会自动给这次录入分配一条稳定的默认短句，保证前端和网关始终拿得到朗读内容。
+  - 后端新增声纹录入提示服务，按“先 TTS 提示，再播放提示音”的方式下发每轮引导，不新开协议，继续走现有 `play.start`。
+  - 创建任务后立即播第一轮提示；每轮录入成功但还没满 3 轮时，自动播下一轮提示；样本被拒绝时，自动播当前轮重试提示。
+  - 前端等待页改成真正的朗读卡片，直接显示当前句子、当前轮次和三步操作说明，不再让用户自己猜流程。
+- 这次明确不做什么：
+  - 不改前端轮询协议。
+  - 不做“三轮三句不同短句”的复杂编排，首版先固定一句话循环 3 轮。
+  - 不让音响直接念出屏幕上的句子，避免把提示语污染进声纹样本。
+- 顺手修掉的真 bug：
+  - 同步 endpoint 里 `anyio.from_thread.run()` 之前是错用关键字参数，实际有概率根本没把异步通知发出去。
+  - 现在统一改成闭包调用，确保 `binding.refresh` 和声纹引导提示都真的能发到运行中的事件循环。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m py_compile C:\Code\FamilyClaw\apps\api-server\app\api\v1\endpoints\voiceprints.py C:\Code\FamilyClaw\apps\api-server\app\modules\voice\pipeline.py C:\Code\FamilyClaw\apps\api-server\app\modules\voiceprint\service.py C:\Code\FamilyClaw\apps\api-server\app\modules\voiceprint\prompt_service.py C:\Code\FamilyClaw\apps\api-server\tests\test_voiceprints_api.py C:\Code\FamilyClaw\apps\api-server\tests\test_voiceprint_prompt_service.py`
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m unittest tests.test_voiceprints_api tests.test_voiceprint_prompt_service`
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m unittest tests.test_bridge`
+  - `cd C:\Code\FamilyClaw\apps\user-app && npm.cmd run test:voiceprint`
+
+---
+
+## 补记：2026-03-17 声纹录入卡死任务自动收口
+
+- 现象：如果之前有一个 enrollment 已经过期，但状态还挂在 `pending / recording / processing`，前端会一直卡在“录入进行中”，用户既关不掉，也开不了新的录入任务。
+- 真正原因：
+  - 前端 waiting 态没有“结束本次录入”的正式入口，还把弹窗关闭动作硬锁死了。
+  - 设备详情页对同一个 enrollment 轮询了两遍，纯属重复代码。
+  - 后端没有把过期 enrollment 自动改成终态，导致旧任务一直占着设备坑位。
+- 修复做法：
+  - 前端 waiting 态增加“结束本次录入”按钮，调用正式取消接口，不再只给一个禁用的“请等待”。
+  - 设备详情页删除重复轮询 effect，只保留一份等待态轮询。
+  - 后端新增过期 enrollment 收口逻辑，在创建任务、查询任务、读取成员详情、读取家庭汇总、列出任务这些入口先清理过期任务，再继续返回结果。
+  - 过期任务统一改成 `cancelled`，并写入 `voiceprint_enrollment_expired`，避免再伪装成“还在进行中”。
+- 这次明确不做什么：
+  - 不新增另一套“强制结束流程”协议。
+  - 不靠前端本地超时假装任务结束。
+  - 不让关闭弹窗冒充取消任务。
+- 验证命令：
+  - `cd C:\Code\FamilyClaw\apps\user-app && npm.cmd run test:voiceprint`
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m unittest tests.test_voiceprints_api`
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m py_compile app\modules\voiceprint\service.py app\api\v1\endpoints\voiceprints.py`
+
+---
+
+## 补记：2026-03-17 声纹引导实时指令改成正式后台任务投递
+
+- 现象：创建声纹录入任务后，前端能看到 enrollment 已经创建，但 gateway 完全没有收到 `binding.refresh` 和 `play.start`，日志安静得像没发生过事。
+- 真正原因：
+  - 这条链路之前在同步 endpoint 里用 `anyio.from_thread.run()` 直接把异步实时指令塞回主循环。
+  - 这种写法依赖当前请求线程一定带有 AnyIO worker thread 上下文，条件不成立时就会直接跳过。
+  - 之前这类跳过还是 `debug` 日志，生产现场用 `INFO` 基本看不到，排查成本高得离谱。
+- 修复做法：
+  - 录入创建、录入取消这两个同步 endpoint 改成使用 FastAPI `BackgroundTasks` 投递实时副作用。
+  - 录入提示使用轻量 snapshot 传参，不再把 ORM 对象生命周期硬绑到后台投递时机上。
+  - 后端补了明确日志：成功下发会打印 `dispatched binding refresh` / `dispatched voiceprint round prompt`；没发出去会明确写 terminal offline 或 delivery failed。
+- 这次明确不做什么：
+  - 不把同步 endpoint 全部粗暴改成 async 再直接跑阻塞 DB。
+  - 不新造一套队列系统去解决一个局部实时投递问题。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m py_compile app\api\v1\endpoints\voiceprints.py app\modules\voice\binding_refresh_service.py app\modules\voiceprint\prompt_service.py`
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m unittest tests.test_voiceprints_api tests.test_voiceprint_prompt_service`
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m unittest tests.test_bridge`
+
+---
+
+## 补记：2026-03-17 声纹录入第一轮不自动结束的网关热修
+
+- 现象：
+  - `binding.refresh`、TTS 和提示音已经能到 gateway，但第一轮永远停在 0/3。
+  - 日志里只有 `play.start`，没有后续样本提交。
+- 真正原因：
+  - 之前的实现只把 `pending_voiceprint_enrollment` 当成“如果终端自己发起语音事件，就按 enrollment 处理”的上下文。
+  - 但是提示音播完以后，gateway 并不会主动建一轮声纹采集会话，也不会主动在一个固定窗口后提交样本。
+  - 结果就是：没有 `session.start`，`record` 音频也不会被转发，第一轮只能一直挂着。
+- 修复做法：
+  - 声纹引导里的 `beep` 在 gateway 侧增加真实的 3 秒等待，不再只是 TTS 里口头说“3 秒后”。
+  - `beep` 播完后，gateway 主动开始一轮声纹采集：
+    - 创建 `voiceprint_enrollment` 会话并上报 `session.start`
+    - 重新下发一次 `start_recording`，确保录音流处于工作状态
+    - 在固定采集窗口结束后自动上报 `audio.commit`
+  - 为了让声纹建档稳定收口，commit 会带上 enrollment 的 `expected_phrase` 作为 `debug_transcript` 兜底。
+  - 如果这一轮根本没有收到任何音频字节，gateway 不再无限等待，而是明确上报 `session.cancel` 并打出日志。
+  - 同时补了状态清理：
+    - 绑定刷新时会取消旧的声纹轮次任务
+    - 终端断开时会取消未结束的轮次任务
+    - 新一轮开始前会清掉旧的声纹会话，避免再次卡死在上一轮
+- 这次明确不做什么：
+  - 不新增新的后端录入协议。
+  - 不把录入时序再塞回前端猜。
+  - 不继续依赖终端“也许会自己开一轮录音”这种不可靠行为。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m py_compile apps\open-xiaoai-gateway\open_xiaoai_gateway\bridge.py apps\open-xiaoai-gateway\tests\test_bridge.py`
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m unittest apps.open-xiaoai-gateway.tests.test_bridge`
+
+---
+
+## 补记：2026-03-18 第一轮成功后第二轮不播的后端热修
+
+- 现象：
+  - 第一轮已经能正常采集并自动 `audio.commit`。
+  - 后端状态也能推进到 `1/3`，前端会显示“等待下一轮样本”。
+  - 但 gateway 只收到新的 `binding.refresh`，始终收不到第二轮 `play.start`。
+- 真正原因：
+  - 样本处理函数返回的是 ORM `enrollment` 对象。
+  - 第一轮提交完成后，pipeline 一边用它做 `binding.refresh`，一边又继续拿它的 `sample_count/status` 去拼第二轮 prompt。
+  - 这在对象已经脱离会话时非常不稳，典型结果就是：`binding.refresh` 发出去了，第二轮 prompt 这边直接炸掉或者静默失败。
+- 修复做法：
+  - 把声纹提示所需的最小字段抽成正式的 `VoiceprintPromptEnrollmentSnapshot`，放到独立模块里。
+  - `process_voiceprint_enrollment_sample()` 返回结果时，同时带上这个 snapshot，不再让后续链路继续碰脱会话 ORM 对象。
+  - pipeline 刷新 terminal binding 和下发下一轮 prompt 时，统一优先使用 snapshot 的 `terminal_id/sample_count/status`。
+  - 顺手拆掉了原来 `service -> prompt_service -> service` 的循环依赖，避免这条链越修越烂。
+- 这次明确不做什么：
+  - 不新增另一套“轮次推进事件”协议。
+  - 不靠前端自己猜“既然变成 1/3 了，那就本地弹第二轮”。
+  - 不继续让 pipeline 读取跨线程返回的 ORM 对象赌运气。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m py_compile app\modules\voiceprint\prompt_types.py app\modules\voiceprint\prompt_service.py app\modules\voiceprint\service.py app\modules\voice\pipeline.py tests\test_voice_pipeline_voiceprint_prompt.py`
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m unittest tests.test_voice_pipeline_voiceprint_prompt tests.test_voiceprint_prompt_service tests.test_voiceprint_async_service`
+
+---
+
+## 补记：2026-03-18 网关按 binding.refresh 自循环后续轮次
+
+- 现象：
+  - 第一轮采样成功后，前端已经变成 `1/3`，但第二轮提示音和滴声还是没来。
+  - 现场日志能看到第一轮结束后的 `binding.refresh`，但没有新的 `play.start`。
+- 真正原因：
+  - 就算后端已经把第二轮 prompt 发送逻辑补稳，现场依然可能因为实时链路时序、对象生命周期或投递缺口，出现“状态推进了，但下一轮提示没有继续播”的断链。
+  - 这种设计本身就太脆，后续轮次不该继续依赖后端每轮都再推一遍完整 `play.start`。
+- 修复做法：
+  - gateway 收到 `binding.refresh` 且发现 `pending_voiceprint_enrollment` 从 `0/3` 变成 `1/3`、`2/3` 这类“已推进但未完成”的状态后，会直接在本地排队下一轮提示。
+  - 本地提示仍然沿用同一套节奏：
+    - 先播“请准备第 N 轮”
+    - 再等 3 秒
+    - 再播滴声
+    - 然后自动进入录音窗口并自动 commit
+  - 这样后续轮次的推进只依赖 `binding.refresh`，不再依赖 api-server 再补发一整组 `play.start`。
+- 这次明确不做什么：
+  - 不再把“第二轮一定要等后端 prompt”当作单点依赖。
+  - 不把轮次推进交给前端本地计时。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m py_compile open_xiaoai_gateway\bridge.py tests\test_bridge.py`
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m unittest tests.test_bridge`
+
+---
+
+## 补记：2026-03-18 重启后续轮补播与调度日志收口
+
+- 现象：
+  - gateway 重启后，日志能看到 `claimed terminal activated` 和周期性的 `refreshed active terminal binding`。
+  - 但第二轮、第三轮有时就是不继续播，现场只能看到“拿到了 pending enrollment”，看不到为什么没排队。
+- 真正原因：
+  - 原来的本地续轮调度还在赌 `refresh_reason` 和 `sample_count_changed` 这类时序条件。
+  - 这种写法太脆，只要重启、轮询刷新、实时 `binding.refresh` 到达顺序稍微变一下，就可能因为“看起来没变化”而直接跳过。
+  - 更糟的是，早退分支几乎没有明确日志，现场只能看到“没播”，根本不知道是被哪条条件挡住。
+- 修复做法：
+  - gateway 的本地续轮调度改成更笨也更稳的规则：
+    - 只要当前还有未完成的 `pending_voiceprint_enrollment`
+    - 且没有正在播的音频、没有正在录的声纹会话、没有正在跑的轮次任务
+    - 且这轮 `prompt_key` 之前没播过
+    - 就直接排本地提示，不再强依赖 `sample_count_changed`
+  - 仍然保留 `voiceprint_enrollment_created` 的特殊处理，避免和后端首轮 prompt 重复。
+  - 给每个跳过分支补了 `INFO` 日志，把 `refresh_reason`、前后 sample_count、当前播放/会话状态一起打出来，现场以后不会再靠猜。
+- 这次明确不做什么：
+  - 不再继续增加新的“也许这次能猜对”的条件判断。
+  - 不要求前端参与续轮定时。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m py_compile open_xiaoai_gateway\bridge.py tests\test_bridge.py`
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m unittest tests.test_bridge`
+
+---
+
+## 补记：2026-03-18 声纹样本提交后的脱会话 ORM 崩溃修复
+
+- 现象：
+  - 第一轮录音提交后，gateway 已经能收到 `binding.refresh` 并准备本地续播第二轮。
+  - 但 api-server 会立刻把 realtime websocket 打成 `1011`，gateway 随后在发送第二轮 `playback.started` 时撞到已关闭连接。
+  - 日志里明确是 `DetachedInstanceError`，炸点在 `result.sample.id`。
+- 真正原因：
+  - 声纹处理结果虽然已经把 prompt 需要的 enrollment 信息抽成了 snapshot，但 pipeline 里还残留着对 `result.sample.id` / `result.profile.id` 这类 ORM 对象的直接访问。
+  - 这些对象一旦离开原来的 Session，就不再可靠，继续碰它们就是在赌 SQLAlchemy 不会反噬。
+- 修复做法：
+  - `VoiceprintEnrollmentProcessResult` 正式增加 `sample_id` 和 `profile_id` 两个稳定字段。
+  - 结果构造时立即把 id 提前拎出来，后续链路不再依赖脱会话 ORM。
+  - pipeline 更新路由结果时只读 `result.profile_id or result.sample_id`。
+  - 顺手把“第一轮之后继续由 api-server 发后续 prompt”收掉，改成只刷新 binding，由 gateway 本地续轮，减少 realtime 链路的脆弱点。
+- 这次明确不做什么：
+  - 不再继续让 pipeline 读取 `sample.id`、`profile.id` 这种脱会话字段。
+  - 不保留两套“后端续轮”和“网关续轮”并行竞争。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m py_compile app\modules\voice\pipeline.py app\modules\voiceprint\service.py tests\test_voice_pipeline_voiceprint_prompt.py`
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m unittest tests.test_voice_pipeline_voiceprint_prompt tests.test_voiceprint_prompt_service tests.test_voiceprint_async_service`
+
+---
+
+## 补记：2026-03-18 对话调试日志补齐声纹识别记录
+
+- 现象：
+  - 声纹识别结果已经进入语音链路内存态，也能影响后续身份决策。
+  - 但打开对话调试日志时，只能看到聊天编排和回复阶段，看不到这次到底把谁识别成了说话人。
+- 真正原因：
+  - 之前只有 `conversation.service` 内部私有的 `_append_debug_log(...)`。
+  - `voice.conversation_bridge` 没有正式入口可调用，所以声纹身份结果一直没落到 `conversation_debug_logs`。
+- 修复做法：
+  - 在 `conversation.service` 增加正式公开入口 `append_conversation_debug_log(...)`，统一复用现有调试日志落库逻辑。
+  - 在语音桥接主链里新增 `voice.identity.resolved` 调试阶段。
+  - 日志 payload 会带上：
+    - `identity_status`
+    - `requester_member_id`
+    - `requester_member_name`
+    - `requester_member_role`
+    - `speaker_confidence`
+    - `identity_reason`
+    - `voiceprint_hint`
+    - `candidates`
+    - 以及 `voice_session_id`、`terminal_id`、`transcript_text`
+- 这次明确不做什么：
+  - 不让 `voice` 模块直接硬调私有函数。
+  - 不把声纹识别结果拆成一堆散字段后各处自己拼日志。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\api-server\.venv\Scripts\python.exe -m unittest tests.test_conversation_debug_log_service tests.test_voice_conversation_bridge`
+
+---
+
+## 补记：2026-03-18 网关对 api realtime websocket 重启的收尾加固
+
+- 现象：
+  - 语音对话过程中，gateway 偶尔会收到 api-server realtime websocket 的 `1012 service restart` 关闭。
+  - 实际上 terminal 很快就能重新 claim 成功，但 gateway 收尾代码还会继续尝试发 `terminal.offline`，并把已关闭 websocket 当成异常抛栈。
+  - 现场看起来像“网关崩了”，其实是“断线已恢复，但日志和收尾逻辑很烂”。
+- 真正原因：
+  - `_forward_api_commands()` 没把 `ConnectionClosed` 视为正常断链。
+  - `_handle_terminal_connection()` 的 finally 里又会继续 await 已失败的 `api_reader_task`，并尝试往已关闭 websocket 发送 `terminal.offline`。
+- 修复做法：
+  - gateway 现在把 api websocket 的 `ConnectionClosed` 视为正常断链，记一条 `INFO`，不再抛异常栈。
+  - 如果 websocket 已经关闭，就跳过 `terminal.offline` 上报，不再把可恢复重连打成错误。
+  - finally 阶段等待 `api_reader_task` 时，也会吞掉这类已知连接关闭异常。
+- 这次明确不做什么：
+  - 不伪造“api-server 永远不会重启”这种前提。
+  - 不把可恢复 websocket 关闭继续当成 gateway 崩溃。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m unittest tests.test_bridge`
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m py_compile open_xiaoai_gateway\bridge.py tests\test_bridge.py`
+
+---
+
+## 补记：2026-03-18 普通前缀接管对话补齐声纹识别音频留存
+
+- 现象：
+  - 声纹录入已经成功，但普通语音对话的调试日志里 `voiceprint_hint.status` 一直是 `not_attempted`。
+  - 同一时间段内，`voice-runtime-artifacts` 只有 `voiceprint_enrollment` 样本，没有普通 `conversation` 音频文件。
+- 真正原因：
+  - `native_first` 模式下，gateway 之前要等最终识别文本命中接管前缀，才会正式发 `session.start`。
+  - 这意味着前面 `record` 音频流到达时还没有 `active_session_id`，`audio.append` 全被直接丢掉。
+  - api-server 收不到普通对话音频，自然也就没有音频文件给声纹识别服务尝试。
+- 修复做法：
+  - `native_first` 普通前缀接管在 `is_vad_begin` 时先预热一轮 `conversation` 会话，但不提前打断原生小爱。
+  - 这样录音流可以先正常转成 `audio.append`，把普通对话音频留到 runtime 里。
+  - 等最终文本出来以后：
+    - 命中接管前缀，就复用这轮会话直接 `audio.commit`
+    - 没命中接管前缀，就发 `session.cancel`，把临时缓存收掉
+  - 同时补单测，明确覆盖“预热后提交”和“预热后取消”两条时序。
+- 这次明确不做什么：
+  - 不去改 api-server 的身份识别入口绕过音频缺失。
+  - 不把普通对话也强行改成 `always_familyclaw`。
+- 验证命令：
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m unittest tests.test_translator tests.test_bridge`
+  - `C:\Code\FamilyClaw\apps\open-xiaoai-gateway\.venv\Scripts\python.exe -m py_compile open_xiaoai_gateway\translator.py tests\test_translator.py`
+
+- 现场补充结论：
+  - 只靠 `is_vad_begin` 还是不够稳，现场设备这次普通对话很可能没有先给独立的 VAD 开始事件。
+  - 后续正式方案不再继续赌“什么时候开始建 session”，而是改成 gateway 本地维护最近 6 秒的 PCM 内存环形缓冲。
+  - `native_first` 被唤醒后，等待前缀判断期间先只缓存音频，不立刻往 api-server 发正式 `audio.append`。
+  - 一旦最终文本命中接管前缀，gateway 会：
+    - 先发 `session.start`
+    - 再把内存里回溯到的最近音频补发成一串 `audio.append`
+    - 最后再发 `audio.commit`
+  - 如果最终没有命中接管前缀，就直接清空缓冲，不落盘、不留历史音频。
+  - 这样普通对话是否能做声纹识别，不再依赖设备必须先吐出某个理想化的 VAD 事件。
+

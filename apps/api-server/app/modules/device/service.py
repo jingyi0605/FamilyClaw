@@ -13,6 +13,10 @@ from app.modules.device.models import Device, DeviceBinding, DeviceEntityFavorit
 from app.modules.device.schemas import (
     DeviceActionLogListResponse,
     DeviceActionLogRead,
+    DeviceDetailBuiltinTabRead,
+    DeviceDetailCapabilityRead,
+    DeviceDetailPluginTabRead,
+    DeviceDetailViewRead,
     DeviceEntityControlOptionRead,
     DeviceEntityControlRead,
     DeviceEntityListResponse,
@@ -99,6 +103,9 @@ def update_device(db: Session, device: Device, payload: DeviceUpdate) -> tuple[D
     if not update_data:
         return device, {}
 
+    device_bindings = _load_device_bindings(db, device_id=device.id)
+    supports_voice_terminal = _device_supports_voice_terminal(device=device, bindings=device_bindings)
+
     if "room_id" in update_data:
         _validate_room_in_household(
             db,
@@ -110,26 +117,26 @@ def update_device(db: Session, device: Device, payload: DeviceUpdate) -> tuple[D
         update_data["controllable"] = 1 if update_data["controllable"] else 0
 
     if "voice_auto_takeover_enabled" in update_data:
-        if device.device_type != "speaker" or device.vendor != "xiaomi":
+        if not supports_voice_terminal:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="voice takeover settings only support xiaomi speaker devices",
+                detail="voice takeover settings only support voice terminal devices",
             )
         update_data["voice_auto_takeover_enabled"] = 1 if update_data["voice_auto_takeover_enabled"] else 0
 
     if "voiceprint_identity_enabled" in update_data:
-        if device.device_type != "speaker" or device.vendor != "xiaomi":
+        if not supports_voice_terminal:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="voiceprint settings only support xiaomi speaker devices",
+                detail="voiceprint settings only support voice terminal devices",
             )
         update_data["voiceprint_identity_enabled"] = 1 if update_data["voiceprint_identity_enabled"] else 0
 
     if "voice_takeover_prefixes" in update_data:
-        if device.device_type != "speaker" or device.vendor != "xiaomi":
+        if not supports_voice_terminal:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="voice takeover settings only support xiaomi speaker devices",
+                detail="voice takeover settings only support voice terminal devices",
             )
 
     for field_name, field_value in update_data.items():
@@ -259,6 +266,26 @@ def list_device_action_logs(
         page=page,
         page_size=page_size,
         total=total,
+    )
+
+
+def get_device_detail_view(
+    db: Session,
+    *,
+    device_id: str,
+) -> DeviceDetailViewRead:
+    device = get_device_or_404(db, device_id)
+    bindings = _load_device_bindings(db, device_id=device.id)
+    capabilities = _build_device_detail_capabilities(device=device, bindings=bindings)
+    return DeviceDetailViewRead(
+        device=DeviceRead.model_validate(device),
+        capabilities=capabilities,
+        builtin_tabs=_build_device_detail_builtin_tabs(capabilities=capabilities),
+        plugin_tabs=_build_device_detail_plugin_tabs(
+            db,
+            device=device,
+            bindings=bindings,
+        ),
     )
 
 
@@ -776,9 +803,156 @@ def _extract_log_message(action: str, details: dict[str, Any]) -> str | None:
     return None
 
 
+def _build_device_detail_capabilities(
+    *,
+    device: Device,
+    bindings: list[DeviceBinding],
+) -> DeviceDetailCapabilityRead:
+    adapter_type: str | None = None
+    plugin_id: str | None = None
+    vendor_code: str | None = None
+    capability_tags: list[str] = []
+
+    for binding in bindings:
+        binding_capabilities = _load_binding_capabilities(binding)
+        if plugin_id is None and binding.plugin_id:
+            plugin_id = binding.plugin_id
+        if adapter_type is None:
+            adapter_type = _normalize_optional_text(binding_capabilities.get("adapter_type"))
+        if vendor_code is None:
+            vendor_code = _normalize_optional_text(binding_capabilities.get("vendor_code"))
+        for tag in _load_capability_tags(binding_capabilities):
+            if tag not in capability_tags:
+                capability_tags.append(tag)
+
+    if vendor_code is None and device.vendor:
+        vendor_code = device.vendor
+
+    supports_voice_terminal = _device_supports_voice_terminal(device=device, bindings=bindings)
+    return DeviceDetailCapabilityRead(
+        supports_voice_terminal=supports_voice_terminal,
+        supports_voiceprint=supports_voice_terminal,
+        adapter_type=adapter_type,
+        plugin_id=plugin_id,
+        vendor_code=vendor_code,
+        capability_tags=capability_tags,
+    )
+
+
+def _build_device_detail_builtin_tabs(
+    *,
+    capabilities: DeviceDetailCapabilityRead,
+) -> list[DeviceDetailBuiltinTabRead]:
+    tabs: list[DeviceDetailBuiltinTabRead] = []
+    if capabilities.supports_voiceprint:
+        tabs.append(DeviceDetailBuiltinTabRead(key="voiceprint"))
+    return tabs
+
+
+def _build_device_detail_plugin_tabs(
+    db: Session,
+    *,
+    device: Device,
+    bindings: list[DeviceBinding],
+) -> list[DeviceDetailPluginTabRead]:
+    from app.modules.plugin.config_service import get_plugin_config_form
+    from app.modules.plugin.service import PluginServiceError, get_household_plugin
+
+    tabs: list[DeviceDetailPluginTabRead] = []
+    seen_plugin_ids: set[str] = set()
+
+    for binding in bindings:
+        if not binding.plugin_id or binding.plugin_id in seen_plugin_ids:
+            continue
+        seen_plugin_ids.add(binding.plugin_id)
+        try:
+            plugin = get_household_plugin(
+                db,
+                household_id=device.household_id,
+                plugin_id=binding.plugin_id,
+            )
+        except PluginServiceError:
+            continue
+        for tab in plugin.capabilities.device_detail_tabs:
+            try:
+                config_form = get_plugin_config_form(
+                    db,
+                    household_id=device.household_id,
+                    plugin_id=plugin.id,
+                    scope_type=tab.config_scope_type,
+                    scope_key=device.id,
+                )
+            except PluginServiceError:
+                continue
+            tabs.append(
+                DeviceDetailPluginTabRead(
+                    tab_key=tab.tab_key,
+                    title=tab.title,
+                    description=tab.description,
+                    plugin_id=plugin.id,
+                    plugin_name=plugin.name,
+                    config_form=config_form,
+                )
+            )
+    return tabs
+
+
 def _load_binding_capabilities(binding: DeviceBinding) -> dict[str, Any]:
     loaded = load_json(binding.capabilities)
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _load_capability_tags(capabilities: dict[str, Any]) -> list[str]:
+    raw_tags = capabilities.get("capability_tags")
+    if not isinstance(raw_tags, list):
+        return []
+    tags: list[str] = []
+    for item in raw_tags:
+        text = str(item).strip().lower()
+        if not text or text in tags:
+            continue
+        tags.append(text)
+    return tags
+
+
+def _binding_supports_voice_terminal(
+    *,
+    device: Device,
+    binding: DeviceBinding,
+    capabilities: dict[str, Any],
+) -> bool:
+    if binding.platform == "open_xiaoai":
+        return True
+    if binding.plugin_id == "open-xiaoai-speaker":
+        return True
+
+    adapter_type = _normalize_optional_text(capabilities.get("adapter_type"))
+    if adapter_type in {"open_xiaoai", "voice_terminal"}:
+        return True
+
+    vendor_code = _normalize_optional_text(capabilities.get("vendor_code"))
+    if vendor_code == "xiaomi" and device.device_type == "speaker":
+        return True
+
+    capability_tags = set(_load_capability_tags(capabilities))
+    if capability_tags.intersection({"voice_terminal", "voiceprint", "speaker", "microphone"}):
+        return True
+    return False
+
+
+def _device_supports_voice_terminal(
+    *,
+    device: Device,
+    bindings: list[DeviceBinding],
+) -> bool:
+    for binding in bindings:
+        if _binding_supports_voice_terminal(
+            device=device,
+            binding=binding,
+            capabilities=_load_binding_capabilities(binding),
+        ):
+            return True
+    return device.device_type == "speaker" and device.vendor == "xiaomi"
 
 
 def _load_device_bindings(db: Session, *, device_id: str) -> list[DeviceBinding]:

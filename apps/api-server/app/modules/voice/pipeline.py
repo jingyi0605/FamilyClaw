@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session
 
+from app.modules.voice.binding_refresh_service import refresh_voice_terminal_binding_state
 from app.modules.voice.conversation_bridge import voice_conversation_bridge
 from app.modules.voice.fast_action_service import VoiceFastActionExecutionError, VoiceRouteDecision, voice_fast_action_service
 from app.modules.voice.protocol import (
@@ -26,7 +29,10 @@ from app.modules.voice.registry import (
 from app.modules.voice.router import VoiceRoutingResult, voice_router
 from app.modules.voice.runtime_client import voice_runtime_client
 from app.modules.voiceprint.async_service import async_process_voiceprint_enrollment_sample
+from app.modules.voiceprint.prompt_service import send_voiceprint_round_prompt
 from app.modules.voiceprint.service import mark_voiceprint_enrollment_failed
+
+logger = logging.getLogger(__name__)
 
 
 class VoicePipelineService:
@@ -258,6 +264,10 @@ class VoicePipelineService:
                     error_code=transcript_result.error_code or "voice_runtime_unavailable",
                     detail=transcript_result.detail or "声纹建档样本转写失败",
                 )
+                await self._refresh_voiceprint_terminal_binding(
+                    terminal_id=session.terminal_id,
+                    reason="voiceprint_enrollment_failed",
+                )
             voice_session_registry.mark_failed(
                 session_id=session.session_id,
                 error_code=transcript_result.error_code or "voice_runtime_unavailable",
@@ -279,6 +289,10 @@ class VoicePipelineService:
                     enrollment_id=session.voiceprint_enrollment_id,
                     error_code="voice_transcript_empty",
                     detail="声纹建档样本文本为空，无法继续入库",
+                )
+                await self._refresh_voiceprint_terminal_binding(
+                    terminal_id=session.terminal_id,
+                    reason="voiceprint_enrollment_failed",
                 )
             voice_session_registry.mark_failed(session_id=session.session_id, error_code="voice_transcript_empty")
             return [
@@ -465,6 +479,10 @@ class VoicePipelineService:
                 error_code="voiceprint_artifact_missing",
                 detail="声纹建档样本缺少音频产物元数据",
             )
+            await self._refresh_voiceprint_terminal_binding(
+                terminal_id=session.terminal_id,
+                reason="voiceprint_enrollment_failed",
+            )
             voice_session_registry.mark_failed(session_id=session.session_id, error_code="voiceprint_artifact_missing")
             return []
 
@@ -488,10 +506,14 @@ class VoicePipelineService:
                 error_code="voiceprint_enrollment_failed",
                 detail=str(detail),
             )
+            await self._refresh_voiceprint_terminal_binding(
+                terminal_id=session.terminal_id,
+                reason="voiceprint_enrollment_failed",
+            )
             voice_session_registry.mark_failed(session_id=session.session_id, error_code="voiceprint_enrollment_failed")
             return []
 
-        route_target = result.profile.id if result.profile is not None else result.sample.id if result.sample is not None else None
+        route_target = result.profile_id or result.sample_id
         voice_session_registry.update_route(
             session_id=session.session_id,
             lane="voiceprint_enrollment",
@@ -499,10 +521,25 @@ class VoicePipelineService:
             route_target=route_target,
             route_error_code=result.error_code,
         )
+        prompt_enrollment = result.prompt_enrollment
+        terminal_id = prompt_enrollment.terminal_id if prompt_enrollment is not None else result.enrollment.terminal_id
         if result.outcome == "failed":
             voice_session_registry.mark_failed(
                 session_id=session.session_id,
                 error_code=result.error_code or "voiceprint_enrollment_failed",
+            )
+        await self._refresh_voiceprint_terminal_binding(
+            terminal_id=terminal_id,
+            reason="voiceprint_enrollment_failed" if result.outcome == "failed" else "voiceprint_enrollment_progressed",
+        )
+        if result.outcome in {"recorded", "rejected"}:
+            logger.info(
+                "skip api follow-up voiceprint prompt because gateway will continue locally enrollment_id=%s terminal_id=%s outcome=%s sample_count=%s sample_goal=%s",
+                prompt_enrollment.id if prompt_enrollment is not None else result.enrollment.id,
+                terminal_id,
+                result.outcome,
+                prompt_enrollment.sample_count if prompt_enrollment is not None else result.enrollment.sample_count,
+                prompt_enrollment.sample_goal if prompt_enrollment is not None else result.enrollment.sample_goal,
             )
         return []
 
@@ -576,6 +613,44 @@ class VoicePipelineService:
             db.commit()
         except Exception:
             db.rollback()
+
+    async def _refresh_voiceprint_terminal_binding(self, *, terminal_id: str, reason: str) -> None:
+        if not terminal_id.strip():
+            return
+        try:
+            await refresh_voice_terminal_binding_state(
+                terminal_id=terminal_id,
+                reason=reason,
+            )
+        except Exception:
+            logger.warning(
+                "voiceprint terminal binding refresh failed terminal_id=%s reason=%s",
+                terminal_id,
+                reason,
+                exc_info=True,
+            )
+
+    async def _send_voiceprint_round_prompt(
+        self,
+        *,
+        enrollment,
+        prompt_key: str,
+        retry: bool = False,
+    ) -> None:
+        try:
+            await send_voiceprint_round_prompt(
+                enrollment,
+                prompt_key=prompt_key,
+                retry=retry,
+            )
+        except Exception:
+            logger.warning(
+                "voiceprint round prompt failed enrollment_id=%s terminal_id=%s prompt_key=%s",
+                enrollment.id,
+                enrollment.terminal_id,
+                prompt_key,
+                exc_info=True,
+            )
 
 
 voice_pipeline_service = VoicePipelineService()

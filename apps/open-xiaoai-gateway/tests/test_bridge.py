@@ -5,10 +5,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
+
 from open_xiaoai_gateway.bridge import (
     GatewayDiscoveryStatus,
     GatewayRuntimeState,
     OpenXiaoAIGateway,
+    _VOICEPRINT_PROMPT_DELAY_SECONDS,
     _parse_gateway_discovery_status,
     _extract_remote_addr,
 )
@@ -119,6 +123,44 @@ class _FakeTerminalWebSocket:
         return item
 
 
+class _ClosedApiWebSocket:
+    def __init__(self, close_exc: ConnectionClosedError) -> None:
+        self._close_exc = close_exc
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise self._close_exc
+
+    async def send(self, message: str) -> None:
+        _ = message
+        raise self._close_exc
+
+    async def close(self) -> None:
+        return None
+
+
+def _build_claimed_context(
+    *,
+    pending_voiceprint_enrollment: PendingVoiceprintEnrollment | None = None,
+) -> TerminalBridgeContext:
+    context = TerminalBridgeContext()
+    context.apply_discovery(build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0"))
+    context.apply_binding(
+        VoiceTerminalBinding(
+            household_id="household-1",
+            terminal_id="terminal-1",
+            room_id="room-1",
+            terminal_name="客厅小爱",
+            voice_auto_takeover_enabled=False,
+            voice_takeover_prefixes=("请",),
+            pending_voiceprint_enrollment=pending_voiceprint_enrollment,
+        )
+    )
+    return context
+
+
 class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_handle_terminal_connection_discovers_terminal_while_reader_is_running(self) -> None:
         gateway = OpenXiaoAIGateway()
@@ -137,6 +179,27 @@ class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(3, len(websocket.sent_messages))
         first_request = json.loads(websocket.sent_messages[0])["Request"]
         self.assertEqual("get_version", first_request["command"])
+
+    async def test_forward_api_commands_ignores_service_restart_close(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        close_exc = ConnectionClosedError(
+            Close(code=1012, reason="service restart"),
+            Close(code=1012, reason="service restart"),
+            True,
+        )
+        state = GatewayRuntimeState(
+            context=TerminalBridgeContext(
+                fingerprint="open_xiaoai:LX06:SN001",
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                name="客厅小爱",
+            ),
+            terminal_rpc=SimpleNamespace(),
+            remote_addr="192.168.1.22",
+        )
+
+        await gateway._forward_api_commands(_ClosedApiWebSocket(close_exc), state)
 
     async def test_refresh_active_binding_updates_takeover_strategy(self) -> None:
         gateway = OpenXiaoAIGateway()
@@ -243,9 +306,13 @@ class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
         api_reader_task = asyncio.create_task(asyncio.sleep(60))
         state = GatewayRuntimeState(
             context=context,
-            terminal_rpc=SimpleNamespace(),
+            terminal_rpc=SimpleNamespace(
+                call=AsyncMock(return_value=SimpleNamespace(code=0, msg="ok", data={"stdout": "", "stderr": "", "exit_code": 0})),
+                notify=AsyncMock(),
+                send_stream=AsyncMock(),
+            ),
             remote_addr="192.168.1.22",
-            api_websocket=SimpleNamespace(),
+            api_websocket=SimpleNamespace(send=AsyncMock()),
             api_reader_task=api_reader_task,
         )
 
@@ -277,6 +344,221 @@ class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(context.pending_voiceprint_enrollment)
         assert context.pending_voiceprint_enrollment is not None
         self.assertEqual("enrollment-1", context.pending_voiceprint_enrollment.enrollment_id)
+
+    async def test_refresh_active_binding_progress_schedules_local_next_round_prompt(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        context = _build_claimed_context(
+            pending_voiceprint_enrollment=PendingVoiceprintEnrollment(
+                enrollment_id="enrollment-1",
+                target_member_id="member-1",
+                expected_phrase="我是妈妈",
+                sample_goal=3,
+                sample_count=0,
+                expires_at="2026-03-18T00:30:00+08:00",
+            )
+        )
+        api_reader_task = asyncio.create_task(asyncio.sleep(60))
+        state = GatewayRuntimeState(
+            context=context,
+            terminal_rpc=SimpleNamespace(),
+            remote_addr="192.168.1.22",
+            api_websocket=SimpleNamespace(),
+            api_reader_task=api_reader_task,
+        )
+
+        try:
+            with patch.object(
+                OpenXiaoAIGateway,
+                "_enqueue_local_voiceprint_round_prompt",
+                new=AsyncMock(),
+            ) as enqueue_mock:
+                await gateway._refresh_active_binding(
+                    state,
+                    VoiceTerminalBinding(
+                        household_id="household-1",
+                        terminal_id="terminal-1",
+                        room_id="room-1",
+                        terminal_name="客厅小爱",
+                        voice_auto_takeover_enabled=False,
+                        voice_takeover_prefixes=("请",),
+                        pending_voiceprint_enrollment=PendingVoiceprintEnrollment(
+                            enrollment_id="enrollment-1",
+                            target_member_id="member-1",
+                            expected_phrase="我是妈妈",
+                            sample_goal=3,
+                            sample_count=1,
+                            expires_at="2026-03-18T00:30:00+08:00",
+                        ),
+                    ),
+                    reason="voiceprint_enrollment_progressed",
+                )
+        finally:
+            api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await api_reader_task
+
+        enqueue_mock.assert_awaited_once()
+        self.assertEqual("recorded-1", enqueue_mock.await_args.kwargs["prompt_key"])
+        self.assertFalse(enqueue_mock.await_args.kwargs["retry"])
+
+    async def test_maybe_schedule_local_voiceprint_round_prompt_replays_current_round_without_reason(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        enrollment = PendingVoiceprintEnrollment(
+            enrollment_id="enrollment-1",
+            target_member_id="member-1",
+            expected_phrase="鎴戞槸濡堝",
+            sample_goal=3,
+            sample_count=1,
+            expires_at="2026-03-18T00:30:00+08:00",
+        )
+        context = _build_claimed_context(pending_voiceprint_enrollment=enrollment)
+        api_reader_task = asyncio.create_task(asyncio.sleep(60))
+        state = GatewayRuntimeState(
+            context=context,
+            terminal_rpc=SimpleNamespace(),
+            remote_addr="192.168.1.22",
+            api_websocket=SimpleNamespace(),
+            api_reader_task=api_reader_task,
+        )
+
+        try:
+            with patch.object(
+                OpenXiaoAIGateway,
+                "_enqueue_local_voiceprint_round_prompt",
+                new=AsyncMock(),
+            ) as enqueue_mock:
+                await gateway._maybe_schedule_local_voiceprint_round_prompt(
+                    api_websocket=state.api_websocket,
+                    state=state,
+                    previous_pending_enrollment=PendingVoiceprintEnrollment(
+                        enrollment_id="enrollment-1",
+                        target_member_id="member-1",
+                        expected_phrase="鎴戞槸濡堝",
+                        sample_goal=3,
+                        sample_count=1,
+                        expires_at="2026-03-18T00:30:00+08:00",
+                    ),
+                    refresh_reason=None,
+                )
+        finally:
+            api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await api_reader_task
+
+        enqueue_mock.assert_awaited_once()
+        self.assertEqual("recorded-1", enqueue_mock.await_args.kwargs["prompt_key"])
+        self.assertFalse(enqueue_mock.await_args.kwargs["retry"])
+
+    async def test_maybe_schedule_local_voiceprint_round_prompt_skips_duplicate_prompt_key(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        enrollment = PendingVoiceprintEnrollment(
+            enrollment_id="enrollment-1",
+            target_member_id="member-1",
+            expected_phrase="鎴戞槸濡堝",
+            sample_goal=3,
+            sample_count=1,
+            expires_at="2026-03-18T00:30:00+08:00",
+        )
+        context = _build_claimed_context(pending_voiceprint_enrollment=enrollment)
+        api_reader_task = asyncio.create_task(asyncio.sleep(60))
+        state = GatewayRuntimeState(
+            context=context,
+            terminal_rpc=SimpleNamespace(),
+            remote_addr="192.168.1.22",
+            api_websocket=SimpleNamespace(),
+            api_reader_task=api_reader_task,
+            last_local_voiceprint_prompt_key="enrollment-1:recorded-1",
+        )
+
+        try:
+            with patch.object(
+                OpenXiaoAIGateway,
+                "_enqueue_local_voiceprint_round_prompt",
+                new=AsyncMock(),
+            ) as enqueue_mock:
+                await gateway._maybe_schedule_local_voiceprint_round_prompt(
+                    api_websocket=state.api_websocket,
+                    state=state,
+                    previous_pending_enrollment=PendingVoiceprintEnrollment(
+                        enrollment_id="enrollment-1",
+                        target_member_id="member-1",
+                        expected_phrase="鎴戞槸濡堝",
+                        sample_goal=3,
+                        sample_count=1,
+                        expires_at="2026-03-18T00:30:00+08:00",
+                    ),
+                    refresh_reason=None,
+                )
+        finally:
+            api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await api_reader_task
+
+        enqueue_mock.assert_not_awaited()
+
+    async def test_handle_binding_refresh_command_updates_pending_voiceprint_enrollment(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        context = TerminalBridgeContext()
+        context.apply_discovery(build_discovery_info(model="LX06", sn="SN001", runtime_version="1.0.0"))
+        context.apply_binding(
+            VoiceTerminalBinding(
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                terminal_name="瀹㈠巺灏忕埍",
+                voice_auto_takeover_enabled=False,
+                voice_takeover_prefixes=("\u8bf7",),
+            )
+        )
+        api_reader_task = asyncio.create_task(asyncio.sleep(60))
+        state = GatewayRuntimeState(
+            context=context,
+            terminal_rpc=SimpleNamespace(),
+            remote_addr="192.168.1.22",
+            api_websocket=SimpleNamespace(),
+            api_reader_task=api_reader_task,
+        )
+
+        command = GatewayCommand.model_validate(
+            {
+                "type": "binding.refresh",
+                "terminal_id": "terminal-1",
+                "session_id": "binding-refresh:terminal-1",
+                "seq": 0,
+                "payload": {
+                    "reason": "voiceprint_enrollment_created",
+                    "binding": {
+                        "household_id": "household-1",
+                        "terminal_id": "terminal-1",
+                        "room_id": "room-1",
+                        "terminal_name": "瀹㈠巺灏忕埍",
+                        "voice_auto_takeover_enabled": False,
+                        "voice_takeover_prefixes": ["\u8bf7"],
+                        "pending_voiceprint_enrollment": {
+                            "enrollment_id": "enrollment-2",
+                            "target_member_id": "member-2",
+                            "expected_phrase": "鎴戞槸鐖哥埜",
+                            "sample_goal": 3,
+                            "sample_count": 0,
+                            "expires_at": "2026-03-16T12:00:00+08:00",
+                        },
+                    },
+                },
+                "ts": "2026-03-15T00:00:00+08:00",
+            }
+        )
+
+        try:
+            await gateway._handle_binding_refresh_command(state=state, command=command)
+        finally:
+            api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await api_reader_task
+
+        self.assertIsNotNone(context.pending_voiceprint_enrollment)
+        assert context.pending_voiceprint_enrollment is not None
+        self.assertEqual("enrollment-2", context.pending_voiceprint_enrollment.enrollment_id)
+        self.assertEqual("member-2", context.pending_voiceprint_enrollment.target_member_id)
 
     async def test_dispatch_local_terminal_messages_interrupts_native_xiaoai_for_takeover(self) -> None:
         gateway = OpenXiaoAIGateway()
@@ -357,6 +639,197 @@ class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(api_websocket.send.await_count, 2)
         self.assertIsNone(state.context.active_playback_id)
 
+    async def test_dispatch_api_command_delays_voiceprint_prompt_beep_and_schedules_round(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        api_websocket = SimpleNamespace(send=AsyncMock())
+        terminal_rpc = SimpleNamespace(
+            notify=AsyncMock(),
+            call=AsyncMock(return_value=SimpleNamespace(code=0, msg="ok", data={"stdout": "", "stderr": "", "exit_code": 0})),
+            send_stream=AsyncMock(),
+        )
+        state = GatewayRuntimeState(
+            context=_build_claimed_context(
+                pending_voiceprint_enrollment=PendingVoiceprintEnrollment(
+                    enrollment_id="enrollment-1",
+                    target_member_id="member-1",
+                    expected_phrase="我正在录入声纹",
+                    sample_goal=3,
+                    sample_count=0,
+                    expires_at="2026-03-17T23:30:00+08:00",
+                )
+            ),
+            terminal_rpc=terminal_rpc,
+            remote_addr="192.168.1.22",
+            api_websocket=api_websocket,
+            api_reader_task=asyncio.create_task(asyncio.sleep(60)),
+        )
+        command = GatewayCommand.model_validate(
+            {
+                "type": "play.start",
+                "terminal_id": "terminal-1",
+                "session_id": "voiceprint-prompt:enrollment-1:created",
+                "seq": 1,
+                "payload": {
+                    "playback_id": "playback-beep",
+                    "mode": "audio_bytes",
+                    "audio_base64": "AA==",
+                },
+                "ts": "2026-03-17T23:01:42+08:00",
+            }
+        )
+
+        try:
+            with patch("open_xiaoai_gateway.bridge.asyncio.sleep", new=AsyncMock()) as sleep_mock, patch.object(
+                OpenXiaoAIGateway,
+                "_schedule_voiceprint_round_after_prompt",
+            ) as schedule_mock:
+                await gateway._dispatch_api_command(
+                    api_websocket=api_websocket,
+                    state=state,
+                    command=command,
+                )
+        finally:
+            state.api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state.api_reader_task
+
+        self.assertGreaterEqual(len(sleep_mock.await_args_list), 1)
+        self.assertEqual(_VOICEPRINT_PROMPT_DELAY_SECONDS, sleep_mock.await_args_list[0].args[0])
+        schedule_mock.assert_called_once()
+        terminal_rpc.call.assert_awaited_once()
+        terminal_rpc.send_stream.assert_awaited_once()
+
+    async def test_run_voiceprint_round_after_prompt_starts_and_commits_capture(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        api_websocket = SimpleNamespace(send=AsyncMock())
+        terminal_rpc = SimpleNamespace(
+            notify=AsyncMock(),
+            call=AsyncMock(return_value=SimpleNamespace(code=0, msg="ok", data={"stdout": "", "stderr": "", "exit_code": 0})),
+            send_stream=AsyncMock(),
+        )
+        state = GatewayRuntimeState(
+            context=_build_claimed_context(
+                pending_voiceprint_enrollment=PendingVoiceprintEnrollment(
+                    enrollment_id="enrollment-1",
+                    target_member_id="member-1",
+                    expected_phrase="床前明月光",
+                    sample_goal=3,
+                    sample_count=0,
+                    expires_at="2026-03-17T23:30:00+08:00",
+                )
+            ),
+            terminal_rpc=terminal_rpc,
+            remote_addr="192.168.1.22",
+            api_websocket=api_websocket,
+            api_reader_task=asyncio.create_task(asyncio.sleep(60)),
+        )
+        state.context.track_playback(
+            playback_id="playback-beep",
+            session_id="voiceprint-prompt:enrollment-1:created",
+        )
+        command = GatewayCommand.model_validate(
+            {
+                "type": "play.start",
+                "terminal_id": "terminal-1",
+                "session_id": "voiceprint-prompt:enrollment-1:created",
+                "seq": 2,
+                "payload": {
+                    "playback_id": "playback-beep",
+                    "mode": "audio_bytes",
+                    "audio_base64": "AA==",
+                },
+                "ts": "2026-03-17T23:01:50+08:00",
+            }
+        )
+
+        sleep_delays: list[float] = []
+
+        async def _sleep(delay: float) -> None:
+            sleep_delays.append(delay)
+            if len(sleep_delays) == 2:
+                state.voiceprint_capture_audio_bytes = 4096
+
+        try:
+            with patch("open_xiaoai_gateway.bridge.asyncio.sleep", side_effect=_sleep):
+                await gateway._run_voiceprint_round_after_prompt(
+                    api_websocket=api_websocket,
+                    state=state,
+                    command=command,
+                )
+        finally:
+            state.api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state.api_reader_task
+
+        sent_payloads = [json.loads(call.args[0]) for call in api_websocket.send.await_args_list]
+        self.assertEqual(["playback.receipt", "session.start", "audio.commit"], [payload["type"] for payload in sent_payloads])
+        self.assertEqual("voiceprint_enrollment", sent_payloads[1]["payload"]["session_purpose"])
+        self.assertEqual("enrollment-1", sent_payloads[2]["payload"]["enrollment_id"])
+        self.assertEqual("床前明月光", sent_payloads[2]["payload"]["debug_transcript"])
+        terminal_rpc.call.assert_awaited_once()
+        self.assertIsNone(state.context.active_session_id)
+        self.assertIsNone(state.voiceprint_capture_session_id)
+        self.assertEqual(0, state.voiceprint_capture_audio_bytes)
+
+    async def test_run_voiceprint_round_after_prompt_cancels_when_no_audio_arrives(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        api_websocket = SimpleNamespace(send=AsyncMock())
+        terminal_rpc = SimpleNamespace(
+            notify=AsyncMock(),
+            call=AsyncMock(return_value=SimpleNamespace(code=0, msg="ok", data={"stdout": "", "stderr": "", "exit_code": 0})),
+            send_stream=AsyncMock(),
+        )
+        state = GatewayRuntimeState(
+            context=_build_claimed_context(
+                pending_voiceprint_enrollment=PendingVoiceprintEnrollment(
+                    enrollment_id="enrollment-1",
+                    target_member_id="member-1",
+                    expected_phrase="床前明月光",
+                    sample_goal=3,
+                    sample_count=0,
+                    expires_at="2026-03-17T23:30:00+08:00",
+                )
+            ),
+            terminal_rpc=terminal_rpc,
+            remote_addr="192.168.1.22",
+            api_websocket=api_websocket,
+            api_reader_task=asyncio.create_task(asyncio.sleep(60)),
+        )
+        state.context.track_playback(
+            playback_id="playback-beep",
+            session_id="voiceprint-prompt:enrollment-1:created",
+        )
+        command = GatewayCommand.model_validate(
+            {
+                "type": "play.start",
+                "terminal_id": "terminal-1",
+                "session_id": "voiceprint-prompt:enrollment-1:created",
+                "seq": 2,
+                "payload": {
+                    "playback_id": "playback-beep",
+                    "mode": "audio_bytes",
+                    "audio_base64": "AA==",
+                },
+                "ts": "2026-03-17T23:01:50+08:00",
+            }
+        )
+
+        try:
+            with patch("open_xiaoai_gateway.bridge.asyncio.sleep", new=AsyncMock()):
+                await gateway._run_voiceprint_round_after_prompt(
+                    api_websocket=api_websocket,
+                    state=state,
+                    command=command,
+                )
+        finally:
+            state.api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state.api_reader_task
+
+        sent_payloads = [json.loads(call.args[0]) for call in api_websocket.send.await_args_list]
+        self.assertEqual(["playback.receipt", "session.start", "session.cancel"], [payload["type"] for payload in sent_payloads])
+        self.assertEqual("voiceprint_enrollment_no_audio", sent_payloads[2]["payload"]["reason"])
+
     async def test_handle_terminal_message_skips_forwarding_when_local_takeover_fails(self) -> None:
         gateway = OpenXiaoAIGateway()
         api_websocket = SimpleNamespace(send=AsyncMock())
@@ -410,6 +883,162 @@ class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
         api_websocket.send.assert_not_called()
         self.assertEqual("native_passthrough", state.context.last_invocation_decision)
         self.assertEqual("takeover_pause_failed", state.context.last_passthrough_reason)
+
+    async def test_handle_terminal_message_replays_native_first_buffered_audio_on_takeover(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        api_websocket = SimpleNamespace(send=AsyncMock())
+        terminal_rpc = SimpleNamespace(
+            call=AsyncMock(return_value=SimpleNamespace(code=0, msg="ok", data={"stdout": "", "stderr": "", "exit_code": 0})),
+            notify=AsyncMock(),
+            send_stream=AsyncMock(),
+        )
+        context = _build_claimed_context()
+        context.takeover_prefixes = ("cmd",)
+        state = GatewayRuntimeState(
+            context=context,
+            terminal_rpc=terminal_rpc,
+            remote_addr="192.168.1.22",
+            api_websocket=api_websocket,
+            api_reader_task=asyncio.create_task(asyncio.sleep(60)),
+        )
+
+        kws_message = json.dumps(
+            {
+                "Event": {
+                    "id": "event-kws-1",
+                    "event": "kws",
+                    "data": {"Keyword": "小爱同学"},
+                }
+            },
+            ensure_ascii=False,
+        )
+        final_message = json.dumps(
+            {
+                "Event": {
+                    "id": "event-instruction-1",
+                    "event": "instruction",
+                    "data": {
+                        "NewLine": json.dumps(
+                            {
+                                "header": {
+                                    "namespace": "SpeechRecognizer",
+                                    "name": "RecognizeResult",
+                                },
+                                "payload": {
+                                    "is_final": True,
+                                    "is_vad_begin": False,
+                                    "results": [{"text": "cmd 打开客厅灯"}],
+                                },
+                            },
+                            ensure_ascii=False,
+                        )
+                    },
+                }
+            },
+            ensure_ascii=False,
+        )
+        audio_chunk = json.dumps(
+            {
+                "id": "stream-1",
+                "tag": "record",
+                "bytes": [97, 98, 99],
+            }
+        ).encode("utf-8")
+
+        try:
+            await gateway._handle_terminal_message(message=kws_message, state=state)
+            await gateway._handle_terminal_message(message=audio_chunk, state=state)
+            await gateway._handle_terminal_message(message=final_message, state=state)
+        finally:
+            state.api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state.api_reader_task
+
+        sent_payloads = [json.loads(call.args[0]) for call in api_websocket.send.await_args_list]
+        self.assertEqual(["session.start", "audio.append", "audio.commit"], [payload["type"] for payload in sent_payloads])
+        self.assertEqual(3, sent_payloads[1]["payload"]["chunk_bytes"])
+        self.assertEqual(sent_payloads[0]["session_id"], sent_payloads[1]["session_id"])
+        self.assertEqual(sent_payloads[0]["session_id"], sent_payloads[2]["session_id"])
+        self.assertTrue(str(sent_payloads[2]["payload"]["debug_transcript"]).endswith("打开客厅灯"))
+        self.assertEqual(0, state.native_first_audio_bytes)
+        self.assertEqual(0, len(state.native_first_audio_chunks))
+        self.assertIsNone(state.context.active_session_id)
+
+    async def test_handle_terminal_message_discards_native_first_buffer_on_passthrough(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        api_websocket = SimpleNamespace(send=AsyncMock())
+        terminal_rpc = SimpleNamespace(
+            call=AsyncMock(return_value=SimpleNamespace(code=0, msg="ok", data={"stdout": "", "stderr": "", "exit_code": 0})),
+            notify=AsyncMock(),
+            send_stream=AsyncMock(),
+        )
+        context = _build_claimed_context()
+        context.takeover_prefixes = ("cmd",)
+        state = GatewayRuntimeState(
+            context=context,
+            terminal_rpc=terminal_rpc,
+            remote_addr="192.168.1.22",
+            api_websocket=api_websocket,
+            api_reader_task=asyncio.create_task(asyncio.sleep(60)),
+        )
+
+        kws_message = json.dumps(
+            {
+                "Event": {
+                    "id": "event-kws-1",
+                    "event": "kws",
+                    "data": {"Keyword": "小爱同学"},
+                }
+            },
+            ensure_ascii=False,
+        )
+        final_message = json.dumps(
+            {
+                "Event": {
+                    "id": "event-instruction-1",
+                    "event": "instruction",
+                    "data": {
+                        "NewLine": json.dumps(
+                            {
+                                "header": {
+                                    "namespace": "SpeechRecognizer",
+                                    "name": "RecognizeResult",
+                                },
+                                "payload": {
+                                    "is_final": True,
+                                    "is_vad_begin": False,
+                                    "results": [{"text": "打开客厅灯"}],
+                                },
+                            },
+                            ensure_ascii=False,
+                        )
+                    },
+                }
+            },
+            ensure_ascii=False,
+        )
+        audio_chunk = json.dumps(
+            {
+                "id": "stream-1",
+                "tag": "record",
+                "bytes": [97, 98, 99],
+            }
+        ).encode("utf-8")
+
+        try:
+            await gateway._handle_terminal_message(message=kws_message, state=state)
+            await gateway._handle_terminal_message(message=audio_chunk, state=state)
+            await gateway._handle_terminal_message(message=final_message, state=state)
+        finally:
+            state.api_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state.api_reader_task
+
+        api_websocket.send.assert_not_awaited()
+        self.assertEqual(0, state.native_first_audio_bytes)
+        self.assertEqual(0, len(state.native_first_audio_chunks))
+        self.assertEqual("takeover_prefix_not_matched", state.context.last_passthrough_reason)
+        self.assertIsNone(state.context.active_session_id)
 
     async def test_handle_play_start_command_queues_when_playback_is_active(self) -> None:
         gateway = OpenXiaoAIGateway()

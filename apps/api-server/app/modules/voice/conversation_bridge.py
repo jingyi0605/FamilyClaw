@@ -11,6 +11,7 @@ from app.modules.conversation.inbound_command_service import (
 )
 from app.modules.conversation.schemas import ConversationSessionCreate, ConversationMessageRead
 from app.modules.conversation.service import (
+    append_conversation_debug_log,
     conversation_turn_exists,
     create_conversation_session,
     get_conversation_session_detail,
@@ -141,6 +142,21 @@ class VoiceConversationBridge:
             terminal_id=session.terminal_id,
         )
         request_id = new_uuid()
+        append_conversation_debug_log(
+            db,
+            session_id=conversation_session_id,
+            request_id=request_id,
+            stage="voice.identity.resolved",
+            source="voice",
+            message="已完成声纹识别与身份决策。",
+            payload=_build_voice_identity_debug_payload(
+                session=session,
+                terminal=terminal,
+                terminal_code=terminal_code,
+                transcript_text=transcript_text,
+                identity=identity,
+            ),
+        )
 
         def _record_voice_turn_source() -> None:
             record_conversation_turn_source(
@@ -238,6 +254,50 @@ def _find_latest_assistant_message(messages: list[ConversationMessageRead]) -> C
             continue
         return item
     return None
+
+
+def _build_voice_identity_debug_payload(
+    *,
+    session: VoiceSessionState,
+    terminal: VoiceTerminalState,
+    terminal_code: str | None,
+    transcript_text: str,
+    identity: VoiceIdentityResolution | None,
+) -> dict[str, object]:
+    if identity is None:
+        return {
+            "voice_session_id": session.session_id,
+            "terminal_id": session.terminal_id,
+            "terminal_code": terminal_code,
+            "terminal_name": terminal.name,
+            "transcript_text": transcript_text,
+            "identity_status": None,
+            "requester_member_id": None,
+            "requester_member_name": None,
+            "requester_member_role": None,
+            "speaker_confidence": None,
+            "identity_reason": None,
+            "context_conflict": None,
+            "voiceprint_hint": None,
+            "candidates": [],
+        }
+
+    return {
+        "voice_session_id": session.session_id,
+        "terminal_id": session.terminal_id,
+        "terminal_code": terminal_code,
+        "terminal_name": terminal.name,
+        "transcript_text": transcript_text,
+        "identity_status": identity.status,
+        "requester_member_id": identity.primary_member_id,
+        "requester_member_name": identity.primary_member_name,
+        "requester_member_role": identity.primary_member_role,
+        "speaker_confidence": identity.confidence,
+        "identity_reason": identity.reason,
+        "context_conflict": identity.context_conflict,
+        "voiceprint_hint": identity.voiceprint_hint.model_dump(mode="json"),
+        "candidates": [item.model_dump(mode="json") for item in identity.candidates],
+    }
 
 
 def _split_tts_segments(text: str, *, flush_tail: bool) -> tuple[list[str], str]:

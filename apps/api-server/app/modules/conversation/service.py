@@ -384,6 +384,33 @@ def list_conversation_debug_logs(
     )
 
 
+def append_conversation_debug_log(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str | None,
+    stage: str,
+    source: str,
+    message: str,
+    payload: dict | None = None,
+    level: str = "info",
+) -> bool:
+    session = repository.get_session(db, session_id)
+    if session is None:
+        return False
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage=stage,
+        source=source,
+        message=message,
+        payload=payload,
+        level=level,
+    )
+    return True
+
+
 def create_conversation_turn(
     db: Session,
     *,

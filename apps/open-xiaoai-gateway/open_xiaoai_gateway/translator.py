@@ -366,7 +366,7 @@ def translate_audio_chunk(raw_chunk: bytes, context: TerminalBridgeContext) -> l
 
 
 def translate_command_to_terminal(command: GatewayCommand, context: TerminalBridgeContext) -> list[TerminalOutboundMessage]:
-    if command.type in {"session.ready", "agent.error"}:
+    if command.type in {"binding.refresh", "session.ready", "agent.error"}:
         return []
     if not context.is_claimed():
         return []
@@ -555,6 +555,16 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> T
         context.last_invocation_decision = decision.decision_type
         context.last_passthrough_reason = decision.reason if decision.decision_type != "familyclaw_takeover" else None
         if decision.decision_type != "familyclaw_takeover" or not decision.resolved_text:
+            if context.active_session_id:
+                session_id = context.active_session_id
+                context.clear_session()
+                events.append(
+                    _build_session_cancel_event(
+                        context,
+                        session_id=session_id,
+                        reason=decision.reason,
+                    )
+                )
             return TextTranslationResult(events=events, terminal_messages=[])
 
         terminal_messages: list[TerminalOutboundMessage] = []
@@ -583,16 +593,7 @@ def _translate_instruction_event(data: Any, context: TerminalBridgeContext) -> T
     if context.active_session_id:
         session_id = context.active_session_id
         context.clear_session()
-        events.append(
-            GatewayEvent(
-                type="session.cancel",
-                terminal_id=context.terminal_id,
-                session_id=session_id,
-                seq=context.next_seq(),
-                payload={"reason": "speech_recognizer_empty"},
-                ts=utc_now_iso(),
-            )
-        )
+        events.append(_build_session_cancel_event(context, session_id=session_id, reason="speech_recognizer_empty"))
     context.last_invocation_decision = "native_passthrough" if context.invocation_mode == "native_first" else context.last_invocation_decision
     context.last_passthrough_reason = "speech_recognizer_empty"
     return TextTranslationResult(events=events, terminal_messages=[])
@@ -691,6 +692,17 @@ def _resolve_session_purpose(context: TerminalBridgeContext) -> tuple[str, str |
     if context.pending_voiceprint_enrollment is None:
         return "conversation", None
     return "voiceprint_enrollment", context.pending_voiceprint_enrollment.enrollment_id
+
+
+def _build_session_cancel_event(context: TerminalBridgeContext, *, session_id: str, reason: str) -> GatewayEvent:
+    return GatewayEvent(
+        type="session.cancel",
+        terminal_id=context.terminal_id or "",
+        session_id=session_id,
+        seq=context.next_seq(),
+        payload={"reason": reason},
+        ts=utc_now_iso(),
+    )
 
 
 def _build_playback_audio_config() -> dict[str, object]:

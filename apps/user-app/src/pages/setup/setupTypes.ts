@@ -53,7 +53,10 @@ export type AiProviderField = {
   default_value: string | number | boolean | null;
   options: AiProviderFieldOption[];
 };
+export type AiProviderModelType = 'llm' | 'embedding' | 'vision' | 'speech' | 'image';
 export type AiProviderAdapter = {
+  plugin_id: string;
+  plugin_name: string;
   adapter_code: string;
   display_name: string;
   description: string;
@@ -61,12 +64,17 @@ export type AiProviderAdapter = {
   api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   default_privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
   default_supported_capabilities: string[];
+  supported_model_types: AiProviderModelType[];
+  llm_workflow: string;
   field_schema: AiProviderField[];
 };
 export type AiProviderProfile = {
   id: string;
   provider_code: string;
   display_name: string;
+  plugin_id: string | null;
+  plugin_enabled: boolean | null;
+  plugin_disabled_reason: string | null;
   transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
   api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   base_url: string | null;

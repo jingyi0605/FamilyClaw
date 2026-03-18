@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.channel import repository as channel_repository
 from app.modules.channel.models import ChannelPluginAccount
+from app.modules.device.models import Device
 
 from . import repository
 from .config_crypto import decrypt_plugin_config_secrets, encrypt_plugin_config_secrets
@@ -24,6 +25,10 @@ from .schemas import (
     PluginRegistryItem,
 )
 from .service import PluginServiceError, get_household_plugin
+from app.modules.device.plugin_config_bridge import (
+    load_device_scope_legacy_payloads,
+    sync_device_scope_legacy_fields,
+)
 
 
 PLUGIN_SCOPE_KEY = "default"
@@ -163,10 +168,12 @@ def save_plugin_config_form(
         _extract_persisted_secret_data(config_spec=config_spec, secret_data=next_secret_data)
     )
     now = utc_now_iso()
+    device_id = scope_context.id if isinstance(scope_context, Device) else None
     if existing_instance is None:
         existing_instance = PluginConfigInstance(
             id=new_uuid(),
             household_id=household_id,
+            device_id=device_id,
             plugin_id=plugin.id,
             scope_type=config_spec.scope_type,
             scope_key=scope_key,
@@ -179,6 +186,7 @@ def save_plugin_config_form(
         )
         repository.add_plugin_config_instance(db, existing_instance)
     else:
+        existing_instance.device_id = device_id
         existing_instance.schema_version = config_spec.schema_version
         existing_instance.data_json = data_json
         existing_instance.secret_data_encrypted = secret_data_encrypted
@@ -409,6 +417,36 @@ def _build_scope_read(
             ],
         )
 
+    if config_spec.scope_type == "device":
+        instances: list[PluginConfigScopeInstanceRead] = []
+        for device in repository.list_plugin_scope_devices(
+            db,
+            household_id=household_id,
+            plugin_id=plugin.id,
+        ):
+            form = _build_plugin_config_form(
+                db,
+                household_id=household_id,
+                plugin=plugin,
+                config_spec=config_spec,
+                scope_key=device.id,
+                scope_context=device,
+            )
+            instances.append(
+                PluginConfigScopeInstanceRead(
+                    scope_key=device.id,
+                    label=device.name,
+                    description=device.device_type,
+                    configured=form.view.state != "unconfigured",
+                )
+            )
+        return PluginConfigScopeRead(
+            scope_type=config_spec.scope_type,
+            title=config_spec.title,
+            description=config_spec.description,
+            instances=instances,
+        )
+
     instances: list[PluginConfigScopeInstanceRead] = []
     for account in channel_repository.list_channel_plugin_accounts(db, household_id=household_id):
         if account.plugin_id != plugin.id:
@@ -444,7 +482,7 @@ def _build_plugin_config_form(
     plugin: PluginRegistryItem,
     config_spec: PluginManifestConfigSpec,
     scope_key: str,
-    scope_context: ChannelPluginAccount | None,
+    scope_context: ChannelPluginAccount | Device | None,
 ) -> PluginConfigFormRead:
     instance = repository.get_plugin_config_instance(
         db,
@@ -489,14 +527,31 @@ def _load_config_payloads(
     plugin: PluginRegistryItem,
     config_spec: PluginManifestConfigSpec,
     instance: PluginConfigInstance | None,
-    scope_context: ChannelPluginAccount | None,
+    scope_context: ChannelPluginAccount | Device | None,
 ) -> tuple[dict[str, Any], dict[str, Any], bool]:
+    legacy_data: dict[str, Any] = {}
+    legacy_secret_data: dict[str, Any] = {}
+    legacy_has_record = False
+    if isinstance(scope_context, Device):
+        legacy_data, legacy_secret_data, legacy_has_record = load_device_scope_legacy_payloads(
+            plugin_id=plugin.id,
+            config_spec=config_spec,
+            device=scope_context,
+        )
+
     if instance is not None:
         data_payload, secret_payload = _load_config_instance_payload(instance)
+        for key, value in legacy_data.items():
+            data_payload.setdefault(key, value)
+        for key, value in legacy_secret_data.items():
+            secret_payload.setdefault(key, value)
         return data_payload, secret_payload, True
 
     if scope_context is None:
         return {}, {}, False
+
+    if isinstance(scope_context, Device):
+        return legacy_data, legacy_secret_data, legacy_has_record
 
     raw_payload = load_json(scope_context.config_json)
     if not isinstance(raw_payload, dict):
@@ -596,13 +651,27 @@ def _sync_runtime_scope_config(
     *,
     household_id: str,
     plugin: PluginRegistryItem,
-    scope_context: ChannelPluginAccount | None,
+    scope_context: ChannelPluginAccount | Device | None,
     config_spec: PluginManifestConfigSpec,
     values: dict[str, Any],
     secret_fields: dict[str, Any],
     secret_data: dict[str, Any],
 ) -> None:
-    if scope_context is None or config_spec.scope_type != "channel_account":
+    if scope_context is None:
+        return
+
+    if isinstance(scope_context, Device):
+        if config_spec.scope_type != "device":
+            return
+        sync_device_scope_legacy_fields(
+            plugin_id=plugin.id,
+            config_spec=config_spec,
+            device=scope_context,
+            values=values,
+        )
+        return
+
+    if config_spec.scope_type != "channel_account":
         return
 
     runtime_payload = dict(values)
@@ -663,9 +732,20 @@ def _resolve_scope_context(
     plugin: PluginRegistryItem,
     config_spec: PluginManifestConfigSpec,
     scope_key: str,
-) -> ChannelPluginAccount | None:
+) -> ChannelPluginAccount | Device | None:
     if config_spec.scope_type == "plugin":
         return None
+
+    if config_spec.scope_type == "device":
+        device = db.get(Device, scope_key)
+        if device is None or device.household_id != household_id:
+            raise PluginServiceError(
+                "请求的 device 作用域不存在。",
+                error_code=PLUGIN_CONFIG_INSTANCE_NOT_FOUND,
+                field="scope_key",
+                status_code=404,
+            )
+        return device
 
     account = channel_repository.get_channel_plugin_account(db, scope_key)
     if account is None or account.household_id != household_id or account.plugin_id != plugin.id:

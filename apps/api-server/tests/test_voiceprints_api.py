@@ -1,6 +1,7 @@
 ﻿import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
@@ -48,6 +49,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                 room_type="living_room",
                 privacy_level="public",
             )
+            db.flush()
             member = create_member(
                 db,
                 MemberCreate(
@@ -56,6 +58,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                     role="adult",
                 ),
             )
+            db.flush()
             device = Device(
                 id=new_uuid(),
                 household_id=household.id,
@@ -126,6 +129,52 @@ class VoiceprintsApiTests(unittest.TestCase):
         self.assertEqual("鎴戞槸濡堝", payload["expected_phrase"])
         self.assertIsNotNone(payload["expires_at"])
 
+    def test_create_enrollment_notifies_gateway_binding_refresh(self) -> None:
+        with patch(
+            "app.api.v1.endpoints.voiceprints.notify_voice_terminal_binding_refresh_best_effort"
+        ) as notify_refresh, patch(
+            "app.api.v1.endpoints.voiceprints.notify_voiceprint_round_prompt_best_effort"
+        ) as notify_round_prompt:
+            response = self.client.post(
+                f"{settings.api_v1_prefix}/voiceprints/enrollments",
+                json={
+                    "household_id": self.household_id,
+                    "member_id": self.member_id,
+                    "terminal_id": self.terminal_id,
+                    "expected_phrase": "鎴戞槸濡堝",
+                },
+            )
+
+        self.assertEqual(201, response.status_code)
+        notify_refresh.assert_called_once_with(
+            terminal_id=self.terminal_id,
+            reason="voiceprint_enrollment_created",
+        )
+        notify_round_prompt.assert_called_once()
+        notify_kwargs = notify_round_prompt.call_args.kwargs
+        self.assertEqual("created", notify_kwargs["prompt_key"])
+        self.assertEqual(self.terminal_id, notify_kwargs["enrollment"].terminal_id)
+
+    def test_create_enrollment_assigns_default_phrase_when_missing(self) -> None:
+        with patch(
+            "app.api.v1.endpoints.voiceprints.notify_voice_terminal_binding_refresh_best_effort"
+        ), patch(
+            "app.api.v1.endpoints.voiceprints.notify_voiceprint_round_prompt_best_effort"
+        ):
+            response = self.client.post(
+                f"{settings.api_v1_prefix}/voiceprints/enrollments",
+                json={
+                    "household_id": self.household_id,
+                    "member_id": self.member_id,
+                    "terminal_id": self.terminal_id,
+                },
+            )
+
+        self.assertEqual(201, response.status_code)
+        payload = response.json()
+        self.assertTrue(payload["expected_phrase"])
+        self.assertEqual(3, payload["sample_goal"])
+
     def test_create_enrollment_rejects_terminal_conflict(self) -> None:
         with self.SessionLocal() as db:
             db.add(
@@ -154,6 +203,41 @@ class VoiceprintsApiTests(unittest.TestCase):
         self.assertEqual(409, response.status_code)
         self.assertEqual("voiceprint enrollment conflict", response.json()["detail"])
 
+    def test_create_enrollment_ignores_expired_pending_conflict(self) -> None:
+        stale_enrollment_id = new_uuid()
+        with self.SessionLocal() as db:
+            db.add(
+                VoiceprintEnrollment(
+                    id=stale_enrollment_id,
+                    household_id=self.household_id,
+                    member_id=self.member_id,
+                    terminal_id=self.terminal_id,
+                    status="pending",
+                    expected_phrase="鎴戞槸濡堝",
+                    sample_goal=3,
+                    sample_count=0,
+                    expires_at="2000-01-01T00:00:00+00:00",
+                )
+            )
+            db.commit()
+
+        response = self.client.post(
+            f"{settings.api_v1_prefix}/voiceprints/enrollments",
+            json={
+                "household_id": self.household_id,
+                "member_id": self.member_id,
+                "terminal_id": self.terminal_id,
+                "expected_phrase": "鎴戞槸濡堝",
+            },
+        )
+
+        self.assertEqual(201, response.status_code)
+        with self.SessionLocal() as db:
+            stale_enrollment = db.get(VoiceprintEnrollment, stale_enrollment_id)
+            assert stale_enrollment is not None
+            self.assertEqual("cancelled", stale_enrollment.status)
+            self.assertEqual("voiceprint_enrollment_expired", stale_enrollment.error_code)
+
     def test_list_and_cancel_enrollment(self) -> None:
         create_response = self.client.post(
             f"{settings.api_v1_prefix}/voiceprints/enrollments",
@@ -179,6 +263,66 @@ class VoiceprintsApiTests(unittest.TestCase):
         )
         self.assertEqual(200, cancel_response.status_code)
         self.assertEqual("cancelled", cancel_response.json()["status"])
+
+    def test_get_enrollment_auto_cancels_expired_pending_task(self) -> None:
+        enrollment_id = new_uuid()
+        with self.SessionLocal() as db:
+            db.add(
+                VoiceprintEnrollment(
+                    id=enrollment_id,
+                    household_id=self.household_id,
+                    member_id=self.member_id,
+                    terminal_id=self.terminal_id,
+                    status="recording",
+                    expected_phrase="鎴戞槸濡堝",
+                    sample_goal=3,
+                    sample_count=1,
+                    expires_at="2000-01-01T00:00:00+00:00",
+                )
+            )
+            db.commit()
+
+        response = self.client.get(f"{settings.api_v1_prefix}/voiceprints/enrollments/{enrollment_id}")
+
+        self.assertEqual(200, response.status_code)
+        payload = response.json()
+        self.assertEqual("cancelled", payload["status"])
+        self.assertEqual("voiceprint_enrollment_expired", payload["error_code"])
+
+        with self.SessionLocal() as db:
+            enrollment = db.get(VoiceprintEnrollment, enrollment_id)
+            assert enrollment is not None
+            self.assertEqual("cancelled", enrollment.status)
+
+    def test_cancel_enrollment_notifies_gateway_binding_refresh(self) -> None:
+        enrollment_id = new_uuid()
+        with self.SessionLocal() as db:
+            db.add(
+                VoiceprintEnrollment(
+                    id=enrollment_id,
+                    household_id=self.household_id,
+                    member_id=self.member_id,
+                    terminal_id=self.terminal_id,
+                    status="pending",
+                    expected_phrase="鎴戞槸濡堝",
+                    sample_goal=3,
+                    sample_count=0,
+                )
+            )
+            db.commit()
+
+        with patch(
+            "app.api.v1.endpoints.voiceprints.notify_voice_terminal_binding_refresh_best_effort"
+        ) as notify_refresh:
+            cancel_response = self.client.post(
+                f"{settings.api_v1_prefix}/voiceprints/enrollments/{enrollment_id}/cancel"
+            )
+
+        self.assertEqual(200, cancel_response.status_code)
+        notify_refresh.assert_called_once_with(
+            terminal_id=self.terminal_id,
+            reason="voiceprint_enrollment_cancelled",
+        )
 
     def test_member_voiceprint_detail_and_delete(self) -> None:
         profile_id = new_uuid()
@@ -208,6 +352,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                     version=1,
                 )
             )
+            db.flush()
             db.add(
                 MemberVoiceprintSample(
                     id=sample_id,
@@ -251,6 +396,34 @@ class VoiceprintsApiTests(unittest.TestCase):
             self.assertEqual("deleted", profile.status)
             self.assertEqual("cancelled", enrollment.status)
 
+    def test_member_detail_does_not_expose_expired_pending_enrollment(self) -> None:
+        enrollment_id = new_uuid()
+        with self.SessionLocal() as db:
+            db.add(
+                VoiceprintEnrollment(
+                    id=enrollment_id,
+                    household_id=self.household_id,
+                    member_id=self.member_id,
+                    terminal_id=self.terminal_id,
+                    status="pending",
+                    expected_phrase="鎴戞槸濡堝",
+                    sample_goal=3,
+                    sample_count=0,
+                    expires_at="2000-01-01T00:00:00+00:00",
+                )
+            )
+            db.commit()
+
+        response = self.client.get(f"{settings.api_v1_prefix}/voiceprints/members/{self.member_id}")
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual([], response.json()["pending_enrollments"])
+
+        with self.SessionLocal() as db:
+            enrollment = db.get(VoiceprintEnrollment, enrollment_id)
+            assert enrollment is not None
+            self.assertEqual("cancelled", enrollment.status)
+
     def test_household_voiceprint_summary_returns_device_strategy_and_member_statuses(self) -> None:
         failed_member_id = new_uuid()
         disabled_member_id = new_uuid()
@@ -288,7 +461,7 @@ class VoiceprintsApiTests(unittest.TestCase):
                     expected_phrase="鎴戞槸濡堝",
                     sample_goal=3,
                     sample_count=2,
-                    expires_at="2026-03-16T12:00:00+08:00",
+                    expires_at="2999-03-16T12:00:00+08:00",
                 )
             )
             db.add(
@@ -333,6 +506,40 @@ class VoiceprintsApiTests(unittest.TestCase):
         self.assertEqual("failed", status_map[failed_member_id]["status"])
         self.assertEqual("provider down", status_map[failed_member_id]["error_message"])
         self.assertEqual("disabled", status_map[disabled_member_id]["status"])
+
+    def test_household_summary_hides_expired_pending_enrollment(self) -> None:
+        enrollment_id = new_uuid()
+        with self.SessionLocal() as db:
+            db.add(
+                VoiceprintEnrollment(
+                    id=enrollment_id,
+                    household_id=self.household_id,
+                    member_id=self.member_id,
+                    terminal_id=self.terminal_id,
+                    status="pending",
+                    expected_phrase="鎴戞槸濡堝",
+                    sample_goal=3,
+                    sample_count=2,
+                    expires_at="2000-01-01T00:00:00+00:00",
+                )
+            )
+            db.commit()
+
+        response = self.client.get(
+            f"{settings.api_v1_prefix}/voiceprints/households/{self.household_id}/summary",
+            params={"terminal_id": self.terminal_id},
+        )
+
+        self.assertEqual(200, response.status_code)
+        payload = response.json()
+        self.assertIsNone(payload["pending_enrollment"])
+        status_map = {item["member_id"]: item for item in payload["members"]}
+        self.assertEqual("not_enrolled", status_map[self.member_id]["status"])
+
+        with self.SessionLocal() as db:
+            enrollment = db.get(VoiceprintEnrollment, enrollment_id)
+            assert enrollment is not None
+            self.assertEqual("cancelled", enrollment.status)
 
 
 if __name__ == "__main__":

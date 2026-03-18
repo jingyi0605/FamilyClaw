@@ -53,3 +53,34 @@ def get_voice_terminal_binding(db: Session, *, fingerprint: str) -> VoiceTermina
         voice_takeover_prefixes=device.voice_takeover_prefixes,
         pending_voiceprint_enrollment=pending_voiceprint_enrollment,
     )
+
+
+def get_voice_terminal_binding_by_terminal_id(db: Session, *, terminal_id: str) -> VoiceTerminalBindingSnapshot | None:
+    statement = (
+        select(DeviceBinding, Device)
+        .join(Device, Device.id == DeviceBinding.device_id)
+        .where(
+            Device.id == terminal_id,
+            DeviceBinding.platform == OPEN_XIAOAI_BINDING_PLATFORM,
+            DeviceBinding.plugin_id == OPEN_XIAOAI_PLUGIN_ID,
+        )
+        .order_by(DeviceBinding.last_sync_at.desc().nullslast(), DeviceBinding.id.asc())
+    )
+    row = db.execute(statement).first()
+    if row is None:
+        return None
+    _binding, device = row
+    pending_voiceprint_enrollment = get_pending_voiceprint_enrollment_by_terminal(
+        db,
+        household_id=device.household_id,
+        terminal_id=device.id,
+    )
+    return VoiceTerminalBindingSnapshot(
+        household_id=device.household_id,
+        terminal_id=device.id,
+        room_id=device.room_id,
+        terminal_name=device.name,
+        voice_auto_takeover_enabled=bool(device.voice_auto_takeover_enabled),
+        voice_takeover_prefixes=device.voice_takeover_prefixes,
+        pending_voiceprint_enrollment=pending_voiceprint_enrollment,
+    )

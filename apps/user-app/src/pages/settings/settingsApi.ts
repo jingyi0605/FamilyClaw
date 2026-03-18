@@ -20,6 +20,7 @@ import type {
   DeviceActionExecuteRequest,
   DeviceActionExecuteResponse,
   DeviceActionLogListRead,
+  DeviceDetailViewRead,
   DeviceEntityListRead,
   IntegrationActionResult,
   IntegrationCatalogListRead,
@@ -63,8 +64,8 @@ export { ApiError };
 
 export const settingsApi = {
   ...coreApi,
-  listAiProviderAdapters() {
-    return request<AiProviderAdapter[]>('/ai-config/provider-adapters');
+  listAiProviderAdapters(householdId: string) {
+    return request<AiProviderAdapter[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-adapters`);
   },
   listHouseholdAiProviders(householdId: string) {
     return request<AiProviderProfile[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-profiles`);
@@ -228,6 +229,9 @@ export const settingsApi = {
   listDeviceEntities(deviceId: string, view: 'favorites' | 'all') {
     return request<DeviceEntityListRead>(`/devices/${encodeURIComponent(deviceId)}/entities?view=${encodeURIComponent(view)}`);
   },
+  getDeviceDetailView(deviceId: string) {
+    return request<DeviceDetailViewRead>(`/devices/${encodeURIComponent(deviceId)}/detail-view`);
+  },
   updateDeviceEntityFavorite(deviceId: string, entityId: string, favorite: boolean) {
     return request<DeviceEntityListRead>(`/devices/${encodeURIComponent(deviceId)}/entities/${encodeURIComponent(entityId)}/favorite`, {
       method: 'PUT',
@@ -291,7 +295,7 @@ export const settingsApi = {
     householdId: string,
     pluginId: string,
     params: {
-      scope_type: 'plugin' | 'channel_account';
+      scope_type: 'plugin' | 'channel_account' | 'device';
       scope_key: string;
     },
   ) {
@@ -307,7 +311,7 @@ export const settingsApi = {
     householdId: string,
     pluginId: string,
     payload: {
-      scope_type: 'plugin' | 'channel_account';
+      scope_type: 'plugin' | 'channel_account' | 'device';
       scope_key: string;
       values: Record<string, unknown>;
       clear_secret_fields: string[];

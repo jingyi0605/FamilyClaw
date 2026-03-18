@@ -10,6 +10,15 @@
     "connector": "app.plugins.builtin.open_xiaoai_speaker.connector.sync",
     "action": "app.plugins.builtin.open_xiaoai_speaker.executor.run"
   },
+  "capabilities": {
+    "device_detail_tabs": [
+      {
+        "tab_key": "voice-takeover",
+        "title": "语音接管",
+        "description": "设置这台小爱音箱是否接管全部语音指令，以及只响应哪些开头词。"
+      }
+    ]
+  },
   "config_specs": [
     {
       "scope_type": "plugin",
@@ -44,6 +53,55 @@
             "widget": "input",
             "placeholder": "xiaomi-gateway-living-room",
             "help_text": "平台用这个标识把 gateway discovery 归到当前集成实例。"
+          }
+        }
+      }
+    },
+    {
+      "scope_type": "device",
+      "title": "语音接管",
+      "description": "把小爱音箱上的语音接管设置迁到插件自己的设备详情页签里。",
+      "schema_version": 1,
+      "config_schema": {
+        "fields": [
+          {
+            "key": "voice_auto_takeover_enabled",
+            "label": "接管全部语音指令",
+            "type": "boolean",
+            "required": true,
+            "default": false,
+            "description": "开启后，这台音箱上的所有语音请求都会直接转给 FamilyClaw。"
+          },
+          {
+            "key": "voice_takeover_prefixes",
+            "label": "响应前缀",
+            "type": "text",
+            "required": true,
+            "min_length": 1,
+            "description": "关闭全量接管时，只有以这些前缀开头的请求才会转给 FamilyClaw。"
+          }
+        ]
+      },
+      "ui_schema": {
+        "sections": [
+          {
+            "id": "voice-takeover",
+            "title": "语音接管",
+            "description": "这里控制的是这台小爱音箱什么时候把语音请求转给 FamilyClaw。",
+            "fields": ["voice_auto_takeover_enabled", "voice_takeover_prefixes"]
+          }
+        ],
+        "field_order": ["voice_auto_takeover_enabled", "voice_takeover_prefixes"],
+        "submit_text": "保存语音接管",
+        "widgets": {
+          "voice_auto_takeover_enabled": {
+            "widget": "switch",
+            "help_text": "开启后不再判断前缀，所有语音请求都会直接进入 FamilyClaw。"
+          },
+          "voice_takeover_prefixes": {
+            "widget": "textarea",
+            "placeholder": "比如：请\n帮我\n小管家",
+            "help_text": "每行一个前缀，也可以用逗号分隔。至少保留一个前缀，避免误触发。"
           }
         }
       }

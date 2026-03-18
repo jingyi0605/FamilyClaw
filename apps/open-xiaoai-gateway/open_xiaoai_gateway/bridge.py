@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections import deque
 import contextlib
 import json
 import logging
+import math
+import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -14,8 +17,9 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import websockets
+from websockets.exceptions import ConnectionClosed
 
-from open_xiaoai_gateway.protocol import GatewayCommand, OpenXiaoAIResponse
+from open_xiaoai_gateway.protocol import GatewayCommand, GatewayEvent, OpenXiaoAIResponse
 from open_xiaoai_gateway.settings import settings
 from open_xiaoai_gateway.translator import (
     TerminalBinaryStream,
@@ -33,6 +37,7 @@ from open_xiaoai_gateway.translator import (
     build_stream_message,
     build_terminal_offline_event,
     build_terminal_online_event,
+    parse_open_xiaoai_stream,
     parse_open_xiaoai_text_message,
     translate_audio_chunk,
     translate_command_to_terminal,
@@ -78,6 +83,15 @@ _LOCAL_PLAYBACK_STOP_PHRASES = frozenset(
     }
 )
 _MAX_INTERRUPTED_PLAYBACK_SESSIONS = 32
+_VOICEPRINT_PROMPT_SESSION_PREFIX = "voiceprint-prompt:"
+_VOICEPRINT_PROMPT_DELAY_SECONDS = 3.0
+_VOICEPRINT_PROMPT_BEEP_SETTLE_SECONDS = 0.35
+_VOICEPRINT_CAPTURE_WINDOW_SECONDS = 7.0
+_VOICEPRINT_PROMPT_BEEP_SAMPLE_RATE = 16000
+_VOICEPRINT_PROMPT_BEEP_DURATION_SECONDS = 0.18
+_VOICEPRINT_PROMPT_BEEP_FREQUENCY_HZ = 880.0
+_VOICEPRINT_PROMPT_BEEP_VOLUME = 0.45
+_NATIVE_FIRST_AUDIO_BUFFER_SECONDS = 6.0
 _TERMINAL_MESSAGE_QUEUE_CLOSE = object()
 
 
@@ -196,6 +210,12 @@ class GatewayRuntimeState:
     native_barge_in_active: bool = False
     suppressed_stop_phrase: str | None = None
     suppressed_stop_phrase_deadline: float | None = None
+    voiceprint_round_task: asyncio.Task[Any] | None = None
+    voiceprint_capture_session_id: str | None = None
+    voiceprint_capture_audio_bytes: int = 0
+    last_local_voiceprint_prompt_key: str | None = None
+    native_first_audio_chunks: deque[bytes] = field(default_factory=deque)
+    native_first_audio_bytes: int = 0
     activation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def is_active(self) -> bool:
@@ -258,6 +278,7 @@ class OpenXiaoAIGateway:
             for pending_task in pending:
                 await pending_task
         finally:
+            await self._cancel_voiceprint_round_task(state, reason="terminal_disconnect")
             await self._stop_takeover_keepalive(
                 state,
                 reason="terminal_disconnect",
@@ -285,11 +306,18 @@ class OpenXiaoAIGateway:
                 if offline_event is not None:
                     try:
                         await state.api_websocket.send(offline_event.model_dump_json())
+                    except ConnectionClosed as exc:
+                        logger.info(
+                            "skip terminal.offline because api websocket already closed terminal_id=%s code=%s reason=%s",
+                            context.terminal_id,
+                            getattr(exc.rcvd, "code", None),
+                            getattr(exc.rcvd, "reason", ""),
+                        )
                     except Exception:
                         logger.exception("failed to report terminal.offline terminal_id=%s", context.terminal_id)
             if state.api_reader_task is not None:
                 state.api_reader_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
+                with contextlib.suppress(asyncio.CancelledError, ConnectionClosed):
                     await state.api_reader_task
             if state.playback_worker_task is not None:
                 state.playback_worker_task.cancel()
@@ -336,8 +364,15 @@ class OpenXiaoAIGateway:
         if isinstance(message, bytes):
             if not state.is_active():
                 return
+            stream = parse_open_xiaoai_stream(message)
+            raw_bytes = stream.raw_bytes() if stream.tag == "record" else b""
+            if raw_bytes and _should_buffer_native_first_audio(state):
+                _buffer_native_first_audio_chunk(state, raw_bytes)
+            if raw_bytes and _should_hold_native_first_audio_until_takeover(state):
+                return
             events = translate_audio_chunk(message, context)
             for event in events:
+                self._record_voiceprint_capture_audio(state, event)
                 await state.api_websocket.send(event.model_dump_json())
             return
 
@@ -429,6 +464,8 @@ class OpenXiaoAIGateway:
                 return
 
         translation = translate_text_message_result(message, context)
+        if _is_kws_event_frame(frame) and context.last_invocation_decision == "await_takeover_prefix":
+            _clear_native_first_audio_buffer(state)
         if translation.terminal_messages:
             try:
                 await self._dispatch_local_terminal_messages(
@@ -446,13 +483,21 @@ class OpenXiaoAIGateway:
                 if context.last_invocation_decision == "familyclaw_takeover":
                     context.last_invocation_decision = "native_passthrough"
                     context.last_passthrough_reason = "takeover_pause_failed"
+                    _clear_native_first_audio_buffer(state)
                     logger.info(
                         "skip takeover forwarding because local pause failed fingerprint=%s",
                         context.fingerprint,
                     )
                     return
 
-        for event in translation.events:
+        events_to_send = translation.events
+        if _is_final_instruction_frame(frame):
+            if context.last_invocation_decision == "familyclaw_takeover":
+                events_to_send = _inject_native_first_buffered_audio_events(state, events_to_send)
+            else:
+                _clear_native_first_audio_buffer(state)
+
+        for event in events_to_send:
             await state.api_websocket.send(event.model_dump_json())
 
         if _is_final_instruction_frame(frame):
@@ -544,8 +589,14 @@ class OpenXiaoAIGateway:
                 state.context.invocation_mode,
                 ",".join(state.context.takeover_prefixes),
             )
+            await self._maybe_schedule_local_voiceprint_round_prompt(
+                api_websocket=api_websocket,
+                state=state,
+                previous_pending_enrollment=None,
+                refresh_reason="terminal_activated",
+            )
 
-    async def _refresh_active_binding(self, state: GatewayRuntimeState, binding: VoiceTerminalBinding) -> None:
+    async def _refresh_active_binding(self, state: GatewayRuntimeState, binding: VoiceTerminalBinding, *, reason: str | None = None) -> None:
         async with state.activation_lock:
             if not state.is_active():
                 return
@@ -564,6 +615,14 @@ class OpenXiaoAIGateway:
             if not changes:
                 return
 
+            previous_pending_enrollment = state.context.pending_voiceprint_enrollment
+            if "pending_voiceprint_enrollment" in changes:
+                await self._cancel_voiceprint_round_task(state, reason="binding_refresh")
+                await self._cancel_active_voiceprint_session(
+                    api_websocket=state.api_websocket,
+                    state=state,
+                    reason="binding_refresh",
+                )
             state.context.apply_binding(binding)
             logger.info(
                 "refreshed active terminal binding fingerprint=%s changes=%s invocation_mode=%s takeover_prefixes=%s",
@@ -571,6 +630,12 @@ class OpenXiaoAIGateway:
                 ",".join(changes),
                 state.context.invocation_mode,
                 ",".join(state.context.takeover_prefixes),
+            )
+            await self._maybe_schedule_local_voiceprint_round_prompt(
+                api_websocket=state.api_websocket,
+                state=state,
+                previous_pending_enrollment=previous_pending_enrollment,
+                refresh_reason=reason,
             )
 
     async def _connect_api(self, context: TerminalBridgeContext):
@@ -590,58 +655,71 @@ class OpenXiaoAIGateway:
         )
 
     async def _forward_api_commands(self, api_websocket, state: GatewayRuntimeState) -> None:
-        async for raw_message in api_websocket:
-            command = GatewayCommand.model_validate_json(raw_message)
-            logger.info(
-                "recv api command type=%s terminal_id=%s session_id=%s payload=%s",
-                command.type,
-                command.terminal_id,
-                command.session_id,
-                _preview_payload(command.payload),
-            )
+        try:
+            async for raw_message in api_websocket:
+                command = GatewayCommand.model_validate_json(raw_message)
+                logger.info(
+                    "recv api command type=%s terminal_id=%s session_id=%s payload=%s",
+                    command.type,
+                    command.terminal_id,
+                    command.session_id,
+                    _preview_payload(command.payload),
+                )
 
-            try:
-                if command.type == "play.start":
-                    await self._handle_play_start_command(
+                try:
+                    if command.type == "binding.refresh":
+                        await self._handle_binding_refresh_command(state=state, command=command)
+                        continue
+
+                    if command.type == "play.start":
+                        await self._handle_play_start_command(
+                            api_websocket=api_websocket,
+                            state=state,
+                            command=command,
+                        )
+                        continue
+
+                    if command.type in {"play.stop", "play.abort"}:
+                        handled = await self._interrupt_local_playback_if_needed(
+                            api_websocket=api_websocket,
+                            state=state,
+                            reason=f"api:{command.type}",
+                            transcript=None,
+                            completion_status="completed" if command.type == "play.stop" else "interrupted",
+                            ts=command.ts,
+                            interrupt_native=False,
+                        )
+                        if handled:
+                            continue
+                        self._clear_pending_playback_queue(
+                            state,
+                            reason=f"api:{command.type}",
+                        )
+
+                    await self._dispatch_api_command(
                         api_websocket=api_websocket,
                         state=state,
                         command=command,
                     )
-                    continue
-
-                if command.type in {"play.stop", "play.abort"}:
-                    handled = await self._interrupt_local_playback_if_needed(
-                        api_websocket=api_websocket,
-                        state=state,
-                        reason=f"api:{command.type}",
-                        transcript=None,
-                        completion_status="completed" if command.type == "play.stop" else "interrupted",
-                        ts=command.ts,
-                        interrupt_native=False,
+                except Exception:
+                    logger.exception("failed to dispatch command type=%s", command.type)
+                    failed_event = build_playback_failed_event(
+                        state.context,
+                        detail="gateway dispatch failed",
+                        error_code="playback_failed",
                     )
-                    if handled:
-                        continue
-                    self._clear_pending_playback_queue(
-                        state,
-                        reason=f"api:{command.type}",
-                    )
-
-                await self._dispatch_api_command(
-                    api_websocket=api_websocket,
-                    state=state,
-                    command=command,
-                )
-            except Exception:
-                logger.exception("failed to dispatch command type=%s", command.type)
-                failed_event = build_playback_failed_event(
-                    state.context,
-                    detail="gateway dispatch failed",
-                    error_code="playback_failed",
-                )
-                if failed_event is not None:
-                    await api_websocket.send(failed_event.model_dump_json())
-                if command.type == "play.start":
-                    await self._dispatch_next_pending_playback(api_websocket=api_websocket, state=state, reason="play_start_dispatch_failed")
+                    if failed_event is not None:
+                        await api_websocket.send(failed_event.model_dump_json())
+                    if command.type == "play.start":
+                        await self._dispatch_next_pending_playback(api_websocket=api_websocket, state=state, reason="play_start_dispatch_failed")
+        except ConnectionClosed as exc:
+            logger.info(
+                "api websocket closed terminal_id=%s fingerprint=%s code=%s reason=%s",
+                state.context.terminal_id,
+                state.context.fingerprint,
+                getattr(exc.rcvd, "code", None),
+                getattr(exc.rcvd, "reason", ""),
+            )
 
     async def _handle_play_start_command(self, *, api_websocket, state: GatewayRuntimeState, command: GatewayCommand) -> None:
         session_id = str(command.session_id or "").strip()
@@ -665,6 +743,21 @@ class OpenXiaoAIGateway:
             command.session_id,
             command.payload.get("playback_id"),
             len(state.pending_playback_commands),
+        )
+
+    async def _handle_binding_refresh_command(self, *, state: GatewayRuntimeState, command: GatewayCommand) -> None:
+        binding = _parse_voice_terminal_binding(command.payload.get("binding"))
+        if binding is None:
+            logger.warning(
+                "skip binding.refresh because payload is invalid terminal_id=%s payload=%s",
+                command.terminal_id,
+                _preview_payload(command.payload),
+            )
+            return
+        await self._refresh_active_binding(
+            state,
+            binding,
+            reason=_coerce_optional_text(command.payload.get("reason")),
         )
 
     def _ensure_playback_worker(self, *, api_websocket, state: GatewayRuntimeState) -> None:
@@ -726,6 +819,15 @@ class OpenXiaoAIGateway:
                 state.playback_worker_task = None
 
     async def _dispatch_api_command(self, *, api_websocket, state: GatewayRuntimeState, command: GatewayCommand) -> None:
+        if _is_voiceprint_prompt_beep_command(command):
+            logger.info(
+                "delay voiceprint prompt beep before playback fingerprint=%s session_id=%s delay_seconds=%.1f",
+                state.context.fingerprint,
+                command.session_id,
+                _VOICEPRINT_PROMPT_DELAY_SECONDS,
+            )
+            await asyncio.sleep(_VOICEPRINT_PROMPT_DELAY_SECONDS)
+
         outgoing_messages = translate_command_to_terminal(command, state.context)
         if not outgoing_messages:
             return
@@ -745,6 +847,12 @@ class OpenXiaoAIGateway:
             command=command,
             outgoing_messages=outgoing_messages,
         )
+        if _is_voiceprint_prompt_beep_command(command):
+            self._schedule_voiceprint_round_after_prompt(
+                api_websocket=api_websocket,
+                state=state,
+                command=command,
+            )
 
     async def _dispatch_next_pending_playback(self, *, api_websocket, state: GatewayRuntimeState, reason: str) -> None:
         if state.context.active_playback_id:
@@ -1248,6 +1356,510 @@ class OpenXiaoAIGateway:
             stderr or "<empty>",
         )
 
+    def _schedule_voiceprint_round_after_prompt(
+        self,
+        *,
+        api_websocket,
+        state: GatewayRuntimeState,
+        command: GatewayCommand,
+    ) -> None:
+        existing_task = state.voiceprint_round_task
+        if existing_task is not None and not existing_task.done():
+            existing_task.cancel()
+        state.voiceprint_round_task = asyncio.create_task(
+            self._run_voiceprint_round_after_prompt(
+                api_websocket=api_websocket,
+                state=state,
+                command=command,
+            )
+        )
+
+    async def _maybe_schedule_local_voiceprint_round_prompt(
+        self,
+        *,
+        api_websocket,
+        state: GatewayRuntimeState,
+        previous_pending_enrollment: PendingVoiceprintEnrollment | None,
+        refresh_reason: str | None,
+    ) -> None:
+        pending_enrollment = state.context.pending_voiceprint_enrollment
+        previous_enrollment_id = previous_pending_enrollment.enrollment_id if previous_pending_enrollment is not None else None
+        previous_sample_count = previous_pending_enrollment.sample_count if previous_pending_enrollment is not None else None
+        current_enrollment_id = pending_enrollment.enrollment_id if pending_enrollment is not None else None
+        current_sample_count = pending_enrollment.sample_count if pending_enrollment is not None else None
+        current_sample_goal = pending_enrollment.sample_goal if pending_enrollment is not None else None
+
+        if api_websocket is None:
+            logger.info(
+                "skip local voiceprint prompt scheduling because api websocket is unavailable fingerprint=%s reason=%s previous_enrollment_id=%s previous_sample_count=%s current_enrollment_id=%s current_sample_count=%s current_sample_goal=%s",
+                state.context.fingerprint,
+                refresh_reason,
+                previous_enrollment_id,
+                previous_sample_count,
+                current_enrollment_id,
+                current_sample_count,
+                current_sample_goal,
+            )
+            return
+        if pending_enrollment is None:
+            logger.info(
+                "skip local voiceprint prompt scheduling because pending enrollment is missing fingerprint=%s reason=%s previous_enrollment_id=%s previous_sample_count=%s",
+                state.context.fingerprint,
+                refresh_reason,
+                previous_enrollment_id,
+                previous_sample_count,
+            )
+            return
+        if (
+            state.voiceprint_round_task is not None
+            and not state.voiceprint_round_task.done()
+        ):
+            logger.info(
+                "skip local voiceprint prompt scheduling because round task is still running fingerprint=%s reason=%s enrollment_id=%s sample_count=%s sample_goal=%s",
+                state.context.fingerprint,
+                refresh_reason,
+                pending_enrollment.enrollment_id,
+                pending_enrollment.sample_count,
+                pending_enrollment.sample_goal,
+            )
+            return
+        if state.context.active_session_purpose == "voiceprint_enrollment":
+            logger.info(
+                "skip local voiceprint prompt scheduling because voiceprint session is still active fingerprint=%s reason=%s enrollment_id=%s sample_count=%s active_session_id=%s",
+                state.context.fingerprint,
+                refresh_reason,
+                pending_enrollment.enrollment_id,
+                pending_enrollment.sample_count,
+                state.context.active_session_id,
+            )
+            return
+        if state.context.active_playback_id or state.pending_playback_commands:
+            logger.info(
+                "skip local voiceprint prompt scheduling because playback is still busy fingerprint=%s reason=%s enrollment_id=%s sample_count=%s active_playback_id=%s pending_playback_count=%s",
+                state.context.fingerprint,
+                refresh_reason,
+                pending_enrollment.enrollment_id,
+                pending_enrollment.sample_count,
+                state.context.active_playback_id,
+                len(state.pending_playback_commands),
+            )
+            return
+        if pending_enrollment.sample_count >= pending_enrollment.sample_goal:
+            logger.info(
+                "skip local voiceprint prompt scheduling because enrollment is already complete fingerprint=%s reason=%s enrollment_id=%s sample_count=%s sample_goal=%s",
+                state.context.fingerprint,
+                refresh_reason,
+                pending_enrollment.enrollment_id,
+                pending_enrollment.sample_count,
+                pending_enrollment.sample_goal,
+            )
+            return
+
+        if refresh_reason == "voiceprint_enrollment_created":
+            logger.info(
+                "skip local voiceprint prompt scheduling because initial round should come from api prompt fingerprint=%s enrollment_id=%s sample_count=%s sample_goal=%s",
+                state.context.fingerprint,
+                pending_enrollment.enrollment_id,
+                pending_enrollment.sample_count,
+                pending_enrollment.sample_goal,
+            )
+            return
+
+        sample_count_changed = (
+            previous_pending_enrollment is None
+            or previous_pending_enrollment.enrollment_id != pending_enrollment.enrollment_id
+            or previous_pending_enrollment.sample_count != pending_enrollment.sample_count
+        )
+        is_retry = (
+            not sample_count_changed
+            and refresh_reason == "voiceprint_enrollment_progressed"
+            and previous_pending_enrollment is not None
+            and previous_pending_enrollment.enrollment_id == pending_enrollment.enrollment_id
+        )
+
+        if pending_enrollment.sample_count <= 0:
+            prompt_key = "created"
+        else:
+            prompt_key = f"{'rejected' if is_retry else 'recorded'}-{pending_enrollment.sample_count}"
+        dedupe_key = f"{pending_enrollment.enrollment_id}:{prompt_key}"
+        if state.last_local_voiceprint_prompt_key == dedupe_key:
+            logger.info(
+                "skip duplicate local voiceprint prompt fingerprint=%s reason=%s enrollment_id=%s prompt_key=%s previous_enrollment_id=%s previous_sample_count=%s current_sample_goal=%s",
+                state.context.fingerprint,
+                refresh_reason,
+                pending_enrollment.enrollment_id,
+                prompt_key,
+                previous_enrollment_id,
+                previous_sample_count,
+                pending_enrollment.sample_goal,
+            )
+            return
+        logger.info(
+            "schedule local voiceprint prompt fingerprint=%s reason=%s enrollment_id=%s prompt_key=%s retry=%s sample_count_changed=%s previous_enrollment_id=%s previous_sample_count=%s current_sample_count=%s current_sample_goal=%s",
+            state.context.fingerprint,
+            refresh_reason,
+            pending_enrollment.enrollment_id,
+            prompt_key,
+            is_retry,
+            sample_count_changed,
+            previous_enrollment_id,
+            previous_sample_count,
+            pending_enrollment.sample_count,
+            pending_enrollment.sample_goal,
+        )
+        state.last_local_voiceprint_prompt_key = dedupe_key
+        await self._enqueue_local_voiceprint_round_prompt(
+            api_websocket=api_websocket,
+            state=state,
+            enrollment=pending_enrollment,
+            prompt_key=prompt_key,
+            retry=is_retry,
+        )
+
+    async def _enqueue_local_voiceprint_round_prompt(
+        self,
+        *,
+        api_websocket,
+        state: GatewayRuntimeState,
+        enrollment: PendingVoiceprintEnrollment,
+        prompt_key: str,
+        retry: bool,
+    ) -> None:
+        playback_token = uuid4().hex
+        session_id = f"{_VOICEPRINT_PROMPT_SESSION_PREFIX}{enrollment.enrollment_id}:{prompt_key}"
+        current_round = _get_voiceprint_current_round(enrollment)
+        if retry:
+            prompt_text = (
+                f"刚才这一轮没有录成成功。请重新准备第 {current_round} 轮。"
+                "三秒后在滴的一声后，开始朗读屏幕上的句子。"
+            )
+        else:
+            prompt_text = (
+                f"请准备第 {current_round} 轮声纹录入。"
+                "三秒后在滴的一声后，开始朗读屏幕上的句子。"
+            )
+        tts_command = GatewayCommand.model_validate(
+            {
+                "type": "play.start",
+                "terminal_id": state.context.terminal_id or "",
+                "session_id": session_id,
+                "seq": state.context.next_seq(),
+                "payload": {
+                    "playback_id": f"{playback_token}-tts",
+                    "mode": "tts_text",
+                    "text": prompt_text,
+                },
+                "ts": command_ts_now(),
+            }
+        )
+        beep_command = GatewayCommand.model_validate(
+            {
+                "type": "play.start",
+                "terminal_id": state.context.terminal_id or "",
+                "session_id": session_id,
+                "seq": state.context.next_seq(),
+                "payload": {
+                    "playback_id": f"{playback_token}-beep",
+                    "mode": "audio_bytes",
+                    "audio_base64": _get_voiceprint_prompt_beep_audio_base64(),
+                    "content_type": "audio/pcm;rate=16000;channels=1;format=s16le",
+                },
+                "ts": command_ts_now(),
+            }
+        )
+        logger.info(
+            "enqueue local voiceprint prompt fingerprint=%s session_id=%s prompt_key=%s retry=%s current_round=%s",
+            state.context.fingerprint,
+            session_id,
+            prompt_key,
+            retry,
+            current_round,
+        )
+        await self._handle_play_start_command(
+            api_websocket=api_websocket,
+            state=state,
+            command=tts_command,
+        )
+        await self._handle_play_start_command(
+            api_websocket=api_websocket,
+            state=state,
+            command=beep_command,
+        )
+
+    async def _run_voiceprint_round_after_prompt(
+        self,
+        *,
+        api_websocket,
+        state: GatewayRuntimeState,
+        command: GatewayCommand,
+    ) -> None:
+        playback_id = str(command.payload.get("playback_id") or "").strip()
+        prompt_session_id = str(command.session_id or "").strip()
+        capture_session_id: str | None = None
+        try:
+            await asyncio.sleep(_VOICEPRINT_PROMPT_BEEP_SETTLE_SECONDS)
+            if not state.is_active():
+                return
+            if _is_same_playback(state.context, playback_id, prompt_session_id):
+                completed_event = self._build_playback_completed_json(
+                    context=state.context,
+                    playback_id=playback_id,
+                    session_id=prompt_session_id,
+                    detail="voiceprint_prompt_beep_completed",
+                    ts=command_ts_now(),
+                )
+                if completed_event is not None:
+                    await api_websocket.send(completed_event)
+            capture_session_id = await self._start_voiceprint_enrollment_capture(
+                api_websocket=api_websocket,
+                state=state,
+                prompt_session_id=prompt_session_id,
+            )
+            if not capture_session_id:
+                return
+            await asyncio.sleep(_VOICEPRINT_CAPTURE_WINDOW_SECONDS)
+            await self._finish_voiceprint_enrollment_capture(
+                api_websocket=api_websocket,
+                state=state,
+                capture_session_id=capture_session_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if state.voiceprint_round_task is asyncio.current_task():
+                state.voiceprint_round_task = None
+            if capture_session_id and state.voiceprint_capture_session_id == capture_session_id:
+                state.voiceprint_capture_session_id = None
+                state.voiceprint_capture_audio_bytes = 0
+
+    async def _start_voiceprint_enrollment_capture(
+        self,
+        *,
+        api_websocket,
+        state: GatewayRuntimeState,
+        prompt_session_id: str,
+    ) -> str | None:
+        enrollment = state.context.pending_voiceprint_enrollment
+        if enrollment is None:
+            logger.warning(
+                "skip voiceprint enrollment capture because pending enrollment is missing fingerprint=%s prompt_session_id=%s",
+                state.context.fingerprint,
+                prompt_session_id,
+            )
+            return None
+
+        await self._cancel_active_voiceprint_session(
+            api_websocket=api_websocket,
+            state=state,
+            reason="voiceprint_round_restart",
+        )
+
+        capture_session_id = state.context.start_session(
+            purpose="voiceprint_enrollment",
+            enrollment_id=enrollment.enrollment_id,
+        )
+        state.voiceprint_capture_session_id = capture_session_id
+        state.voiceprint_capture_audio_bytes = 0
+        await api_websocket.send(
+            self._build_voiceprint_session_start_event(
+                state=state,
+                session_id=capture_session_id,
+                enrollment_id=enrollment.enrollment_id,
+            ).model_dump_json()
+        )
+        logger.info(
+            "started voiceprint enrollment capture fingerprint=%s prompt_session_id=%s session_id=%s enrollment_id=%s",
+            state.context.fingerprint,
+            prompt_session_id,
+            capture_session_id,
+            enrollment.enrollment_id,
+        )
+
+        if settings.recording_enabled:
+            try:
+                response = await state.terminal_rpc.call(
+                    command="start_recording",
+                    payload=build_recording_rpc_payload(),
+                )
+                if not self._is_successful_response(response):
+                    logger.warning(
+                        "voiceprint enrollment start_recording returned non-zero fingerprint=%s session_id=%s detail=%s",
+                        state.context.fingerprint,
+                        capture_session_id,
+                        self._describe_response(response),
+                    )
+            except Exception:
+                logger.warning(
+                    "failed to refresh terminal recording for voiceprint enrollment fingerprint=%s session_id=%s",
+                    state.context.fingerprint,
+                    capture_session_id,
+                    exc_info=True,
+                )
+
+        return capture_session_id
+
+    async def _finish_voiceprint_enrollment_capture(
+        self,
+        *,
+        api_websocket,
+        state: GatewayRuntimeState,
+        capture_session_id: str,
+    ) -> None:
+        if state.voiceprint_capture_session_id != capture_session_id:
+            return
+        if state.context.active_session_id != capture_session_id:
+            return
+        if state.context.active_session_purpose != "voiceprint_enrollment":
+            return
+
+        enrollment = state.context.pending_voiceprint_enrollment
+        enrollment_id = state.context.active_enrollment_id
+        if enrollment is None or not enrollment_id:
+            logger.warning(
+                "skip finishing voiceprint enrollment capture because binding changed fingerprint=%s session_id=%s",
+                state.context.fingerprint,
+                capture_session_id,
+            )
+            state.context.clear_session()
+            return
+
+        audio_bytes = max(int(state.voiceprint_capture_audio_bytes or 0), 0)
+        if audio_bytes <= 0:
+            logger.warning(
+                "cancel voiceprint enrollment capture because no audio was captured fingerprint=%s session_id=%s enrollment_id=%s",
+                state.context.fingerprint,
+                capture_session_id,
+                enrollment_id,
+            )
+            await api_websocket.send(
+                GatewayEvent(
+                    type="session.cancel",
+                    terminal_id=state.context.terminal_id or "",
+                    session_id=capture_session_id,
+                    seq=state.context.next_seq(),
+                    payload={"reason": "voiceprint_enrollment_no_audio"},
+                    ts=command_ts_now(),
+                ).model_dump_json()
+            )
+            state.context.clear_session()
+            return
+
+        await api_websocket.send(
+            GatewayEvent(
+                type="audio.commit",
+                terminal_id=state.context.terminal_id or "",
+                session_id=capture_session_id,
+                seq=state.context.next_seq(),
+                payload={
+                    "duration_ms": None,
+                    "reason": "voiceprint_enrollment_window_elapsed",
+                    "debug_transcript": enrollment.expected_phrase,
+                    "session_purpose": "voiceprint_enrollment",
+                    "enrollment_id": enrollment_id,
+                },
+                ts=command_ts_now(),
+            ).model_dump_json()
+        )
+        logger.info(
+            "auto committed voiceprint enrollment capture fingerprint=%s session_id=%s enrollment_id=%s audio_bytes=%s",
+            state.context.fingerprint,
+            capture_session_id,
+            enrollment_id,
+            audio_bytes,
+        )
+        state.context.clear_session()
+
+    async def _cancel_voiceprint_round_task(self, state: GatewayRuntimeState, *, reason: str) -> None:
+        task = state.voiceprint_round_task
+        if task is None or task.done() or task is asyncio.current_task():
+            return
+        logger.info(
+            "cancel voiceprint round task fingerprint=%s reason=%s",
+            state.context.fingerprint,
+            reason,
+        )
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        state.voiceprint_round_task = None
+        state.voiceprint_capture_session_id = None
+        state.voiceprint_capture_audio_bytes = 0
+
+    async def _cancel_active_voiceprint_session(
+        self,
+        *,
+        api_websocket,
+        state: GatewayRuntimeState,
+        reason: str,
+    ) -> None:
+        session_id = str(state.context.active_session_id or "").strip()
+        if not session_id or state.context.active_session_purpose != "voiceprint_enrollment":
+            return
+        logger.info(
+            "cancel stale voiceprint enrollment session fingerprint=%s session_id=%s reason=%s",
+            state.context.fingerprint,
+            session_id,
+            reason,
+        )
+        await api_websocket.send(
+            GatewayEvent(
+                type="session.cancel",
+                terminal_id=state.context.terminal_id or "",
+                session_id=session_id,
+                seq=state.context.next_seq(),
+                payload={"reason": reason},
+                ts=command_ts_now(),
+            ).model_dump_json()
+        )
+        state.context.clear_session()
+        if state.voiceprint_capture_session_id == session_id:
+            state.voiceprint_capture_session_id = None
+            state.voiceprint_capture_audio_bytes = 0
+
+    def _build_voiceprint_session_start_event(
+        self,
+        *,
+        state: GatewayRuntimeState,
+        session_id: str,
+        enrollment_id: str,
+    ) -> GatewayEvent:
+        return GatewayEvent(
+            type="session.start",
+            terminal_id=state.context.terminal_id or "",
+            session_id=session_id,
+            seq=state.context.next_seq(),
+            payload={
+                "household_id": state.context.household_id,
+                "room_id": state.context.room_id,
+                "terminal_code": state.context.terminal_code,
+                "sample_rate": settings.recording_sample_rate,
+                "codec": "pcm_s16le",
+                "channels": settings.recording_channels,
+                "trace_id": None,
+                "session_purpose": "voiceprint_enrollment",
+                "enrollment_id": enrollment_id,
+            },
+            ts=command_ts_now(),
+        )
+
+    def _record_voiceprint_capture_audio(self, state: GatewayRuntimeState, event: GatewayEvent) -> None:
+        if event.type != "audio.append":
+            return
+        if state.voiceprint_capture_session_id != event.session_id:
+            return
+        chunk_bytes = max(int(event.payload.get("chunk_bytes") or 0), 0)
+        if chunk_bytes <= 0:
+            return
+        had_audio = state.voiceprint_capture_audio_bytes > 0
+        state.voiceprint_capture_audio_bytes += chunk_bytes
+        if not had_audio:
+            logger.info(
+                "received first voiceprint enrollment audio chunk fingerprint=%s session_id=%s chunk_bytes=%s",
+                state.context.fingerprint,
+                event.session_id,
+                chunk_bytes,
+            )
+
     async def _start_takeover_keepalive(self, state: GatewayRuntimeState) -> None:
         existing_task = state.takeover_keepalive_task
         if existing_task is not None and not existing_task.done():
@@ -1340,24 +1952,30 @@ def build_terminal_interrupted_json(*, context: TerminalBridgeContext, reason: o
 
 
 def _parse_gateway_discovery_status(payload: dict[str, Any]) -> GatewayDiscoveryStatus:
-    binding_payload = payload.get("binding")
-    binding = None
-    if isinstance(binding_payload, dict):
-        pending_voiceprint_enrollment = _parse_pending_voiceprint_enrollment(
-            binding_payload.get("pending_voiceprint_enrollment")
-        )
-        binding = VoiceTerminalBinding(
-            household_id=str(binding_payload.get("household_id") or "").strip(),
-            terminal_id=str(binding_payload.get("terminal_id") or "").strip(),
-            room_id=_coerce_optional_text(binding_payload.get("room_id")),
-            terminal_name=str(binding_payload.get("terminal_name") or "").strip(),
-            voice_auto_takeover_enabled=bool(binding_payload.get("voice_auto_takeover_enabled")),
-            voice_takeover_prefixes=tuple(_coerce_text_list(binding_payload.get("voice_takeover_prefixes")) or ["请"]),
-            pending_voiceprint_enrollment=pending_voiceprint_enrollment,
-        )
     return GatewayDiscoveryStatus(
         claimed=bool(payload.get("claimed")),
-        binding=binding,
+        binding=_parse_voice_terminal_binding(payload.get("binding")),
+    )
+
+
+def _parse_voice_terminal_binding(payload: object) -> VoiceTerminalBinding | None:
+    if not isinstance(payload, dict):
+        return None
+
+    household_id = str(payload.get("household_id") or "").strip()
+    terminal_id = str(payload.get("terminal_id") or "").strip()
+    terminal_name = str(payload.get("terminal_name") or "").strip()
+    if not household_id or not terminal_id or not terminal_name:
+        return None
+
+    return VoiceTerminalBinding(
+        household_id=household_id,
+        terminal_id=terminal_id,
+        room_id=_coerce_optional_text(payload.get("room_id")),
+        terminal_name=terminal_name,
+        voice_auto_takeover_enabled=bool(payload.get("voice_auto_takeover_enabled")),
+        voice_takeover_prefixes=tuple(_coerce_text_list(payload.get("voice_takeover_prefixes")) or ["\u8bf7"]),
+        pending_voiceprint_enrollment=_parse_pending_voiceprint_enrollment(payload.get("pending_voiceprint_enrollment")),
     )
 
 
@@ -1473,7 +2091,7 @@ def _collect_binding_refresh_changes(context: TerminalBridgeContext, binding: Vo
     next_invocation_mode = "always_familyclaw" if binding.voice_auto_takeover_enabled else "native_first"
     if context.invocation_mode != next_invocation_mode:
         changes.append("invocation_mode")
-    if tuple(context.takeover_prefixes) != tuple(binding.voice_takeover_prefixes or ("请",)):
+    if tuple(context.takeover_prefixes) != tuple(binding.voice_takeover_prefixes or ("\u8bf7",)):
         changes.append("takeover_prefixes")
     if not _same_pending_voiceprint_enrollment(
         context.pending_voiceprint_enrollment,
@@ -1603,6 +2221,89 @@ def _extract_instruction_event_payload(frame) -> dict[str, Any] | None:
     return payload
 
 
+def _should_buffer_native_first_audio(state: GatewayRuntimeState) -> bool:
+    return (
+        state.context.invocation_mode == "native_first"
+        and state.context.pending_voiceprint_enrollment is None
+        and state.context.active_session_id is None
+        and state.context.terminal_id is not None
+    )
+
+
+def _should_hold_native_first_audio_until_takeover(state: GatewayRuntimeState) -> bool:
+    return _should_buffer_native_first_audio(state) and state.context.last_invocation_decision == "await_takeover_prefix"
+
+
+def _buffer_native_first_audio_chunk(state: GatewayRuntimeState, raw_bytes: bytes) -> None:
+    if not raw_bytes:
+        return
+    max_bytes = _get_native_first_audio_buffer_limit_bytes()
+    if max_bytes <= 0:
+        return
+    state.native_first_audio_chunks.append(raw_bytes)
+    state.native_first_audio_bytes += len(raw_bytes)
+    while state.native_first_audio_chunks and state.native_first_audio_bytes > max_bytes:
+        removed = state.native_first_audio_chunks.popleft()
+        state.native_first_audio_bytes -= len(removed)
+    if state.native_first_audio_bytes < 0:
+        state.native_first_audio_bytes = 0
+
+
+def _clear_native_first_audio_buffer(state: GatewayRuntimeState) -> None:
+    state.native_first_audio_chunks.clear()
+    state.native_first_audio_bytes = 0
+
+
+def _inject_native_first_buffered_audio_events(
+    state: GatewayRuntimeState,
+    events: list[GatewayEvent],
+) -> list[GatewayEvent]:
+    if not events or not state.native_first_audio_chunks:
+        return events
+
+    commit_index = next((index for index, item in enumerate(events) if item.type == "audio.commit"), None)
+    if commit_index is None:
+        return events
+
+    session_id = str(events[commit_index].session_id or "").strip()
+    terminal_id = str(state.context.terminal_id or "").strip()
+    if not session_id or not terminal_id:
+        _clear_native_first_audio_buffer(state)
+        return events
+
+    buffered_events: list[GatewayEvent] = []
+    for raw_bytes in state.native_first_audio_chunks:
+        if not raw_bytes:
+            continue
+        buffered_events.append(
+            GatewayEvent(
+                type="audio.append",
+                terminal_id=terminal_id,
+                session_id=session_id,
+                seq=state.context.next_seq(),
+                payload={
+                    "chunk_base64": base64.b64encode(raw_bytes).decode("ascii"),
+                    "chunk_bytes": len(raw_bytes),
+                    "codec": "pcm_s16le",
+                    "sample_rate": settings.recording_sample_rate,
+                },
+                ts=command_ts_now(),
+            )
+        )
+
+    _clear_native_first_audio_buffer(state)
+    if not buffered_events:
+        return events
+
+    return events[:commit_index] + buffered_events + events[commit_index:]
+
+
+def _get_native_first_audio_buffer_limit_bytes() -> int:
+    bytes_per_sample = max(1, settings.recording_bits_per_sample // 8)
+    bytes_per_second = settings.recording_sample_rate * settings.recording_channels * bytes_per_sample
+    return max(0, int(bytes_per_second * _NATIVE_FIRST_AUDIO_BUFFER_SECONDS))
+
+
 def _should_interrupt_local_playback(transcript: str) -> bool:
     normalized = _normalize_stop_phrase(transcript)
     return normalized in _LOCAL_PLAYBACK_STOP_PHRASES
@@ -1610,6 +2311,15 @@ def _should_interrupt_local_playback(transcript: str) -> bool:
 
 def _has_pending_or_active_playback(state: GatewayRuntimeState) -> bool:
     return bool(state.context.active_playback_id or state.pending_playback_commands)
+
+
+def _is_voiceprint_prompt_beep_command(command: GatewayCommand) -> bool:
+    if command.type != "play.start":
+        return False
+    session_id = str(command.session_id or "").strip()
+    if not session_id.startswith(_VOICEPRINT_PROMPT_SESSION_PREFIX):
+        return False
+    return str(command.payload.get("mode") or "").strip() == "audio_bytes"
 
 
 def _is_stop_phrase_suppressed(state: GatewayRuntimeState, transcript: str) -> bool:
@@ -1640,6 +2350,28 @@ def _collect_playback_session_ids(state: GatewayRuntimeState) -> set[str]:
 
 def _is_same_playback(context: TerminalBridgeContext, playback_id: str | None, session_id: str | None) -> bool:
     return context.active_playback_id == playback_id and context.active_playback_session_id == session_id
+
+
+def _get_voiceprint_current_round(enrollment: PendingVoiceprintEnrollment) -> int:
+    sample_goal = max(int(enrollment.sample_goal or 1), 1)
+    sample_count = max(int(enrollment.sample_count or 0), 0)
+    return min(sample_goal, sample_count + 1)
+
+
+def _get_voiceprint_prompt_beep_audio_base64() -> str:
+    total_frames = int(_VOICEPRINT_PROMPT_BEEP_SAMPLE_RATE * _VOICEPRINT_PROMPT_BEEP_DURATION_SECONDS)
+    frames = bytearray()
+    for frame_index in range(total_frames):
+        progress = frame_index / total_frames
+        envelope = min(progress / 0.15, 1.0) * min((1.0 - progress) / 0.2, 1.0)
+        sample_value = int(
+            32767
+            * _VOICEPRINT_PROMPT_BEEP_VOLUME
+            * max(envelope, 0.0)
+            * math.sin(2.0 * math.pi * _VOICEPRINT_PROMPT_BEEP_FREQUENCY_HZ * (frame_index / _VOICEPRINT_PROMPT_BEEP_SAMPLE_RATE))
+        )
+        frames.extend(struct.pack("<h", sample_value))
+    return base64.b64encode(bytes(frames)).decode("ascii")
 
 
 def _normalize_stop_phrase(transcript: str) -> str:

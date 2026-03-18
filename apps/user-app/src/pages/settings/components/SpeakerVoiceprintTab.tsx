@@ -1,5 +1,4 @@
-import { useI18n } from '../../../runtime';
-import { ToggleSwitch } from '../../family/base';
+import { useI18n } from '../../../runtime/h5-shell/i18n/I18nProvider';
 import type {
   Device,
   HouseholdVoiceprintSummaryRead,
@@ -9,7 +8,7 @@ import {
   getVoiceprintConversationCopy,
   getVoiceprintMemberStatusMeta,
 } from './speakerVoiceprintHelpers';
-import { SettingsEmptyState } from './SettingsSharedBlocks';
+import { VoiceprintEmptyState, VoiceprintToggleSwitch } from './VoiceprintSharedBlocks';
 
 function formatMemberRole(role: string) {
   switch (role) {
@@ -54,7 +53,7 @@ export function SpeakerVoiceprintTab(props: {
           <p>{t('voiceprint.tab.strategyDesc')}</p>
         </div>
         <div className="speaker-device-detail-dialog__toggle-card">
-          <ToggleSwitch
+          <VoiceprintToggleSwitch
             checked={voiceprintEnabled}
             label={t('voiceprint.tab.toggleLabel')}
             description={props.canManage ? t('voiceprint.tab.toggleDescEnabled') : t('voiceprint.tab.toggleDescReadonly')}
@@ -90,7 +89,7 @@ export function SpeakerVoiceprintTab(props: {
 
         {props.loading ? <div className="speaker-voiceprint-tab__empty">{t('voiceprint.tab.loading')}</div> : null}
         {!props.loading && props.error ? (
-          <SettingsEmptyState
+          <VoiceprintEmptyState
             className="speaker-voiceprint-tab__error-card"
             icon="⚠️"
             title={t('voiceprint.tab.loadFailed')}
@@ -166,7 +165,7 @@ export function SpeakerVoiceprintTab(props: {
         ) : null}
 
         {!props.loading && !props.error && props.summary && props.summary.members.length === 0 ? (
-          <SettingsEmptyState
+          <VoiceprintEmptyState
             icon="🎙️"
             title={t('voiceprint.tab.memberTitle')}
             description={t('voiceprint.tab.empty')}

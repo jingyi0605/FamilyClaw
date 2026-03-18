@@ -122,6 +122,12 @@ class PluginConfigInstance(Base):
         nullable=True,
         index=True,
     )
+    device_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     plugin_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     scope_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     scope_key: Mapped[str] = mapped_column(String(100), nullable=False)

@@ -17,6 +17,7 @@ GatewayEventType = Literal[
     "playback.receipt",
 ]
 GatewayCommandType = Literal[
+    "binding.refresh",
     "session.ready",
     "play.start",
     "play.stop",

@@ -4,11 +4,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.modules.plugin.schemas import PluginConfigFormRead
+
 DeviceType = Literal["light", "ac", "curtain", "speaker", "camera", "sensor", "lock"]
 DeviceVendor = Literal["xiaomi", "ha", "other"]
 DeviceStatus = Literal["active", "offline", "inactive", "disabled"]
 DeviceEntityView = Literal["favorites", "all"]
 DeviceEntityControlKind = Literal["none", "toggle", "range", "action_set"]
+DeviceDetailBuiltinTabKey = Literal["voiceprint"]
 
 
 class DeviceRead(BaseModel):
@@ -70,6 +73,43 @@ class DeviceListResponse(BaseModel):
     page: int
     page_size: int
     total: int
+
+
+class DeviceDetailCapabilityRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supports_voice_terminal: bool = False
+    supports_voiceprint: bool = False
+    adapter_type: str | None = None
+    plugin_id: str | None = None
+    vendor_code: str | None = None
+    capability_tags: list[str] = Field(default_factory=list)
+
+
+class DeviceDetailBuiltinTabRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: DeviceDetailBuiltinTabKey
+
+
+class DeviceDetailPluginTabRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tab_key: str
+    title: str
+    description: str | None = None
+    plugin_id: str
+    plugin_name: str
+    config_form: PluginConfigFormRead
+
+
+class DeviceDetailViewRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    device: DeviceRead
+    capabilities: DeviceDetailCapabilityRead
+    builtin_tabs: list[DeviceDetailBuiltinTabRead] = Field(default_factory=list)
+    plugin_tabs: list[DeviceDetailPluginTabRead] = Field(default_factory=list)
 
 
 class DeviceEntityControlOptionRead(BaseModel):

@@ -19,6 +19,7 @@ from app.db.utils import utc_now_iso
 from app.modules.audit.service import write_audit_log
 from app.modules.device.schemas import (
     DeviceActionLogListResponse,
+    DeviceDetailViewRead,
     DeviceEntityFavoriteUpdateRequest,
     DeviceEntityListResponse,
     DeviceListResponse,
@@ -31,6 +32,7 @@ from app.modules.device.service import (
     delete_device,
     disable_device,
     get_device_or_404,
+    get_device_detail_view,
     list_device_action_logs,
     list_device_entities,
     list_devices,
@@ -99,6 +101,17 @@ def update_device_endpoint(
 
     db.refresh(device)
     return DeviceRead.model_validate(device)
+
+
+@router.get("/{device_id}/detail-view", response_model=DeviceDetailViewRead)
+def get_device_detail_view_endpoint(
+    device_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> DeviceDetailViewRead:
+    device = get_device_or_404(db, device_id)
+    ensure_actor_can_access_household(actor, device.household_id)
+    return get_device_detail_view(db, device_id=device_id)
 
 
 @router.get("/{device_id}/entities", response_model=DeviceEntityListResponse)

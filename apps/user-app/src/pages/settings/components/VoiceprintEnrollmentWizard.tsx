@@ -1,4 +1,4 @@
-import { useI18n } from '../../../runtime';
+import { useI18n } from '../../../runtime/h5-shell/i18n/I18nProvider';
 import type {
   HouseholdVoiceprintMemberSummaryRead,
   VoiceprintEnrollmentRead,
@@ -7,7 +7,7 @@ import {
   formatVoiceprintTime,
   type VoiceprintWizardState,
 } from './speakerVoiceprintHelpers';
-import { SettingsDialog } from './SettingsSharedBlocks';
+import { VoiceprintDialog } from './VoiceprintSharedBlocks';
 
 function getWizardTitle(
   mode: VoiceprintWizardState['mode'],
@@ -46,6 +46,7 @@ export function VoiceprintEnrollmentWizard(props: {
   enrollment: VoiceprintEnrollmentRead | null;
   busy: boolean;
   onClose: () => void;
+  onCancelEnrollment: () => void;
   onBack: () => void;
   onSelectMember: (memberId: string) => void;
   onContinue: () => void;
@@ -56,10 +57,18 @@ export function VoiceprintEnrollmentWizard(props: {
   const isWaiting = props.wizard.step === 'waiting';
   const progressCount = props.enrollment?.sample_count ?? 0;
   const progressGoal = props.enrollment?.sample_goal ?? 3;
+  const currentRound = Math.max(
+    1,
+    Math.min(
+      progressGoal,
+      props.enrollment?.status === 'processing' ? progressCount : progressCount + 1,
+    ),
+  );
+  const phraseText = (props.enrollment?.expected_phrase ?? '').trim() || t('voiceprint.wizard.promptFallback');
   const memberName = selectedMember?.member_name ?? t('voiceprint.wizard.noMember');
 
   return (
-    <SettingsDialog
+    <VoiceprintDialog
       title={getWizardTitle(props.wizard.mode, props.wizard.step, t)}
       description={t('voiceprint.wizard.intro')}
       className="speaker-voiceprint-wizard"
@@ -81,10 +90,20 @@ export function VoiceprintEnrollmentWizard(props: {
               </button>
             </>
           ) : null}
-          {props.wizard.step === 'creating' || props.wizard.step === 'waiting' ? (
+          {props.wizard.step === 'creating' ? (
             <button className="btn btn--outline btn--sm" type="button" disabled>
               {t('voiceprint.wizard.pleaseWait')}
             </button>
+          ) : null}
+          {props.wizard.step === 'waiting' ? (
+            <>
+              <button className="btn btn--outline btn--sm" type="button" onClick={props.onCancelEnrollment} disabled={props.busy}>
+                {props.busy ? t('voiceprint.wizard.cancelling') : t('voiceprint.wizard.cancelEnrollment')}
+              </button>
+              <button className="btn btn--outline btn--sm" type="button" disabled>
+                {t('voiceprint.wizard.pleaseWait')}
+              </button>
+            </>
           ) : null}
           {props.wizard.step === 'success' ? (
             <button className="btn btn--outline btn--sm" type="button" onClick={props.onClose}>{t('voiceprint.wizard.done')}</button>
@@ -166,6 +185,16 @@ export function VoiceprintEnrollmentWizard(props: {
               <span className="badge badge--info">{t('voiceprint.wizard.waitingBadge')}</span>
               <strong>{t('voiceprint.wizard.waitingTitle', { memberName })}</strong>
             </div>
+            <div className="speaker-voiceprint-wizard__prompt-card">
+              <div className="speaker-voiceprint-wizard__prompt-meta">
+                <span className="speaker-voiceprint-wizard__label">{t('voiceprint.wizard.roundLabel')}</span>
+                <strong>{t('voiceprint.wizard.roundValue', { current: currentRound, goal: progressGoal })}</strong>
+              </div>
+              <div className="speaker-voiceprint-wizard__prompt-meta">
+                <span className="speaker-voiceprint-wizard__label">{t('voiceprint.wizard.promptLabel')}</span>
+                <strong className="speaker-voiceprint-wizard__prompt-text">{phraseText}</strong>
+              </div>
+            </div>
             <div className="speaker-voiceprint-wizard__progress-card">
               <div>
                 <span className="speaker-voiceprint-wizard__label">{t('voiceprint.wizard.progress')}</span>
@@ -184,6 +213,11 @@ export function VoiceprintEnrollmentWizard(props: {
                 <strong>{formatVoiceprintTime(props.enrollment?.updated_at ?? null, locale, t)}</strong>
               </div>
             </div>
+            <ul className="speaker-voiceprint-wizard__guide-list">
+              <li>{t('voiceprint.wizard.guide.step1')}</li>
+              <li>{t('voiceprint.wizard.guide.step2')}</li>
+              <li>{t('voiceprint.wizard.guide.step3')}</li>
+            </ul>
             <p className="speaker-voiceprint-wizard__hint">{t('voiceprint.wizard.waitingHint', { deviceName: props.deviceName })}</p>
           </div>
         ) : null}
@@ -207,6 +241,6 @@ export function VoiceprintEnrollmentWizard(props: {
             <p>{props.wizard.error || t('voiceprint.wizard.failedHint')}</p>
           </div>
         ) : null}
-    </SettingsDialog>
+    </VoiceprintDialog>
   );
 }

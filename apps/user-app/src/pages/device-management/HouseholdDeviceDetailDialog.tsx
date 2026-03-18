@@ -413,43 +413,6 @@ export function HouseholdDeviceDetailDialog({
   }, [currentHouseholdId, onError, open, page]);
 
   useEffect(() => {
-    if (!voiceprintWizard || voiceprintWizard.step !== 'waiting' || !voiceprintWizard.enrollmentId) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    const timer = setInterval(async () => {
-      try {
-        const enrollment = await settingsApi.getVoiceprintEnrollment(voiceprintWizard.enrollmentId!);
-        if (cancelled) {
-          return;
-        }
-        setVoiceprintEnrollment(enrollment);
-        setVoiceprintWizard((current) => (
-          current ? getNextWizardStateFromEnrollment(current, enrollment) : current
-        ));
-        if (enrollment.status === 'completed' || enrollment.status === 'failed' || enrollment.status === 'cancelled') {
-          void (deviceId ? loadVoiceprintSummary(deviceId) : Promise.resolve());
-        }
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-        setVoiceprintWizard((current) => current ? {
-          ...current,
-          step: 'failed',
-          error: error instanceof Error ? error.message : page('settings.integrations.error.loadVoiceprintEnrollmentFailed'),
-        } : current);
-      }
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [deviceId, page, voiceprintWizard]);
-
-  useEffect(() => {
     if (!open || !voiceprintWizard || voiceprintWizard.step !== 'waiting' || !voiceprintWizard.enrollmentId) {
       return undefined;
     }
@@ -896,6 +859,25 @@ export function HouseholdDeviceDetailDialog({
         step: 'failed',
         error: error instanceof Error ? error.message : page('settings.integrations.error.createVoiceprintEnrollmentFailed'),
       } : current);
+    } finally {
+      setVoiceprintBusy(false);
+    }
+  }
+
+  async function handleCancelVoiceprintEnrollment() {
+    if (!deviceId || !voiceprintWizard?.enrollmentId) {
+      return;
+    }
+    setVoiceprintBusy(true);
+    try {
+      const enrollment = await settingsApi.cancelVoiceprintEnrollment(voiceprintWizard.enrollmentId);
+      setVoiceprintEnrollment(enrollment);
+      setVoiceprintWizard(null);
+      setVoiceprintEnrollment(null);
+      await loadVoiceprintSummary(deviceId);
+      onStatus(page('settings.integrations.status.voiceprintEnrollmentCancelled'));
+    } catch (error) {
+      onError(error instanceof Error ? error.message : page('settings.integrations.error.cancelVoiceprintEnrollmentFailed'));
     } finally {
       setVoiceprintBusy(false);
     }
@@ -1466,6 +1448,7 @@ export function HouseholdDeviceDetailDialog({
             setVoiceprintWizard(null);
             setVoiceprintEnrollment(null);
           }}
+          onCancelEnrollment={() => void handleCancelVoiceprintEnrollment()}
           onBack={() => setVoiceprintWizard((current) => (
             current
               ? {
