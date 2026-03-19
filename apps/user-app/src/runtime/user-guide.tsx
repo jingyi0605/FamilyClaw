@@ -61,6 +61,7 @@ type UserGuideContextValue = {
 };
 
 const UserGuideContext = createContext<UserGuideContextValue | null>(null);
+const USER_GUIDE_AUTO_START_ROUTE = '/pages/home/index';
 
 function normalizeRoute(route: string | null | undefined): string {
   if (!route) {
@@ -425,7 +426,14 @@ export function UserGuideProvider(props: { children: ReactNode }) {
   }, [currentRoute, markCurrentStepReady, platformAdapter, session]);
 
   useEffect(() => {
-    if (!actor?.member_id || guideStatusLoading || session || guideStatusError || !guideRestoreChecked) {
+    if (
+      !actor?.member_id
+      || guideStatusLoading
+      || session
+      || guideStatusError
+      || !guideRestoreChecked
+      || currentRoute !== USER_GUIDE_AUTO_START_ROUTE
+    ) {
       return;
     }
 
@@ -463,6 +471,7 @@ export function UserGuideProvider(props: { children: ReactNode }) {
     };
   }, [
     actor?.member_id,
+    currentRoute,
     guideStatus,
     guideStatusError,
     guideStatusLoading,
