@@ -19,8 +19,10 @@ from app.modules.agent.service import create_agent, get_agent_detail, upsert_age
 from app.modules.conversation import repository as conversation_repository
 from app.modules.conversation.models import ConversationMessage, ConversationProposalBatch, ConversationProposalItem
 from app.modules.device.models import Device
+from app.modules.llm_task import LlmResult, LlmStreamEvent
 from app.modules.conversation.orchestrator import (
     ConversationIntent,
+    ConversationIntentDetection,
     ConversationIntentLabel,
     ConversationLane,
     ConversationLaneSelection,
@@ -28,6 +30,7 @@ from app.modules.conversation.orchestrator import (
     _build_free_chat_variables,
     detect_conversation_intent,
     run_orchestrated_turn,
+    stream_orchestrated_turn,
 )
 from app.modules.conversation.proposal_analyzers import ProposalDraft
 from app.modules.conversation.proposal_pipeline import ProposalPipelineResult
@@ -62,10 +65,11 @@ from app.modules.reminder.service import list_tasks as list_reminder_tasks
 
 
 class _FakeLlmResult:
-    def __init__(self, *, text: str = "", data=None, provider: str = "mock-provider") -> None:
+    def __init__(self, *, text: str = "", data=None, provider: str = "mock-provider", degraded: bool = False) -> None:
         self.text = text
         self.data = data
         self.provider = provider
+        self.degraded = degraded
 
 
 class ConversationFoundationTests(unittest.TestCase):
@@ -1185,6 +1189,114 @@ class ConversationFoundationTests(unittest.TestCase):
             payload={"task_type": "free_chat", "user_message": "浣犲ソ"},
         )
         self.assertIn("浣犲ソ锛屾垜鍦", str(output.get("text") or ""))
+
+    @patch("app.modules.conversation.orchestrator._build_free_chat_prompt_context")
+    @patch("app.modules.conversation.orchestrator.invoke_llm")
+    def test_run_orchestrated_turn_free_chat_does_not_treat_memory_degraded_as_response_degraded(
+        self,
+        invoke_llm_mock,
+        build_free_chat_prompt_context_mock,
+    ) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        invoke_llm_mock.side_effect = [
+            _FakeLlmResult(
+                data=ConversationIntentDetectionOutput(
+                    primary_intent="free_chat",
+                    secondary_intents=[],
+                    confidence=0.92,
+                    reason="普通闲聊。",
+                    candidate_actions=[],
+                )
+            ),
+            _FakeLlmResult(text="这轮回答是正常的。", degraded=False),
+        ]
+        build_free_chat_prompt_context_mock.return_value = SimpleNamespace(
+            variables={"agent_context": "", "memory_context": "", "device_context": "", "household_context": ""},
+            memory_bundle=SimpleNamespace(degraded=True),
+            memory_trace_items=[],
+        )
+
+        result = run_orchestrated_turn(
+            self.db,
+            session=session,
+            message="你好",
+            actor=self.actor,
+            conversation_history=[],
+        )
+
+        self.assertEqual("这轮回答是正常的。", result.text)
+        self.assertFalse(result.degraded)
+
+    @patch("app.modules.conversation.orchestrator._build_free_chat_prompt_context")
+    @patch("app.modules.conversation.orchestrator.stream_llm")
+    @patch("app.modules.conversation.orchestrator.adetect_conversation_intent")
+    def test_stream_orchestrated_turn_free_chat_does_not_treat_memory_degraded_as_response_degraded(
+        self,
+        adetect_conversation_intent_mock,
+        stream_llm_mock,
+        build_free_chat_prompt_context_mock,
+    ) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        adetect_conversation_intent_mock.return_value = ConversationIntentDetection(
+            primary_intent=ConversationIntentLabel.FREE_CHAT,
+            secondary_intents=[],
+            confidence=0.92,
+            reason="普通闲聊。",
+            candidate_actions=[],
+            route_intent=ConversationIntent.FREE_CHAT,
+        )
+        build_free_chat_prompt_context_mock.return_value = SimpleNamespace(
+            variables={"agent_context": "", "memory_context": "", "device_context": "", "household_context": ""},
+            memory_bundle=SimpleNamespace(degraded=True),
+            memory_trace_items=[],
+        )
+
+        async def _fake_stream():
+            yield LlmStreamEvent("chunk", content="先回一半。")
+            yield LlmStreamEvent(
+                "done",
+                result=LlmResult(
+                    raw_text="完整回答。",
+                    display_text="完整回答。",
+                    provider="mock-provider",
+                    degraded=False,
+                ),
+            )
+
+        stream_llm_mock.return_value = _fake_stream()
+
+        async def _collect():
+            events: list[tuple[str, object]] = []
+            async for event_type, payload in stream_orchestrated_turn(
+                self.db,
+                session=session,
+                message="你好",
+                actor=self.actor,
+                conversation_history=[],
+            ):
+                events.append((event_type, payload))
+            return events
+
+        import asyncio
+
+        events = asyncio.run(_collect())
+        done_events = [payload for event_type, payload in events if event_type == "done"]
+        self.assertEqual(1, len(done_events))
+        self.assertFalse(done_events[0].degraded)
 
     @patch("app.modules.conversation.orchestrator.get_conversation_debug_logger")
     @patch("app.modules.conversation.orchestrator.build_memory_context_bundle")

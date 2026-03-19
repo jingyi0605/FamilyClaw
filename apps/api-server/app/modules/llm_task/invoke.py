@@ -28,12 +28,15 @@ class LlmResult:
         parsed: BaseModel | None = None,
         latency_ms: int = 0,
         provider: str = "",
+        degraded: bool = False,
     ):
         self.raw_text = raw_text
         self.display_text = display_text
         self.parsed = parsed
         self.latency_ms = latency_ms
         self.provider = provider
+        # 这里只记录 AI 主回答链路是否发生降级，不能混入记忆召回或上下文链路状态。
+        self.degraded = degraded
 
     @property
     def text(self) -> str:
@@ -137,6 +140,7 @@ def invoke_llm(
         latency_ms=response.attempts[-1].latency_ms or 0 if response.attempts else 0,
         output_model=task.output_model,
         task_type=task_type,
+        degraded=response.degraded,
     )
 
     return result
@@ -184,6 +188,7 @@ async def ainvoke_llm(
         latency_ms=response.attempts[-1].latency_ms or 0 if response.attempts else 0,
         output_model=task.output_model,
         task_type=task_type,
+        degraded=response.degraded,
     )
 
 
@@ -246,6 +251,7 @@ async def stream_llm(
             latency_ms=0,
             output_model=task.output_model,
             task_type=task_type,
+            degraded=False,
         ),
     )
 
@@ -257,6 +263,7 @@ def _build_result(
     latency_ms: int,
     output_model: type[BaseModel] | None,
     task_type: str,
+    degraded: bool = False,
 ) -> LlmResult:
     parsed = parse_to_model(raw_text, output_model) if output_model else None
     if output_model is not None and parsed is None and raw_text.strip():
@@ -272,6 +279,7 @@ def _build_result(
         parsed=parsed,
         latency_ms=latency_ms,
         provider=provider,
+        degraded=degraded,
     )
 
 

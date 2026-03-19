@@ -2028,7 +2028,7 @@ async def _stream_non_qa_chat(
                 ConversationOrchestratorResult(
                     intent=intent,
                     text=text,
-                    degraded=prompt_context.memory_bundle.degraded,
+                    degraded=getattr(event.result, "degraded", False),
                     facts=[],
                     suggestions=[],
                     memory_candidate_payloads=[],
@@ -2081,7 +2081,7 @@ def _run_non_qa_chat(
     return ConversationOrchestratorResult(
         intent=intent,
         text=result.text,
-        degraded=prompt_context.memory_bundle.degraded,
+        degraded=getattr(result, "degraded", False),
         facts=[],
         suggestions=[],
         memory_candidate_payloads=[],
