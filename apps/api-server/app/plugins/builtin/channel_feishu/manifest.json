@@ -96,7 +96,7 @@
   "capabilities": {
     "channel": {
       "platform_code": "feishu",
-      "inbound_modes": ["webhook"],
+      "inbound_modes": ["webhook", "polling"],
       "delivery_modes": ["reply", "push"],
       "supports_member_binding": true,
       "supports_group_chat": true,
