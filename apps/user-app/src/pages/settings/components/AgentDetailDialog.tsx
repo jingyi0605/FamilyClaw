@@ -93,7 +93,7 @@ export function AgentDetailDialog(props: {
     onSaved,
   } = props;
 
-  const [activeSection, setActiveSection] = useState<'base' | 'soul' | 'runtime' | 'cognition'>('base');
+  const [activeSection, setActiveSection] = useState<'base' | 'runtime' | 'cognition'>('base');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -150,6 +150,8 @@ export function AgentDetailDialog(props: {
     saveBaseFailed: t('settings.ai.agent.saveBaseFailed'),
     saveSoulSuccess: t('settings.ai.agent.saveSoulSuccess'),
     saveSoulFailed: t('settings.ai.agent.saveSoulFailed'),
+    saveProfileSuccess: t('settings.ai.agent.saveProfileSuccess'),
+    saveProfileFailed: t('settings.ai.agent.saveProfileFailed'),
     saveRuntimeSuccess: t('settings.ai.agent.saveRuntimeSuccess'),
     saveRuntimeFailed: t('settings.ai.agent.saveRuntimeFailed'),
     saveCognitionSuccess: t('settings.ai.agent.saveCognitionSuccess'),
@@ -160,19 +162,19 @@ export function AgentDetailDialog(props: {
     agentSkillBindingsTitle: t('settings.ai.agent.agentSkillBindingsTitle'),
     noAgentSkillPlugins: t('settings.ai.agent.noAgentSkillPlugins'),
     inheritHouseholdRoute: t('settings.ai.agent.inheritHouseholdRoute'),
+    profileTitle: t('settings.ai.agent.profileTitle'),
     baseTitle: t('settings.ai.agent.baseTitle'),
     displayNameLabel: t('settings.ai.agent.displayName'),
     statusLabel: t('settings.ai.agent.status'),
     sortOrderLabel: t('settings.ai.agent.sortOrder'),
-    saveBaseButton: t('settings.ai.agent.saveBase'),
-    soulTitle: t('settings.ai.agent.soulTitle'),
     selfIdentityLabel: t('settings.ai.agent.selfIdentity'),
     roleSummaryLabel: t('settings.ai.agent.roleSummary'),
     introMessageLabel: t('settings.ai.agent.introMessage'),
     speakingStyleLabel: t('settings.ai.agent.speakingStyle'),
     personalityTraitsLabel: t('settings.ai.agent.personalityTraits'),
     serviceFocusLabel: t('settings.ai.agent.serviceFocus'),
-    saveSoulButton: t('settings.ai.agent.saveSoul'),
+    soulTitle: t('settings.ai.agent.soulTitle'),
+    saveProfileButton: t('settings.ai.agent.saveProfile'),
     runtimeTitle: t('settings.ai.agent.runtimeTitle'),
     conversationOption: t('settings.ai.agent.conversationOption'),
     defaultEntryOption: t('settings.ai.agent.defaultEntry'),
@@ -237,45 +239,32 @@ export function AgentDetailDialog(props: {
     }
   }, [agent, agentSkillPlugins]);
 
-  async function handleSaveBase() {
+  async function handleSaveProfile() {
     if (!agent) return;
     setSaving(true);
     setError('');
     setStatus('');
     try {
-      await settingsApi.updateAgent(householdId, agent.id, {
-        display_name: baseForm.displayName.trim(),
-        status: baseForm.status,
-        sort_order: Number(baseForm.sortOrder),
-      });
+      await Promise.all([
+        settingsApi.updateAgent(householdId, agent.id, {
+          display_name: baseForm.displayName.trim(),
+          status: baseForm.status,
+          sort_order: Number(baseForm.sortOrder),
+        }),
+        settingsApi.upsertAgentSoul(householdId, agent.id, {
+          self_identity: soulForm.selfIdentity.trim(),
+          role_summary: soulForm.roleSummary.trim(),
+          intro_message: soulForm.introMessage.trim() || null,
+          speaking_style: soulForm.speakingStyle.trim() || null,
+          personality_traits: parseTags(soulForm.personalityTraits),
+          service_focus: parseTags(soulForm.serviceFocus),
+          created_by: 'user-app',
+        }),
+      ]);
       await onSaved();
-      setStatus(copy.saveBaseSuccess);
+      setStatus(copy.saveProfileSuccess);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : copy.saveBaseFailed);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleSaveSoul() {
-    if (!agent) return;
-    setSaving(true);
-    setError('');
-    setStatus('');
-    try {
-      await settingsApi.upsertAgentSoul(householdId, agent.id, {
-        self_identity: soulForm.selfIdentity.trim(),
-        role_summary: soulForm.roleSummary.trim(),
-        intro_message: soulForm.introMessage.trim() || null,
-        speaking_style: soulForm.speakingStyle.trim() || null,
-        personality_traits: parseTags(soulForm.personalityTraits),
-        service_focus: parseTags(soulForm.serviceFocus),
-        created_by: 'user-app',
-      });
-      await onSaved();
-      setStatus(copy.saveSoulSuccess);
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : copy.saveSoulFailed);
+      setError(saveError instanceof Error ? saveError.message : copy.saveProfileFailed);
     } finally {
       setSaving(false);
     }
@@ -349,8 +338,7 @@ export function AgentDetailDialog(props: {
   }
 
   const sections: Array<{ key: typeof activeSection; label: string }> = [
-    { key: 'base', label: copy.baseTitle },
-    { key: 'soul', label: copy.soulTitle },
+    { key: 'base', label: copy.profileTitle },
     { key: 'runtime', label: copy.runtimeTitle },
     { key: 'cognition', label: copy.cognitionTitle },
   ];
@@ -395,6 +383,7 @@ export function AgentDetailDialog(props: {
         <div className="agent-detail-content">
           {activeSection === 'base' && (
             <div className="agent-detail-section">
+              <h4 className="agent-detail-subtitle">{copy.baseTitle}</h4>
               <div className="setup-form-grid">
                 <div className="form-group">
                   <label>{copy.displayNameLabel}</label>
@@ -426,29 +415,23 @@ export function AgentDetailDialog(props: {
                   />
                 </div>
               </div>
-              <div className="setup-form-actions">
-                <button type="button" className="btn btn--primary" onClick={() => void handleSaveBase()} disabled={saving}>
-                  {saving ? copy.saving : copy.saveBaseButton}
-                </button>
-              </div>
-            </div>
-          )}
 
-          {activeSection === 'soul' && (
-            <div className="agent-detail-section">
+              <div className="ai-config-section-separator" />
+
+              <h4 className="agent-detail-subtitle">{copy.soulTitle}</h4>
               <div className="setup-form-grid">
                 <div className="form-group">
                   <label>{copy.selfIdentityLabel}</label>
-                  <textarea
-                    className="form-input setup-textarea"
+                  <input
+                    className="form-input"
                     value={soulForm.selfIdentity}
                     onChange={(event) => setSoulForm(current => ({ ...current, selfIdentity: event.target.value }))}
                   />
                 </div>
                 <div className="form-group">
                   <label>{copy.roleSummaryLabel}</label>
-                  <textarea
-                    className="form-input setup-textarea"
+                  <input
+                    className="form-input"
                     value={soulForm.roleSummary}
                     onChange={(event) => setSoulForm(current => ({ ...current, roleSummary: event.target.value }))}
                   />
@@ -486,9 +469,10 @@ export function AgentDetailDialog(props: {
                   />
                 </div>
               </div>
+
               <div className="setup-form-actions">
-                <button type="button" className="btn btn--primary" onClick={() => void handleSaveSoul()} disabled={saving}>
-                  {saving ? copy.saving : copy.saveSoulButton}
+                <button type="button" className="btn btn--primary" onClick={() => void handleSaveProfile()} disabled={saving}>
+                  {saving ? copy.saving : copy.saveProfileButton}
                 </button>
               </div>
             </div>
@@ -696,8 +680,8 @@ export function AgentDetailDialog(props: {
                         </div>
                         <div className="form-group">
                           <label>{copy.promptNotesLabel}</label>
-                          <textarea
-                            className="form-input setup-textarea"
+                          <input
+                            className="form-input"
                             value={cognition.promptNotes}
                             onChange={(event) => setCognitionForm(current => ({ ...current, [member.id]: { ...cognition, promptNotes: event.target.value } }))}
                           />

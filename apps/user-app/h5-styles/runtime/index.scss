@@ -7229,7 +7229,14 @@ body::before {
 .ai-config-card {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: 0;
+  cursor: pointer;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.ai-config-card:hover {
+  border-color: var(--brand-primary);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--brand-primary) 15%, transparent);
 }
 
 .ai-config-card--selected {
@@ -7241,11 +7248,23 @@ body::before {
 .ai-config-detail__hero {
   display: flex;
   align-items: flex-start;
-  gap: var(--spacing-md);
+  gap: var(--spacing-sm);
 }
 
 .ai-config-card__summary {
-  min-height: 2.75rem;
+  margin: 0;
+}
+
+.ai-config-card__hint {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  margin-top: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px dashed var(--border-light);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
 }
 
 .ai-config-detail {
@@ -8383,23 +8402,83 @@ body::before {
   max-height: calc(100vh - 32px);
 }
 
+/* 紧凑表单样式 */
+.agent-detail-modal .form-group {
+  gap: 4px;
+}
+
+.agent-detail-modal .form-group label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.agent-detail-modal .form-input,
+.agent-detail-modal .form-select {
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  border-radius: 6px;
+}
+
+.agent-detail-modal .form-input::placeholder {
+  font-size: 14px;
+}
+
+.agent-detail-modal .setup-textarea {
+  min-height: 80px;
+}
+
+.agent-detail-modal .setup-choice-group {
+  gap: 8px;
+}
+
+.agent-detail-modal .setup-choice {
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+.agent-detail-modal .setup-form-grid {
+  gap: 12px;
+}
+
+.agent-detail-modal .ai-cognition-item {
+  padding: 12px;
+}
+
+.agent-detail-modal .ai-cognition-item__top {
+  margin-bottom: 8px;
+}
+
+.agent-detail-modal .ai-config-subsection {
+  gap: 8px;
+}
+
+.agent-detail-modal .ai-config-subsection h5 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.agent-detail-modal .ai-config-section-separator {
+  margin: 8px 0;
+}
+
 .agent-detail-tabs {
   display: flex;
-  gap: 0.25rem;
-  margin-bottom: var(--spacing-md);
+  gap: 4px;
+  margin-bottom: var(--spacing-sm);
   border-bottom: 1px solid var(--border-light);
-  padding-bottom: 0.5rem;
+  padding-bottom: 8px;
 }
 
 .agent-detail-tab {
-  padding: 0.5rem 1rem;
+  padding: 6px 12px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-radius: 4px 4px 0 0;
   transition: color 0.2s ease, background-color 0.2s ease;
 }
 
@@ -8415,13 +8494,20 @@ body::before {
 
 .agent-detail-content {
   overflow-y: auto;
-  max-height: calc(100vh - 220px);
+  max-height: calc(100vh - 200px);
 }
 
 .agent-detail-section {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: 12px;
+}
+
+.agent-detail-subtitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .ai-route-grid {
@@ -8482,6 +8568,25 @@ body::before {
 
 .ai-cognition-item p {
   margin-top: 0.5rem;
+}
+
+.ai-config-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.ai-config-subsection h5 {
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ai-config-section-separator {
+  height: 1px;
+  margin: var(--spacing-sm) 0;
+  background: var(--border-light);
 }
 
 .setup-guard,

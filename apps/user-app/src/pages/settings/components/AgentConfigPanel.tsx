@@ -97,6 +97,7 @@ export function AgentConfigPanel(props: {
     conversationEnabled: t('settings.ai.agent.conversationEnabled'),
     conversationPaused: t('settings.ai.agent.conversationPaused'),
     summaryEmpty: t('settings.ai.agent.summaryEmpty'),
+    clickToEdit: t('settings.ai.agent.clickToEdit'),
     emptyButlerTitle: t('settings.ai.agent.emptyButler'),
     emptyAgentTitle: t('settings.ai.agent.emptyAgent'),
     emptyDescription: t('settings.ai.agent.emptyHint'),
@@ -280,6 +281,10 @@ export function AgentConfigPanel(props: {
                     <p className="ai-config-card__meta">{getAgentTypeLabel(agent.agent_type, t)} · {getAgentStatusLabel(agent.status, t)}</p>
                     <p className="ai-config-card__summary">{agent.summary ?? copy.summaryEmpty}</p>
                   </div>
+                </div>
+                <div className="ai-config-card__hint">
+                  <span>{copy.clickToEdit}</span>
+                  <span>→</span>
                 </div>
               </button>
             ))}
