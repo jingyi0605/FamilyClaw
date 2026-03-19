@@ -31,7 +31,7 @@ from app.modules.conversation.models import (
     ConversationSessionSummary,
     ConversationTurnSource,
 )
-from app.modules.device.models import Device, DeviceBinding, DeviceEntityFavorite
+from app.modules.device.models import Device, DeviceBinding, DeviceEntity, DeviceEntityFavorite
 from app.modules.family_qa.models import QaQueryLog
 from app.modules.household import lifecycle as household_lifecycle  # noqa: F401
 from app.modules.household.models import Household
@@ -110,6 +110,7 @@ __all__ = [
     "ConversationTurnSource",
     "Device",
     "DeviceBinding",
+    "DeviceEntity",
     "DeviceEntityFavorite",
     "Household",
     "Member",

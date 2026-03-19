@@ -9,6 +9,12 @@ from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.audit.models import AuditLog
+from app.modules.device.entity_store import (
+    build_binding_entity_ids,
+    build_entity_payload_from_row,
+    list_binding_entity_rows,
+    update_binding_entity_state_snapshot,
+)
 from app.modules.device.models import Device, DeviceBinding, DeviceEntityFavorite
 from app.modules.device.schemas import (
     DeviceActionLogListResponse,
@@ -314,18 +320,46 @@ def _resolve_device_entities(
     seen_entity_ids: set[str] = set()
     for binding in bindings:
         capabilities = _load_binding_capabilities(binding)
+        binding_entity_rows = list_binding_entity_rows(db, binding_id=binding.id)
+        raw_entities = [build_entity_payload_from_row(row) for row in binding_entity_rows]
         if _binding_is_home_assistant_unavailable(
             binding=binding,
             unavailable_instance_ids=unavailable_instance_ids,
         ):
-            unavailable_items = _build_unavailable_binding_entities(
-                binding=binding,
-                device=device,
-                capabilities=capabilities,
-                favorite_ids=favorite_ids,
-            )
+            if raw_entities:
+                unavailable_items = _build_unavailable_items_from_raw_entities(
+                    raw_entities=raw_entities,
+                    binding=binding,
+                    device=device,
+                    favorite_ids=favorite_ids,
+                )
+            else:
+                unavailable_items = _build_unavailable_binding_entities(
+                    binding=binding,
+                    device=device,
+                    capabilities=capabilities,
+                    favorite_ids=favorite_ids,
+                )
             for item in unavailable_items:
                 if item.entity_id in seen_entity_ids:
+                    continue
+                items.append(item)
+                seen_entity_ids.add(item.entity_id)
+            continue
+        if raw_entities:
+            _apply_live_state_snapshot_to_raw_entities(
+                device=device,
+                raw_entities=raw_entities,
+                live_state_map=live_state_maps.get(binding.integration_instance_id or ""),
+            )
+            for raw_entity in raw_entities:
+                item = _normalize_entity_snapshot(
+                    raw_entity,
+                    binding=binding,
+                    device=device,
+                    favorite_ids=favorite_ids,
+                )
+                if item is None or item.entity_id in seen_entity_ids:
                     continue
                 items.append(item)
                 seen_entity_ids.add(item.entity_id)
@@ -336,9 +370,9 @@ def _resolve_device_entities(
             capabilities=capabilities,
             live_state_map=live_state_maps.get(binding.integration_instance_id or ""),
         )
-        raw_entities = capabilities.get("entities")
-        if isinstance(raw_entities, list):
-            for raw_entity in raw_entities:
+        legacy_entities = capabilities.get("entities")
+        if isinstance(legacy_entities, list):
+            for raw_entity in legacy_entities:
                 item = _normalize_entity_snapshot(
                     raw_entity,
                     binding=binding,
@@ -467,6 +501,26 @@ def _build_unavailable_binding_entities(
         favorite_ids=favorite_ids,
     )
     return [fallback] if fallback is not None else []
+
+
+def _build_unavailable_items_from_raw_entities(
+    *,
+    raw_entities: list[dict[str, Any]],
+    binding: DeviceBinding,
+    device: Device,
+    favorite_ids: set[str],
+) -> list[DeviceEntityRead]:
+    items: list[DeviceEntityRead] = []
+    for raw_entity in raw_entities:
+        item = _build_unavailable_entity_snapshot(
+            raw_entity=raw_entity,
+            binding=binding,
+            device=device,
+            favorite_ids=favorite_ids,
+        )
+        if item is not None:
+            items.append(item)
+    return items
 
 
 def _build_unavailable_entity_snapshot(
@@ -899,24 +953,7 @@ def _build_device_detail_plugin_tabs(
 
 def _load_binding_capabilities(binding: DeviceBinding) -> dict[str, Any]:
     loaded = load_json(binding.capabilities)
-    capabilities = loaded if isinstance(loaded, dict) else {}
-    return _normalize_plugin_binding_capabilities(binding=binding, capabilities=capabilities)
-
-
-def _normalize_plugin_binding_capabilities(
-    *,
-    binding: DeviceBinding,
-    capabilities: dict[str, Any],
-) -> dict[str, Any]:
-    if binding.plugin_id != "official-weather" or binding.platform != "weather":
-        return capabilities
-    try:
-        from official_weather.service import normalize_weather_capabilities_payload
-    except Exception:
-        return capabilities
-
-    normalized = normalize_weather_capabilities_payload(capabilities)
-    return normalized if isinstance(normalized, dict) else capabilities
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _load_capability_tags(capabilities: dict[str, Any]) -> list[str]:
@@ -1089,6 +1126,28 @@ def _apply_live_state_snapshot(
     capabilities["domain"] = _normalize_optional_text(capabilities.get("domain")) or primary_entity_id.split(".", 1)[0]
 
 
+def _apply_live_state_snapshot_to_raw_entities(
+    *,
+    device: Device,
+    raw_entities: list[dict[str, Any]],
+    live_state_map: dict[str, dict[str, Any]] | None,
+) -> None:
+    if not live_state_map:
+        return
+    for raw_entity in raw_entities:
+        entity_id = _normalize_optional_text(raw_entity.get("entity_id"))
+        if not entity_id:
+            continue
+        live_state = live_state_map.get(entity_id)
+        if live_state is None:
+            continue
+        _apply_live_state_to_entity_payload(
+            device=device,
+            raw_entity=raw_entity,
+            live_state=live_state,
+        )
+
+
 def _apply_live_state_to_entity_payload(
     *,
     device: Device,
@@ -1139,25 +1198,20 @@ def _resolve_binding_primary_entity_id(binding: DeviceBinding, capabilities: dic
     return None
 
 
-def _binding_contains_entity_id(binding: DeviceBinding, capabilities: dict[str, Any], entity_id: str) -> bool:
+def _binding_contains_entity_id(
+    db: Session,
+    binding: DeviceBinding,
+    capabilities: dict[str, Any],
+    entity_id: str,
+) -> bool:
     normalized_entity_id = _normalize_optional_text(entity_id)
     if not normalized_entity_id:
         return False
-    if _resolve_binding_primary_entity_id(binding, capabilities) == normalized_entity_id:
-        return True
-    raw_entity_ids = capabilities.get("entity_ids")
-    if isinstance(raw_entity_ids, list):
-        for candidate in raw_entity_ids:
-            if _normalize_optional_text(candidate) == normalized_entity_id:
-                return True
-    raw_entities = capabilities.get("entities")
-    if isinstance(raw_entities, list):
-        for raw_entity in raw_entities:
-            if not isinstance(raw_entity, dict):
-                continue
-            if _normalize_optional_text(raw_entity.get("entity_id")) == normalized_entity_id:
-                return True
-    return False
+    return normalized_entity_id in build_binding_entity_ids(
+        db=db,
+        binding=binding,
+        capabilities=capabilities,
+    )
 
 
 def update_binding_entity_state(
@@ -1169,9 +1223,14 @@ def update_binding_entity_state(
 ) -> None:
     if not resolved_entity_id or not isinstance(patch, dict):
         return
+    changed = update_binding_entity_state_snapshot(
+        db,
+        binding=binding,
+        resolved_entity_id=resolved_entity_id,
+        patch=patch,
+    )
     capabilities = _load_binding_capabilities(binding)
     raw_entities = capabilities.get("entities")
-    changed = False
     if isinstance(raw_entities, list):
         for raw_entity in raw_entities:
             if not isinstance(raw_entity, dict):
@@ -1191,7 +1250,7 @@ def update_binding_entity_state(
             break
         capabilities["entities"] = raw_entities
     if isinstance(patch.get("state"), str) and patch["state"].strip():
-        if _binding_contains_entity_id(binding, capabilities, resolved_entity_id):
+        if _binding_contains_entity_id(db, binding, capabilities, resolved_entity_id):
             capabilities["state"] = patch["state"].strip()
             changed = True
     if not changed:

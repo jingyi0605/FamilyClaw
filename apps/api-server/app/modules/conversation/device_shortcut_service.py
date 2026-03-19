@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.conversation import repository as conversation_repository
 from app.modules.conversation.models import ConversationDeviceControlShortcut
+from app.modules.device.entity_store import build_binding_entity_ids, list_binding_entity_payloads
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.device_control.protocol import device_control_protocol_registry
 
@@ -306,14 +307,12 @@ def _collect_shortcut_target_texts(
             texts.append(raw_text)
     for binding in _list_device_bindings(db, device_id=device.id):
         capabilities = load_json(binding.capabilities)
-        if not isinstance(capabilities, dict):
-            continue
-        raw_entities = capabilities.get("entities")
-        if not isinstance(raw_entities, list):
-            continue
-        for raw_entity in raw_entities:
-            if not isinstance(raw_entity, dict):
-                continue
+        entity_payloads = list_binding_entity_payloads(
+            db,
+            binding=binding,
+            capabilities=capabilities if isinstance(capabilities, dict) else None,
+        )
+        for raw_entity in entity_payloads:
             if str(raw_entity.get("entity_id") or "").strip() != shortcut.entity_id:
                 continue
             normalized_name = normalize_device_shortcut_text(str(raw_entity.get("name") or ""))
@@ -436,13 +435,19 @@ def _device_has_entity_binding(db: Session, *, device_id: str, entity_id: str) -
         capabilities = load_json(binding.capabilities)
         if not isinstance(capabilities, dict):
             capabilities = {}
-        if _binding_contains_entity_id(binding=binding, capabilities=capabilities, entity_id=entity_id):
+        if _binding_contains_entity_id(
+            db=db,
+            binding=binding,
+            capabilities=capabilities,
+            entity_id=entity_id,
+        ):
             return True
     return False
 
 
 def _binding_contains_entity_id(
     *,
+    db: Session,
     binding: DeviceBinding,
     capabilities: dict[str, Any],
     entity_id: str,
@@ -450,22 +455,8 @@ def _binding_contains_entity_id(
     normalized_entity_id = str(entity_id or "").strip()
     if not normalized_entity_id:
         return False
-    for candidate in (
-        binding.external_entity_id,
-        capabilities.get("primary_entity_id"),
-    ):
-        if str(candidate or "").strip() == normalized_entity_id:
-            return True
-    raw_entity_ids = capabilities.get("entity_ids")
-    if isinstance(raw_entity_ids, list):
-        for candidate in raw_entity_ids:
-            if str(candidate or "").strip() == normalized_entity_id:
-                return True
-    raw_entities = capabilities.get("entities")
-    if isinstance(raw_entities, list):
-        for raw_entity in raw_entities:
-            if not isinstance(raw_entity, dict):
-                continue
-            if str(raw_entity.get("entity_id") or "").strip() == normalized_entity_id:
-                return True
-    return False
+    return normalized_entity_id in build_binding_entity_ids(
+        db,
+        binding=binding,
+        capabilities=capabilities,
+    )

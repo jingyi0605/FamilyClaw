@@ -122,3 +122,69 @@ class DeviceEntityFavorite(Base):
     created_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
 
+
+class DeviceEntity(Base):
+    __tablename__ = "device_entities"
+    __table_args__ = (
+        UniqueConstraint(
+            "device_id",
+            "entity_id",
+            name="uq_device_entities_device_entity",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    device_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    binding_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("device_bindings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    integration_instance_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("integration_instances.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    domain: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, default="unknown")
+    state_display: Mapped[str] = mapped_column(Text, nullable=False, default="未知")
+    unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    control_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    is_primary: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default=utc_now_iso,
+        onupdate=utc_now_iso,
+    )
+
+    @property
+    def control(self) -> dict:
+        loaded = load_json(self.control_json)
+        return loaded if isinstance(loaded, dict) else {}
+
+    @control.setter
+    def control(self, value: dict | None) -> None:
+        self.control_json = dump_json(value if isinstance(value, dict) else {}) or "{}"
+
+    @property
+    def metadata_payload(self) -> dict:
+        loaded = load_json(self.metadata_json)
+        return loaded if isinstance(loaded, dict) else {}
+
+    @metadata_payload.setter
+    def metadata_payload(self, value: dict | None) -> None:
+        self.metadata_json = dump_json(value if isinstance(value, dict) else {}) or "{}"
+

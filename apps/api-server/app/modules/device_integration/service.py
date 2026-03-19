@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, new_uuid, utc_now_iso
+from app.modules.device.entity_store import replace_binding_entities_from_capabilities
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.device_integration.schemas import IntegrationSyncPluginPayload, IntegrationSyncPluginResult
 from app.modules.household.service import get_household_or_404
@@ -574,6 +575,11 @@ def _apply_device_sync_result(
                         last_sync_at=utc_now_iso(),
                     )
                     db.add(binding)
+                    replace_binding_entities_from_capabilities(
+                        db,
+                        binding=binding,
+                        capabilities=item.capabilities,
+                    )
                     created_devices += 1
                     created_bindings += 1
                 else:
@@ -596,6 +602,11 @@ def _apply_device_sync_result(
                     binding.last_sync_at = utc_now_iso()
                     db.add(device)
                     db.add(binding)
+                    replace_binding_entities_from_capabilities(
+                        db,
+                        binding=binding,
+                        capabilities=item.capabilities,
+                    )
                     updated_devices += 1
 
                 if sync_rooms_enabled and item.room_name:
