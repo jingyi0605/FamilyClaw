@@ -26,6 +26,10 @@ import {
   useTheme,
 } from '../../runtime';
 import { appStorage } from '../../runtime/core';
+import {
+  BOOTSTRAP_LOGIN_USERNAME,
+  dismissBootstrapLoginPrefillForUsername,
+} from '../../runtime/shared/login/localState';
 import { markPendingGuideAutoStart } from '../../runtime/shared/user-guide/localState';
 import './styles-entry';
 
@@ -411,12 +415,15 @@ export default function SetupPageH5() {
           guardian_member_id: null,
         });
 
+        const nextUsername = memberForm.username.trim() || BOOTSTRAP_LOGIN_USERNAME;
+
         await setupApi.completeBootstrapAccount({
           household_id: currentHouseholdId,
           member_id: member.id,
-          username: memberForm.username.trim() || 'user',
+          username: nextUsername,
           password: memberForm.password,
         });
+        await dismissBootstrapLoginPrefillForUsername(appStorage, nextUsername).catch(() => undefined);
 
         await refreshAuth();
       }

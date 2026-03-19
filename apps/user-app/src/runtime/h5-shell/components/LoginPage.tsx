@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useAuthContext } from '../../auth';
+import {
+  BOOTSTRAP_LOGIN_PASSWORD,
+  BOOTSTRAP_LOGIN_USERNAME,
+  readBootstrapLoginPrefillDismissedFromBrowserStorage,
+} from '../../shared/login/localState';
 import { useI18n } from '../i18n/I18nProvider';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeSwitcher } from './ThemeSwitcher';
@@ -100,15 +105,42 @@ function FloatingShapes() {
 export function H5LoginPage() {
   const { login, loginPending, loginError } = useAuthContext();
   const { t } = useI18n();
-  const [username, setUsername] = useState('user');
-  const [password, setPassword] = useState('user');
+  const shouldPrefillBootstrapAccount = !readBootstrapLoginPrefillDismissedFromBrowserStorage();
+  const [username, setUsername] = useState(() => (
+    shouldPrefillBootstrapAccount ? BOOTSTRAP_LOGIN_USERNAME : ''
+  ));
+  const [password, setPassword] = useState(() => (
+    shouldPrefillBootstrapAccount ? BOOTSTRAP_LOGIN_PASSWORD : ''
+  ));
   const [focusedField, setFocusedField] = useState<string | null>(null);
+  const usernameInputRef = useRef<HTMLInputElement>(null);
+  const passwordInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const syncAutofilledValue = () => {
+      const nextUsername = usernameInputRef.current?.value ?? '';
+      const nextPassword = passwordInputRef.current?.value ?? '';
+      setUsername(nextUsername);
+      setPassword(nextPassword);
+    };
+
+    // 浏览器自动填充通常晚于首帧渲染，补两次同步，别让按钮状态和真实输入框脱节。
+    const frameId = window.requestAnimationFrame(syncAutofilledValue);
+    const timeoutId = window.setTimeout(syncAutofilledValue, 300);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const nextUsername = (usernameInputRef.current?.value ?? username).trim();
+    const nextPassword = passwordInputRef.current?.value ?? password;
 
     try {
-      await login(username.trim(), password);
+      await login(nextUsername, nextPassword);
     } catch {
       return;
     }
@@ -166,7 +198,7 @@ export function H5LoginPage() {
         </div>
 
         <div className="login-form-wrapper">
-          <form className="login-form" onSubmit={event => void handleSubmit(event)}>
+          <form className="login-form" autoComplete="on" method="post" onSubmit={event => void handleSubmit(event)}>
             <div className="login-form__header">
               <h2 className="login-form__title">{t('login.title')}</h2>
               <p className="login-form__subtitle">{t('login.formSubtitle')}</p>
@@ -184,10 +216,15 @@ export function H5LoginPage() {
                   </svg>
                 </span>
                 <input
+                  ref={usernameInputRef}
                   id="username"
+                  name="username"
                   type="text"
                   autoComplete="username"
-                  value={username}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  defaultValue={shouldPrefillBootstrapAccount ? BOOTSTRAP_LOGIN_USERNAME : ''}
                   onChange={event => setUsername(event.target.value)}
                   onFocus={() => setFocusedField('username')}
                   onBlur={() => setFocusedField(null)}
@@ -209,10 +246,12 @@ export function H5LoginPage() {
                   </svg>
                 </span>
                 <input
+                  ref={passwordInputRef}
                   id="password"
+                  name="password"
                   type="password"
                   autoComplete="current-password"
-                  value={password}
+                  defaultValue={shouldPrefillBootstrapAccount ? BOOTSTRAP_LOGIN_PASSWORD : ''}
                   onChange={event => setPassword(event.target.value)}
                   onFocus={() => setFocusedField('password')}
                   onBlur={() => setFocusedField(null)}

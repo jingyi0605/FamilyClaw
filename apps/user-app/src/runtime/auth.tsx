@@ -13,6 +13,7 @@ import {
   type LoginResponse,
 } from '@familyclaw/user-core';
 import { coreApiClient, appStorage } from './core';
+import { dismissBootstrapLoginPrefillForUsername } from './shared/login/localState';
 
 type AuthContextValue = {
   actor: AuthActor | null;
@@ -52,7 +53,9 @@ export function AuthProvider(props: { children: ReactNode }) {
   async function refreshAuth() {
     try {
       const response = await coreApiClient.getAuthMe();
-      setActor(requireAuthActor(response, '/auth/me'));
+      const nextActor = requireAuthActor(response, '/auth/me');
+      setActor(nextActor);
+      void dismissBootstrapLoginPrefillForUsername(appStorage, nextActor.username).catch(() => undefined);
       setLoginError('');
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -76,7 +79,9 @@ export function AuthProvider(props: { children: ReactNode }) {
 
     try {
       const response = await coreApiClient.login({ username, password });
-      setActor(requireAuthActor(response, '/auth/login'));
+      const nextActor = requireAuthActor(response, '/auth/login');
+      setActor(nextActor);
+      void dismissBootstrapLoginPrefillForUsername(appStorage, nextActor.username).catch(() => undefined);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : '登录失败');
       throw error;
