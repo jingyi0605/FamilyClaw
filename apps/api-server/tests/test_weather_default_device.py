@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.utils import load_json
-from app.modules.device.models import Device, DeviceBinding
+from app.modules.device.models import Device, DeviceBinding, DeviceEntity
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.integration.models import IntegrationInstance
@@ -146,6 +146,16 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.assertEqual("weather.condition", capabilities["primary_entity_id"])
         self.assertIn("weather.temperature", capabilities["entity_ids"])
         self.assertEqual("met_norway", capabilities["metadata"]["provider_type"])
+        entity_ids = list(
+            self.db.scalars(
+                select(DeviceEntity.entity_id)
+                .where(DeviceEntity.binding_id == device_binding.id)
+                .order_by(DeviceEntity.sort_order.asc(), DeviceEntity.id.asc())
+            ).all()
+        )
+        self.assertEqual(10, len(entity_ids))
+        self.assertIn("weather.condition", entity_ids)
+        self.assertIn("weather.updated_at", entity_ids)
 
     def test_enable_plugin_without_coordinate_marks_instance_degraded(self) -> None:
         household = create_household(
@@ -241,6 +251,15 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         assert isinstance(capabilities, dict)
         self.assertTrue(capabilities["metadata"]["is_stale"])
         self.assertEqual("weather_provider_timeout", capabilities["metadata"]["error_code"])
+        condition_row = self.db.scalar(
+            select(DeviceEntity).where(
+                DeviceEntity.binding_id == device_binding.id,
+                DeviceEntity.entity_id == "weather.condition",
+            )
+        )
+        assert condition_row is not None
+        self.assertTrue(condition_row.metadata_payload["is_stale"])
+        self.assertEqual("weather_provider_timeout", condition_row.metadata_payload["error_code"])
 
     def test_switch_provider_keeps_same_default_device_and_entities(self) -> None:
         household = create_household(
@@ -331,6 +350,14 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         assert isinstance(capabilities, dict)
         self.assertEqual("weatherapi", capabilities["metadata"]["provider_type"])
         self.assertIn("weather.updated_at", capabilities["entity_ids"])
+        condition_row = self.db.scalar(
+            select(DeviceEntity).where(
+                DeviceEntity.binding_id == device_binding.id,
+                DeviceEntity.entity_id == "weather.condition",
+            )
+        )
+        assert condition_row is not None
+        self.assertEqual("weatherapi", condition_row.metadata_payload["provider_type"])
 
 
 if __name__ == "__main__":

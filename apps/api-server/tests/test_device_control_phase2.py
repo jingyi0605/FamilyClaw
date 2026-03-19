@@ -18,7 +18,7 @@ from app.db.session import get_db
 from app.db.utils import new_uuid
 from app.core.config import settings
 from app.modules.conversation import orchestrator as conversation_orchestrator
-from app.modules.device.models import Device, DeviceBinding
+from app.modules.device.models import Device, DeviceBinding, DeviceEntity
 from app.modules.device_action.schemas import DeviceActionExecuteRequest
 from app.modules.device_action import service as device_action_service_module
 from app.modules.device_control.schemas import DeviceControlRequest
@@ -221,9 +221,10 @@ class DeviceControlPhase2Tests(unittest.TestCase):
                 external_entity_id="sensor.study_light_power",
                 external_device_id="ha-device-study-light",
             )
+            weather_binding_id = new_uuid()
             db.add(
                 DeviceBinding(
-                    id=new_uuid(),
+                    id=weather_binding_id,
                     device_id=multi_binding_device_id,
                     integration_instance_id=self.integration_instance_id,
                     platform="home_assistant",
@@ -231,9 +232,30 @@ class DeviceControlPhase2Tests(unittest.TestCase):
                     binding_version=1,
                     external_entity_id="light.study_main",
                     external_device_id="ha-device-study-light",
-                    capabilities='{"entities":[{"entity_id":"light.study_main","name":"书房灯","domain":"light","state":"off","state_display":"关闭","control":{"kind":"toggle","value":false,"action_on":"turn_on","action_off":"turn_off"}}]}',
+                    capabilities='{"primary_entity_id":"light.study_main","entity_ids":["light.study_main"]}',
                 )
             )
+            entity_row = DeviceEntity(
+                id=new_uuid(),
+                device_id=multi_binding_device_id,
+                binding_id=weather_binding_id,
+                integration_instance_id=self.integration_instance_id,
+                entity_id="light.study_main",
+                name="书房灯",
+                domain="light",
+                state="off",
+                state_display="关闭",
+                created_at="2026-03-18T03:00:00Z",
+                updated_at="2026-03-18T03:00:00Z",
+            )
+            entity_row.control = {
+                "kind": "toggle",
+                "value": False,
+                "action_on": "turn_on",
+                "action_off": "turn_off",
+            }
+            entity_row.metadata_payload = {}
+            db.add(entity_row)
             db.commit()
             with patch("app.plugins.builtin.homeassistant_device_action.client.HomeAssistantClient.call_service", return_value={"status": "ok"}) as mocked_call:
                 result = execute_device_control(
@@ -436,11 +458,12 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             "request_id": new_uuid(),
             "household_id": self.household_id,
             "plugin_id": plugin_id,
-            "binding": {
-                "binding_id": new_uuid(),
-                "platform": "home_assistant",
-                "plugin_id": plugin_id,
-                "external_device_id": f"external-{device_id}",
+                "binding": {
+                    "binding_id": new_uuid(),
+                    "integration_instance_id": self.integration_instance_id,
+                    "platform": "home_assistant",
+                    "plugin_id": plugin_id,
+                    "external_device_id": f"external-{device_id}",
                 "external_entity_id": external_entity_id,
                 "capabilities": {"primary_entity_id": external_entity_id},
                 "binding_version": 1,

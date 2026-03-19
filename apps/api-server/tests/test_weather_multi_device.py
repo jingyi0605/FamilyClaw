@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, load_json, new_uuid
-from app.modules.device.models import DeviceBinding
+from app.modules.device.models import DeviceBinding, DeviceEntity
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.integration.schemas import IntegrationInstanceActionRequest, IntegrationInstanceCreateRequest
@@ -248,6 +248,23 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         assert isinstance(hangzhou_capabilities, dict)
         self.assertTrue(suzhou_capabilities["metadata"]["is_stale"])
         self.assertEqual("weatherapi", hangzhou_capabilities["metadata"]["provider_type"])
+        suzhou_condition = self.db.scalar(
+            select(DeviceEntity).where(
+                DeviceEntity.binding_id == suzhou_device_binding.id,
+                DeviceEntity.entity_id == "weather.condition",
+            )
+        )
+        hangzhou_condition = self.db.scalar(
+            select(DeviceEntity).where(
+                DeviceEntity.binding_id == hangzhou_device_binding.id,
+                DeviceEntity.entity_id == "weather.condition",
+            )
+        )
+        assert suzhou_condition is not None
+        assert hangzhou_condition is not None
+        self.assertTrue(suzhou_condition.metadata_payload["is_stale"])
+        self.assertEqual("weatherapi", hangzhou_condition.metadata_payload["provider_type"])
+        self.assertNotEqual(suzhou_condition.updated_at, hangzhou_condition.updated_at)
 
         dashboard = get_home_dashboard(
             self.db,
@@ -308,6 +325,24 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         self.assertEqual([(31.2989, 120.5853)], provider.calls)
         self.assertEqual("2026-03-18T04:30:00Z", suzhou_refreshed.last_success_at)
         self.assertEqual("2026-03-18T03:12:00Z", hangzhou_refreshed.last_success_at)
+        suzhou_device_binding = self.db.scalar(select(DeviceBinding).where(DeviceBinding.device_id == suzhou_binding.device_id))
+        hangzhou_device_binding = self.db.scalar(select(DeviceBinding).where(DeviceBinding.device_id == hangzhou_binding.device_id))
+        assert suzhou_device_binding is not None
+        assert hangzhou_device_binding is not None
+        suzhou_updated_at = self.db.scalar(
+            select(DeviceEntity.updated_at).where(
+                DeviceEntity.binding_id == suzhou_device_binding.id,
+                DeviceEntity.entity_id == "weather.updated_at",
+            )
+        )
+        hangzhou_updated_at = self.db.scalar(
+            select(DeviceEntity.updated_at).where(
+                DeviceEntity.binding_id == hangzhou_device_binding.id,
+                DeviceEntity.entity_id == "weather.updated_at",
+            )
+        )
+        self.assertEqual("2026-03-18T04:30:00Z", suzhou_updated_at)
+        self.assertEqual("2026-03-18T03:12:00Z", hangzhou_updated_at)
 
     def test_home_dashboard_shows_one_weather_card_per_instance(self) -> None:
         dashboard = get_home_dashboard(
