@@ -35,11 +35,78 @@ class ReminderExtractionOutput(BaseModel):
 class ProposalExtractionItemOutput(BaseModel):
     """统一提案提取项"""
 
-    title: str | None = Field(default=None, description="提案标题")
-    summary: str | None = Field(default=None, description="提案摘要")
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str | None = Field(
+        default=None,
+        description="提案标题",
+        validation_alias=AliasChoices("title", "name"),
+    )
+    summary: str | None = Field(
+        default=None,
+        description="提案摘要",
+        validation_alias=AliasChoices("summary", "content", "description"),
+    )
     confidence: float = Field(default=0.0, ge=0, le=1, description="提案置信度")
-    evidence_message_ids: list[str] = Field(default_factory=list, description="提案引用的来源消息 ID")
-    payload: dict[str, Any] = Field(default_factory=dict, description="提案原始载荷")
+    evidence_message_ids: list[str] = Field(
+        default_factory=list,
+        description="提案引用的来源消息 ID",
+        validation_alias=AliasChoices("evidence_message_ids", "evidence_ids", "message_ids"),
+    )
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        description="提案原始载荷",
+        validation_alias=AliasChoices("payload", "data", "content_payload"),
+    )
+
+    @field_validator("title", "summary", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value: object) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        normalized = str(value or "").strip().lower()
+        if not normalized:
+            return 0.0
+        if normalized in {"high", "\u9ad8", "\u9ad8\u7f6e\u4fe1\u5ea6"}:
+            return 0.9
+        if normalized in {"medium", "medium_high", "\u4e2d", "\u4e2d\u7b49", "\u4e2d\u7f6e\u4fe1\u5ea6"}:
+            return 0.65
+        if normalized in {"low", "\u4f4e", "\u4f4e\u7f6e\u4fe1\u5ea6"}:
+            return 0.35
+        try:
+            return float(normalized)
+        except ValueError:
+            return 0.0
+
+    @field_validator("evidence_message_ids", mode="before")
+    @classmethod
+    def normalize_evidence_message_ids(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            normalized = value.strip()
+            return [normalized] if normalized else []
+        if not isinstance(value, list):
+            return []
+        normalized_ids: list[str] = []
+        for item in value:
+            message_id = str(item or "").strip()
+            if message_id:
+                normalized_ids.append(message_id)
+        return normalized_ids
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def normalize_payload(cls, value: object) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
 
 
 class ProposalBatchExtractionOutput(BaseModel):

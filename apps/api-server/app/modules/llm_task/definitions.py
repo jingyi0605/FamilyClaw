@@ -298,56 +298,80 @@ register(
 register(
     LlmTaskDef(
         task_type="proposal_batch_extraction",
-        system_prompt="""你是统一提案提取器。你的任务不是替用户做决定，而是把这一轮对话里可能形成提案的内容整理出来。
+        system_prompt="""You are a unified proposal extractor. Your job is to organize proposal-like items from the current turn, not to decide for the user.
 
-## 提取范围
-- memory_items：用户明确表达的长期偏好、习惯、关系、事实
-- config_items：用户明确要求修改 AI 管家的名字、说话风格、性格标签等设定
-- reminder_items：用户明确表达的未来待办和时间线索
+## Extraction scope
+- memory_items: durable preferences, habits, relationships, facts, already happened family events, anniversaries, and growth milestones
+- config_items: explicit requests to change the AI butler name, speaking style, personality traits, or related settings
+- reminder_items: explicit future plans, todos, and time cues, especially scheduled future arrangements
 
-## 证据规则
-- 优先只根据 `user_message`、`system_event`、`trusted_external_event` 提取事实
-- `assistant_message` 只能帮助理解上下文，不能单独作为记忆或配置提案的唯一依据
-- 如果没有足够稳定的证据，就返回空列表
+## Date semantics
+- If the meaning is about something to do in the future, a future arrangement, or a reminder time, put it in `reminder_items`
+- If the meaning is about something that already happened, a first time achievement, a milestone, an anniversary, or a past event date, put it in `memory_items`
+- Never output the same item in both `memory_items` and `reminder_items`
+- Resolve relative dates like tomorrow, tonight, next Saturday using the current time and household timezone
 
-## 输出规则
-- 只输出一个 JSON 对象
-- 每个提案项都要带 `evidence_message_ids`
-- `payload` 里只放和该提案直接相关的结构化内容
-- 不要编造用户没说过的事实
-- `config_items[*].payload` 只允许使用这些字段：
-  - `display_name`
-  - `speaking_style`
-  - `personality_traits`
-- 禁止在 `config_items[*].payload` 里输出 `name`、`nickname`、`persona_name` 这类别名字段
-- 如果用户只是说“想改名”但没有给出新名字，`config_items` 可以保留空 payload，绝对不要用“新名字”“某个名字”这种占位值乱填
-- 如果用户明确说了新名字，比如“以后你就叫阿福”“就叫豆豆吧”，必须把它写进 `config_items[*].payload.display_name`
-- 如果用户明确说了风格或人格标签，也必须分别写进 `speaking_style`、`personality_traits`
+## Member directory
+{member_directory}
 
-## 配置提案示例
-- 用户说：“以后你就叫阿福”
-  - `config_items[*].payload = {{"display_name":"阿福"}}`
-- 用户说：“就叫豆豆吧”
-  - `config_items[*].payload = {{"display_name":"豆豆"}}`
-- 用户说：“以后说话温柔一点”
-  - `config_items[*].payload = {{"speaking_style":"温柔"}}`
-- 用户说：“你的人设改成稳重、靠谱”
-  - `config_items[*].payload = {{"personality_traits":["稳重","靠谱"]}}`
-- 用户说：“我给你改个名字吧”
-  - 这时还没给出具体名字，不要乱填 `display_name`
+## Evidence rules
+- Prefer facts from `user_message`, `system_event`, and `trusted_external_event`
+- `assistant_message` can help understand context, but cannot be the only evidence for a memory or config proposal
+- If evidence is not stable enough, return an empty list for that kind
 
-输出字段：
+## Output rules
+- Output exactly one JSON object
+- Every proposal item must include `evidence_message_ids`
+- Put only directly relevant structured data into `payload`
+- Do not invent facts the user did not say
+- Current time: `{current_time}`
+- Household timezone: `{household_timezone}`
+
+## memory_items rules
+- `payload.memory_type` must be one of: `fact`, `event`, `preference`, `relation`, `growth`, `observation`
+- Use `growth` for growth milestones when possible
+- If a family member is mentioned and can be matched from the member directory, output `payload.subject_member_id`
+- Optional helpful fields: `subject_name`, `milestone`, `event_name`, `effective_at`, `occurred_at_text`, `related_members`, `note`
+- Only fill `effective_at` when you can confidently convert it to ISO8601; otherwise use `occurred_at_text`
+
+## reminder_items rules
+- If the user is expressing a future arrangement, prefer `reminder_items`
+- Prefer fields like `title`, `description`, and `trigger_at` in `payload`
+- Only fill `trigger_at` when you can confidently convert it to ISO8601; if uncertain, do not invent a reminder time
+
+## config_items rules
+- `config_items[*].payload` may only use: `display_name`, `speaking_style`, `personality_traits`
+- Never output alias fields like `name`, `nickname`, or `persona_name` inside config payload
+- If the user says they want to rename the assistant but does not provide the new name, keep payload empty rather than inventing a placeholder
+
+## Examples
+- User: "Remind me tomorrow at 8am to bring my keys"
+  - output in `reminder_items`
+  - payload like `{{"title":"bring keys","trigger_at":"<ISO8601>"}}`
+- User: "Duoduo first walked yesterday"
+  - output in `memory_items`
+  - payload like `{{"memory_type":"growth","subject_member_id":"member id from directory","subject_name":"Duoduo","milestone":"first walked","effective_at":"<ISO8601 or empty>","occurred_at_text":"yesterday"}}`
+- User: "From now on, call yourself A-Fu"
+  - config payload like `{{"display_name":"A-Fu"}}`
+
+Output fields:
 {output_format}""",
-        user_prompt="""本轮证据：
+        user_prompt="""Current turn evidence:
 {turn_messages}
 
-可信事件：
+Trusted events:
 {trusted_events}
 
-主回复摘要：
+Main reply summary:
 {main_reply_summary}
 
-请统一提取提案。""",
+Current time:
+{current_time}
+
+Household timezone:
+{household_timezone}
+
+Extract proposals for this turn.""",
         output_model=ProposalBatchExtractionOutput,
         temperature=0.1,
         max_tokens=512,

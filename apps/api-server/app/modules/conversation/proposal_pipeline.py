@@ -17,8 +17,10 @@ from app.modules.conversation.proposal_analyzers import (
     ProposalDraft,
     _normalize_config_payload,
 )
+from app.modules.household.models import Household
 from app.modules.llm_task import ainvoke_llm, invoke_llm
 from app.modules.llm_task.output_models import ProposalBatchExtractionOutput
+from app.modules.member.prompt_context_service import list_member_prompt_profiles
 from app.modules.memory import repository as memory_repository
 
 
@@ -43,6 +45,9 @@ class TurnProposalContext:
     conversation_history_excerpt: list[dict[str, str]]
     lane_result: dict
     main_reply_summary: str
+    current_time: str
+    household_timezone: str
+    member_directory: str
     persist_enabled: bool = False
 
     @property
@@ -204,6 +209,9 @@ def build_turn_proposal_context(
     main_reply_summary: str,
     trusted_events: list[dict] | None = None,
 ) -> TurnProposalContext:
+    current_time = utc_now_iso()
+    household_timezone = _resolve_household_timezone(db, household_id=session.household_id)
+    member_directory = _build_member_directory(db, household_id=session.household_id)
     return TurnProposalContext(
         db=db,
         session_id=session.id,
@@ -229,6 +237,9 @@ def build_turn_proposal_context(
         conversation_history_excerpt=conversation_history_excerpt,
         lane_result=lane_result,
         main_reply_summary=main_reply_summary,
+        current_time=current_time,
+        household_timezone=household_timezone,
+        member_directory=member_directory,
     )
 
 
@@ -244,6 +255,9 @@ def extract_proposal_batch(
             "turn_messages": _render_turn_messages(turn_context.turn_messages),
             "trusted_events": dump_json(turn_context.trusted_events) or "[]",
             "main_reply_summary": _render_assistant_context_summary(turn_context.main_reply_summary),
+            "current_time": turn_context.current_time,
+            "household_timezone": turn_context.household_timezone,
+            "member_directory": turn_context.member_directory or "No member directory available.",
         },
         household_id=household_id,
         conversation_history=turn_context.conversation_history_excerpt,
@@ -271,6 +285,9 @@ async def aextract_proposal_batch(
             "turn_messages": _render_turn_messages(turn_context.turn_messages),
             "trusted_events": dump_json(turn_context.trusted_events) or "[]",
             "main_reply_summary": _render_assistant_context_summary(turn_context.main_reply_summary),
+            "current_time": turn_context.current_time,
+            "household_timezone": turn_context.household_timezone,
+            "member_directory": turn_context.member_directory or "No member directory available.",
         },
         household_id=household_id,
         conversation_history=turn_context.conversation_history_excerpt,
@@ -299,6 +316,41 @@ def _normalize_turn_message_id_alias(message_id: str, evidence_by_id: dict[str, 
         if candidate_id in evidence_by_id:
             return candidate_id
     return None
+
+
+def _resolve_household_timezone(db: Session | None, *, household_id: str) -> str:
+    if db is None:
+        return "Asia/Shanghai"
+    household = db.get(Household, household_id)
+    if household is None:
+        return "Asia/Shanghai"
+    normalized_timezone = str(household.timezone or "").strip()
+    return normalized_timezone or "Asia/Shanghai"
+
+
+def _build_member_directory(db: Session | None, *, household_id: str) -> str:
+    if db is None:
+        return ""
+    profiles = list_member_prompt_profiles(db, household_id=household_id, status_value="active")
+    if not profiles:
+        return ""
+
+    lines: list[str] = []
+    for profile in profiles:
+        alias_text = " / ".join(alias for alias in profile.aliases if alias and alias != profile.display_name)
+        parts = [f"member_id={profile.member_id}", f"display_name={profile.display_name}", f"role={profile.role}"]
+        if alias_text:
+            parts.append(f"aliases={alias_text}")
+        if profile.birthday:
+            parts.append(f"birthday={profile.birthday}")
+        if profile.relationships:
+            relationship_text = "; ".join(
+                f"to {relationship.target_member_name}: {relationship.relation_label}"
+                for relationship in profile.relationships[:4]
+            )
+            parts.append(f"relationships={relationship_text}")
+        lines.append("- " + "; ".join(parts))
+    return "\n".join(lines)
 
 
 def persist_proposal_batch(

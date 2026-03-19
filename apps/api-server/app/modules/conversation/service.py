@@ -331,22 +331,15 @@ def _execute_proposal_item(
     if item.proposal_kind == "memory_write":
         memory_card = create_manual_memory_card(
             db,
-            payload=MemoryCardManualCreate(
+            payload=_build_manual_memory_card_create_payload(
+                db,
                 household_id=session.household_id,
-                memory_type=str(payload.get("memory_type") or payload.get("type") or "fact"),
+                payload=payload if isinstance(payload, dict) else {},
                 title=item.title,
                 summary=item.summary or item.title,
-                content=payload if isinstance(payload, dict) else {},
-                status="active",
-                visibility="family",
-                importance=3,
-                confidence=item.confidence,
-                subject_member_id=session.requester_member_id,
-                source_event_id=None,
+                fallback_subject_member_id=session.requester_member_id,
                 dedupe_key=item.dedupe_key or f"proposal:{item.id}",
-                effective_at=None,
-                last_observed_at=None,
-                related_members=[],
+                confidence=item.confidence,
                 reason="applied from conversation proposal",
             ),
             actor=actor,
@@ -361,6 +354,139 @@ def _execute_proposal_item(
     if item.proposal_kind in {"scheduled_task_update", "scheduled_task_pause", "scheduled_task_resume", "scheduled_task_delete"}:
         return _apply_scheduled_task_operation_proposal_item(db, proposal_kind=item.proposal_kind, payload=payload, actor=actor)
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported conversation proposal kind")
+
+
+def _build_manual_memory_card_create_payload(
+    db: Session,
+    *,
+    household_id: str,
+    payload: dict,
+    title: str,
+    summary: str,
+    fallback_subject_member_id: str | None,
+    dedupe_key: str,
+    confidence: float,
+    reason: str,
+) -> MemoryCardManualCreate:
+    subject_member_id, related_members = _resolve_memory_member_links(
+        db,
+        household_id=household_id,
+        payload=payload,
+        fallback_subject_member_id=fallback_subject_member_id,
+    )
+    effective_at = _normalize_memory_time_value(payload.get("effective_at") or payload.get("occurred_at"))
+    last_observed_at = _normalize_memory_time_value(payload.get("last_observed_at")) or effective_at
+    return MemoryCardManualCreate(
+        household_id=household_id,
+        memory_type=_normalize_memory_type(str(payload.get("memory_type") or payload.get("type") or "fact")),
+        title=title,
+        summary=summary,
+        content=payload,
+        status="active",
+        visibility="family",
+        importance=3,
+        confidence=confidence,
+        subject_member_id=subject_member_id,
+        source_event_id=None,
+        dedupe_key=dedupe_key,
+        effective_at=effective_at,
+        last_observed_at=last_observed_at,
+        related_members=related_members,
+        reason=reason,
+    )
+
+
+def _resolve_memory_member_links(
+    db: Session,
+    *,
+    household_id: str,
+    payload: dict,
+    fallback_subject_member_id: str | None,
+) -> tuple[str | None, list[dict[str, str]]]:
+    members, _ = member_service.list_members(
+        db,
+        household_id=household_id,
+        page=1,
+        page_size=200,
+        status_value="active",
+    )
+    display_name_map = member_service.build_member_display_name_map(
+        db,
+        household_id=household_id,
+        members=members,
+        status_value="active",
+    )
+    subject_member_id = _resolve_household_member_id(
+        payload.get("subject_member_id"),
+        members=members,
+    ) or _match_household_member_id_by_name(
+        payload.get("subject_name") or payload.get("subject") or payload.get("member_name"),
+        members=members,
+        display_name_map=display_name_map,
+    )
+    if subject_member_id is None:
+        subject_member_id = _resolve_household_member_id(fallback_subject_member_id, members=members)
+
+    related_members: list[dict[str, str]] = []
+    seen_keys: set[str] = set()
+    raw_related_members = payload.get("related_members")
+    if isinstance(raw_related_members, list):
+        for item in raw_related_members:
+            if not isinstance(item, dict):
+                continue
+            member_id = _resolve_household_member_id(item.get("member_id"), members=members) or _match_household_member_id_by_name(
+                item.get("member_name") or item.get("name"),
+                members=members,
+                display_name_map=display_name_map,
+            )
+            if member_id is None or member_id == subject_member_id:
+                continue
+            relation_role = str(item.get("relation_role") or "participant").strip() or "participant"
+            relation_key = f"{member_id}:{relation_role}"
+            if relation_key in seen_keys:
+                continue
+            seen_keys.add(relation_key)
+            related_members.append({"member_id": member_id, "relation_role": relation_role})
+    return subject_member_id, related_members
+
+
+def _resolve_household_member_id(raw_member_id: object, *, members: list) -> str | None:
+    normalized_member_id = str(raw_member_id or "").strip()
+    if not normalized_member_id:
+        return None
+    for member in members:
+        if member.id == normalized_member_id:
+            return member.id
+    return None
+
+
+def _match_household_member_id_by_name(
+    raw_name: object,
+    *,
+    members: list,
+    display_name_map: dict[str, str],
+) -> str | None:
+    normalized_target = _normalize_member_alias(raw_name)
+    if not normalized_target:
+        return None
+    for member in members:
+        aliases = {
+            _normalize_member_alias(display_name_map.get(member.id)),
+            _normalize_member_alias(member.nickname),
+            _normalize_member_alias(member.name),
+        }
+        if normalized_target in aliases:
+            return member.id
+    return None
+
+
+def _normalize_member_alias(value: object) -> str:
+    return "".join(str(value or "").strip().lower().split())
+
+
+def _normalize_memory_time_value(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
 
 
 def get_conversation_session_snapshot(
@@ -732,24 +858,18 @@ def confirm_memory_candidate(
     if candidate.status != "pending_review":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="conversation memory candidate already resolved")
 
+    candidate_payload = load_json(candidate.content_json)
     memory_card = create_manual_memory_card(
         db,
-        payload=MemoryCardManualCreate(
+        payload=_build_manual_memory_card_create_payload(
+            db,
             household_id=session.household_id,
-            memory_type=_normalize_memory_type(candidate.memory_type),
+            payload=candidate_payload if isinstance(candidate_payload, dict) else {},
             title=candidate.title,
             summary=candidate.summary,
-            content=load_json(candidate.content_json) or {},
-            status="active",
-            visibility="family",
-            importance=3,
-            confidence=candidate.confidence,
-            subject_member_id=candidate.requester_member_id,
-            source_event_id=None,
+            fallback_subject_member_id=candidate.requester_member_id,
             dedupe_key=f"conversation_candidate:{candidate.id}",
-            effective_at=None,
-            last_observed_at=None,
-            related_members=[],
+            confidence=candidate.confidence,
             reason="confirmed from conversation candidate",
         ),
         actor=actor,

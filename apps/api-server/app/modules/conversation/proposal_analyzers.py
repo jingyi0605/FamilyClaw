@@ -429,12 +429,49 @@ def _build_dedupe_key(proposal_kind: str, evidence_message_ids: list[str], title
 
 def _normalize_memory_payload(payload: dict) -> dict:
     normalized = dict(payload)
-    if "type" in normalized and "memory_type" not in normalized:
-        normalized["memory_type"] = normalized.get("type")
+    memory_type = _normalize_memory_type_alias(normalized.get("memory_type") or normalized.get("type"))
+    if memory_type:
+        normalized["memory_type"] = memory_type
+    subject_name = str(
+        normalized.get("subject_name")
+        or normalized.get("subject")
+        or normalized.get("member_name")
+        or ""
+    ).strip()
+    if subject_name and "subject_name" not in normalized:
+        normalized["subject_name"] = subject_name
+    event_name = str(
+        normalized.get("milestone")
+        or normalized.get("event_name")
+        or normalized.get("event")
+        or ""
+    ).strip()
+    if event_name:
+        if "milestone" not in normalized and _looks_like_growth_milestone(event_name):
+            normalized["milestone"] = event_name
+        if "event_name" not in normalized:
+            normalized["event_name"] = event_name
+    occurred_at_text = str(
+        normalized.get("occurred_at_text")
+        or normalized.get("date")
+        or normalized.get("date_text")
+        or ""
+    ).strip()
+    if occurred_at_text and "occurred_at_text" not in normalized:
+        normalized["occurred_at_text"] = occurred_at_text
     return normalized
 
 
 def _build_memory_summary_from_payload(payload: dict) -> str:
+    subject_name = str(payload.get("subject_name") or "").strip()
+    milestone = str(payload.get("milestone") or payload.get("event_name") or "").strip()
+    occurred_at_text = str(payload.get("occurred_at_text") or payload.get("effective_at") or "").strip()
+    if subject_name and milestone and occurred_at_text:
+        return f"{subject_name}: {milestone} ({occurred_at_text})"
+    if subject_name and milestone:
+        return f"{subject_name}: {milestone}"
+    if milestone and occurred_at_text:
+        return f"{milestone} ({occurred_at_text})"
     entries = [
         (str(key).strip(), _stringify_memory_payload_value(value))
         for key, value in payload.items()
@@ -445,8 +482,8 @@ def _build_memory_summary_from_payload(payload: dict) -> str:
         return ""
     if len(entries) == 1:
         key, value = entries[0]
-        return f"{key}：{value}"
-    return "；".join(f"{key}：{value}" for key, value in entries[:3])
+        return f"{key}: {value}"
+    return "; ".join(f"{key}: {value}" for key, value in entries[:3])
 
 
 def _stringify_memory_payload_value(value: object) -> str:
@@ -454,18 +491,51 @@ def _stringify_memory_payload_value(value: object) -> str:
         return value.strip()
     if isinstance(value, list):
         parts = [str(item).strip() for item in value if str(item).strip()]
-        return "、".join(parts)
+        return ", ".join(parts)
     return str(value).strip() if value is not None else ""
 
 
 def _infer_memory_type_from_payload(payload: dict) -> str:
-    explicit_type = str(payload.get("memory_type") or payload.get("type") or "").strip()
+    explicit_type = _normalize_memory_type_alias(payload.get("memory_type") or payload.get("type"))
     if explicit_type:
         return explicit_type
     keys = [str(key).strip() for key in payload.keys()]
-    if any(("喜欢" in key) or ("不喜欢" in key) or ("偏好" in key) for key in keys):
+    text_blob = " ".join(_stringify_memory_payload_value(value) for value in payload.values())
+    if any(key in {"milestone", "event_name", "occurred_at_text", "effective_at"} for key in keys) or _looks_like_growth_milestone(text_blob):
+        return "growth"
+    if any(key in {"date", "date_text"} for key in keys):
+        return "event"
+    if any(("\u559c\u6b22" in key) or ("\u4e0d\u559c\u6b22" in key) or ("\u504f\u597d" in key) for key in keys):
         return "preference"
     return "fact"
+
+
+def _normalize_memory_type_alias(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return ""
+    aliases = {
+        "fact": "fact",
+        "event": "event",
+        "preference": "preference",
+        "relation": "relation",
+        "growth": "growth",
+        "observation": "observation",
+        "milestone": "growth",
+        "growth_milestone": "growth",
+        "growth-event": "growth",
+        "timeline": "event",
+        "schedule": "event",
+    }
+    return aliases.get(normalized, "")
+
+
+def _looks_like_growth_milestone(text: str) -> bool:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return False
+    keywords = ("\u7b2c\u4e00\u6b21", "\u91cc\u7a0b\u7891", "\u4f1a\u8d70\u8def", "\u4f1a\u53eb", "\u957f\u7259", "\u7ffb\u8eab", "\u722c", "\u7ad9")
+    return any(keyword in normalized for keyword in keywords)
 
 
 def _normalize_config_payload(payload: dict, *, summary: str | None) -> dict:

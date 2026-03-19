@@ -209,6 +209,51 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         self.assertIn("辣椒", drafts[0].summary or "")
         self.assertEqual("preference", drafts[0].payload["memory_type"])
 
+    def test_proposal_extraction_item_output_accepts_date_memory_shape(self) -> None:
+        item = ProposalExtractionItemOutput.model_validate(
+            {
+                "content": "朵朵第一次会走路是在昨天",
+                "confidence": "high",
+                "evidence_message_ids": ["message-1"],
+                "payload": {
+                    "type": "milestone",
+                    "subject_name": "朵朵",
+                    "milestone": "第一次会走路",
+                    "occurred_at_text": "昨天",
+                },
+            }
+        )
+
+        self.assertEqual("朵朵第一次会走路是在昨天", item.summary)
+        self.assertAlmostEqual(0.9, item.confidence)
+
+    def test_memory_proposal_analyzer_maps_milestone_to_growth(self) -> None:
+        context = self._build_context(user_text="朵朵第一次会走路是在昨天", assistant_text="好，我记下来了。")
+        extraction = ProposalBatchExtractionOutput(
+            memory_items=[
+                ProposalExtractionItemOutput.model_validate(
+                    {
+                        "content": "朵朵第一次会走路是在昨天",
+                        "confidence": "high",
+                        "evidence_message_ids": [context.turn_messages[0].message_id],
+                        "payload": {
+                            "type": "milestone",
+                            "subject_name": "朵朵",
+                            "milestone": "第一次会走路",
+                            "occurred_at_text": "昨天",
+                        },
+                    }
+                )
+            ]
+        )
+
+        drafts = MemoryProposalAnalyzer().analyze(context, extraction)
+
+        self.assertEqual(1, len(drafts))
+        self.assertEqual("growth", drafts[0].payload["memory_type"])
+        self.assertIn("朵朵", drafts[0].summary or "")
+        self.assertIn("第一次会走路", drafts[0].summary or "")
+
     def test_proposal_pipeline_filters_noop_config_draft_when_name_matches_current_agent(self) -> None:
         now = utc_now_iso()
         session = ConversationSession(
@@ -501,12 +546,16 @@ class ConversationProposalPipelineTests(unittest.TestCase):
                 "turn_messages": "[user_message] user(u1): 浠ュ悗浣犲氨鍙樋绂",
                 "trusted_events": "[]",
                 "main_reply_summary": "濂界殑锛屼互鍚庢垜灏卞彨闃跨銆",
+                "current_time": "2026-03-19T19:41:33+08:00",
+                "household_timezone": "Asia/Shanghai",
+                "member_directory": "- member_id=m1；称呼=朵朵；角色=child",
             },
             conversation_history=[],
         )
 
         self.assertGreaterEqual(len(messages), 2)
         self.assertIn("display_name", messages[0]["content"])
+        self.assertIn("subject_member_id", messages[0]["content"])
 
     @patch("app.modules.conversation.service._generate_memory_candidates_for_turn")
     @patch("app.modules.conversation.service.ProposalPipeline.run")

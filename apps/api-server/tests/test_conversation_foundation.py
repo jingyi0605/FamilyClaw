@@ -2624,6 +2624,98 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("preference", created_memory.memory_type)
         self.assertEqual("delayed memory", created_memory.title)
 
+    def test_confirm_conversation_proposal_uses_subject_member_and_effective_at_from_payload(self) -> None:
+        child = create_member(
+            self.db,
+            MemberCreate(household_id=self.household.id, name="朵朵", role="child"),
+        )
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        self.db.flush()
+
+        assistant_message = ConversationMessage(
+            id=new_uuid(),
+            session_id=session.id,
+            request_id="request-growth-memory",
+            seq=conversation_repository.get_next_message_seq(self.db, session_id=session.id),
+            role="assistant",
+            message_type="text",
+            content="我记下朵朵第一次会走路了。",
+            status="completed",
+            effective_agent_id=self.agent.id,
+            ai_provider_code="mock-provider",
+            ai_trace_id="trace-growth-memory",
+            degraded=False,
+            error_code=None,
+            facts_json=dump_json([]),
+            suggestions_json=dump_json([]),
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        conversation_repository.add_message(self.db, assistant_message)
+        batch = ConversationProposalBatch(
+            id=new_uuid(),
+            session_id=session.id,
+            request_id="request-growth-memory",
+            source_message_ids_json=dump_json([assistant_message.id]) or "[]",
+            source_roles_json=dump_json(["assistant"]) or "[]",
+            lane_json='{"lane":"free_chat"}',
+            status="pending_confirmation",
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        conversation_repository.add_proposal_batch(self.db, batch)
+        item = ConversationProposalItem(
+            id=new_uuid(),
+            batch_id=batch.id,
+            proposal_kind="memory_write",
+            policy_category="ask",
+            status="pending_confirmation",
+            title="朵朵第一次会走路",
+            summary="朵朵第一次会走路（2026-03-18）",
+            evidence_message_ids_json=dump_json([assistant_message.id]) or "[]",
+            evidence_roles_json=dump_json(["assistant"]) or "[]",
+            dedupe_key="memory:growth:dodo:first-walk",
+            confidence=0.95,
+            payload_json=dump_json(
+                {
+                    "memory_type": "growth",
+                    "subject_member_id": child.id,
+                    "subject_name": "朵朵",
+                    "milestone": "第一次会走路",
+                    "effective_at": "2026-03-18T00:00:00+08:00",
+                    "related_members": [{"member_id": self.member.id, "relation_role": "owner"}],
+                }
+            )
+            or "{}",
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+        )
+        conversation_repository.add_proposal_item(self.db, item)
+        self.db.commit()
+
+        result = confirm_conversation_proposal(
+            self.db,
+            proposal_item_id=item.id,
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        created_memory = memory_repository.get_memory_card(self.db, result.affected_target_id)
+        self.assertIsNotNone(created_memory)
+        assert created_memory is not None
+        self.assertEqual("growth", created_memory.memory_type)
+        self.assertEqual(child.id, created_memory.subject_member_id)
+        self.assertEqual("2026-03-18T00:00:00+08:00", created_memory.effective_at)
+        self.assertEqual(1, len(created_memory.related_members))
+        self.assertEqual(self.member.id, created_memory.related_members[0].member_id)
+
     def test_dismiss_conversation_proposal_marks_item_dismissed(self) -> None:
         session = create_conversation_session(
             self.db,
