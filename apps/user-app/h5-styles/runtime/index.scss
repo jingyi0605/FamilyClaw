@@ -6869,8 +6869,9 @@ body::before {
   padding: var(--spacing-md) !important;
 }
 
-.relationship-graph-card,
-.relationship-graph-card * {
+/* 只在家庭关系页图谱卡片内禁用文字选择，其他页面保持可复制 */
+.family-relationships__graph-card,
+.family-relationships__graph-card * {
   -webkit-user-select: none;
   user-select: none;
 }

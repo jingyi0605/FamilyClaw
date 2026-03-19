@@ -3350,7 +3350,7 @@ export function FamilyRelationships() {
   return (
     <div className="family-relationships">
       {/* 鍏崇郴鍥捐氨 */}
-      <Card className="relationship-graph-card">
+      <Card className="relationship-graph-card family-relationships__graph-card">
         {members.length >= 2 && relationships.length > 0 ? (
           <DynamicRelationshipGraph
             members={members}
