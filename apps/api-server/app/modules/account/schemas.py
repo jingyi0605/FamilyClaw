@@ -71,3 +71,27 @@ class BootstrapAccountCompleteRequest(BaseModel):
     member_id: str = Field(min_length=1)
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=200)
+
+
+class AccountWithBindingRead(BaseModel):
+    """Account with its member binding info."""
+    account: AccountRead
+    binding: AccountMemberBindingRead | None = None
+
+
+class HouseholdAccountListResponse(BaseModel):
+    """List of household accounts with bindings."""
+    items: list[AccountWithBindingRead]
+    total: int
+
+
+class HouseholdAccountUpdateRequest(BaseModel):
+    """Request to update a household account."""
+    status: str | None = Field(default=None, pattern="^(active|disabled|locked)$")
+    must_change_password: bool | None = None
+
+
+class HouseholdAccountResetPasswordRequest(BaseModel):
+    """Request to reset account password."""
+    new_password: str = Field(min_length=6, max_length=200)
+    must_change_password: bool = True

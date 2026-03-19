@@ -1,4 +1,5 @@
 import type {
+  AccountWithBinding,
   ContextConfigRead,
   ContextOverviewRead,
   Device as CoreDevice,
@@ -18,6 +19,7 @@ import type {
 } from '@familyclaw/user-core';
 
 export type {
+  AccountWithBinding,
   ContextConfigRead,
   ContextOverviewRead,
   Household,

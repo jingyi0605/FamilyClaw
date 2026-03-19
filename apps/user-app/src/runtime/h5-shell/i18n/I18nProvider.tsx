@@ -116,6 +116,8 @@ const SHELL_MESSAGES = {
     'settings.nav.channelAccess.desc': '接入 Telegram、Discord 等外部平台',
     'settings.nav.plugins.label': '插件管理',
     'settings.nav.plugins.desc': '查看和管理已安装插件',
+    'settings.nav.accounts.label': '账号管理',
+    'settings.nav.accounts.desc': '管理家庭账号与登录凭证',
     // 仪表盘/首页标签页
     'dashboard.title': '仪表盘',
     'dashboard.tab.home': '主页',
@@ -265,6 +267,8 @@ const SHELL_MESSAGES = {
     'settings.nav.channelAccess.desc': 'Connect Telegram, Discord, and other external platforms',
     'settings.nav.plugins.label': 'Plugins',
     'settings.nav.plugins.desc': 'Review and manage installed plugins',
+    'settings.nav.accounts.label': 'Account Management',
+    'settings.nav.accounts.desc': 'Manage family accounts and credentials',
     // Dashboard/Home tabs
     'dashboard.title': 'Dashboard',
     'dashboard.tab.home': 'Home',

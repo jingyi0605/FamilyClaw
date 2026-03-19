@@ -59,6 +59,26 @@ export type HouseholdAccountCreateResponse = {
   binding: AccountMemberBindingRead;
 };
 
+export type AccountWithBinding = {
+  account: AccountRead;
+  binding: AccountMemberBindingRead | null;
+};
+
+export type HouseholdAccountListResponse = {
+  items: AccountWithBinding[];
+  total: number;
+};
+
+export type HouseholdAccountUpdatePayload = {
+  status?: 'active' | 'disabled' | 'locked';
+  must_change_password?: boolean;
+};
+
+export type HouseholdAccountResetPasswordPayload = {
+  new_password: string;
+  must_change_password?: boolean;
+};
+
 export type PluginLocale = {
   plugin_id: string;
   locale_id: string;

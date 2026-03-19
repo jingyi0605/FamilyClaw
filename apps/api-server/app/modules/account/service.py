@@ -15,7 +15,12 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.account.models import Account, AccountMemberBinding, AccountSession
-from app.modules.account.schemas import BootstrapAccountCompleteRequest, HouseholdAccountCreateRequest
+from app.modules.account.schemas import (
+    BootstrapAccountCompleteRequest,
+    HouseholdAccountCreateRequest,
+    HouseholdAccountResetPasswordRequest,
+    HouseholdAccountUpdateRequest,
+)
 from app.modules.household.models import Household
 from app.modules.member.models import Member
 
@@ -527,3 +532,113 @@ def complete_bootstrap_account(
         ),
     )
     return account
+
+
+def list_household_accounts(
+    db: Session,
+    household_id: str,
+) -> list[tuple[Account, AccountMemberBinding | None]]:
+    """List all accounts for a household with their bindings."""
+    accounts = list(
+        db.scalars(
+            select(Account).where(
+                Account.household_id == household_id,
+                Account.account_type == "household",
+            ).order_by(Account.created_at.asc())
+        ).all()
+    )
+
+    results: list[tuple[Account, AccountMemberBinding | None]] = []
+    for account in accounts:
+        binding = db.scalar(
+            select(AccountMemberBinding).where(
+                AccountMemberBinding.account_id == account.id,
+                AccountMemberBinding.binding_status == "active",
+            )
+        )
+        results.append((account, binding))
+
+    return results
+
+
+def update_household_account(
+    db: Session,
+    account_id: str,
+    household_id: str,
+    payload: HouseholdAccountUpdateRequest,
+) -> Account:
+    """Update a household account's status or must_change_password flag."""
+    account = db.get(Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+
+    if account.household_id != household_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="account does not belong to this household")
+
+    if account.account_type != "household":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="can only update household accounts")
+
+    if payload.status is not None:
+        account.status = payload.status
+    if payload.must_change_password is not None:
+        account.must_change_password = payload.must_change_password
+
+    db.add(account)
+    return account
+
+
+def reset_household_account_password(
+    db: Session,
+    account_id: str,
+    household_id: str,
+    payload: HouseholdAccountResetPasswordRequest,
+) -> Account:
+    """Reset a household account's password."""
+    account = db.get(Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+
+    if account.household_id != household_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="account does not belong to this household")
+
+    if account.account_type != "household":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="can only reset household account passwords")
+
+    account.password_hash = hash_password(payload.new_password)
+    account.must_change_password = payload.must_change_password
+
+    # Revoke all existing sessions for this account
+    revoke_sessions_for_account(db, account_id)
+
+    db.add(account)
+    return account
+
+
+def delete_household_account(
+    db: Session,
+    account_id: str,
+    household_id: str,
+) -> None:
+    """Delete a household account (soft delete by setting status to deleted)."""
+    account = db.get(Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+
+    if account.household_id != household_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="account does not belong to this household")
+
+    if account.account_type != "household":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="can only delete household accounts")
+
+    # Revoke all sessions first
+    revoke_sessions_for_account(db, account_id)
+
+    # Delete bindings
+    bindings = db.scalars(
+        select(AccountMemberBinding).where(AccountMemberBinding.account_id == account_id)
+    ).all()
+    for binding in bindings:
+        db.delete(binding)
+
+    # Delete the account
+    db.delete(account)

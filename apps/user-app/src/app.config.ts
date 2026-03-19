@@ -21,7 +21,7 @@ export default {
     },
     {
       root: 'pages/settings',
-      pages: ['index', 'ai/index', 'integrations/index', 'channel-access/index'],
+      pages: ['index', 'ai/index', 'accounts/index', 'integrations/index', 'channel-access/index'],
     },
     {
       root: 'pages/plugins',

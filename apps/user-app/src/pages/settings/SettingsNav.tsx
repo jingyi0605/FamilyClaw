@@ -3,6 +3,7 @@ import {
   Bot,
   Globe,
   HeartHandshake,
+  KeyRound,
   Link as LinkIcon,
   MessageCircle,
   Palette,
@@ -18,6 +19,7 @@ import { useAuthContext } from '../../runtime/auth';
 type SettingsNavKey =
   | 'appearance'
   | 'ai'
+  | 'accounts'
   | 'language'
   | 'notifications'
   | 'accessibility'
@@ -70,6 +72,14 @@ const settingsItems: SettingsNavItem[] = [
     descKey: 'settings.nav.ai.desc',
     url: '/pages/settings/ai/index',
     icon: <Bot size={20} />,
+    adminOnly: true,
+  },
+  {
+    key: 'accounts',
+    labelKey: 'settings.nav.accounts.label',
+    descKey: 'settings.nav.accounts.desc',
+    url: '/pages/settings/accounts/index',
+    icon: <KeyRound size={20} />,
     adminOnly: true,
   },
   {

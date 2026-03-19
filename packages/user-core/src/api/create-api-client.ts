@@ -32,6 +32,9 @@ import {
   HomeAssistantSyncResponse,
   Household,
   HouseholdAccountCreateResponse,
+  HouseholdAccountListResponse,
+  HouseholdAccountResetPasswordPayload,
+  HouseholdAccountUpdatePayload,
   HouseholdSetupStatus,
   LoginResponse,
   MemoryCard,
@@ -58,6 +61,7 @@ import {
   ReminderOverviewRead,
   Room,
   ButlerBootstrapSession,
+  AccountRead,
 } from '../domain/types';
 
 export type RequestClient = <T>(
@@ -220,6 +224,35 @@ export function createCoreApiClient(request: RequestClient) {
         method: 'POST',
         body: JSON.stringify(payload),
       });
+    },
+    listHouseholdAccounts(householdId: string) {
+      return request<HouseholdAccountListResponse>(`/accounts/household/${encodeURIComponent(householdId)}`);
+    },
+    updateHouseholdAccount(householdId: string, accountId: string, payload: HouseholdAccountUpdatePayload) {
+      return request<AccountRead>(
+        `/accounts/household/${encodeURIComponent(householdId)}/${encodeURIComponent(accountId)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        },
+      );
+    },
+    resetHouseholdAccountPassword(householdId: string, accountId: string, payload: HouseholdAccountResetPasswordPayload) {
+      return request<AccountRead>(
+        `/accounts/household/${encodeURIComponent(householdId)}/${encodeURIComponent(accountId)}/reset-password`,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        },
+      );
+    },
+    deleteHouseholdAccount(householdId: string, accountId: string) {
+      return request<void>(
+        `/accounts/household/${encodeURIComponent(householdId)}/${encodeURIComponent(accountId)}`,
+        {
+          method: 'DELETE',
+        },
+      );
     },
     listAiProviderAdapters() {
       return request<AiProviderAdapter[]>('/ai-config/provider-adapters');
