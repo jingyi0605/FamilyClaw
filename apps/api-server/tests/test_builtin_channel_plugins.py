@@ -3,6 +3,7 @@ import hashlib
 import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from xml.etree import ElementTree
 
@@ -11,8 +12,11 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import httpx
 
+from app.modules.channel.schemas import ChannelInboundMessage
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import execute_plugin, list_registered_plugins
+from app.plugins.builtin.channel_feishu import event_parser as feishu_event_parser
+from app.plugins.builtin.channel_feishu import plugin_binding as feishu_plugin_binding
 
 
 class _MockHttpResponse:
@@ -417,45 +421,49 @@ class BuiltinChannelPluginTests(unittest.TestCase):
             challenge_result.output["http_response"]["body_json"],
         )
 
-        message_result = execute_plugin(
-            PluginExecutionRequest(
-                plugin_id="channel-feishu",
-                plugin_type="channel",
-                payload={
-                    "action": "webhook",
-                    "account": {"config": json.dumps({"verification_token": "vt-001"})},
-                    "request": {
-                        "body_text": json.dumps(
-                            {
-                                "schema": "2.0",
-                                "header": {
+        with patch(
+            "app.plugins.builtin.channel_feishu.channel.route_inbound_event_for_core",
+            side_effect=lambda _account, event: event,
+        ):
+            message_result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-feishu",
+                    plugin_type="channel",
+                    payload={
+                        "action": "webhook",
+                        "account": {"config": json.dumps({"verification_token": "vt-001"})},
+                        "request": {
+                            "body_text": json.dumps(
+                                {
+                                    "schema": "2.0",
+                                    "header": {
+                                        "event_id": "evt-feishu-001",
+                                        "event_type": "im.message.receive_v1",
+                                    },
                                     "event_id": "evt-feishu-001",
-                                    "event_type": "im.message.receive_v1",
-                                },
-                                "event_id": "evt-feishu-001",
-                                "token": "vt-001",
-                                "event": {
-                                    "sender": {
-                                        "sender_id": {"open_id": "ou_user_001"},
-                                        "tenant_key": "张三",
-                                    },
-                                    "message": {
-                                        "message_id": "om_001",
-                                        "chat_id": "oc_123",
-                                        "chat_type": "p2p",
-                                        "message_type": "text",
-                                        "thread_id": "th_001",
-                                        "content": json.dumps({"text": "你好，飞书"}, ensure_ascii=False),
+                                    "token": "vt-001",
+                                    "event": {
+                                        "sender": {
+                                            "sender_id": {"open_id": "ou_user_001"},
+                                            "tenant_key": "张三",
+                                        },
+                                        "message": {
+                                            "message_id": "om_001",
+                                            "chat_id": "oc_123",
+                                            "chat_type": "p2p",
+                                            "message_type": "text",
+                                            "thread_id": "th_001",
+                                            "content": json.dumps({"text": "你好，飞书"}, ensure_ascii=False),
+                                        },
                                     },
                                 },
-                            },
-                            ensure_ascii=False,
-                        )
+                                ensure_ascii=False,
+                            )
+                        },
                     },
-                },
-            ),
-            root_dir=self.builtin_root,
-        )
+                ),
+                root_dir=self.builtin_root,
+            )
 
         self.assertTrue(message_result.success)
         event = message_result.output["event"]
@@ -521,27 +529,31 @@ class BuiltinChannelPluginTests(unittest.TestCase):
         encrypt_key = "feishu-encrypt-demo-key"
         encrypted_text = self._encrypt_feishu_payload(inner_payload, encrypt_key)
 
-        result = execute_plugin(
-            PluginExecutionRequest(
-                plugin_id="channel-feishu",
-                plugin_type="channel",
-                payload={
-                    "action": "webhook",
-                    "account": {
-                        "config": json.dumps(
-                            {
-                                "verification_token": "vt-enc-001",
-                                "encrypt_key": encrypt_key,
-                            }
-                        )
+        with patch(
+            "app.plugins.builtin.channel_feishu.channel.route_inbound_event_for_core",
+            side_effect=lambda _account, event: event,
+        ):
+            result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-feishu",
+                    plugin_type="channel",
+                    payload={
+                        "action": "webhook",
+                        "account": {
+                            "config": json.dumps(
+                                {
+                                    "verification_token": "vt-enc-001",
+                                    "encrypt_key": encrypt_key,
+                                }
+                            )
+                        },
+                        "request": {
+                            "body_text": json.dumps({"encrypt": encrypted_text}),
+                        },
                     },
-                    "request": {
-                        "body_text": json.dumps({"encrypt": encrypted_text}),
-                    },
-                },
-            ),
-            root_dir=self.builtin_root,
-        )
+                ),
+                root_dir=self.builtin_root,
+            )
 
         self.assertTrue(result.success)
         event = result.output["event"]
@@ -550,7 +562,249 @@ class BuiltinChannelPluginTests(unittest.TestCase):
         self.assertEqual("chat:oc_encrypt_123", event["external_conversation_key"])
         self.assertEqual("th_encrypt_001", event["normalized_payload"]["thread_key"])
 
-    def test_dingtalk_plugin_normalizes_stream_event_and_sends_via_session_webhook(self) -> None:
+    def test_feishu_plugin_treats_private_chat_as_direct_message(self) -> None:
+        event = feishu_event_parser.normalize_feishu_message_event(
+            {
+                "schema": "2.0",
+                "header": {
+                    "event_id": "evt-feishu-private-001",
+                    "event_type": "im.message.receive_v1",
+                },
+                "event": {
+                    "sender": {
+                        "sender_id": {"open_id": "ou_user_private_001"},
+                        "tenant_key": "王五",
+                    },
+                    "message": {
+                        "message_id": "om_private_001",
+                        "chat_id": "oc_private_001",
+                        "chat_type": "private",
+                        "message_type": "text",
+                        "content": json.dumps({"text": "你好，私聊飞书"}, ensure_ascii=False),
+                    },
+                },
+            }
+        )
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual("direct", event["normalized_payload"]["chat_type"])
+        self.assertEqual("private", event["normalized_payload"]["metadata"]["chat_type"])
+
+    def test_feishu_plugin_handles_unbound_direct_message_inside_plugin(self) -> None:
+        class _FakeSession:
+            def __init__(self) -> None:
+                self.commit_count = 0
+                self.account_row = SimpleNamespace(last_inbound_at=None, last_outbound_at=None, updated_at=None)
+
+            def commit(self) -> None:
+                self.commit_count += 1
+
+        class _FakeSessionLocal:
+            def __init__(self, db: _FakeSession) -> None:
+                self._db = db
+
+            def __call__(self):
+                return self
+
+            def __enter__(self):
+                return self._db
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        fake_db = _FakeSession()
+        fake_event_row = SimpleNamespace(received_at="2026-03-19T09:00:00Z")
+        account_payload = {
+            "id": "feishu-account-001",
+            "household_id": "household-001",
+            "config": json.dumps(
+                {
+                    "app_id": "cli_xxx",
+                    "app_secret": "secret-yyy",
+                }
+            ),
+        }
+        inbound_event = {
+            "external_event_id": "evt-feishu-unbound-001",
+            "event_type": "message",
+            "external_user_id": "ou_user_unbound_001",
+            "external_conversation_key": "chat:oc_unbound_001",
+            "received_at": "2026-03-19T09:00:00Z",
+            "normalized_payload": {
+                "text": "你好，未绑定飞书",
+                "chat_type": "direct",
+                "metadata": {
+                    "chat_id": "oc_unbound_001",
+                },
+            },
+        }
+
+        with patch.object(feishu_plugin_binding, "SessionLocal", _FakeSessionLocal(fake_db)):
+            with patch.object(feishu_plugin_binding, "_get_active_member_binding", return_value=None):
+                with patch.object(
+                    feishu_plugin_binding,
+                    "record_channel_inbound_event",
+                    return_value=(fake_event_row, True),
+                ) as record_mock:
+                    with patch.object(
+                        feishu_plugin_binding.repository,
+                        "get_channel_plugin_account",
+                        return_value=fake_db.account_row,
+                    ):
+                        with patch.object(
+                            feishu_plugin_binding,
+                            "send_text_message",
+                            return_value="om_reply_unbound_001",
+                        ) as send_mock:
+                            result = feishu_plugin_binding.route_inbound_event_for_core(account_payload, inbound_event)
+
+        self.assertIsNone(result)
+        record_mock.assert_called_once()
+        send_mock.assert_called_once()
+        self.assertEqual(feishu_plugin_binding.UNBOUND_DIRECT_REPLY_TEXT, send_mock.call_args.kwargs["text"])
+        self.assertEqual(2, fake_db.commit_count)
+
+    def test_channel_bridge_prefers_plugin_binding_metadata(self) -> None:
+        normalized_message = ChannelInboundMessage.model_validate(
+            {
+                "text": "你好",
+                "chat_type": "direct",
+                "metadata": {
+                    "plugin_binding": {
+                        "managed_by_plugin": True,
+                        "matched": True,
+                        "strategy": "bound",
+                        "member_id": "member-001",
+                        "binding_id": "binding-001",
+                    }
+                },
+            }
+        )
+
+        with patch("app.modules.channel.conversation_bridge.resolve_member_binding_for_inbound") as fallback_mock:
+            from app.modules.channel import conversation_bridge
+
+            result = conversation_bridge._resolve_inbound_binding(
+                None,
+                household_id="household-001",
+                channel_account_id="channel-account-001",
+                inbound_event=SimpleNamespace(external_user_id="ou_user_001"),
+                normalized_message=normalized_message,
+            )
+
+        fallback_mock.assert_not_called()
+        self.assertTrue(result.matched)
+        self.assertEqual("bound", result.strategy)
+        self.assertEqual("member-001", result.member_id)
+        self.assertEqual("binding-001", result.binding_id)
+
+    def test_dingtalk_plugin_polls_stream_queue_and_sends_group_message_via_openapi(self) -> None:
+        class _FakePoller:
+            def drain_events(self, *, limit: int) -> list[dict]:
+                self.last_limit = limit
+                return [
+                    {
+                        "external_event_id": "stream-msg-001",
+                        "event_type": "message",
+                        "external_user_id": "staff-001",
+                        "external_conversation_key": "group:cid-001",
+                        "normalized_payload": {
+                            "text": "你好，钉钉",
+                            "chat_type": "group",
+                            "sender_display_name": "钉钉用户",
+                            "metadata": {
+                                "conversation_id": "cid-001",
+                                "stream_message_id": "stream-msg-001",
+                            },
+                        },
+                        "status": "received",
+                    }
+                ]
+
+        fake_poller = _FakePoller()
+        with patch(
+            "app.plugins.builtin.channel_dingtalk.channel._ensure_stream_poller",
+            return_value=fake_poller,
+        ) as ensure_poller:
+            poll_result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-dingtalk",
+                    plugin_type="channel",
+                    payload={
+                        "action": "poll",
+                        "account": {
+                            "id": "ding-account-001",
+                            "config": json.dumps(
+                                {
+                                    "app_key": "ding-app-key-poll",
+                                    "app_secret": "ding-app-secret-poll",
+                                }
+                            ),
+                        },
+                    },
+                ),
+                root_dir=self.builtin_root,
+            )
+
+        self.assertTrue(poll_result.success)
+        ensure_poller.assert_called_once()
+        self.assertEqual("stream-msg-001", poll_result.output["next_cursor"])
+        self.assertEqual(1, len(poll_result.output["events"]))
+        event = poll_result.output["events"][0]
+        self.assertEqual("stream-msg-001", event["external_event_id"])
+        self.assertEqual("staff-001", event["external_user_id"])
+        self.assertEqual("group:cid-001", event["external_conversation_key"])
+        self.assertEqual("group", event["normalized_payload"]["chat_type"])
+
+        with patch("app.plugins.builtin.channel_dingtalk.channel.httpx.post") as http_post:
+            http_post.side_effect = [
+                _MockHttpResponse({"accessToken": "ding-access-token", "expireIn": 7200}),
+                _MockHttpResponse({"processQueryKey": "ding-send-001"}),
+            ]
+            send_result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-dingtalk",
+                    plugin_type="channel",
+                    payload={
+                        "action": "send",
+                        "account": {
+                            "config": json.dumps(
+                                {
+                                    "app_key": "ding-app-key-send",
+                                    "app_secret": "ding-app-secret-send",
+                                }
+                            )
+                        },
+                        "delivery": {
+                            "external_conversation_key": "group:cid-001",
+                            "text": "回复 钉钉",
+                        },
+                    },
+                ),
+                root_dir=self.builtin_root,
+            )
+
+        self.assertTrue(send_result.success)
+        self.assertEqual("ding-send-001", send_result.output["provider_message_ref"])
+        self.assertEqual(
+            "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+            http_post.call_args_list[0].args[0],
+        )
+        self.assertEqual(
+            "https://api.dingtalk.com/v1.0/robot/groupMessages/send",
+            http_post.call_args_list[1].args[0],
+        )
+        self.assertEqual(
+            "ding-access-token",
+            http_post.call_args_list[1].kwargs["headers"]["x-acs-dingtalk-access-token"],
+        )
+        self.assertEqual(
+            "cid-001",
+            http_post.call_args_list[1].kwargs["json"]["openConversationId"],
+        )
+
+    def test_dingtalk_plugin_keeps_legacy_webhook_parse_and_session_webhook_fallback(self) -> None:
         webhook_result = execute_plugin(
             PluginExecutionRequest(
                 plugin_id="channel-dingtalk",
@@ -615,6 +869,66 @@ class BuiltinChannelPluginTests(unittest.TestCase):
         self.assertTrue(send_result.success)
         self.assertEqual("ding-send-001", send_result.output["provider_message_ref"])
         self.assertEqual("https://example.test/dingtalk/session", http_post.call_args.args[0])
+
+    def test_dingtalk_plugin_probe_accepts_app_key_only_or_full_credentials(self) -> None:
+        session_webhook_mode_result = execute_plugin(
+            PluginExecutionRequest(
+                plugin_id="channel-dingtalk",
+                plugin_type="channel",
+                payload={
+                    "action": "probe",
+                    "account": {
+                        "config": json.dumps(
+                            {
+                                "app_key": "ding-app-key-only",
+                            }
+                        )
+                    },
+                },
+            ),
+            root_dir=self.builtin_root,
+        )
+
+        self.assertTrue(session_webhook_mode_result.success)
+        self.assertEqual("ok", session_webhook_mode_result.output["probe_status"])
+        self.assertEqual(
+            "dingtalk legacy webhook mode does not require active probe",
+            session_webhook_mode_result.output["message"],
+        )
+
+        with patch("app.plugins.builtin.channel_dingtalk.channel.httpx.post") as http_post:
+            http_post.return_value = _MockHttpResponse(
+                {
+                    "endpoint": "wss://example.test/gateway",
+                    "ticket": "ticket-001",
+                }
+            )
+            credential_mode_result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="channel-dingtalk",
+                    plugin_type="channel",
+                    payload={
+                        "action": "probe",
+                        "account": {
+                            "connection_mode": "polling",
+                            "config": json.dumps(
+                                {
+                                    "app_key": "ding-app-key",
+                                    "app_secret": "ding-app-secret",
+                                }
+                            ),
+                        },
+                    },
+                ),
+                root_dir=self.builtin_root,
+            )
+
+        self.assertTrue(credential_mode_result.success)
+        self.assertEqual("ok", credential_mode_result.output["probe_status"])
+        self.assertEqual(
+            "dingtalk stream credentials validated",
+            credential_mode_result.output["message"],
+        )
 
     def test_wecom_app_plugin_handles_handshake_message_and_send(self) -> None:
         aes_key = self._build_wecom_aes_key()

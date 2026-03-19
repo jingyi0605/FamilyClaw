@@ -1,7 +1,7 @@
 {
   "id": "channel-dingtalk",
   "name": "钉钉通讯通道",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "api_version": 1,
   "types": ["channel"],
   "permissions": [
@@ -17,7 +17,7 @@
     {
       "scope_type": "channel_account",
       "title": "钉钉账号配置",
-      "description": "给当前钉钉应用填基础连接参数。",
+      "description": "给当前钉钉企业应用填写接入参数。轮询模式会在插件内部维持钉钉 Stream 长连接，不再依赖 webhook。",
       "schema_version": 1,
       "config_schema": {
         "fields": [
@@ -48,13 +48,13 @@
         "widgets": {
           "app_key": {
             "widget": "input",
-            "placeholder": "dingxxx",
-            "help_text": "钉钉开放平台应用 App Key。"
+            "placeholder": "dingxxxxxxxxxxxxxxxx",
+            "help_text": "钉钉开放平台企业内部应用的 App Key。"
           },
           "app_secret": {
             "widget": "password",
-            "placeholder": "可选，用于获取 Access Token",
-            "help_text": "如果需要调用开放平台接口，请填写应用密钥。"
+            "placeholder": "用于 Stream 接收与 OpenAPI 发送",
+            "help_text": "推荐同时填写 App Secret。轮询模式和 OpenAPI 回消息都依赖它。"
           }
         }
       }
@@ -63,7 +63,7 @@
   "capabilities": {
     "channel": {
       "platform_code": "dingtalk",
-      "inbound_modes": ["webhook"],
+      "inbound_modes": ["polling", "webhook"],
       "delivery_modes": ["reply", "push"],
       "supports_member_binding": true,
       "supports_group_chat": true,
@@ -72,12 +72,12 @@
         "binding": {
           "identity_label": "用户 ID",
           "identity_placeholder": "例如：staff-001",
-          "identity_help_text": "钉钉用户在当前通道里使用的唯一标识。",
+          "identity_help_text": "钉钉成员在当前通道里使用的唯一标识。单聊场景优先使用 staffId。",
           "chat_label": "会话 ID",
           "chat_placeholder": "例如：cid-001",
-          "chat_help_text": "钉钉会话 conversationId。",
+          "chat_help_text": "群聊会使用钉钉 conversationId；单聊轮询模式下会自动按用户 ID 路由。",
           "candidate_title": "待绑定钉钉用户",
-          "candidate_help_text": "这里只展示最近给当前账号发过消息、但还没有在当前账号下绑定的用户。"
+          "candidate_help_text": "这里只展示最近给当前账号发过消息、但还没有在当前账号下绑定成员的钉钉用户。"
         }
       },
       "reserved": false

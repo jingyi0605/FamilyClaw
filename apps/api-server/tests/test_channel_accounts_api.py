@@ -278,6 +278,35 @@ class ChannelAccountsApiTests(unittest.TestCase):
         self.assertEqual(409, probe_response.status_code)
         self.assertEqual("plugin_disabled", probe_response.json()["detail"]["error_code"])
 
+    def test_probe_dingtalk_channel_account_returns_ok_after_configured(self) -> None:
+        create_response = self.client.post(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts",
+            json={
+                "plugin_id": "channel-dingtalk",
+                "account_code": "dingtalk-main",
+                "display_name": "钉钉主账号",
+                "connection_mode": "webhook",
+                "config": {
+                    "app_key": "ding-app-key",
+                },
+                "status": "active",
+            },
+        )
+        self.assertEqual(201, create_response.status_code)
+        account_id = create_response.json()["id"]
+
+        probe_response = self.client.post(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts/{account_id}/probe"
+        )
+        self.assertEqual(200, probe_response.status_code)
+        probe_payload = probe_response.json()
+        self.assertEqual("ok", probe_payload["account"]["last_probe_status"])
+        self.assertEqual("active", probe_payload["account"]["status"])
+        self.assertEqual(
+            "dingtalk legacy webhook mode does not require active probe",
+            probe_payload["account"]["last_error_message"],
+        )
+
     def test_update_channel_account_allows_configuring_disabled_channel_plugin(self) -> None:
         create_response = self.client.post(
             f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts",
