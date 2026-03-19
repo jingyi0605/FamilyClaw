@@ -14,7 +14,12 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.core.config import (
+    OFFICIAL_PLUGIN_MARKETPLACE_BRANCH,
+    OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT,
+    OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL,
+    settings,
+)
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.plugin.models import PluginMount
 from app.modules.plugin.schemas import (
@@ -639,11 +644,11 @@ def ensure_builtin_marketplace_source(
     if existing is not None:
         return existing
 
-    branch = settings.plugin_marketplace_official_branch.strip() or "main"
-    entry_root = settings.plugin_marketplace_official_entry_root.strip() or "plugins"
+    branch = OFFICIAL_PLUGIN_MARKETPLACE_BRANCH.strip() or "main"
+    entry_root = OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins"
     marketplace_client = _get_client(client)
     repo_provider = _resolve_repo_provider(
-        repo_url=settings.plugin_marketplace_official_repo_url.strip(),
+        repo_url=OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL.strip(),
         explicit_provider=None,
         client=marketplace_client,
         field_name="repo_provider",
@@ -654,7 +659,7 @@ def ensure_builtin_marketplace_source(
         market_id=None,
         name="官方插件市场",
         owner=None,
-        repo_url=settings.plugin_marketplace_official_repo_url.strip(),
+        repo_url=OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL.strip(),
         repo_provider=repo_provider,
         api_base_url=None,
         mirror_repo_url=None,

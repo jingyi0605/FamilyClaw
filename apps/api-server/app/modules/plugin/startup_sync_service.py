@@ -9,7 +9,12 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.core.config import (
+    OFFICIAL_PLUGIN_MARKETPLACE_BRANCH,
+    OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT,
+    OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL,
+    settings,
+)
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.household.models import Household
 from app.modules.plugin import repository as plugin_repository
@@ -438,14 +443,14 @@ def _ensure_builtin_marketplace_source_row(db: Session) -> PluginMarketplaceSour
         market_id=None,
         name="官方插件市场",
         owner=None,
-        repo_url=settings.plugin_marketplace_official_repo_url.strip(),
-        repo_provider=_infer_repo_provider(settings.plugin_marketplace_official_repo_url),
+        repo_url=OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL.strip(),
+        repo_provider=_infer_repo_provider(OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL),
         api_base_url=None,
         mirror_repo_url=None,
         mirror_repo_provider=None,
         mirror_api_base_url=None,
-        branch=settings.plugin_marketplace_official_branch.strip() or "main",
-        entry_root=settings.plugin_marketplace_official_entry_root.strip() or "plugins",
+        branch=OFFICIAL_PLUGIN_MARKETPLACE_BRANCH.strip() or "main",
+        entry_root=OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins",
         trusted_level="official",
         enabled=True,
         last_sync_status="idle",

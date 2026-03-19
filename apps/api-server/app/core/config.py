@@ -8,6 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_URL = "postgresql+psycopg://familyclaw:change-me@127.0.0.1:5432/familyclaw"
 VoiceRuntimeMode = Literal["embedded", "disabled"]
+OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL = "https://github.com/jingyi0605/familyclaw-marketplace.git"
+OFFICIAL_PLUGIN_MARKETPLACE_BRANCH = "main"
+OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
 
 
 class AiProviderRuntimeConfig(BaseModel):
@@ -73,9 +76,6 @@ class Settings(BaseSettings):
     plugin_job_default_timeout_seconds: int = 60
     plugin_job_running_stale_after_seconds: int = 120
     plugin_config_secret_seed: str = "familyclaw-dev-plugin-config-seed"
-    plugin_marketplace_official_repo_url: str = "https://github.com/familyclaw/plugin-marketplace"
-    plugin_marketplace_official_branch: str = "main"
-    plugin_marketplace_official_entry_root: str = "plugins"
     plugin_marketplace_github_token: str | None = None
     plugin_storage_root: str = str((BASE_DIR / "data" / "plugins").resolve())
     plugin_marketplace_install_root: str = str((BASE_DIR / "data" / "plugins").resolve())
