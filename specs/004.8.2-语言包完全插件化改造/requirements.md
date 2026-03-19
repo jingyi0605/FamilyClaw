@@ -11,16 +11,18 @@
 - RN 页面还没有和 H5 一样走统一的语言插件运行时。
 - 插件安装、升级、卸载后，前端怎么拿到最新语言资源，还没有一套完整规则。
 
-这次 Spec 要解决的不是“再补一个语言包”，而是把语言资源的所有权彻底交给 `locale-pack` 插件：
+这次 Spec 要解决的不是“再补一个语言包”，而是把“语言包插件”和“普通插件自带词典”这两条链同时理顺：
 
 - 内置语言包也必须是“真实插件目录 + manifest + 资源文件”。
 - `user-app` 不再把宿主常量表当 canonical source。
 - 未来官方插件和第三方插件统一从 `data/plugins` 加载资源，并同时支持 H5 和 RN。
+- 普通插件允许通过 `manifest.locales` 提供自己的插件词典，不再要求所有文案都拆进 `locale-pack`。
 
 ## 术语表
 
 - **System**：FamilyClaw 的插件平台、前后端运行时和插件市场安装链路。
 - **locale-pack 插件**：声明一个或多个 `locale_id`，并提供消息资源文件的正式插件。
+- **插件自带词典**：普通插件通过 `manifest.locales` 声明的自有文案资源，只负责该插件自己的消息 key。
 - **内置语言插件**：仓库内自带、随 `user-app` 一起发布的 `locale-pack` 插件。
 - **远端语言插件**：安装到 `apps/api-server/data/plugins` 下，由后端托管并分发资源的官方或第三方 `locale-pack` 插件。
 - **语言资源注册表**：后端输出给前端的当前家庭可用语言插件清单，包含插件、版本、状态和资源索引信息。
@@ -52,6 +54,7 @@
 1. WHEN 系统检查内置语言资源 THEN System SHALL 让 `zh-CN`、`en-US`、`zh-TW` 都以真实插件目录、manifest 和资源文件存在。
 2. WHEN 系统注册语言插件 THEN System SHALL 统一从插件 manifest 读取 `locale_id`、资源入口、版本和适用端信息，而不是从宿主常量表拼装。
 3. WHEN 语言插件被停用、卸载或损坏 THEN System SHALL 明确标记该插件不可用，而不是静默回退到宿主默认文案。
+4. WHEN 普通插件声明 `manifest.locales` THEN System SHALL 允许它参与同一 `locale_id` 的消息 key 合并，而不是强制要求它改造成 `locale-pack`。
 
 ### 需求 2：前端必须统一走语言插件运行时
 

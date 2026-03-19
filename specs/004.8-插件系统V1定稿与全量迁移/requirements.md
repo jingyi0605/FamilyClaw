@@ -77,6 +77,8 @@ FamilyClaw 现在已经有插件注册、启停、配置、任务、卡片、内
 8. WHEN 宿主承接运行态标准实体 THEN System SHALL 将实体写入宿主公共标准实体承载层，SHALL NOT 再把 `DeviceBinding.capabilities.entities` 当成正式实体事实源。
 9. WHEN `official` 或 `third_party` 插件目录缺失 THEN System SHALL 仍可完成宿主启动、数据库迁移和核心接口初始化。
 10. WHEN 插件私有表需要建表、升级或删表 THEN System SHALL 使用插件私有迁移边界处理，而不是倒挂回宿主核心 Alembic 历史。
+11. WHEN 插件产出仪表盘卡片 THEN System SHALL 只消费卡片 payload 里的标准可见字段，SHALL NOT 按某个插件的词典 key、卡片字段名或领域类型写宿主专用渲染分支。
+12. WHEN 卡片 payload 包含用户可见文案 THEN System SHALL 要求插件通过 `label`、`label_key`、`value_display`、`value_type` 等标准字段传递，SHALL NOT 允许宿主把插件词典 key 原样显示给用户。
 
 ### 需求 3：现有内置插件和官方插件必须全量迁移
 
