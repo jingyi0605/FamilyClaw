@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from app.api.dependencies import ActorContext
 from app.db.utils import new_uuid, utc_now_iso
@@ -10,6 +11,7 @@ from app.modules.channel.binding_service import resolve_member_binding_for_inbou
 from app.modules.channel.conversation_routing import resolve_channel_conversation_route
 from app.modules.channel.models import ChannelConversationBinding
 from app.modules.channel.schemas import (
+    ChannelBindingResolveRead,
     ChannelConversationBridgeRead,
     ChannelInboundMessage,
 )
@@ -25,6 +27,9 @@ from app.modules.conversation.service import (
     create_conversation_turn,
     record_conversation_turn_source,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class ChannelConversationBridgeError(ValueError):
@@ -49,12 +54,30 @@ def handle_inbound_message(
 
     normalized_payload = json.loads(inbound_event.normalized_payload_json or "{}")
     normalized_message = ChannelInboundMessage.model_validate(normalized_payload)
-    binding = resolve_member_binding_for_inbound(
+    logger.info(
+        "feishu-debug bridge_enter inbound_event_id=%s account_id=%s household_id=%s external_event_id=%s external_user_id=%s chat_type=%s",
+        inbound_event.id,
+        channel_account_id,
+        household_id,
+        inbound_event.external_event_id,
+        inbound_event.external_user_id,
+        normalized_message.chat_type,
+    )
+    binding = _resolve_inbound_binding(
         db,
         household_id=household_id,
         channel_account_id=channel_account_id,
-        external_user_id=inbound_event.external_user_id,
-        chat_type=normalized_message.chat_type,
+        inbound_event=inbound_event,
+        normalized_message=normalized_message,
+    )
+    logger.info(
+        "feishu-debug bridge_binding_resolved inbound_event_id=%s account_id=%s household_id=%s strategy=%s matched=%s member_id=%s",
+        inbound_event.id,
+        channel_account_id,
+        household_id,
+        binding.strategy,
+        binding.matched,
+        binding.member_id,
     )
 
     now = utc_now_iso()
@@ -68,6 +91,13 @@ def handle_inbound_message(
             "direct member binding is missing" if binding.strategy == "direct_unbound_prompt" else "group message ignored because member binding is missing"
         )
         inbound_event.processed_at = now
+        logger.info(
+            "feishu-debug bridge_ignored inbound_event_id=%s account_id=%s household_id=%s strategy=%s",
+            inbound_event.id,
+            channel_account_id,
+            household_id,
+            binding.strategy,
+        )
         return ChannelConversationBridgeRead(
             inbound_event_id=inbound_event.id,
             disposition="ignored",
@@ -101,6 +131,14 @@ def handle_inbound_message(
         inbound_event.status = "dispatched"
         inbound_event.conversation_session_id = command_result.conversation_session_id
         inbound_event.processed_at = now
+        logger.info(
+            "feishu-debug bridge_command_dispatched inbound_event_id=%s account_id=%s household_id=%s session_id=%s created_binding=%s",
+            inbound_event.id,
+            channel_account_id,
+            household_id,
+            command_result.conversation_session_id,
+            command_result.created_binding,
+        )
         return ChannelConversationBridgeRead(
             inbound_event_id=inbound_event.id,
             disposition="dispatched",
@@ -151,6 +189,16 @@ def handle_inbound_message(
     inbound_event.status = "dispatched"
     inbound_event.conversation_session_id = conversation_binding.conversation_session_id
     inbound_event.processed_at = now
+    logger.info(
+        "feishu-debug bridge_message_dispatched inbound_event_id=%s account_id=%s household_id=%s session_id=%s request_id=%s created_session=%s created_conversation_binding=%s",
+        inbound_event.id,
+        channel_account_id,
+        household_id,
+        conversation_binding.conversation_session_id,
+        turn.request_id,
+        created_session,
+        created_conversation_binding,
+    )
 
     return ChannelConversationBridgeRead(
         inbound_event_id=inbound_event.id,
@@ -164,6 +212,86 @@ def handle_inbound_message(
         created_session=created_session,
         created_conversation_binding=created_conversation_binding,
     )
+
+
+def _resolve_inbound_binding(
+    db,
+    *,
+    household_id: str,
+    channel_account_id: str,
+    inbound_event,
+    normalized_message: ChannelInboundMessage,
+) -> ChannelBindingResolveRead:
+    plugin_binding = _parse_plugin_binding_resolution(normalized_message)
+    if plugin_binding is not None:
+        logger.info(
+            "feishu-debug bridge_binding_source source=plugin account_id=%s household_id=%s strategy=%s matched=%s member_id=%s",
+            channel_account_id,
+            household_id,
+            plugin_binding.strategy,
+            plugin_binding.matched,
+            plugin_binding.member_id,
+        )
+        return plugin_binding
+
+    # TODO(渠道插件迁移):
+    # 当前这里保留核心侧绑定兜底，只是为了兼容还没迁移完成的渠道。
+    # 后续当所有渠道插件都自己产出绑定决策后，这段 fallback 必须删除，
+    # 核心只保留抽象桥接能力，不再承担具体平台的成员匹配实现。
+    logger.info(
+        "feishu-debug bridge_binding_source source=core_fallback account_id=%s household_id=%s external_user_id=%s chat_type=%s",
+        channel_account_id,
+        household_id,
+        inbound_event.external_user_id,
+        normalized_message.chat_type,
+    )
+    return resolve_member_binding_for_inbound(
+        db,
+        household_id=household_id,
+        channel_account_id=channel_account_id,
+        external_user_id=inbound_event.external_user_id,
+        chat_type=normalized_message.chat_type,
+    )
+
+
+def _parse_plugin_binding_resolution(
+    normalized_message: ChannelInboundMessage,
+) -> ChannelBindingResolveRead | None:
+    metadata = normalized_message.metadata
+    if not isinstance(metadata, dict):
+        return None
+    plugin_binding = metadata.get("plugin_binding")
+    if not isinstance(plugin_binding, dict):
+        return None
+    if plugin_binding.get("managed_by_plugin") is not True:
+        return None
+
+    matched = plugin_binding.get("matched")
+    strategy = plugin_binding.get("strategy")
+    member_id = plugin_binding.get("member_id")
+    binding_id = plugin_binding.get("binding_id")
+    reply_text = plugin_binding.get("reply_text")
+
+    if not isinstance(matched, bool):
+        return None
+    if strategy not in {"bound", "direct_unbound_prompt", "group_unbound_ignore"}:
+        return None
+    if isinstance(member_id, str) and not member_id.strip():
+        member_id = None
+    if isinstance(binding_id, str) and not binding_id.strip():
+        binding_id = None
+    if isinstance(reply_text, str) and not reply_text.strip():
+        reply_text = None
+
+    return ChannelBindingResolveRead(
+        matched=matched,
+        strategy=strategy,
+        member_id=member_id,
+        binding_id=binding_id,
+        reply_text=reply_text,
+    )
+
+
 def _get_or_create_conversation_binding(
     db,
     *,

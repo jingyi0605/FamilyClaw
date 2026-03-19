@@ -6,7 +6,7 @@ from app.modules.ai_gateway.provider_runtime import _build_messages
 class ProviderRuntimeMessagesTests(unittest.TestCase):
     def test_qa_generation_prompt_forbids_claiming_execution_from_history(self) -> None:
         messages = _build_messages(
-            capability="qa_generation",
+            capability="text",
             payload={
                 "question": "帮我关掉",
                 "answer_draft": "当前没有执行结果，需要先确认设备目标。",
@@ -22,6 +22,27 @@ class ProviderRuntimeMessagesTests(unittest.TestCase):
         self.assertIn("不能说“我这就帮你打开/关闭/执行”", messages[0]["content"])
         self.assertIn("最近设备上下文只用于理解用户这轮可能在指哪个设备", messages[0]["content"])
         self.assertIn("书房灯", messages[0]["content"])
+
+    def test_qa_generation_prompt_includes_realtime_context(self) -> None:
+        messages = _build_messages(
+            capability="text",
+            payload={
+                "question": "今天要不要早点休息",
+                "answer_draft": "可以提醒用户今天已经比较晚了。",
+                "realtime_context_text": (
+                    "当前实时信息：\n"
+                    "- 今天日期：2026-03-19\n"
+                    "- 当前本地时间：2026-03-19 22:30\n"
+                    "- 星期：星期四\n"
+                    "- 当前时区：Asia/Shanghai"
+                ),
+            },
+        )
+
+        self.assertIn("下面这段实时上下文只用于理解“今天”“现在”“今晚”“明天早上”这类相对时间表达", messages[0]["content"])
+        self.assertIn("今天日期：2026-03-19", messages[0]["content"])
+        self.assertIn("当前本地时间：2026-03-19 22:30", messages[0]["content"])
+        self.assertIn("当前时区：Asia/Shanghai", messages[0]["content"])
 
 
 if __name__ == "__main__":

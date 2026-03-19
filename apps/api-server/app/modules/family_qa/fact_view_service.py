@@ -9,9 +9,12 @@ from app.modules.agent.service import build_agent_runtime_context
 from app.modules.context.service import get_context_overview
 from app.modules.device.models import Device
 from app.modules.member import service as member_service
+from app.modules.member.prompt_context_service import MemberPromptProfile, list_member_prompt_profiles
 from app.modules.family_qa.schemas import (
     QaFactReference,
     QaFactDeviceState,
+    QaFactMemberProfile,
+    QaFactMemberRelationship,
     QaFactViewRead,
     QaMemorySummary,
     QaPermissionScope,
@@ -60,6 +63,14 @@ def build_qa_fact_view(
             update={"name": display_name_map.get(member_state.member_id, member_state.name)}
         )
         for member_state in overview.member_states
+    ]
+    member_profiles = [
+        _to_qa_fact_member_profile(profile)
+        for profile in list_member_prompt_profiles(
+            db,
+            household_id=household_id,
+            status_value="active",
+        )
     ]
     room_occupancy = [
         room.model_copy(
@@ -185,6 +196,7 @@ def build_qa_fact_view(
         requester_member_id=requester_member_id,
         active_member=active_member,
         member_states=member_states,
+        member_profiles=member_profiles,
         room_occupancy=room_occupancy,
         device_summary=overview.device_summary,
         device_states=[
@@ -411,10 +423,15 @@ def trim_qa_fact_view(fact_view: QaFactViewRead) -> QaFactViewRead:
         trimmed.member_states = [
             item for item in trimmed.member_states if item.member_id in scope.visible_member_ids
         ]
+        trimmed.member_profiles = [
+            item for item in trimmed.member_profiles if item.member_id in scope.visible_member_ids
+        ]
         if trimmed.active_member is not None and trimmed.active_member.member_id not in scope.visible_member_ids:
             trimmed.active_member = None
         if "member_states" not in scope.masked_sections:
             scope.masked_sections.append("member_states")
+        if "member_profiles" not in scope.masked_sections:
+            scope.masked_sections.append("member_profiles")
 
     visible_room_ids = set(scope.visible_room_ids)
     trimmed.room_occupancy = [
@@ -470,6 +487,32 @@ def trim_qa_fact_view(fact_view: QaFactViewRead) -> QaFactViewRead:
 
     trimmed.permission_scope = scope
     return trimmed
+
+
+def _to_qa_fact_member_profile(profile: MemberPromptProfile) -> QaFactMemberProfile:
+    return QaFactMemberProfile(
+        member_id=profile.member_id,
+        name=profile.display_name,
+        aliases=list(profile.aliases),
+        role=profile.role,
+        gender=profile.gender,
+        age_group=profile.age_group,
+        age_group_label=profile.age_group_label,
+        birthday=profile.birthday,
+        age_years=profile.age_years,
+        preferred_name=profile.preferred_name,
+        guardian_member_id=profile.guardian_member_id,
+        guardian_name=profile.guardian_name,
+        relationships=[
+            QaFactMemberRelationship(
+                target_member_id=relationship.target_member_id,
+                target_member_name=relationship.target_member_name,
+                relation_type=relationship.relation_type,
+                relation_label=relationship.relation_label,
+            )
+            for relationship in profile.relationships
+        ],
+    )
 
 
 def _build_permission_scope(

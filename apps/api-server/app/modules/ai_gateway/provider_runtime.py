@@ -1337,6 +1337,7 @@ def _build_messages(
         agent_prompt = _build_agent_prompt(payload)
         memory_prompt = _build_agent_memory_prompt(payload)
         device_context_prompt = _build_device_context_prompt(payload)
+        realtime_context_prompt = _build_realtime_context_prompt(payload)
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
@@ -1345,7 +1346,7 @@ def _build_messages(
                     "不要编造事实，也不要把最近对话里的控制请求、历史动作或上下文暗示说成“这轮已经执行过”。"
                     "除非当前规则回答草稿明确包含执行结果，否则不能说“已为你打开/关闭/执行”。"
                     "同样也不能说“我这就帮你打开/关闭/执行”这类即将执行的话，因为当前链路不是设备执行链。"
-                    f"{agent_prompt}{memory_prompt}{device_context_prompt}"
+                    f"{agent_prompt}{memory_prompt}{device_context_prompt}{realtime_context_prompt}"
                 ),
             }
         ]
@@ -1678,6 +1679,17 @@ def _build_device_context_prompt(payload: Mapping[str, object]) -> str:
     return (
         "\n最近设备上下文只用于理解用户这轮可能在指哪个设备，不能当成这轮已经执行成功的证据。"
         "如果它和当前结构化事实冲突，以结构化事实为准。\n"
+        f"{summary_text}"
+    )
+
+
+def _build_realtime_context_prompt(payload: Mapping[str, object]) -> str:
+    summary_text = str(payload.get("realtime_context_text") or "").strip()
+    if not summary_text:
+        return ""
+    return (
+        "\n下面这段实时上下文只用于理解“今天”“现在”“今晚”“明天早上”这类相对时间表达。"
+        "如果用户的问题依赖当前日期或本地时间，以这里为准。\n"
         f"{summary_text}"
     )
 

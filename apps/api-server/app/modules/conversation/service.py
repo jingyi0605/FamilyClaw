@@ -74,6 +74,7 @@ from app.modules.llm_task.output_models import MemoryExtractionOutput, ProposalB
 from app.modules.memory.schemas import MemoryCardCorrectionPayload, MemoryCardManualCreate
 from app.modules.memory.service import correct_memory_card, create_manual_memory_card
 from app.modules.member import service as member_service
+from app.modules.member.prompt_context_service import build_member_prompt_context
 from app.modules.reminder.schemas import ReminderTaskCreate
 from app.modules.reminder.service import create_task as create_reminder_task
 from app.modules.reminder.service import delete_task as delete_reminder_task
@@ -2671,26 +2672,7 @@ def _build_memory_extraction_conversation(
 
 
 def _build_member_context(db: Session, *, household_id: str) -> str:
-    members, _ = member_service.list_members(db, household_id=household_id, page=1, page_size=100, status_value="active")
-    if members:
-        display_name_map = member_service.build_member_display_name_map(
-            db,
-            household_id=household_id,
-            members=members,
-            status_value="active",
-        )
-        lines: list[str] = []
-        for member in members:
-            display_name = display_name_map.get(member.id, member.name)
-            lines.append(f"- {display_name} ({member.role})")
-        return "\n".join(lines)
-    if not members:
-        return "当前家庭还没有有效成员。"
-    lines: list[str] = []
-    for member in members:
-        display_name = member.nickname or member.name
-        lines.append(f"- {display_name}（{member.role}）")
-    return "\n".join(lines)
+    return build_member_prompt_context(db, household_id=household_id, status_value="active")
 
 
 def _build_memory_candidate_title(summary: str) -> str:

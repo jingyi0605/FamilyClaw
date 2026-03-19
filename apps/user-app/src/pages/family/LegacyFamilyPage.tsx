@@ -1795,7 +1795,6 @@ export function FamilyMembers() {
                 <h3>{copy.addButton}</h3>
                 <p>{copy.modalDesc}</p>
               </div>
-              <button className="card-action-btn" type="button" onClick={closeCreateMemberModal}>{t('common.cancel')}</button>
             </div>
             <form className="settings-form" onSubmit={handleCreateMember} noValidate>
               <div className="form-group">

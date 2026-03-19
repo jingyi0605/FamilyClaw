@@ -17,6 +17,7 @@ from app.modules.conversation.device_control_planner import (
     ConversationDevicePlannerError,
     plan_device_control,
 )
+from app.modules.conversation.prompt_realtime_context_service import build_realtime_prompt_context
 from app.modules.conversation.device_control_toolkit import entity_supports_action
 from app.modules.conversation.device_shortcut_service import (
     DeviceShortcutResolutionSource,
@@ -44,6 +45,7 @@ from app.modules.llm_task.output_models import (
 )
 from app.modules.memory.context_engine import build_memory_context_bundle
 from app.modules.member import service as member_service
+from app.modules.member.prompt_context_service import build_member_prompt_context
 
 
 INTENT_FALLBACK_THRESHOLD = 0.6
@@ -2595,6 +2597,15 @@ def _build_free_chat_prompt_context(
             memory_context_text=memory_context_text,
             memory_trace_items=memory_trace_items,
         )
+    realtime_context_text = build_realtime_prompt_context(
+        db,
+        household_id=session.household_id,
+        generated_at=overview.generated_at,
+        quiet_hours_enabled=overview.quiet_hours_enabled,
+        quiet_hours_start=overview.quiet_hours_start,
+        quiet_hours_end=overview.quiet_hours_end,
+    )
+    member_context_text = _build_member_context(db, household_id=session.household_id)
     return FreeChatPromptContext(
         variables={
             "user_message": user_message,
@@ -2613,6 +2624,8 @@ def _build_free_chat_prompt_context(
                 f"当前家庭概况：活跃成员 {overview.active_member.name if overview.active_member else '暂无'}；"
                 f"家庭模式 {overview.home_mode}；"
                 f"集成平台状态 {overview.platform_health_status}。"
+                f"\n{realtime_context_text}"
+                f"\n家庭成员档案：\n{member_context_text}"
             ),
         },
         memory_bundle=memory_bundle,
@@ -2733,21 +2746,7 @@ def _render_history_role(role: str) -> str:
 
 
 def _build_member_context(db: Session, *, household_id: str) -> str:
-    members, _ = member_service.list_members(db, household_id=household_id, page=1, page_size=100, status_value="active")
-    if members:
-        display_name_map = member_service.build_member_display_name_map(
-            db,
-            household_id=household_id,
-            members=members,
-            status_value="active",
-        )
-        return "\n".join(
-            f"- {display_name_map.get(member.id, member.name)} ({member.role})"
-            for member in members
-        )
-    if not members:
-        return "当前家庭还没有有效成员。"
-    return "\n".join(f"- {(member.nickname or member.name)}（{member.role}）" for member in members)
+    return build_member_prompt_context(db, household_id=household_id, status_value="active")
 
 
 def _build_config_suggestion(parsed: object) -> dict:

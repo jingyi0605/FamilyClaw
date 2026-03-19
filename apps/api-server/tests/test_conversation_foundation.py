@@ -1,8 +1,10 @@
 ﻿import tempfile
 import unittest
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from zoneinfo import ZoneInfo
 
 from alembic import command
 from alembic.config import Config
@@ -61,6 +63,8 @@ from app.modules.member.schemas import MemberCreate
 from app.modules.member.preferences_schemas import MemberPreferenceUpsert
 from app.modules.member.preferences_service import upsert_member_preferences
 from app.modules.member.service import create_member
+from app.modules.relationship.schemas import MemberRelationshipCreate
+from app.modules.relationship.service import create_relationship
 from app.modules.reminder.service import list_tasks as list_reminder_tasks
 
 
@@ -453,6 +457,7 @@ class ConversationFoundationTests(unittest.TestCase):
         assert fact_view.active_member is not None
         self.assertEqual("瀹濆疂", fact_view.active_member.name)
         self.assertIn("瀹濆疂", [item.name for item in fact_view.member_states])
+        self.assertIn("瀹濆疂", [item.name for item in fact_view.member_profiles])
 
     def test_build_memory_context_bundle_uses_bound_member_for_channel_system_actor(self) -> None:
         target_member = create_member(
@@ -1406,6 +1411,89 @@ class ConversationFoundationTests(unittest.TestCase):
 
         self.assertIn("瀹濆疂", variables["household_context"])
         self.assertNotIn("Owner", variables["household_context"])
+
+    @patch("app.modules.conversation.orchestrator.build_memory_context_bundle")
+    @patch("app.modules.conversation.orchestrator.build_agent_runtime_context")
+    def test_build_free_chat_variables_include_member_age_guardian_and_relationship(
+        self,
+        build_agent_runtime_context_mock,
+        build_memory_context_bundle_mock,
+    ) -> None:
+        child_member = create_member(
+            self.db,
+            MemberCreate(
+                household_id=self.household.id,
+                name="朵朵",
+                nickname="朵朵",
+                role="child",
+                gender="female",
+                age_group="child",
+                birthday=date(2018, 3, 20),
+                guardian_member_id=self.member.id,
+            ),
+        )
+        create_relationship(
+            self.db,
+            MemberRelationshipCreate(
+                household_id=self.household.id,
+                source_member_id=child_member.id,
+                target_member_id=self.member.id,
+                relation_type="daughter",
+            ),
+        )
+        self.db.commit()
+
+        build_agent_runtime_context_mock.return_value = {
+            "agent": {"name": "绗ㄧ"},
+            "identity": {"role_summary": "AI绠″", "speaking_style": "鑷劧浜插垏"},
+        }
+        build_memory_context_bundle_mock.return_value = SimpleNamespace(
+            capability="conversation_free_chat",
+            hot_summary=SimpleNamespace(
+                preference_highlights=[],
+                recent_event_highlights=[],
+                total_visible_cards=0,
+                top_memories=[],
+            ),
+            recall=SimpleNamespace(
+                session_summary=[],
+                stable_facts=[],
+                recent_events=[],
+                external_knowledge=[],
+                degraded=False,
+                degrade_reasons=[],
+            ),
+            query_result=SimpleNamespace(total=0, items=[]),
+        )
+
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        variables = _build_free_chat_variables(
+            self.db,
+            session=session,
+            actor=self.actor,
+            user_message="朵朵多大了",
+        )
+
+        self.assertIn("家庭成员档案", variables["household_context"])
+        self.assertIn("朵朵", variables["household_context"])
+        self.assertIn("年龄=", variables["household_context"])
+        self.assertIn("监护人=Owner", variables["household_context"])
+        self.assertIn("关系=对Owner是女儿", variables["household_context"])
+        self.assertIn("当前实时信息", variables["household_context"])
+        self.assertIn(
+            f"今天日期：{datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d')}",
+            variables["household_context"],
+        )
+        self.assertIn("当前本地时间：", variables["household_context"])
+        self.assertIn("星期：", variables["household_context"])
+        self.assertIn("当前时区：Asia/Shanghai", variables["household_context"])
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")
     def test_detect_conversation_intent_routes_family_status_to_structured_qa(self, invoke_llm_mock) -> None:

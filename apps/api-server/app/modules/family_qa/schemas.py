@@ -89,6 +89,29 @@ class QaMemorySummary(BaseModel):
     degraded: bool = False
 
 
+class QaFactMemberRelationship(BaseModel):
+    target_member_id: str
+    target_member_name: str
+    relation_type: str
+    relation_label: str
+
+
+class QaFactMemberProfile(BaseModel):
+    member_id: str
+    name: str
+    aliases: list[str] = Field(default_factory=list)
+    role: str
+    gender: str | None = None
+    age_group: str | None = None
+    age_group_label: str | None = None
+    birthday: str | None = None
+    age_years: int | None = None
+    preferred_name: str | None = None
+    guardian_member_id: str | None = None
+    guardian_name: str | None = None
+    relationships: list[QaFactMemberRelationship] = Field(default_factory=list)
+
+
 class QaPermissionScope(BaseModel):
     requester_member_id: str | None = None
     requester_role: str = "guest"
@@ -107,6 +130,7 @@ class QaFactViewRead(BaseModel):
     requester_member_id: str | None = None
     active_member: ContextOverviewActiveMember | None = None
     member_states: list[ContextOverviewMemberState] = Field(default_factory=list)
+    member_profiles: list[QaFactMemberProfile] = Field(default_factory=list)
     room_occupancy: list[ContextOverviewRoomOccupancy] = Field(default_factory=list)
     device_summary: ContextOverviewDeviceSummary
     device_states: list[QaFactDeviceState] = Field(default_factory=list)

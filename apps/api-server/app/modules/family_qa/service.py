@@ -12,6 +12,7 @@ from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
 from app.modules.agent.service import build_agent_runtime_context, resolve_effective_agent
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.conversation.device_context_summary import ConversationDeviceContextSummary
+from app.modules.conversation.prompt_realtime_context_service import build_realtime_prompt_context
 from app.modules.family_qa import repository
 from app.modules.family_qa.fact_view_service import build_qa_fact_view
 from app.modules.family_qa.models import QaQueryLog
@@ -20,6 +21,7 @@ from app.modules.family_qa.schemas import (
     FamilyQaQueryResponse,
     FamilyQaSuggestionItem,
     FamilyQaSuggestionsResponse,
+    QaFactMemberProfile,
     QaFactReference,
     QaFactViewRead,
     QaQueryLogCreate,
@@ -47,6 +49,7 @@ class PreparedFamilyQaTurn:
     agent_runtime_context: dict[str, object]
     conversation_history: list[dict[str, str]]
     device_context_summary: ConversationDeviceContextSummary
+    realtime_context_text: str = ""
 
 
 def create_query_log(db: Session, payload: QaQueryLogCreate) -> QaQueryLogRead:
@@ -326,6 +329,11 @@ def _prepare_family_qa_turn(db: Session, payload: FamilyQaQueryRequest, actor: A
     ai_degraded = False
     degraded = False
     conversation_history = _normalize_conversation_history(payload.context.get("conversation_history"))
+    realtime_context_text = build_realtime_prompt_context(
+        db,
+        household_id=payload.household_id,
+        generated_at=fact_view.generated_at,
+    )
     _ = ai_trace_id, ai_provider_code, ai_degraded, degraded
     return PreparedFamilyQaTurn(
         payload=payload,
@@ -339,6 +347,7 @@ def _prepare_family_qa_turn(db: Session, payload: FamilyQaQueryRequest, actor: A
         agent_runtime_context=agent_runtime_context,
         conversation_history=conversation_history,
         device_context_summary=device_context_summary,
+        realtime_context_text=realtime_context_text,
     )
 
 
@@ -495,6 +504,14 @@ def _answer_from_fact_view(
 ) -> tuple[str, str, float, list[QaFactReference], list[str]]:
     normalized_question = question.strip().lower()
 
+    member_profile_answer = _answer_from_member_profiles(
+        fact_view,
+        question=question,
+        normalized_question=normalized_question,
+    )
+    if member_profile_answer is not None:
+        return member_profile_answer
+
     if fact_view.memory_summary.items and _should_answer_from_memory(normalized_question):
         top_item = fact_view.memory_summary.items[0]
         memory_summary = str(top_item.extra.get("summary") or top_item.label)
@@ -638,11 +655,268 @@ def _answer_from_fact_view(
     return "general", answer, 0.72, facts, ["谁在家", "最近提醒", "最近场景"]
 
 
+def _answer_from_member_profiles(
+    fact_view: QaFactViewRead,
+    *,
+    question: str,
+    normalized_question: str,
+) -> tuple[str, str, float, list[QaFactReference], list[str]] | None:
+    if not fact_view.member_profiles:
+        return None
+
+    if _looks_like_member_age_question(normalized_question):
+        age_answer = _answer_member_age_question(
+            fact_view,
+            question=question,
+            normalized_question=normalized_question,
+        )
+        if age_answer is not None:
+            return age_answer
+
+    if _looks_like_member_relationship_question(normalized_question):
+        relationship_answer = _answer_member_relationship_question(
+            fact_view,
+            question=question,
+            normalized_question=normalized_question,
+        )
+        if relationship_answer is not None:
+            return relationship_answer
+
+    return None
+
+
+def _answer_member_age_question(
+    fact_view: QaFactViewRead,
+    *,
+    question: str,
+    normalized_question: str,
+) -> tuple[str, str, float, list[QaFactReference], list[str]] | None:
+    profile = _select_primary_member_profile(
+        fact_view,
+        question=question,
+        normalized_question=normalized_question,
+    )
+    if profile is None:
+        return None
+    if profile.age_years is None and not profile.age_group_label and not profile.birthday:
+        return None
+
+    detail_parts: list[str] = []
+    if profile.age_years is not None:
+        detail_parts.append(f"{profile.name}现在 {profile.age_years} 岁")
+    elif profile.age_group_label:
+        detail_parts.append(f"{profile.name}当前档案里的年龄段是{profile.age_group_label}")
+
+    if profile.birthday:
+        detail_parts.append(f"生日是 {profile.birthday}")
+    elif profile.age_years is None and profile.age_group_label:
+        detail_parts.append("档案里还没有精确生日")
+
+    answer = "，".join(detail_parts) + "。"
+    facts = [
+        QaFactReference(
+            type="member_profile",
+            label=f"{profile.name} 的年龄资料",
+            source="members",
+            inferred=False,
+            extra={
+                "member_id": profile.member_id,
+                "age_years": profile.age_years,
+                "age_group": profile.age_group,
+                "birthday": profile.birthday,
+            },
+        )
+    ]
+    return "member_profile", answer, 0.96, facts, ["查看家庭成员", "查看家庭关系"]
+
+
+def _answer_member_relationship_question(
+    fact_view: QaFactViewRead,
+    *,
+    question: str,
+    normalized_question: str,
+) -> tuple[str, str, float, list[QaFactReference], list[str]] | None:
+    requester_profile = _find_member_profile_by_id(
+        fact_view.member_profiles,
+        fact_view.requester_member_id,
+    )
+    mentioned_profiles = _find_mentioned_member_profiles(
+        fact_view.member_profiles,
+        question=question,
+        normalized_question=normalized_question,
+    )
+
+    if requester_profile is not None and ("和我" in normalized_question or "我和" in normalized_question):
+        target_profiles = [
+            profile for profile in mentioned_profiles if profile.member_id != requester_profile.member_id
+        ]
+        if len(target_profiles) == 1:
+            target_profile = target_profiles[0]
+            relation = _find_relationship(target_profile, requester_profile.member_id)
+            if relation is not None:
+                answer = f"按当前家庭关系，{target_profile.name}是你的{relation.relation_label}。"
+                return _build_member_relationship_answer(
+                    source_profile=target_profile,
+                    target_profile=requester_profile,
+                    answer=answer,
+                    relation_type=relation.relation_type,
+                    relation_label=relation.relation_label,
+                )
+            reverse_relation = _find_relationship(requester_profile, target_profile.member_id)
+            if reverse_relation is not None:
+                answer = f"按当前家庭关系，你是{target_profile.name}的{reverse_relation.relation_label}。"
+                return _build_member_relationship_answer(
+                    source_profile=requester_profile,
+                    target_profile=target_profile,
+                    answer=answer,
+                    relation_type=reverse_relation.relation_type,
+                    relation_label=reverse_relation.relation_label,
+                )
+
+    if len(mentioned_profiles) < 2:
+        return None
+
+    source_profile = mentioned_profiles[0]
+    target_profile = mentioned_profiles[1]
+    relation = _find_relationship(source_profile, target_profile.member_id)
+    if relation is not None:
+        answer = f"按当前家庭关系，{source_profile.name}是{target_profile.name}的{relation.relation_label}。"
+        return _build_member_relationship_answer(
+            source_profile=source_profile,
+            target_profile=target_profile,
+            answer=answer,
+            relation_type=relation.relation_type,
+            relation_label=relation.relation_label,
+        )
+
+    reverse_relation = _find_relationship(target_profile, source_profile.member_id)
+    if reverse_relation is None:
+        return None
+
+    answer = f"按当前家庭关系，{target_profile.name}是{source_profile.name}的{reverse_relation.relation_label}。"
+    return _build_member_relationship_answer(
+        source_profile=target_profile,
+        target_profile=source_profile,
+        answer=answer,
+        relation_type=reverse_relation.relation_type,
+        relation_label=reverse_relation.relation_label,
+    )
+
+
+def _build_member_relationship_answer(
+    *,
+    source_profile: QaFactMemberProfile,
+    target_profile: QaFactMemberProfile,
+    answer: str,
+    relation_type: str,
+    relation_label: str,
+) -> tuple[str, str, float, list[QaFactReference], list[str]]:
+    facts = [
+        QaFactReference(
+            type="member_relationship",
+            label=f"{source_profile.name} 与 {target_profile.name} 的关系",
+            source="member_relationships",
+            inferred=False,
+            extra={
+                "source_member_id": source_profile.member_id,
+                "target_member_id": target_profile.member_id,
+                "relation_type": relation_type,
+                "relation_label": relation_label,
+            },
+        )
+    ]
+    return "member_relationship", answer, 0.97, facts, ["查看家庭关系", "查看成员资料"]
+
+
+def _find_mentioned_member_profiles(
+    profiles: list[QaFactMemberProfile],
+    *,
+    question: str,
+    normalized_question: str,
+) -> list[QaFactMemberProfile]:
+    matches: list[tuple[int, int, QaFactMemberProfile]] = []
+    seen_member_ids: set[str] = set()
+    for profile in profiles:
+        match_index: int | None = None
+        alias_length = 0
+        for alias in profile.aliases:
+            normalized_alias = str(alias or "").strip().lower()
+            if not normalized_alias:
+                continue
+            current_index = normalized_question.find(normalized_alias)
+            if current_index < 0:
+                continue
+            if match_index is None or current_index < match_index or (
+                current_index == match_index and len(normalized_alias) > alias_length
+            ):
+                match_index = current_index
+                alias_length = len(normalized_alias)
+        if match_index is None or profile.member_id in seen_member_ids:
+            continue
+        matches.append((match_index, -alias_length, profile))
+        seen_member_ids.add(profile.member_id)
+
+    matches.sort(key=lambda item: (item[0], item[1], item[2].name))
+    return [item[2] for item in matches]
+
+
+def _select_primary_member_profile(
+    fact_view: QaFactViewRead,
+    *,
+    question: str,
+    normalized_question: str,
+) -> QaFactMemberProfile | None:
+    mentioned_profiles = _find_mentioned_member_profiles(
+        fact_view.member_profiles,
+        question=question,
+        normalized_question=normalized_question,
+    )
+    if mentioned_profiles:
+        return mentioned_profiles[0]
+    return _find_member_profile_by_id(
+        fact_view.member_profiles,
+        fact_view.requester_member_id if "我" in question else None,
+    )
+
+
+def _find_member_profile_by_id(
+    profiles: list[QaFactMemberProfile],
+    member_id: str | None,
+) -> QaFactMemberProfile | None:
+    if not member_id:
+        return None
+    for profile in profiles:
+        if profile.member_id == member_id:
+            return profile
+    return None
+
+
+def _find_relationship(profile: QaFactMemberProfile, target_member_id: str) -> object | None:
+    for relationship in profile.relationships:
+        if relationship.target_member_id == target_member_id:
+            return relationship
+    if profile.guardian_member_id == target_member_id:
+        return type(
+            "GuardianRelationship",
+            (),
+            {"relation_type": "guardian", "relation_label": "被监护人"},
+        )()
+    return None
+
+
 def _contains_any_keyword(question: str, keywords: list[str]) -> bool:
     for keyword in keywords:
         if keyword in question:
             return True
     return False
+
+
+def _looks_like_member_age_question(question: str) -> bool:
+    return _contains_any_keyword(question, ["多大", "几岁", "年龄", "生日"])
+
+
+def _looks_like_member_relationship_question(question: str) -> bool:
+    return _contains_any_keyword(question, ["关系", "什么关系", "监护人", "家人"])
 
 
 def _should_answer_from_memory(question: str) -> bool:
@@ -680,6 +954,7 @@ def _build_qa_generation_payload(prepared: PreparedFamilyQaTurn) -> dict[str, ob
         "conversation_history": prepared.conversation_history,
         "device_context_summary": prepared.device_context_summary.to_payload(),
         "device_context_summary_text": prepared.device_context_summary.to_prompt_text(),
+        "realtime_context_text": prepared.realtime_context_text,
         "request_context": prepared.payload.context.get("request_context") if isinstance(prepared.payload.context, dict) else {},
         "agent_runtime_context": prepared.agent_runtime_context,
         "agent_memory_context": {
