@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { coreApiClient, useHouseholdContext } from '../../runtime';
+import { coreApiClient, useHouseholdContext } from '../../runtime/runtime-safe';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import type {
   HomeDashboardCardActionRead,

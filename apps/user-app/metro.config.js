@@ -29,6 +29,7 @@ const config = {
       '@familyclaw/user-core': sharedPackagePaths[0],
       '@familyclaw/user-platform': sharedPackagePaths[1],
       '@familyclaw/user-ui': sharedPackagePaths[2],
+      'h5-shell': path.join(projectRoot, 'src/runtime/h5-shell'),
     },
   },
 }

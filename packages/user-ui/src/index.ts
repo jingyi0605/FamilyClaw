@@ -16,7 +16,16 @@ export {
   userAppTokens,
 } from './theme/tokens';
 export {
+  clearRuntimeThemes,
   getThemeCssVariables,
+  getRuntimeThemePlaceholder,
+  normalizePluginThemeTokens,
+  registerRuntimeTheme,
+  resolveRuntimeTheme,
+  replaceRuntimeThemes,
+  type PluginThemeResourcePayload,
+  type ThemeId,
+  type UserAppTheme,
   userAppThemeFoundation,
   userAppThemeList,
   userAppThemes,

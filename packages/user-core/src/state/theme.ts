@@ -3,98 +3,123 @@ export type StorageAdapter = {
   setItem: (key: string, value: string) => Promise<void>;
 };
 
-export type ThemeId =
-  | 'chun-he-jing-ming'
-  | 'yue-lang-xing-xi'
-  | 'ming-cha-qiu-hao'
-  | 'wan-zi-qian-hong'
-  | 'feng-chi-dian-che'
-  | 'xing-he-wan-li'
-  | 'qing-shan-lv-shui'
-  | 'jin-xiu-qian-cheng';
+export type ThemeId = string;
+export type ThemePluginId = string;
+export type ThemeSelectionStatus = 'ready' | 'missing';
+
+export interface ThemeSelection {
+  pluginId: ThemePluginId;
+  themeId: ThemeId;
+  status: ThemeSelectionStatus;
+}
 
 export interface ThemeOption {
+  pluginId: ThemePluginId;
   id: ThemeId;
   label: string;
   description: string;
-  accentColor: string;
-  previewSurface: string;
+  available: boolean;
 }
 
 export const THEME_STORAGE_KEY = 'familyclaw-theme';
+export const THEME_SELECTION_STORAGE_KEY = 'familyclaw-theme-selection';
 export const DEFAULT_THEME_ID: ThemeId = 'chun-he-jing-ming';
+export const DEFAULT_THEME_PLUGIN_ID: ThemePluginId = 'builtin.theme.chun-he-jing-ming';
 
-const THEME_OPTIONS: ThemeOption[] = [
-  {
-    id: 'chun-he-jing-ming',
-    label: '春和景明',
-    description: '温暖宁静，适合日常使用',
-    accentColor: '#d97756',
-    previewSurface: '#f7f5f2',
-  },
-  {
-    id: 'yue-lang-xing-xi',
-    label: '月朗星稀',
-    description: '柔和深色，减少视觉疲劳',
-    accentColor: '#7c9ef5',
-    previewSurface: '#1a1d27',
-  },
-  {
-    id: 'ming-cha-qiu-hao',
-    label: '明察秋毫',
-    description: '更大字号、更高对比度',
-    accentColor: '#b04020',
-    previewSurface: '#f5f5f0',
-  },
-  {
-    id: 'wan-zi-qian-hong',
-    label: '万紫千红',
-    description: '鲜艳活泼，色彩缤纷',
-    accentColor: '#e040a0',
-    previewSurface: '#fef8ff',
-  },
-  {
-    id: 'feng-chi-dian-che',
-    label: '风驰电掣',
-    description: '霓虹电网，赛博激光',
-    accentColor: '#00f0ff',
-    previewSurface: '#1f1032',
-  },
-  {
-    id: 'xing-he-wan-li',
-    label: '星河万里',
-    description: '星云浮动，宇宙漫游',
-    accentColor: '#b480ff',
-    previewSurface: '#161a35',
-  },
-  {
-    id: 'qing-shan-lv-shui',
-    label: '青山绿水',
-    description: '自然清新，森林氧吧',
-    accentColor: '#2e8b57',
-    previewSurface: '#f2f7f3',
-  },
-  {
-    id: 'jin-xiu-qian-cheng',
-    label: '锦绣前程',
-    description: '正金尊贵，大气磅礴',
-    accentColor: '#ffd700',
-    previewSurface: '#181408',
-  },
-];
+// 默认值只负责首次启动时指向内置 theme-pack 插件，不承载任何宿主静态主题 token。
+const INITIAL_THEME_SELECTION: ThemeSelection = {
+  pluginId: DEFAULT_THEME_PLUGIN_ID,
+  themeId: DEFAULT_THEME_ID,
+  status: 'ready',
+};
 
 export function listThemeOptions(): ThemeOption[] {
-  return THEME_OPTIONS.map(option => ({ ...option }));
+  return [];
 }
 
-export function resolveThemeId(themeId: string | null | undefined, fallback: ThemeId = DEFAULT_THEME_ID): ThemeId {
+export function resolveThemeId(
+  themeId: string | null | undefined,
+  fallback: ThemeId = DEFAULT_THEME_ID,
+): ThemeId {
   const normalized = (themeId ?? '').trim();
-  const matched = THEME_OPTIONS.find(option => option.id === normalized);
-  return matched?.id ?? fallback;
+  return normalized || fallback;
+}
+
+export function resolveThemePluginId(
+  pluginId: string | null | undefined,
+  fallback: ThemePluginId = DEFAULT_THEME_PLUGIN_ID,
+): ThemePluginId {
+  const normalized = (pluginId ?? '').trim();
+  return normalized || fallback;
+}
+
+export function normalizeThemeSelection(
+  selection: Partial<ThemeSelection> | null | undefined,
+  fallback: ThemeSelection = INITIAL_THEME_SELECTION,
+): ThemeSelection {
+  return {
+    pluginId: resolveThemePluginId(selection?.pluginId, fallback.pluginId),
+    themeId: resolveThemeId(selection?.themeId, fallback.themeId),
+    status: selection?.status === 'missing' ? 'missing' : 'ready',
+  };
+}
+
+export function parseThemeSelection(
+  raw: string | null | undefined,
+  fallback: ThemeSelection = INITIAL_THEME_SELECTION,
+): ThemeSelection {
+  const normalizedRaw = (raw ?? '').trim();
+  if (!normalizedRaw) {
+    return normalizeThemeSelection(undefined, fallback);
+  }
+
+  try {
+    const payload = JSON.parse(normalizedRaw) as Partial<ThemeSelection>;
+    return normalizeThemeSelection(payload, fallback);
+  } catch {
+    return {
+      pluginId: fallback.pluginId,
+      themeId: resolveThemeId(normalizedRaw, fallback.themeId),
+      status: 'ready',
+    };
+  }
+}
+
+export function serializeThemeSelection(selection: Partial<ThemeSelection> | null | undefined): string {
+  return JSON.stringify(normalizeThemeSelection(selection));
 }
 
 export function isElderFriendlyTheme(themeId: string | null | undefined): boolean {
-  return resolveThemeId(themeId) === 'ming-cha-qiu-hao';
+  return resolveThemeId(themeId, '') === 'ming-cha-qiu-hao';
+}
+
+export async function getStoredThemeSelection(
+  storage: StorageAdapter,
+  storageKey = THEME_SELECTION_STORAGE_KEY,
+  fallback: ThemeSelection = INITIAL_THEME_SELECTION,
+) {
+  const rawSelection = await storage.getItem(storageKey);
+  if (rawSelection && rawSelection.trim()) {
+    return parseThemeSelection(rawSelection, fallback);
+  }
+
+  const legacyThemeId = await storage.getItem(THEME_STORAGE_KEY);
+  return {
+    pluginId: fallback.pluginId,
+    themeId: resolveThemeId(legacyThemeId, fallback.themeId),
+    status: 'ready',
+  };
+}
+
+export async function persistThemeSelection(
+  storage: StorageAdapter,
+  selection: Partial<ThemeSelection> | null | undefined,
+  storageKey = THEME_SELECTION_STORAGE_KEY,
+) {
+  const normalizedSelection = normalizeThemeSelection(selection);
+  await storage.setItem(storageKey, JSON.stringify(normalizedSelection));
+  await storage.setItem(THEME_STORAGE_KEY, normalizedSelection.themeId);
+  return normalizedSelection;
 }
 
 export async function getStoredThemeId(
@@ -102,6 +127,11 @@ export async function getStoredThemeId(
   storageKey = THEME_STORAGE_KEY,
   fallback: ThemeId = DEFAULT_THEME_ID,
 ) {
+  if (storageKey === THEME_STORAGE_KEY) {
+    const selection = await getStoredThemeSelection(storage);
+    return resolveThemeId(selection.themeId, fallback);
+  }
+
   const stored = await storage.getItem(storageKey);
   return resolveThemeId(stored, fallback);
 }
@@ -113,6 +143,15 @@ export async function persistThemeId(
   fallback: ThemeId = DEFAULT_THEME_ID,
 ) {
   const nextThemeId = resolveThemeId(themeId, fallback);
-  await storage.setItem(storageKey, nextThemeId);
+  if (storageKey === THEME_STORAGE_KEY) {
+    await persistThemeSelection(storage, {
+      pluginId: DEFAULT_THEME_PLUGIN_ID,
+      themeId: nextThemeId,
+      status: 'ready',
+    });
+  } else {
+    await storage.setItem(storageKey, nextThemeId);
+  }
+
   return nextThemeId;
 }

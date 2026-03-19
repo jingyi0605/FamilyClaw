@@ -1,3 +1,4 @@
+import './styles-entry';
 import { GuardedPage } from '../../runtime';
 import { H5LoginPage } from '../../runtime/h5-shell';
 

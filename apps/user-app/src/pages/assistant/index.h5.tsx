@@ -16,7 +16,7 @@ import type {
   ScheduledTaskConversationProposalPayload,
 } from './assistant.types';
 import { GuardedPage, useAuthContext, useHouseholdContext, useI18n, useSetupContext, useTheme } from '../../runtime';
-import './index.h5.scss';
+import './styles-entry';
 
 type EmptyStateProps = {
   icon?: ReactNode;

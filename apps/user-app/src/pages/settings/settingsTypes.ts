@@ -472,15 +472,18 @@ export type PluginConfigVisibleOperator = 'equals' | 'not_equals' | 'in' | 'trut
 
 export type PluginConfigEnumOption = {
   label: string;
+  label_key?: string | null;
   value: string;
 };
 
 export type PluginManifestConfigField = {
   key: string;
   label: string;
+  label_key?: string | null;
   type: PluginConfigFieldType;
   required: boolean;
   description?: string | null;
+  description_key?: string | null;
   default?: unknown;
   enum_options?: PluginConfigEnumOption[];
   min_length?: number | null;
@@ -500,21 +503,27 @@ export type PluginManifestVisibilityRule = {
 export type PluginManifestFieldUiSchema = {
   widget?: PluginConfigWidgetType | null;
   placeholder?: string | null;
+  placeholder_key?: string | null;
   help_text?: string | null;
+  help_text_key?: string | null;
   visible_when?: PluginManifestVisibilityRule[];
 };
 
 export type PluginManifestUiSection = {
   id: string;
   title: string;
+  title_key?: string | null;
   description?: string | null;
+  description_key?: string | null;
   fields: string[];
 };
 
 export type PluginManifestConfigSpec = {
   scope_type: PluginConfigScopeType;
   title: string;
+  title_key?: string | null;
   description?: string | null;
+  description_key?: string | null;
   schema_version: number;
   config_schema: {
     fields: PluginManifestConfigField[];
@@ -523,6 +532,7 @@ export type PluginManifestConfigSpec = {
     sections: PluginManifestUiSection[];
     field_order?: string[];
     submit_text?: string | null;
+    submit_text_key?: string | null;
     widgets?: Record<string, PluginManifestFieldUiSchema>;
   };
 };

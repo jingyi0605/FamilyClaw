@@ -65,7 +65,7 @@ export default defineConfig(async merge => {
       '@': path.resolve(process.cwd(), 'src'),
       ...workspacePackageEntries,
     },
-    appPath: 'src/app.ts',
+    appPath: taroEnv === 'rn' ? 'src/app.rn.ts' : 'src/app.ts',
     modifyWebpackChain(chain: any) {
       if (taroEnv !== 'h5') {
         return;

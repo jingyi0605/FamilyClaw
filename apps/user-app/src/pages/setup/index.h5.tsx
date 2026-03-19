@@ -25,7 +25,7 @@ import {
   useSetupContext,
   useTheme,
 } from '../../runtime';
-import './index.h5.scss';
+import './styles-entry';
 
 const WELCOME_SEEN_KEY = 'familyclaw_welcome_seen';
 const ENTRY_PAGE_URL = '/pages/entry/index';
@@ -133,7 +133,7 @@ export default function SetupPageH5() {
   } = useHouseholdContext();
   const { locale, t } = useI18n();
   const { setupStatus, setupStatusLoading, refreshSetupStatus } = useSetupContext();
-  const { themeId, themeList, setTheme } = useTheme();
+  const { theme: selectedTheme, themeList, setTheme } = useTheme();
 
   const defaultLocale = useMemo(() => getDefaultLocale(locale), [locale]);
 
@@ -471,9 +471,12 @@ export default function SetupPageH5() {
       >
         {themeList.map(theme => (
           <button
-            key={theme.id}
+            key={`${theme.plugin_id}:${theme.id}`}
             type="button"
-            onClick={() => setTheme(theme.id)}
+            onClick={() => setTheme({
+              plugin_id: theme.plugin_id,
+              theme_id: theme.id,
+            })}
             title={theme.label}
             style={{
               width: '28px',
@@ -483,7 +486,7 @@ export default function SetupPageH5() {
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: '14px',
-              border: themeId === theme.id
+              border: selectedTheme.id === theme.id && selectedTheme.plugin_id === theme.plugin_id
                 ? '2px solid var(--brand-primary)'
                 : '1px solid var(--border)',
               background: theme.bgCard,

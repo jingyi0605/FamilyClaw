@@ -5,7 +5,19 @@
  */
 
 // Token
-export { rnFoundationTokens, rnSemanticTokens, rnComponentTokens } from './tokens';
+export {
+  applyRnTheme,
+  applyRnThemeById,
+  applyRnThemeFromPluginResource,
+  buildRnThemeTokenBundleFromPluginResource,
+  getCurrentRnTheme,
+  getCurrentRnThemeId,
+  getRnThemeRuntimeState,
+  rnFoundationTokens,
+  rnSemanticTokens,
+  rnComponentTokens,
+} from './tokens';
+export { RnThemeProvider, useRnTheme, useRnThemeTokens } from './theme/RnThemeProvider';
 
 // 组件
 export { RnPageShell } from './components/RnPageShell';

@@ -7,6 +7,11 @@ import { Card, EmptyState, Section } from '../../family/base';
 import { SettingsPageShell } from '../SettingsPageShell';
 import { ChannelAccountBindingsPanel } from '../components/ChannelAccountBindingsPanel';
 import { SettingsDialog, SettingsNotice } from '../components/SettingsSharedBlocks';
+import {
+  resolvePluginFieldLabel,
+  resolvePluginWidgetHelpText,
+  resolvePluginWidgetPlaceholder,
+} from '../pluginConfigI18n';
 import { ApiError, settingsApi } from '../settingsApi';
 import {
   TelegramLogo,
@@ -308,6 +313,7 @@ function getConfigFields(
   plugin: PluginRegistryItem | null,
   platformCode: string | null,
   locale: string | undefined,
+  translate: (key: string, params?: Record<string, string | number>) => string,
 ): ConfigFieldDef[] {
   const configSpec = plugin?.config_specs?.find((item) => item.scope_type === 'channel_account');
   if (configSpec) {
@@ -321,11 +327,11 @@ function getConfigFields(
       const widget = widgets[key];
       return [{
         key: field.key,
-        label: field.label,
+        label: resolvePluginFieldLabel(field, translate),
         type: field.type === 'secret' || widget?.widget === 'password' ? 'password' : 'text',
         required: field.required,
-        placeholder: widget?.placeholder ?? '',
-        helpText: widget?.help_text ?? field.description ?? undefined,
+        placeholder: resolvePluginWidgetPlaceholder(widget, translate),
+        helpText: resolvePluginWidgetHelpText(widget, field, translate) || undefined,
       }];
     });
   }
@@ -365,7 +371,7 @@ function resolveDefaultConnectionMode(plugin: PluginRegistryItem | null): Channe
 
 function SettingsChannelAccessContent() {
   const { currentHouseholdId } = useHouseholdContext();
-  const { locale } = useI18n();
+  const { locale, t: translate } = useI18n();
   const [accounts, setAccounts] = useState<ChannelAccountRead[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [channelPlugins, setChannelPlugins] = useState<PluginRegistryItem[]>([]);
@@ -633,8 +639,8 @@ function SettingsChannelAccessContent() {
     ?? availableChannelPlugins.find((plugin) => plugin.pluginId === accountForm.plugin_id)?.platformCode
     ?? null;
   const configFields = useMemo(
-    () => getConfigFields(selectedPlugin, selectedPlatformCode, locale),
-    [selectedPlugin, selectedPlatformCode, locale],
+    () => getConfigFields(selectedPlugin, selectedPlatformCode, locale, translate),
+    [selectedPlugin, selectedPlatformCode, locale, translate],
   );
   const supportedConnectionModes = useMemo(() => getSupportedConnectionModes(selectedPlugin), [selectedPlugin]);
 

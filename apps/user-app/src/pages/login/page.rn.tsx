@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { View, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import Taro from '@tarojs/taro';
-import { GuardedPage, useAuthContext, useI18n } from '../../runtime';
+import { GuardedPage, useAuthContext, useI18n } from '../../runtime/index.rn';
 import {
   RnPageShell,
   RnCard,

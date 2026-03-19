@@ -4,6 +4,7 @@ import { getLocaleSourceLabel } from '@familyclaw/user-core';
 import { PageSection, ToggleSwitch, UiButton, UiCard, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
 import { GuardedPage, useHouseholdContext } from '../../runtime';
 import { useI18n, useTheme } from '../../runtime/h5-shell';
+import type { ThemeRuntimeSelection, ThemeRuntimeThemeOption } from '../../runtime/shared/theme-plugin/types';
 import { SettingsPageShell } from './SettingsPageShell';
 import { SettingsNotice } from './components/SettingsSharedBlocks';
 import { settingsApi } from './settingsApi';
@@ -23,54 +24,20 @@ function resolveSection(value?: string | string[]): SettingsSection {
   return 'appearance';
 }
 
-function getLocalizedThemeMeta(
+function pickThemeSelection(
+  themeList: ThemeRuntimeThemeOption[],
   themeId: string,
-  t: (key: string, params?: Record<string, string | number>) => string,
-) {
-  switch (themeId) {
-    case 'chun-he-jing-ming':
-      return {
-        label: t('theme.chunHeJingMing.label'),
-        description: t('theme.chunHeJingMing.description'),
-      };
-    case 'yue-lang-xing-xi':
-      return {
-        label: t('theme.yueLangXingXi.label'),
-        description: t('theme.yueLangXingXi.description'),
-      };
-    case 'ming-cha-qiu-hao':
-      return {
-        label: t('theme.mingChaQiuHao.label'),
-        description: t('theme.mingChaQiuHao.description'),
-      };
-    case 'wan-zi-qian-hong':
-      return {
-        label: t('theme.wanZiQianHong.label'),
-        description: t('theme.wanZiQianHong.description'),
-      };
-    case 'feng-chi-dian-che':
-      return {
-        label: t('theme.fengChiDianChe.label'),
-        description: t('theme.fengChiDianChe.description'),
-      };
-    case 'xing-he-wan-li':
-      return {
-        label: t('theme.xingHeWanLi.label'),
-        description: t('theme.xingHeWanLi.description'),
-      };
-    case 'qing-shan-lv-shui':
-      return {
-        label: t('theme.qingShanLvShui.label'),
-        description: t('theme.qingShanLvShui.description'),
-      };
-    case 'jin-xiu-qian-cheng':
-      return {
-        label: t('theme.jinXiuQianCheng.label'),
-        description: t('theme.jinXiuQianCheng.description'),
-      };
-    default:
-      return null;
+): ThemeRuntimeSelection | null {
+  const matched = themeList.find(theme => theme.id === themeId && theme.source_type === 'builtin')
+    ?? themeList.find(theme => theme.id === themeId)
+    ?? null;
+  if (!matched) {
+    return null;
   }
+  return {
+    plugin_id: matched.plugin_id,
+    theme_id: matched.id,
+  };
 }
 
 function useContextConfigSettings() {
@@ -160,6 +127,7 @@ function useContextConfigSettings() {
 
 function SettingsAppearanceSection() {
   const {
+    theme: currentTheme,
     themeId,
     themeList,
     themeListLoading,
@@ -169,9 +137,6 @@ function SettingsAppearanceSection() {
     getThemeVersionInfo,
   } = useTheme();
   const { t } = useI18n();
-  const disabledThemeMeta = themeFallbackNotice
-    ? getLocalizedThemeMeta(themeFallbackNotice.disabledThemeId, t)
-    : null;
 
   return (
     <div className="settings-page">
@@ -179,7 +144,7 @@ function SettingsAppearanceSection() {
         {themeFallbackNotice ? (
           <SettingsNotice tone="info" icon="!">
             {t('settings.appearance.themeDisabledNotice', {
-              theme: disabledThemeMeta?.label ?? themeFallbackNotice.disabledThemeId,
+              theme: themeFallbackNotice.disabledThemeId,
             })}
             {themeFallbackNotice.disabledReason
               ? ` ${t('settings.appearance.disabledReason', { reason: themeFallbackNotice.disabledReason })}`
@@ -193,13 +158,16 @@ function SettingsAppearanceSection() {
         ) : null}
         <div className="theme-grid">
           {themeList.map((theme) => {
-            const localizedTheme = getLocalizedThemeMeta(theme.id, t);
             const themeVersionInfo = getThemeVersionInfo(theme.id);
+            const isActive = currentTheme.id === theme.id && currentTheme.plugin_id === theme.plugin_id;
             return (
             <div
-              key={theme.id}
-              className={`theme-card ${themeId === theme.id ? 'theme-card--active' : ''}`}
-              onClick={() => setTheme(theme.id)}
+              key={`${theme.plugin_id}:${theme.id}`}
+              className={`theme-card ${isActive ? 'theme-card--active' : ''}`}
+              onClick={() => setTheme({
+                plugin_id: theme.plugin_id,
+                theme_id: theme.id,
+              })}
               style={{
                 '--preview-bg': theme.bgApp,
                 '--preview-card': theme.bgCard,
@@ -223,15 +191,15 @@ function SettingsAppearanceSection() {
               <div className="theme-card__info">
                 <span className="theme-card__emoji">{theme.emoji}</span>
                 <div className="theme-card__text">
-                  <span className="theme-card__label">{localizedTheme?.label ?? theme.label}</span>
-                  <span className="theme-card__desc">{localizedTheme?.description ?? theme.description}</span>
+                  <span className="theme-card__label">{theme.label}</span>
+                  <span className="theme-card__desc">{theme.description}</span>
                   {themeVersionInfo ? (
                     <span className="theme-card__desc">
                       v{themeVersionInfo.installedVersion ?? themeVersionInfo.version}
                     </span>
                   ) : null}
                 </div>
-                {themeId === theme.id ? <span className="theme-card__check">✓</span> : null}
+                {isActive ? <span className="theme-card__check">✓</span> : null}
               </div>
             </div>
             );
@@ -440,10 +408,12 @@ function SettingsNotificationsSection() {
 }
 
 function SettingsAccessibilitySection() {
-  const { themeId, setTheme, isThemeAvailable, getThemeDisabledReason } = useTheme();
+  const { theme, themeId, themeList, setTheme, isThemeAvailable, getThemeDisabledReason } = useTheme();
   const { t } = useI18n();
   const isElder = themeId === 'ming-cha-qiu-hao';
-  const elderThemeAvailable = isThemeAvailable('ming-cha-qiu-hao');
+  const elderThemeSelection = pickThemeSelection(themeList, 'ming-cha-qiu-hao');
+  const defaultThemeSelection = pickThemeSelection(themeList, 'chun-he-jing-ming');
+  const elderThemeAvailable = elderThemeSelection !== null || isThemeAvailable('ming-cha-qiu-hao');
   const elderThemeDisabledReason = getThemeDisabledReason('ming-cha-qiu-hao');
   const elderModeDescription = elderThemeAvailable
     ? t('settings.accessibility.elderModeDesc')
@@ -456,11 +426,16 @@ function SettingsAccessibilitySection() {
       <PageSection title={t('settings.accessibility.title')} contentStyle={{ marginTop: 0 }}>
         <div className="settings-toggles">
           <ToggleSwitch
-            checked={isElder && elderThemeAvailable}
+            checked={isElder && elderThemeAvailable && (theme.plugin_id === elderThemeSelection?.plugin_id || elderThemeSelection === null)}
             label={t('settings.accessibility.elderMode')}
             description={elderModeDescription}
             disabled={!elderThemeAvailable}
-            onChange={(value) => setTheme(value ? 'ming-cha-qiu-hao' : 'chun-he-jing-ming')}
+            onChange={(value) => {
+              const nextSelection = value ? elderThemeSelection : defaultThemeSelection;
+              if (nextSelection) {
+                setTheme(nextSelection);
+              }
+            }}
           />
         </div>
 

@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from '../i18n/I18nProvider';
 import { useTheme } from '../theme/ThemeProvider';
 
 export function ThemeSwitcher() {
-  const { theme, themeId, themeList, setTheme } = useTheme();
+  const {
+    theme,
+    themeList,
+    themeListLoading,
+    themeListError,
+    themeFallbackNotice,
+    setTheme,
+  } = useTheme();
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -17,6 +26,12 @@ export function ThemeSwitcher() {
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
 
+  const missingThemeTip = themeFallbackNotice
+    ? t('theme.switcher.missingNotice', {
+      theme: themeFallbackNotice.disabledThemeId,
+    })
+    : '';
+
   return (
     <div className="theme-switcher" ref={containerRef}>
       <button
@@ -30,26 +45,41 @@ export function ThemeSwitcher() {
 
       {open ? (
         <div className="theme-switcher__dropdown">
-          <div className="theme-switcher__header">选择主题</div>
+          <div className="theme-switcher__header">{t('theme.switcher.title')}</div>
+          {themeListLoading ? (
+            <div className="theme-switcher__header">{t('theme.switcher.loading')}</div>
+          ) : null}
+          {themeListError ? (
+            <div className="theme-switcher__header">{themeListError}</div>
+          ) : null}
+          {missingThemeTip ? (
+            <div className="theme-switcher__header">{missingThemeTip}</div>
+          ) : null}
           <div className="theme-switcher__list">
-            {themeList.map(theme => (
-              <button
-                key={theme.id}
-                type="button"
-                className={`theme-switcher__item ${theme.id === themeId ? 'theme-switcher__item--active' : ''}`}
-                onClick={() => {
-                  setTheme(theme.id);
-                  setOpen(false);
-                }}
-              >
-                <span className="theme-switcher__item-emoji">{theme.emoji}</span>
-                <span className="theme-switcher__item-info">
-                  <span className="theme-switcher__item-label">{theme.label}</span>
-                  <span className="theme-switcher__item-desc">{theme.description}</span>
-                </span>
-                {theme.id === themeId ? <span className="theme-switcher__item-check">✓</span> : null}
-              </button>
-            ))}
+            {themeList.map(item => {
+              const isActive = item.id === theme.id && item.plugin_id === theme.plugin_id;
+              return (
+                <button
+                  key={`${item.plugin_id}:${item.id}`}
+                  type="button"
+                  className={`theme-switcher__item ${isActive ? 'theme-switcher__item--active' : ''}`}
+                  onClick={() => {
+                    setTheme({
+                      plugin_id: item.plugin_id,
+                      theme_id: item.id,
+                    });
+                    setOpen(false);
+                  }}
+                >
+                  <span className="theme-switcher__item-emoji">{item.emoji}</span>
+                  <span className="theme-switcher__item-info">
+                    <span className="theme-switcher__item-label">{item.label}</span>
+                    <span className="theme-switcher__item-desc">{item.description}</span>
+                  </span>
+                  {isActive ? <span className="theme-switcher__item-check">✓</span> : null}
+                </button>
+              );
+            })}
           </div>
         </div>
       ) : null}

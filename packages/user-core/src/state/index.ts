@@ -28,12 +28,23 @@ export {
 export { loadSetupStatus } from './setup';
 export {
   DEFAULT_THEME_ID,
+  DEFAULT_THEME_PLUGIN_ID,
+  THEME_SELECTION_STORAGE_KEY,
   THEME_STORAGE_KEY,
   getStoredThemeId,
+  getStoredThemeSelection,
   isElderFriendlyTheme,
   listThemeOptions,
+  normalizeThemeSelection,
+  parseThemeSelection,
   persistThemeId,
+  persistThemeSelection,
   resolveThemeId,
+  resolveThemePluginId,
+  serializeThemeSelection,
   type ThemeId,
+  type ThemePluginId,
   type ThemeOption,
+  type ThemeSelection,
+  type ThemeSelectionStatus,
 } from './theme';

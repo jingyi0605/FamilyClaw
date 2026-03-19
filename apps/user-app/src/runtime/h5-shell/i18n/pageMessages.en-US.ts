@@ -128,6 +128,7 @@
   'authShell.refreshing': 'Refreshing startup status...',
   'featurePlaceholder.migrationStatusLabel': 'Migration Status',
   'featurePlaceholder.backToEntry': 'Back to Entry',
+  'rn.placeholder.description': 'This mobile page is still being adapted, so we keep a safe route wired to the theme plugin runtime instead of falling back to host-owned static themes.',
   'assistant.placeholder.title': 'Assistant Page Is Migrating',
   'assistant.placeholder.description': 'The new assistant entry is ready, and the old page capabilities are being folded into the unified shell.',
   'assistant.placeholder.blockingReason': 'This page shows a migration placeholder for now to avoid the legacy and new assistant pages drifting in parallel.',
@@ -165,6 +166,9 @@
   'theme.qingShanLvShui.description': 'Fresh and natural for long reading sessions',
   'theme.jinXiuQianCheng.label': 'Golden Prospect',
   'theme.jinXiuQianCheng.description': 'Warm golden tones with a formal, steady feel',
+  'theme.switcher.title': 'Switch theme',
+  'theme.switcher.loading': 'Loading theme list...',
+  'theme.switcher.missingNotice': 'The current theme plugin "{theme}" is no longer available. Please choose another one.',
 
   'memory.search': 'Search memories...',
   'memory.facts': 'Facts',

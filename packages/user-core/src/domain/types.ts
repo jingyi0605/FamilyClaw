@@ -126,7 +126,12 @@ export type PluginManifestCapabilities = {
     theme_id: string;
     display_name: string;
     description?: string | null;
-    tokens_resource: string;
+    tokens_resource?: string;
+    entry_resource?: string;
+    resource_source?: 'builtin_bundle' | 'managed_plugin_dir';
+    resource_version?: string;
+    platform_targets?: Array<'h5' | 'rn'>;
+    theme_schema_version?: number;
     preview?: Record<string, unknown>;
     fallback_theme_id?: string | null;
   } | null;
@@ -186,6 +191,36 @@ export type PluginRegistryItem = {
 
 export type PluginRegistrySnapshot = {
   items: PluginRegistryItem[];
+};
+
+export type PluginThemeRegistryItem = {
+  plugin_id: string;
+  theme_id: string;
+  display_name: string;
+  source_type: PluginSourceType;
+  enabled: boolean;
+  state: 'ready' | 'disabled' | 'invalid' | 'stale' | 'missing';
+  disabled_reason: string | null;
+  resource_source: 'builtin_bundle' | 'managed_plugin_dir';
+  resource_version: string;
+  theme_schema_version: number;
+  platform_targets: Array<'h5' | 'rn'>;
+  preview: Record<string, unknown>;
+};
+
+export type PluginThemeRegistrySnapshot = {
+  household_id: string;
+  items: PluginThemeRegistryItem[];
+};
+
+export type PluginThemeResourceResponse = {
+  plugin_id: string;
+  theme_id: string;
+  resource_version: string;
+  theme_schema_version: number;
+  tokens: Record<string, unknown>;
+  source_type: PluginSourceType;
+  resource_source: 'builtin_bundle' | 'managed_plugin_dir';
 };
 
 export type PluginStateUpdateRequest = {

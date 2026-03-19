@@ -3,295 +3,129 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
-import {
-  createRequestClient,
-  DEFAULT_THEME_ID,
-  THEME_STORAGE_KEY,
-  resolveThemeId,
-  type PluginRegistrySnapshot,
-  type ThemeId as SharedThemeId,
-} from '@familyclaw/user-core';
-import {
-  userAppThemeList,
-  userAppThemes,
-} from '@familyclaw/user-ui';
 import { useOptionalHouseholdContext } from '../../household';
 import { applyThemeDocument } from './applyThemeDocument';
+import { createThemeRuntime } from '../../shared/theme-plugin/themeRuntime';
+import type {
+  ThemeFallbackNotice,
+  ThemeRuntimeSelection,
+  ThemeRuntimeThemeOption,
+  ThemeVersionInfo,
+} from '../../shared/theme-plugin/types';
 
-type ThemeId = SharedThemeId;
-type UserAppTheme = (typeof userAppThemeList)[number];
-
-type ThemeFallbackNotice = {
-  disabledThemeId: ThemeId;
-  disabledReason: string | null;
-};
-
-type ThemeVersionInfo = {
-  pluginId: string;
-  version: string;
-  installedVersion: string | null;
-  updateState: string | null;
-};
-
-type ThemeRegistryState = {
-  loaded: boolean;
-  loading: boolean;
-  error: string;
-  availableThemeIds: ThemeId[];
-  disabledReasonByThemeId: Partial<Record<ThemeId, string | null>>;
-  versionInfoByThemeId: Partial<Record<ThemeId, ThemeVersionInfo>>;
-};
+type ThemeId = string;
 
 type ThemeContextValue = {
-  theme: UserAppTheme;
+  theme: ThemeRuntimeThemeOption;
   themeId: ThemeId;
-  themeList: UserAppTheme[];
+  themeList: ThemeRuntimeThemeOption[];
   themeListLoading: boolean;
   themeListError: string;
   themeFallbackNotice: ThemeFallbackNotice | null;
-  setTheme: (id: ThemeId) => void;
+  setTheme: (selection: ThemeId | ThemeRuntimeSelection) => void;
   isThemeAvailable: (id: ThemeId) => boolean;
   getThemeDisabledReason: (id: ThemeId) => string | null;
   getThemeVersionInfo: (id: ThemeId) => ThemeVersionInfo | null;
 };
 
-const ThemeContext = createContext<ThemeContextValue | null>(null);
-
-const request = createRequestClient({
-  baseUrl: '/api/v1',
-  credentials: 'include',
-});
-
-const EMPTY_THEME_REGISTRY_STATE: ThemeRegistryState = {
-  loaded: false,
-  loading: false,
-  error: '',
-  availableThemeIds: [],
-  disabledReasonByThemeId: {},
-  versionInfoByThemeId: {},
+const PLACEHOLDER_THEME: ThemeRuntimeThemeOption = {
+  id: '__theme-placeholder__',
+  plugin_id: '',
+  label: 'Theme placeholder',
+  description: '',
+  emoji: 'T',
+  bgApp: '',
+  bgCard: '',
+  brandPrimary: '',
+  textPrimary: '',
+  glowColor: '',
+  state: 'invalid',
+  source_type: 'builtin',
+  resource_version: '0',
+  tokens: {},
 };
 
-function getStoredThemeId(): ThemeId {
-  if (typeof window === 'undefined') {
-    return DEFAULT_THEME_ID;
-  }
-
-  try {
-    return resolveThemeId(window.localStorage.getItem(THEME_STORAGE_KEY), DEFAULT_THEME_ID);
-  } catch {
-    return DEFAULT_THEME_ID;
-  }
-}
-
-function getThemeById(themeId: ThemeId): UserAppTheme {
-  return userAppThemes[themeId] ?? userAppThemes[DEFAULT_THEME_ID];
-}
-
-function resolveKnownThemeId(themeId: string | null | undefined): ThemeId | null {
-  const normalized = (themeId ?? '').trim();
-  const matched = userAppThemeList.find(item => item.id === normalized);
-  return matched?.id ?? null;
-}
-
-function buildThemeRegistryState(snapshot: PluginRegistrySnapshot): ThemeRegistryState {
-  const availableThemeIds: ThemeId[] = [];
-  const disabledReasonByThemeId: Partial<Record<ThemeId, string | null>> = {};
-  const versionInfoByThemeId: Partial<Record<ThemeId, ThemeVersionInfo>> = {};
-
-  for (const item of snapshot.items) {
-    if (!item.types.includes('theme-pack')) {
-      continue;
-    }
-
-    const themeId = resolveKnownThemeId(item.capabilities.theme_pack?.theme_id);
-    if (!themeId) {
-      continue;
-    }
-
-    versionInfoByThemeId[themeId] = {
-      pluginId: item.id,
-      version: item.version,
-      installedVersion: item.installed_version ?? null,
-      updateState: item.update_state ?? null,
-    };
-
-    if (item.enabled) {
-      if (!availableThemeIds.includes(themeId)) {
-        availableThemeIds.push(themeId);
-      }
-      continue;
-    }
-
-    disabledReasonByThemeId[themeId] = item.disabled_reason ?? null;
-  }
-
-  return {
-    loaded: true,
-    loading: false,
-    error: '',
-    availableThemeIds,
-    disabledReasonByThemeId,
-    versionInfoByThemeId,
-  };
-}
+const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider(props: { children: ReactNode }) {
   const householdContext = useOptionalHouseholdContext();
-  const householdId = householdContext?.currentHouseholdId ?? '';
-  const [themeId, setThemeId] = useState<ThemeId>(getStoredThemeId);
-  const [themeRegistryState, setThemeRegistryState] = useState<ThemeRegistryState>(EMPTY_THEME_REGISTRY_STATE);
-  const [themeFallbackNotice, setThemeFallbackNotice] = useState<ThemeFallbackNotice | null>(null);
+  const householdId = householdContext?.currentHouseholdId?.trim() ?? '';
+  const runtimeRef = useRef(createThemeRuntime());
+  const [snapshot, setSnapshot] = useState(() => runtimeRef.current.getState());
 
   useEffect(() => {
-    if (!householdId) {
-      setThemeRegistryState(EMPTY_THEME_REGISTRY_STATE);
-      setThemeFallbackNotice(null);
-      return;
-    }
+    const runtime = runtimeRef.current;
+    const unsubscribe = runtime.subscribe(nextState => {
+      setSnapshot(nextState);
+    });
+    void runtime.bootstrap();
+    return unsubscribe;
+  }, []);
 
-    let cancelled = false;
-    setThemeRegistryState(current => ({
-      ...current,
-      loaded: false,
-      loading: true,
-      error: '',
-      availableThemeIds: [],
-      disabledReasonByThemeId: {},
-      versionInfoByThemeId: {},
-    }));
-
-    void request<PluginRegistrySnapshot>(`/ai-config/${encodeURIComponent(householdId)}/plugins`)
-      .then(snapshot => {
-        if (cancelled) {
-          return;
-        }
-        setThemeRegistryState(buildThemeRegistryState(snapshot));
-      })
-      .catch(error => {
-        if (cancelled) {
-          return;
-        }
-        setThemeRegistryState({
-          loaded: false,
-          loading: false,
-          error: error instanceof Error ? error.message : '加载主题插件状态失败',
-          availableThemeIds: [],
-          disabledReasonByThemeId: {},
-          versionInfoByThemeId: {},
-        });
-      });
-
-    return () => {
-      cancelled = true;
-    };
+  useEffect(() => {
+    void runtimeRef.current.refreshRegistry(householdId || null);
   }, [householdId]);
 
-  const themeList = useMemo(() => {
-    if (!householdId) {
-      return userAppThemeList;
-    }
-    if (!themeRegistryState.loaded) {
-      return [] as UserAppTheme[];
-    }
-    return userAppThemeList.filter(item => themeRegistryState.availableThemeIds.includes(item.id));
-  }, [householdId, themeRegistryState.availableThemeIds, themeRegistryState.loaded]);
-
-  const fallbackThemeId = themeList[0]?.id ?? DEFAULT_THEME_ID;
-  const activeThemeId = useMemo(() => {
-    if (!householdId || !themeRegistryState.loaded) {
-      return themeId;
-    }
-    if (themeRegistryState.availableThemeIds.includes(themeId)) {
-      return themeId;
-    }
-    return fallbackThemeId;
-  }, [fallbackThemeId, householdId, themeId, themeRegistryState.availableThemeIds, themeRegistryState.loaded]);
-  const theme = getThemeById(activeThemeId);
-
-  useEffect(() => {
-    if (!householdId || !themeRegistryState.loaded) {
-      return;
-    }
-    if (themeRegistryState.availableThemeIds.includes(themeId)) {
-      return;
-    }
-
-    setThemeFallbackNotice({
-      disabledThemeId: themeId,
-      disabledReason: themeRegistryState.disabledReasonByThemeId[themeId] ?? null,
-    });
-    setThemeId(fallbackThemeId);
-  }, [
-    fallbackThemeId,
-    householdId,
-    themeId,
-    themeRegistryState.availableThemeIds,
-    themeRegistryState.disabledReasonByThemeId,
-    themeRegistryState.loaded,
-  ]);
+  const theme = useMemo(
+    () => snapshot.active_theme ?? snapshot.shell_theme ?? PLACEHOLDER_THEME,
+    [snapshot.active_theme, snapshot.shell_theme],
+  );
 
   useEffect(() => {
     applyThemeDocument(theme);
-    if (typeof window === 'undefined') {
-      return;
-    }
+  }, [theme]);
 
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, themeId);
-    } catch {
-      // 忽略本地持久化失败，不影响界面切换
+  const themeList = useMemo(() => {
+    if (snapshot.theme_list.length > 0) {
+      return snapshot.theme_list;
     }
-  }, [theme, themeId]);
+    if (snapshot.shell_theme) {
+      return [snapshot.shell_theme];
+    }
+    return [];
+  }, [snapshot.shell_theme, snapshot.theme_list]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
       theme,
-      themeId: activeThemeId,
+      themeId: snapshot.selection?.theme_id ?? theme.id,
       themeList,
-      themeListLoading: Boolean(householdId) && themeRegistryState.loading,
-      themeListError: themeRegistryState.error,
-      themeFallbackNotice,
-      setTheme: id => {
-        setThemeFallbackNotice(null);
-        setThemeId(resolveThemeId(id, DEFAULT_THEME_ID));
-      },
-      isThemeAvailable: id => {
-        if (!householdId) {
-          return true;
+      themeListLoading: snapshot.loading,
+      themeListError: snapshot.error,
+      themeFallbackNotice: snapshot.theme_fallback_notice,
+      setTheme: selection => {
+        if (typeof selection === 'string') {
+          void runtimeRef.current.selectThemeByThemeId(selection);
+          return;
         }
-        return themeRegistryState.availableThemeIds.includes(id);
+        void runtimeRef.current.selectTheme(selection);
       },
-      getThemeDisabledReason: id => {
-        if (!householdId) {
-          return null;
-        }
-        return themeRegistryState.disabledReasonByThemeId[id] ?? null;
-      },
-      getThemeVersionInfo: id => {
-        if (!householdId) {
-          return null;
-        }
-        return themeRegistryState.versionInfoByThemeId[id] ?? null;
-      },
+      isThemeAvailable: id => themeList.some(item => item.id === id),
+      getThemeDisabledReason: id => snapshot.disabled_reason_by_theme_id[id] ?? null,
+      getThemeVersionInfo: id => snapshot.version_info_by_theme_id[id] ?? null,
     }),
     [
-      activeThemeId,
-      householdId,
+      snapshot.disabled_reason_by_theme_id,
+      snapshot.error,
+      snapshot.loading,
+      snapshot.selection?.theme_id,
+      snapshot.theme_fallback_notice,
+      snapshot.version_info_by_theme_id,
       theme,
-      themeFallbackNotice,
+      theme.id,
       themeList,
-      themeRegistryState.availableThemeIds,
-      themeRegistryState.disabledReasonByThemeId,
-      themeRegistryState.error,
-      themeRegistryState.loading,
-      themeRegistryState.versionInfoByThemeId,
     ],
   );
 
-  return <ThemeContext.Provider value={value}>{props.children}</ThemeContext.Provider>;
+  return (
+    <ThemeContext.Provider value={value}>
+      {props.children}
+    </ThemeContext.Provider>
+  );
 }
 
 export function useTheme() {

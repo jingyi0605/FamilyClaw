@@ -5,7 +5,7 @@
  * 视觉风格与 H5 品牌保持一致：温暖、层次分明、家庭感。
  */
 import { View, StyleSheet } from 'react-native';
-import { useI18n } from '../../runtime';
+import { useI18n } from '../../runtime/index.rn';
 import {
   buildCardMap,
   buildVisibleLayoutItems,

@@ -1,98 +1,100 @@
-import { userAppThemeList } from './themes';
+import { userAppThemeFoundation } from './themes';
 
 const canUseCssVariables = typeof document !== 'undefined';
-const fallbackTheme = userAppThemeList[0];
 
-function themeVar(cssVarName: string, fallbackValue: string) {
-  return canUseCssVariables ? `var(${cssVarName}, ${fallbackValue})` : fallbackValue;
+function themeVar(cssVarName: string, fallbackValue = '') {
+  if (canUseCssVariables) {
+    return fallbackValue ? `var(${cssVarName}, ${fallbackValue})` : `var(${cssVarName})`;
+  }
+  return fallbackValue;
 }
 
 export const userAppFoundationTokens = {
   radius: {
-    sm: themeVar('--radius-sm', fallbackTheme.radiusSm),
-    md: themeVar('--radius-md', fallbackTheme.radiusMd),
-    lg: themeVar('--radius-lg', fallbackTheme.radiusLg),
-    xl: themeVar('--radius-xl', fallbackTheme.radiusXl),
+    sm: themeVar('--radius-sm'),
+    md: themeVar('--radius-md'),
+    lg: themeVar('--radius-lg'),
+    xl: themeVar('--radius-xl'),
     full: themeVar('--radius-full', '999px'),
   },
   fontSize: {
-    xs: themeVar('--font-size-xs', fallbackTheme.fontSizeXs),
-    sm: themeVar('--font-size-sm', fallbackTheme.fontSizeSm),
-    md: themeVar('--font-size-md', fallbackTheme.fontSizeMd),
-    lg: themeVar('--font-size-lg', fallbackTheme.fontSizeLg),
-    xl: themeVar('--font-size-xl', fallbackTheme.fontSizeXl),
-    xxl: themeVar('--font-size-xxl', fallbackTheme.fontSizeXxl),
-    hero: themeVar('--font-size-hero', fallbackTheme.fontSizeHero),
+    xs: themeVar('--font-size-xs'),
+    sm: themeVar('--font-size-sm'),
+    md: themeVar('--font-size-md'),
+    lg: themeVar('--font-size-lg'),
+    xl: themeVar('--font-size-xl'),
+    xxl: themeVar('--font-size-xxl'),
+    hero: themeVar('--font-size-hero'),
   },
   spacing: {
-    xs: themeVar('--spacing-xs', fallbackTheme.spacingXs),
-    sm: themeVar('--spacing-sm', fallbackTheme.spacingSm),
-    md: themeVar('--spacing-md', fallbackTheme.spacingMd),
-    lg: themeVar('--spacing-lg', fallbackTheme.spacingLg),
-    xl: themeVar('--spacing-xl', fallbackTheme.spacingXl),
-    xxl: themeVar('--spacing-xxl', fallbackTheme.spacingXxl),
+    xs: themeVar('--spacing-xs'),
+    sm: themeVar('--spacing-sm'),
+    md: themeVar('--spacing-md'),
+    lg: themeVar('--spacing-lg'),
+    xl: themeVar('--spacing-xl'),
+    xxl: themeVar('--spacing-xxl'),
   },
   shadow: {
-    sm: themeVar('--shadow-sm', fallbackTheme.shadowSm),
-    md: themeVar('--shadow-md', fallbackTheme.shadowMd),
-    lg: themeVar('--shadow-lg', fallbackTheme.shadowLg),
+    sm: themeVar('--shadow-sm'),
+    md: themeVar('--shadow-md'),
+    lg: themeVar('--shadow-lg'),
   },
   motion: {
-    transition: themeVar('--transition', fallbackTheme.transition),
-    animationSpeed: themeVar('--animation-speed', fallbackTheme.animationSpeed),
+    transition: themeVar('--transition', userAppThemeFoundation.transition),
+    animationSpeed: themeVar('--animation-speed', userAppThemeFoundation.animationSpeed),
   },
   layout: {
-    navWidth: themeVar('--nav-width', fallbackTheme.navWidth),
+    navWidth: themeVar('--nav-width', userAppThemeFoundation.navWidth),
   },
 } as const;
 
 export const userAppSemanticTokens = {
   surface: {
-    page: themeVar('--bg-app', fallbackTheme.bgApp),
-    shell: themeVar('--bg-surface', fallbackTheme.bgSurface),
-    card: themeVar('--bg-card', fallbackTheme.bgCard),
-    cardHover: themeVar('--bg-card-hover', fallbackTheme.bgCardHover),
-    sidebar: themeVar('--bg-sidebar', fallbackTheme.bgSidebar),
-    muted: themeVar('--bg-input', fallbackTheme.bgInput),
+    page: themeVar('--bg-app'),
+    shell: themeVar('--bg-surface'),
+    card: themeVar('--bg-card'),
+    cardHover: themeVar('--bg-card-hover'),
+    sidebar: themeVar('--bg-sidebar'),
+    muted: themeVar('--bg-input'),
   },
   text: {
-    primary: themeVar('--text-primary', fallbackTheme.textPrimary),
-    secondary: themeVar('--text-secondary', fallbackTheme.textSecondary),
-    tertiary: themeVar('--text-tertiary', fallbackTheme.textTertiary),
-    inverse: themeVar('--text-inverse', fallbackTheme.textInverse),
+    primary: themeVar('--text-primary'),
+    secondary: themeVar('--text-secondary'),
+    tertiary: themeVar('--text-tertiary'),
+    inverse: themeVar('--text-inverse'),
   },
   border: {
-    default: themeVar('--border-default', fallbackTheme.border),
-    subtle: themeVar('--border-light', fallbackTheme.borderLight),
-    divider: themeVar('--divider', fallbackTheme.divider),
+    default: themeVar('--border-default'),
+    subtle: themeVar('--border-light'),
+    divider: themeVar('--divider'),
   },
   action: {
-    primary: themeVar('--brand-primary', fallbackTheme.brandPrimary),
-    primaryHover: themeVar('--brand-primary-hover', fallbackTheme.brandPrimaryHover),
-    primaryLight: themeVar('--brand-primary-light', fallbackTheme.brandPrimaryLight),
-    secondary: themeVar('--brand-secondary', fallbackTheme.brandSecondary),
+    primary: themeVar('--brand-primary'),
+    primaryHover: themeVar('--brand-primary-hover'),
+    primaryLight: themeVar('--brand-primary-light'),
+    secondary: themeVar('--brand-secondary'),
   },
   state: {
-    success: themeVar('--color-success', fallbackTheme.success),
-    successLight: themeVar('--color-success-light', fallbackTheme.successLight),
-    warning: themeVar('--color-warning', fallbackTheme.warning),
-    warningLight: themeVar('--color-warning-light', fallbackTheme.warningLight),
-    danger: themeVar('--color-danger', fallbackTheme.danger),
-    dangerLight: themeVar('--color-danger-light', fallbackTheme.dangerLight),
-    info: themeVar('--color-info', fallbackTheme.info),
-    infoLight: themeVar('--color-info-light', fallbackTheme.infoLight),
+    success: themeVar('--color-success'),
+    successLight: themeVar('--color-success-light'),
+    warning: themeVar('--color-warning'),
+    warningLight: themeVar('--color-warning-light'),
+    danger: themeVar('--color-danger'),
+    dangerLight: themeVar('--color-danger-light'),
+    info: themeVar('--color-info'),
+    infoLight: themeVar('--color-info-light'),
   },
   nav: {
-    background: themeVar('--nav-bg', fallbackTheme.navBg),
-    text: themeVar('--nav-text', fallbackTheme.navText),
-    textActive: themeVar('--nav-text-active', fallbackTheme.navTextActive),
-    itemHover: themeVar('--nav-item-hover', fallbackTheme.navItemHover),
-    itemActive: themeVar('--nav-item-active', fallbackTheme.navItemActive),
+    background: themeVar('--nav-bg'),
+    text: themeVar('--nav-text'),
+    textActive: themeVar('--nav-text-active'),
+    itemHover: themeVar('--nav-item-hover'),
+    itemActive: themeVar('--nav-item-active'),
   },
   gradient: {
-    primary: themeVar('--gradient-primary', fallbackTheme.gradientPrimary),
-    card: themeVar('--gradient-card', fallbackTheme.gradientCard),
-    glow: themeVar('--glow-color', fallbackTheme.glowColor),
+    primary: themeVar('--gradient-primary'),
+    card: themeVar('--gradient-card'),
+    glow: themeVar('--glow-color'),
   },
   shadow: userAppFoundationTokens.shadow,
 } as const;

@@ -1,44 +1,28 @@
-/**
- * RN 设置页
- *
- * 分段控制器切换外观/语言/关于三个区块。
- */
-import { useState, useEffect, useMemo } from 'react';
-import { Pressable, View, StyleSheet } from 'react-native';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 import Taro, { useRouter } from '@tarojs/taro';
-import { GuardedPage, useHouseholdContext, useI18n } from '../../runtime';
+import { GuardedPage, useHouseholdContext, useI18n } from '../../runtime/index.rn';
+import { useTheme } from '../../runtime/h5-shell/index.rn';
 import {
-  RnPageShell,
-  RnPageHeader,
-  RnSection,
   RnCard,
-  RnText,
+  RnPageHeader,
+  RnPageShell,
+  RnSection,
   RnTabBar,
+  RnText,
   rnFoundationTokens,
   rnSemanticTokens,
 } from '../../runtime/rn-shell';
+import type {
+  ThemeFallbackNotice,
+  ThemeRuntimeSelection,
+  ThemeRuntimeThemeOption,
+} from '../../runtime/shared/theme-plugin/types';
 import { settingsApi } from './settingsApi';
 import type { SystemVersionRead } from './settingsTypes';
 
-/* ─── 类型 ─── */
-
 type SettingsSection = 'appearance' | 'language' | 'about';
 type T = ReturnType<typeof useI18n>['t'];
-
-interface ThemeInfo { id: string; emoji: string; label: string; description: string }
-
-/* ─── 静态数据 ─── */
-
-const THEME_LIST: ThemeInfo[] = [
-  { id: 'chun-he-jing-ming', emoji: '🌸', label: '春和景明', description: '温暖宁静，适合日常使用' },
-  { id: 'yue-lang-xing-xi', emoji: '🌙', label: '月朗星稀', description: '柔和深色，减少视觉疲劳' },
-  { id: 'ming-cha-qiu-hao', emoji: '🔍', label: '明察秋毫', description: '更大字号、更高对比度' },
-  { id: 'wan-zi-qian-hong', emoji: '🌈', label: '万紫千红', description: '鲜艳活泼，色彩绚烂' },
-  { id: 'feng-chi-dian-che', emoji: '⚡', label: '风驰电掣', description: '霓虹电网，赛博激光' },
-  { id: 'xing-he-wan-li', emoji: '🚀', label: '星河万里', description: '星云流动，宇宙漫游' },
-  { id: 'qing-shan-lv-shui', emoji: '🌿', label: '青山绿水', description: '自然清新，森林氧吧' },
-  { id: 'jin-xiu-qian-cheng', emoji: '👑', label: '锦绣前程', description: '鎏金尊贵，大气庄重' },
-];
 
 const TIMEZONE_OPTIONS = [
   { value: 'Asia/Shanghai', label: 'Asia/Shanghai (UTC+8)' },
@@ -49,24 +33,10 @@ const TIMEZONE_OPTIONS = [
   { value: 'UTC', label: 'UTC (UTC+0)' },
 ];
 
-const THEME_PREVIEW_BG: Record<string, string> = {
-  'chun-he-jing-ming': '#f7f5f2', 'yue-lang-xing-xi': '#0f1117',
-  'ming-cha-qiu-hao': '#f5f5f0', 'wan-zi-qian-hong': '#fef8ff',
-  'feng-chi-dian-che': '#160a22', 'xing-he-wan-li': '#0f1228',
-  'qing-shan-lv-shui': '#f2f7f3', 'jin-xiu-qian-cheng': '#0e0c08',
-};
-
-const THEME_PREVIEW_CARD: Record<string, string> = {
-  'chun-he-jing-ming': '#ffffff', 'yue-lang-xing-xi': '#1e2130',
-  'ming-cha-qiu-hao': '#ffffff', 'wan-zi-qian-hong': '#ffffff',
-  'feng-chi-dian-che': '#251440', 'xing-he-wan-li': '#1c2045',
-  'qing-shan-lv-shui': '#ffffff', 'jin-xiu-qian-cheng': '#1e1a0e',
-};
-
-/* ─── 分段控制器 ─── */
-
 function SegmentedControl({
-  options, value, onChange,
+  options,
+  value,
+  onChange,
 }: {
   options: { key: string; label: string }[];
   value: string;
@@ -74,12 +44,20 @@ function SegmentedControl({
 }) {
   return (
     <View style={segStyles.container}>
-      {options.map(opt => {
-        const active = opt.key === value;
+      {options.map(option => {
+        const active = option.key === value;
         return (
-          <Pressable key={opt.key} style={[segStyles.item, active && segStyles.itemActive]} onPress={() => onChange(opt.key)}>
-            <RnText variant="caption" tone={active ? 'primary' : 'secondary'} style={{ fontWeight: active ? '600' : '400' }}>
-              {opt.label}
+          <Pressable
+            key={option.key}
+            style={[segStyles.item, active && segStyles.itemActive]}
+            onPress={() => onChange(option.key)}
+          >
+            <RnText
+              variant="caption"
+              tone={active ? 'primary' : 'secondary'}
+              style={{ fontWeight: active ? '600' : '400' }}
+            >
+              {option.label}
             </RnText>
           </Pressable>
         );
@@ -107,26 +85,48 @@ const segStyles = StyleSheet.create({
   },
 });
 
-/* ─── 主题卡片 ─── */
-
-function ThemeCard({ theme, isActive, onPress }: { theme: ThemeInfo; isActive: boolean; onPress: () => void }) {
+function ThemeCard({
+  theme,
+  isActive,
+  versionLabel,
+  onPress,
+}: {
+  theme: ThemeRuntimeThemeOption;
+  isActive: boolean;
+  versionLabel: string | null;
+  onPress: () => void;
+}) {
   return (
-    <Pressable style={[tcStyles.container, isActive && tcStyles.containerActive]} onPress={onPress}>
-      <View style={tcStyles.preview}>
-        <View style={[tcStyles.previewBg, { backgroundColor: THEME_PREVIEW_BG[theme.id] ?? '#f7f5f2' }]}>
-          <View style={[tcStyles.previewCard, { backgroundColor: THEME_PREVIEW_CARD[theme.id] ?? '#fff' }]} />
+    <Pressable style={[themeCardStyles.container, isActive && themeCardStyles.containerActive]} onPress={onPress}>
+      <View style={themeCardStyles.preview}>
+        <View style={[themeCardStyles.previewBg, { backgroundColor: theme.bgApp || rnSemanticTokens.surface.page }]}>
+          <View
+            style={[
+              themeCardStyles.previewCard,
+              { backgroundColor: theme.bgCard || rnSemanticTokens.surface.card },
+            ]}
+          />
         </View>
       </View>
-      <View style={tcStyles.info}>
-        <RnText variant="label" style={tcStyles.flex1}>{theme.emoji} {theme.label}</RnText>
+      <View style={themeCardStyles.info}>
+        <RnText variant="label" style={themeCardStyles.flex1}>
+          {theme.emoji} {theme.label}
+        </RnText>
         {isActive ? <RnText variant="caption" tone="primary">✓</RnText> : null}
       </View>
-      <RnText variant="caption" tone="tertiary" numberOfLines={1}>{theme.description}</RnText>
+      <RnText variant="caption" tone="tertiary" numberOfLines={1}>
+        {theme.description}
+      </RnText>
+      {versionLabel ? (
+        <RnText variant="caption" tone="secondary" style={themeCardStyles.version}>
+          {versionLabel}
+        </RnText>
+      ) : null}
     </Pressable>
   );
 }
 
-const tcStyles = StyleSheet.create({
+const themeCardStyles = StyleSheet.create({
   container: {
     backgroundColor: rnSemanticTokens.surface.card,
     borderColor: rnSemanticTokens.border.subtle,
@@ -145,22 +145,41 @@ const tcStyles = StyleSheet.create({
     borderRadius: rnFoundationTokens.radius.sm,
     overflow: 'hidden',
   },
-  previewBg: { flex: 1, padding: 6 },
-  previewCard: { flex: 1, borderRadius: 4 },
+  previewBg: {
+    flex: 1,
+    padding: 6,
+  },
+  previewCard: {
+    flex: 1,
+    borderRadius: 4,
+  },
   info: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: rnFoundationTokens.spacing.xs,
   },
-  flex1: { flex: 1 },
+  flex1: {
+    flex: 1,
+  },
+  version: {
+    marginTop: rnFoundationTokens.spacing.xs,
+  },
 });
 
-/* ─── 选项标签（语言/时区） ─── */
-
-function OptionChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+function OptionChip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
   return (
     <Pressable style={[chipStyles.chip, active && chipStyles.chipActive]} onPress={onPress}>
-      <RnText variant="caption" tone={active ? 'primary' : 'secondary'}>{label}</RnText>
+      <RnText variant="caption" tone={active ? 'primary' : 'secondary'}>
+        {label}
+      </RnText>
     </Pressable>
   );
 }
@@ -181,47 +200,157 @@ const chipStyles = StyleSheet.create({
   },
 });
 
-/* ─── 区块组件 ─── */
+function NoticeCard({
+  tone,
+  children,
+}: {
+  tone: 'default' | 'warning' | 'error';
+  children: ReactNode;
+}) {
+  const style = tone === 'warning'
+    ? noticeStyles.warning
+    : tone === 'error'
+      ? noticeStyles.error
+      : noticeStyles.default;
 
-function AppearanceSection({ themeId, onThemeChange, t }: { themeId: string; onThemeChange: (id: string) => void; t: T }) {
+  return (
+    <RnCard variant="muted" style={[noticeStyles.base, style]}>
+      <RnText variant="caption" tone={tone === 'error' ? 'danger' : tone === 'warning' ? 'warning' : 'secondary'}>
+        {children}
+      </RnText>
+    </RnCard>
+  );
+}
+
+const noticeStyles = StyleSheet.create({
+  base: {
+    marginBottom: rnFoundationTokens.spacing.sm,
+  },
+  default: {},
+  warning: {
+    borderColor: rnSemanticTokens.state.warning,
+  },
+  error: {
+    borderColor: rnSemanticTokens.state.danger,
+  },
+});
+
+function resolveFallbackNoticeLabel(themeList: ThemeRuntimeThemeOption[], notice: ThemeFallbackNotice | null) {
+  if (!notice) {
+    return '';
+  }
+  return themeList.find(theme => theme.id === notice.disabledThemeId)?.label ?? notice.disabledThemeId;
+}
+
+function AppearanceSection({
+  currentTheme,
+  themeList,
+  themeListLoading,
+  themeListError,
+  themeFallbackNotice,
+  getThemeVersionInfo,
+  onThemeChange,
+  t,
+}: {
+  currentTheme: ThemeRuntimeThemeOption;
+  themeList: ThemeRuntimeThemeOption[];
+  themeListLoading: boolean;
+  themeListError: string;
+  themeFallbackNotice: ThemeFallbackNotice | null;
+  getThemeVersionInfo: (themeId: string) => { pluginId: string; version: string; installedVersion: string | null } | null;
+  onThemeChange: (selection: ThemeRuntimeSelection) => void;
+  t: T;
+}) {
+  const disabledThemeLabel = resolveFallbackNoticeLabel(themeList, themeFallbackNotice);
+
   return (
     <RnSection title={t('settings.appearance.title')}>
       <RnText variant="body" tone="secondary" style={{ marginBottom: rnFoundationTokens.spacing.md }}>
         {t('settings.appearance.desc')}
       </RnText>
-      {THEME_LIST.map(theme => (
-        <ThemeCard key={theme.id} theme={theme} isActive={themeId === theme.id} onPress={() => onThemeChange(theme.id)} />
-      ))}
+
+      {themeFallbackNotice ? (
+        <NoticeCard tone="warning">
+          {t('settings.appearance.themeDisabledNotice', { theme: disabledThemeLabel })}
+          {themeFallbackNotice.disabledReason
+            ? ` ${t('settings.appearance.disabledReason', { reason: themeFallbackNotice.disabledReason })}`
+            : ''}
+        </NoticeCard>
+      ) : null}
+
+      {themeListError ? <NoticeCard tone="error">{themeListError}</NoticeCard> : null}
+      {themeListLoading ? <NoticeCard tone="default">{t('settings.appearance.loading')}</NoticeCard> : null}
+      {!themeListLoading && !themeListError && !themeList.length ? (
+        <NoticeCard tone="default">{t('settings.appearance.noAvailableThemes')}</NoticeCard>
+      ) : null}
+
+      {themeList.map(theme => {
+        const versionInfo = getThemeVersionInfo(theme.id);
+        const versionLabel = versionInfo && versionInfo.pluginId === theme.plugin_id
+          ? `v${versionInfo.installedVersion ?? versionInfo.version}`
+          : null;
+        const isActive = currentTheme.id === theme.id && currentTheme.plugin_id === theme.plugin_id;
+
+        return (
+          <ThemeCard
+            key={`${theme.plugin_id}:${theme.id}`}
+            theme={theme}
+            isActive={isActive}
+            versionLabel={versionLabel}
+            onPress={() => onThemeChange({
+              plugin_id: theme.plugin_id,
+              theme_id: theme.id,
+            })}
+          />
+        );
+      })}
     </RnSection>
   );
 }
 
 function LanguageSection({
-  locale, locales, timezone, onLocaleChange, onTimezoneChange, formatLocaleLabel, t,
+  locale,
+  locales,
+  timezone,
+  onLocaleChange,
+  onTimezoneChange,
+  formatLocaleLabel,
+  t,
 }: {
   locale: string;
   locales: Array<{ id: string; label: string; source: string; nativeLabel: string }>;
   timezone: string;
   onLocaleChange: (locale: string) => void;
-  onTimezoneChange: (tz: string) => void;
+  onTimezoneChange: (timezone: string) => void;
   formatLocaleLabel: (locale: { id: string; nativeLabel: string }) => string;
   t: T;
 }) {
   return (
     <RnSection title={t('settings.language.title')}>
-      <View style={langStyles.group}>
+      <View style={languageStyles.group}>
         <RnText variant="label">{t('settings.language.interface')}</RnText>
-        <View style={langStyles.options}>
-          {locales.map(loc => (
-            <OptionChip key={loc.id} label={formatLocaleLabel(loc)} active={locale === loc.id} onPress={() => onLocaleChange(loc.id)} />
+        <View style={languageStyles.options}>
+          {locales.map(localeOption => (
+            <OptionChip
+              key={localeOption.id}
+              label={formatLocaleLabel(localeOption)}
+              active={locale === localeOption.id}
+              onPress={() => onLocaleChange(localeOption.id)}
+            />
           ))}
         </View>
       </View>
-      <View style={langStyles.group}>
+
+      <View style={languageStyles.group}>
         <RnText variant="label">{t('settings.language.timezone')}</RnText>
-        <View style={langStyles.options}>
-          {TIMEZONE_OPTIONS.map(tz => (
-            <OptionChip key={tz.value} label={tz.label} active={timezone === tz.value} onPress={() => onTimezoneChange(tz.value)} />
+        <View style={languageStyles.options}>
+          {TIMEZONE_OPTIONS.map(timezoneOption => (
+            <OptionChip
+              key={timezoneOption.value}
+              label={timezoneOption.label}
+              active={timezone === timezoneOption.value}
+              onPress={() => onTimezoneChange(timezoneOption.value)}
+            />
           ))}
         </View>
       </View>
@@ -229,8 +358,10 @@ function LanguageSection({
   );
 }
 
-const langStyles = StyleSheet.create({
-  group: { marginBottom: rnFoundationTokens.spacing.md },
+const languageStyles = StyleSheet.create({
+  group: {
+    marginBottom: rnFoundationTokens.spacing.md,
+  },
   options: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -238,7 +369,15 @@ const langStyles = StyleSheet.create({
   },
 });
 
-function AboutSection({ versionInfo, loading, t }: { versionInfo: SystemVersionRead | null; loading: boolean; t: T }) {
+function AboutSection({
+  versionInfo,
+  loading,
+  t,
+}: {
+  versionInfo: SystemVersionRead | null;
+  loading: boolean;
+  t: T;
+}) {
   const currentVersion = versionInfo?.current_version ?? '-';
   const updateStatus = versionInfo?.update_status ?? 'unknown';
 
@@ -246,7 +385,7 @@ function AboutSection({ versionInfo, loading, t }: { versionInfo: SystemVersionR
     <RnSection title={t('settings.versionManagement.title')}>
       <RnCard variant="muted">
         <View style={aboutStyles.center}>
-          <RnText style={aboutStyles.emoji}>🐾</RnText>
+          <RnText style={aboutStyles.emoji}>FC</RnText>
           <RnText variant="title">FamilyClaw</RnText>
           <RnText variant="caption" tone="secondary" style={aboutStyles.version}>
             {t('settings.versionManagement.currentVersionPill', { version: currentVersion })}
@@ -255,7 +394,9 @@ function AboutSection({ versionInfo, loading, t }: { versionInfo: SystemVersionR
       </RnCard>
       {!loading && updateStatus === 'update_available' ? (
         <View style={aboutStyles.updateBadge}>
-          <RnText variant="caption" tone="success">{t('settings.versionManagement.statusBadge.updateAvailable')}</RnText>
+          <RnText variant="caption" tone="success">
+            {t('settings.versionManagement.statusBadge.updateAvailable')}
+          </RnText>
         </View>
       ) : null}
     </RnSection>
@@ -263,18 +404,40 @@ function AboutSection({ versionInfo, loading, t }: { versionInfo: SystemVersionR
 }
 
 const aboutStyles = StyleSheet.create({
-  center: { alignItems: 'center', paddingVertical: rnFoundationTokens.spacing.lg },
-  emoji: { fontSize: 40, marginBottom: rnFoundationTokens.spacing.sm },
-  version: { marginTop: rnFoundationTokens.spacing.xs },
-  updateBadge: { marginTop: rnFoundationTokens.spacing.sm },
+  center: {
+    alignItems: 'center',
+    paddingVertical: rnFoundationTokens.spacing.lg,
+  },
+  emoji: {
+    fontSize: 40,
+    marginBottom: rnFoundationTokens.spacing.sm,
+  },
+  version: {
+    marginTop: rnFoundationTokens.spacing.xs,
+  },
+  updateBadge: {
+    marginTop: rnFoundationTokens.spacing.sm,
+  },
 });
-
-/* ─── 页面主体 ─── */
 
 function SettingsContent() {
   const router = useRouter();
   const { t, locale, locales, setLocale, formatLocaleLabel } = useI18n();
-  const { currentHouseholdId, currentHousehold, refreshCurrentHousehold, refreshHouseholds } = useHouseholdContext();
+  const {
+    theme: currentTheme,
+    themeList,
+    themeListLoading,
+    themeListError,
+    themeFallbackNotice,
+    setTheme,
+    getThemeVersionInfo,
+  } = useTheme();
+  const {
+    currentHouseholdId,
+    currentHousehold,
+    refreshCurrentHousehold,
+    refreshHouseholds,
+  } = useHouseholdContext();
 
   const initialSection = router.params?.section ?? 'appearance';
   const [activeSection, setActiveSection] = useState<SettingsSection>(
@@ -282,60 +445,76 @@ function SettingsContent() {
       ? initialSection as SettingsSection
       : 'appearance',
   );
-
-  const [themeId, setThemeId] = useState('chun-he-jing-ming');
   const [timezone, setTimezone] = useState(currentHousehold?.timezone ?? 'Asia/Shanghai');
   const [versionInfo, setVersionInfo] = useState<SystemVersionRead | null>(null);
   const [versionLoading, setVersionLoading] = useState(true);
 
   useEffect(() => {
-    if (currentHousehold?.timezone) setTimezone(currentHousehold.timezone);
+    if (currentHousehold?.timezone) {
+      setTimezone(currentHousehold.timezone);
+    }
   }, [currentHousehold?.timezone]);
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
+
+    async function loadVersion() {
       setVersionLoading(true);
       try {
-        const r = await settingsApi.getSystemVersion();
-        if (!cancelled) setVersionInfo(r);
+        const result = await settingsApi.getSystemVersion();
+        if (!cancelled) {
+          setVersionInfo(result);
+        }
       } catch {
-        if (!cancelled) setVersionInfo(null);
+        if (!cancelled) {
+          setVersionInfo(null);
+        }
       } finally {
-        if (!cancelled) setVersionLoading(false);
+        if (!cancelled) {
+          setVersionLoading(false);
+        }
       }
     }
-    void load();
-    return () => { cancelled = true; };
+
+    void loadVersion();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     void Taro.setNavigationBarTitle({ title: t('nav.settings') }).catch(() => undefined);
   }, [t]);
 
-  async function handleLocaleChange(next: string) {
-    const prev = locale;
-    setLocale(next);
-    if (!currentHouseholdId) return;
+  async function handleLocaleChange(nextLocale: string) {
+    const previousLocale = locale;
+    setLocale(nextLocale);
+    if (!currentHouseholdId) {
+      return;
+    }
+
     try {
-      await settingsApi.updateHousehold(currentHouseholdId, { locale: next });
+      await settingsApi.updateHousehold(currentHouseholdId, { locale: nextLocale });
       await refreshCurrentHousehold(currentHouseholdId);
       await refreshHouseholds();
     } catch {
-      setLocale(prev);
+      setLocale(previousLocale);
     }
   }
 
-  async function handleTimezoneChange(next: string) {
-    const prev = timezone;
-    setTimezone(next);
-    if (!currentHouseholdId) return;
+  async function handleTimezoneChange(nextTimezone: string) {
+    const previousTimezone = timezone;
+    setTimezone(nextTimezone);
+    if (!currentHouseholdId) {
+      return;
+    }
+
     try {
-      await settingsApi.updateHousehold(currentHouseholdId, { timezone: next });
+      await settingsApi.updateHousehold(currentHouseholdId, { timezone: nextTimezone });
       await refreshCurrentHousehold(currentHouseholdId);
       await refreshHouseholds();
     } catch {
-      setTimezone(prev);
+      setTimezone(previousTimezone);
     }
   }
 
@@ -345,18 +524,35 @@ function SettingsContent() {
     { key: 'about', label: t('settings.section.about') },
   ];
 
-  const processedLocales = useMemo(() =>
-    locales.map(loc => ({ ...loc, label: loc.label ?? loc.id, nativeLabel: loc.nativeLabel ?? loc.label ?? loc.id })),
+  const processedLocales = useMemo(
+    () => locales.map(item => ({
+      ...item,
+      label: item.label ?? item.id,
+      nativeLabel: item.nativeLabel ?? item.label ?? item.id,
+    })),
     [locales],
   );
 
   return (
     <RnPageShell safeAreaBottom={false}>
       <RnPageHeader title={t('settings.title')} />
-      <SegmentedControl options={sectionOptions} value={activeSection} onChange={k => setActiveSection(k as SettingsSection)} />
+      <SegmentedControl
+        options={sectionOptions}
+        value={activeSection}
+        onChange={section => setActiveSection(section as SettingsSection)}
+      />
 
       {activeSection === 'appearance' ? (
-        <AppearanceSection themeId={themeId} onThemeChange={setThemeId} t={t} />
+        <AppearanceSection
+          currentTheme={currentTheme}
+          themeList={themeList}
+          themeListLoading={themeListLoading}
+          themeListError={themeListError}
+          themeFallbackNotice={themeFallbackNotice}
+          getThemeVersionInfo={getThemeVersionInfo}
+          onThemeChange={selection => setTheme(selection)}
+          t={t}
+        />
       ) : null}
 
       {activeSection === 'language' ? (
@@ -366,7 +562,7 @@ function SettingsContent() {
           timezone={timezone}
           onLocaleChange={handleLocaleChange}
           onTimezoneChange={handleTimezoneChange}
-          formatLocaleLabel={loc => formatLocaleLabel(loc)}
+          formatLocaleLabel={item => formatLocaleLabel(item)}
           t={t}
         />
       ) : null}

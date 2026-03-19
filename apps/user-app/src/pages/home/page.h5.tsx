@@ -32,7 +32,7 @@ import {
   Wind,
   X,
 } from 'lucide-react';
-import './index.h5.scss';
+import './styles-entry';
 import { useI18n } from '../../runtime/h5-shell';
 import type { ShellMessageKey } from '../../runtime/h5-shell/i18n/I18nProvider';
 import {

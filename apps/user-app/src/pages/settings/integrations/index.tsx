@@ -6,6 +6,17 @@ import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils'
 import { Card, Section } from '../../family/base';
 import { IntegrationSyncedDevicePreviewDialog } from '../../device-management/IntegrationSyncedDevicePreviewDialog';
 import { SettingsPageShell } from '../SettingsPageShell';
+import {
+  resolvePluginConfigSectionDescription,
+  resolvePluginConfigSectionTitle,
+  resolvePluginConfigSpecDescription,
+  resolvePluginConfigSubmitText,
+  resolvePluginFieldLabel,
+  resolvePluginMaybeKey,
+  resolvePluginOptionLabel,
+  resolvePluginWidgetHelpText,
+  resolvePluginWidgetPlaceholder,
+} from '../pluginConfigI18n';
 import { ApiError, settingsApi } from '../settingsApi';
 import {
   buildSyncAllImpactSummary,
@@ -234,7 +245,7 @@ function buildOpenXiaoaiGatewayCandidates(discoveries: IntegrationDiscoveryItem[
 }
 
 function SettingsIntegrationsContent() {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const { currentHouseholdId } = useHouseholdContext();
   const page = (
     key: Parameters<typeof getPageMessage>[1],
@@ -549,7 +560,7 @@ function SettingsIntegrationsContent() {
       const keepExisting = Boolean(secretField?.has_value) && !createDraft.secrets[field.key]?.trim() && !createDraft.clearSecretFields[field.key];
       return (
         <div key={field.key} className="form-group">
-          <label>{field.label}</label>
+          <label>{resolvePluginFieldLabel(field, t)}</label>
           <input
             className="form-input"
             type="password"
@@ -557,7 +568,7 @@ function SettingsIntegrationsContent() {
             onChange={(event) => updateSecret(field.key, event.target.value)}
             placeholder={secretField?.has_value
               ? page('settings.integrations.modal.instance.secret.replacePlaceholder')
-              : (widget?.placeholder ?? undefined)}
+              : (resolvePluginWidgetPlaceholder(widget, t) || undefined)}
           />
           {secretField?.has_value ? (
             <label className="form-help" style={{ display: 'block' }}>
@@ -573,7 +584,7 @@ function SettingsIntegrationsContent() {
               })}
             </label>
           ) : null}
-          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
+          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
           {keepExisting ? (
             <div className="form-help">
               {page('settings.integrations.modal.instance.secret.keepHint', {
@@ -581,14 +592,14 @@ function SettingsIntegrationsContent() {
               })}
             </div>
           ) : null}
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
     }
     if (field.type === 'boolean') {
       return (
         <div key={field.key} className="form-group">
-          <label>{field.label}</label>
+          <label>{resolvePluginFieldLabel(field, t)}</label>
           <select
             className="form-select"
             value={createDraft.values[field.key] === true ? 'true' : 'false'}
@@ -597,15 +608,15 @@ function SettingsIntegrationsContent() {
             <option value="false">{page('settings.integrations.modal.config.booleanFalse')}</option>
             <option value="true">{page('settings.integrations.modal.config.booleanTrue')}</option>
           </select>
-          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
     }
     if (field.type === 'enum') {
       return (
         <div key={field.key} className="form-group">
-          <label>{field.label}</label>
+          <label>{resolvePluginFieldLabel(field, t)}</label>
           <select
             className="form-select"
             value={getScalarValue(createDraft.values, field.key)}
@@ -613,41 +624,41 @@ function SettingsIntegrationsContent() {
           >
             <option value="">{page('settings.integrations.modal.config.selectPlaceholder')}</option>
             {(field.enum_options ?? []).map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>{resolvePluginOptionLabel(option, t)}</option>
             ))}
           </select>
-          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
     }
     if (field.type === 'text') {
       return (
         <div key={field.key} className="form-group">
-          <label>{field.label}</label>
+          <label>{resolvePluginFieldLabel(field, t)}</label>
           <textarea
             className="form-input"
             value={getScalarValue(createDraft.values, field.key)}
             onChange={(event) => updateValue(field.key, event.target.value)}
-            placeholder={widget?.placeholder ?? undefined}
+            placeholder={resolvePluginWidgetPlaceholder(widget, t) || undefined}
           />
-          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
     }
     return (
       <div key={field.key} className="form-group">
-        <label>{field.label}</label>
+        <label>{resolvePluginFieldLabel(field, t)}</label>
         <input
           className="form-input"
           type={field.type === 'integer' || field.type === 'number' ? 'number' : 'text'}
           value={getScalarValue(createDraft.values, field.key)}
           onChange={(event) => updateValue(field.key, event.target.value)}
-          placeholder={widget?.placeholder ?? undefined}
+          placeholder={resolvePluginWidgetPlaceholder(widget, t) || undefined}
         />
-        <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
-        {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+        {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
       </div>
     );
   }
@@ -1236,9 +1247,9 @@ function SettingsIntegrationsContent() {
                     instanceFormMode === 'create'
                       ? 'settings.integrations.modal.create.title'
                       : 'settings.integrations.modal.edit.title',
-                    { plugin: formContext.pluginName },
+                    { plugin: resolvePluginMaybeKey(formContext.pluginName, t) },
                   )}</h3>
-                  <p>{formContext.configSpec.description || page(
+                  <p>{resolvePluginConfigSpecDescription(formContext.configSpec, t) || page(
                     instanceFormMode === 'create'
                       ? 'settings.integrations.modal.create.desc'
                       : 'settings.integrations.modal.edit.desc',
@@ -1258,13 +1269,15 @@ function SettingsIntegrationsContent() {
                     }))}
                     placeholder={page('settings.integrations.modal.instance.displayNamePlaceholder')}
                   />
-                  {createDraft.fieldErrors.display_name ? <div className="form-help">{createDraft.fieldErrors.display_name}</div> : null}
+                  {createDraft.fieldErrors.display_name ? <div className="form-help">{resolvePluginMaybeKey(createDraft.fieldErrors.display_name, t)}</div> : null}
                 </div>
                 {formContext.configSpec.ui_schema.sections.map((section) => (
                   <div key={section.id}>
                     <div className="form-group">
-                      <label>{section.title}</label>
-                      {section.description ? <div className="form-help">{section.description}</div> : null}
+                      <label>{resolvePluginConfigSectionTitle(section, t)}</label>
+                      {resolvePluginConfigSectionDescription(section, t) ? (
+                        <div className="form-help">{resolvePluginConfigSectionDescription(section, t)}</div>
+                      ) : null}
                     </div>
                     {section.fields.map((fieldKey) => {
                       const field = formContext.configSpec.config_schema.fields.find((item) => item.key === fieldKey);
@@ -1299,10 +1312,13 @@ function SettingsIntegrationsContent() {
                   >
                     {submitting
                       ? page('settings.integrations.action.saving')
-                      : page(
-                        instanceFormMode === 'create'
-                          ? 'settings.integrations.modal.create.submit'
-                          : 'settings.integrations.modal.edit.submit',
+                      : (
+                        resolvePluginConfigSubmitText(formContext.configSpec, t)
+                        || page(
+                          instanceFormMode === 'create'
+                            ? 'settings.integrations.modal.create.submit'
+                            : 'settings.integrations.modal.edit.submit',
+                        )
                       )}
                   </button>
                 </div>
