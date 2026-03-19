@@ -320,8 +320,24 @@ class DeviceControlPhase2Tests(unittest.TestCase):
                     ),
                 )
             with patch(
-                "app.plugins.builtin.homeassistant_device_action.runtime.build_home_assistant_client_for_instance",
-                return_value=_FakeHomeAssistantClient(),
+                "app.modules.device.service.load_binding_live_state_maps_via_plugin",
+                return_value=type(
+                    "_LiveStateLoadResult",
+                    (),
+                    {
+                        "state_maps": {
+                            self.integration_instance_id: {
+                                "light.study_main": {
+                                    "entity_id": "light.study_main",
+                                    "state": "on",
+                                    "last_updated": "2026-03-17T10:00:00Z",
+                                    "attributes": {},
+                                }
+                            }
+                        },
+                        "unavailable_instance_ids": set(),
+                    },
+                )(),
             ):
                 entities = list_device_entities(db, device_id=device_id, view="all")
 
@@ -458,12 +474,12 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             "request_id": new_uuid(),
             "household_id": self.household_id,
             "plugin_id": plugin_id,
-                "binding": {
-                    "binding_id": new_uuid(),
-                    "integration_instance_id": self.integration_instance_id,
-                    "platform": "home_assistant",
-                    "plugin_id": plugin_id,
-                    "external_device_id": f"external-{device_id}",
+            "binding": {
+                "binding_id": new_uuid(),
+                "integration_instance_id": self.integration_instance_id,
+                "platform": "home_assistant",
+                "plugin_id": plugin_id,
+                "external_device_id": f"external-{device_id}",
                 "external_entity_id": external_entity_id,
                 "capabilities": {"primary_entity_id": external_entity_id},
                 "binding_version": 1,
@@ -481,10 +497,10 @@ class DeviceControlPhase2Tests(unittest.TestCase):
             "timeout_seconds": 8,
             "reason": "phase2.test",
             "risk_level": risk_level,
-            "_system_context": {
-                "device_control": {
-                    "database_url": settings.database_url,
-                }
+            "runtime_config": {
+                "base_url": "http://ha.local:8123",
+                "access_token": "demo-token",
+                "sync_rooms_enabled": False,
             },
         }
 

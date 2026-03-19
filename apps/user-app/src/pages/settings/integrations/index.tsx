@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Taro from '@tarojs/taro';
 import { Home, Check, Plug } from 'lucide-react';
 import { GuardedPage, useHouseholdContext, useI18n } from '../../../runtime';
@@ -151,6 +151,85 @@ function isPluginFieldVisible(
   });
 }
 
+function getFieldDependencies(field: PluginManifestConfigField): string[] {
+  const dependencies = new Set(field.depends_on ?? []);
+  if (field.option_source?.provider_field) {
+    dependencies.add(field.option_source.provider_field);
+  }
+  if (field.option_source?.parent_field) {
+    dependencies.add(field.option_source.parent_field);
+  }
+  return Array.from(dependencies);
+}
+
+function shouldResolveConfigChange(configSpec: PluginManifestConfigSpec, fieldKey: string): boolean {
+  if (configSpec.config_schema.fields.some((field) => getFieldDependencies(field).includes(fieldKey))) {
+    return true;
+  }
+  return Object.values(configSpec.ui_schema.widgets ?? {}).some((widget) => (
+    (widget.visible_when ?? []).some((rule) => rule.field === fieldKey)
+  ));
+}
+
+function sanitizeDraftValuesWithConfigSpec(
+  configSpec: PluginManifestConfigSpec,
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  const nextValues = { ...values };
+  for (const field of configSpec.config_schema.fields) {
+    const currentValue = nextValues[field.key];
+    if (field.type === 'enum') {
+      const optionValues = new Set((field.enum_options ?? []).map((option) => option.value));
+      if (typeof currentValue === 'string' && currentValue && !optionValues.has(currentValue)) {
+        delete nextValues[field.key];
+      }
+      continue;
+    }
+    if (field.type === 'multi_enum' && Array.isArray(currentValue)) {
+      const optionValues = new Set((field.enum_options ?? []).map((option) => option.value));
+      const filtered = currentValue.filter((item): item is string => typeof item === 'string' && optionValues.has(item));
+      if (filtered.length === 0) {
+        delete nextValues[field.key];
+      } else if (filtered.length !== currentValue.length) {
+        nextValues[field.key] = filtered;
+      }
+    }
+  }
+  return nextValues;
+}
+
+function areDraftValuesEqual(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function buildPluginClearFields(
+  configSpec: PluginManifestConfigSpec,
+  values: Record<string, unknown>,
+  widgets: Record<string, PluginManifestFieldUiSchema> | undefined,
+): string[] {
+  return configSpec.config_schema.fields
+    .filter((field) => {
+      if (field.type === 'secret') {
+        return false;
+      }
+      if (!isPluginFieldVisible(field.key, values, widgets)) {
+        return true;
+      }
+      const value = values[field.key];
+      if (value === undefined || value === null) {
+        return true;
+      }
+      if (typeof value === 'string' && !value.trim()) {
+        return true;
+      }
+      if (Array.isArray(value) && value.length === 0) {
+        return true;
+      }
+      return false;
+    })
+    .map((field) => field.key);
+}
+
 function normalizeSubmitValue(field: PluginManifestConfigField, value: unknown): unknown {
   if (value === null || value === undefined) {
     return undefined;
@@ -278,6 +357,7 @@ function SettingsIntegrationsContent() {
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const configResolveSeqRef = useRef(0);
 
   useEffect(() => {
     void Taro.setNavigationBarTitle({ title: page('settings.integrations.title') }).catch(() => undefined);
@@ -401,21 +481,95 @@ function SettingsIntegrationsContent() {
     });
   }
 
-  function openCreateModal(item: IntegrationCatalogItem) {
-    if (!item.config_spec) {
+  async function resolveIntegrationDraftConfig(
+    pluginId: string,
+    draft: CreateDraft,
+    scopeKey?: string,
+  ) {
+    if (!currentHouseholdId) {
       return;
     }
-    setInstanceFormMode('create');
-    setEditingInstanceId(null);
-    setFormContext({
-      pluginId: item.plugin_id,
-      pluginName: item.name,
-      description: item.description ?? null,
-      configSpec: item.config_spec,
+    const resolveSeq = configResolveSeqRef.current + 1;
+    configResolveSeqRef.current = resolveSeq;
+
+    let workingValues = { ...draft.values };
+    let resolvedForm: PluginConfigFormRead | null = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      resolvedForm = await settingsApi.resolveHouseholdPluginConfigForm(currentHouseholdId, pluginId, {
+        scope_type: 'integration_instance',
+        scope_key: scopeKey ?? null,
+        values: workingValues,
+      });
+      const sanitizedValues = sanitizeDraftValuesWithConfigSpec(resolvedForm.config_spec, resolvedForm.view.values);
+      if (areDraftValuesEqual(workingValues, sanitizedValues)) {
+        break;
+      }
+      workingValues = sanitizedValues;
+    }
+
+    if (!resolvedForm || resolveSeq !== configResolveSeqRef.current) {
+      return;
+    }
+
+    setFormContext((current) => {
+      if (!current || current.pluginId !== pluginId) {
+        return current;
+      }
+      return {
+        ...current,
+        configSpec: resolvedForm!.config_spec,
+      };
     });
-    setCreateDraft(buildDraft(item.config_spec, { displayName: item.name }));
-    setCatalogModalOpen(false);
-    setCreateModalOpen(true);
+    setCreateDraft((current) => {
+      if (resolveSeq !== configResolveSeqRef.current) {
+        return current;
+      }
+      const displayNameError = current.fieldErrors.display_name;
+      return {
+        ...current,
+        values: resolvedForm!.view.values,
+        secretFields: Object.keys(resolvedForm!.view.secret_fields).length > 0
+          ? resolvedForm!.view.secret_fields
+          : current.secretFields,
+        fieldErrors: {
+          ...(displayNameError ? { display_name: displayNameError } : {}),
+          ...resolvedForm!.view.field_errors,
+        },
+      };
+    });
+  }
+
+  async function openCreateModal(item: IntegrationCatalogItem) {
+    if (!item.config_spec || !currentHouseholdId) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const resolvedForm = await settingsApi.resolveHouseholdPluginConfigForm(currentHouseholdId, item.plugin_id, {
+        scope_type: 'integration_instance',
+        scope_key: null,
+        values: {},
+      });
+      setInstanceFormMode('create');
+      setEditingInstanceId(null);
+      setFormContext({
+        pluginId: item.plugin_id,
+        pluginName: item.name,
+        description: item.description ?? null,
+        configSpec: resolvedForm.config_spec,
+      });
+      setCreateDraft(buildDraft(resolvedForm.config_spec, {
+        displayName: item.name,
+        form: resolvedForm,
+      }));
+      setCatalogModalOpen(false);
+      setCreateModalOpen(true);
+      setError('');
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : page('settings.integrations.error.loadIntegrationFormFailed'));
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function openEditModal(instance: IntegrationInstance) {
@@ -456,6 +610,7 @@ function SettingsIntegrationsContent() {
   }
 
   function closeCreateModal() {
+    configResolveSeqRef.current += 1;
     setCreateModalOpen(false);
     setFormContext(null);
     setEditingInstanceId(null);
@@ -463,12 +618,21 @@ function SettingsIntegrationsContent() {
     setCreateDraft(buildDraft(null));
   }
 
-  function updateValue(fieldKey: string, value: unknown) {
-    setCreateDraft((current) => ({
-      ...current,
-      values: { ...current.values, [fieldKey]: value },
-      fieldErrors: { ...current.fieldErrors, [fieldKey]: '' },
-    }));
+  async function updateValue(fieldKey: string, value: unknown) {
+    const nextDraft: CreateDraft = {
+      ...createDraft,
+      values: { ...createDraft.values, [fieldKey]: value },
+      fieldErrors: { ...createDraft.fieldErrors, [fieldKey]: '' },
+    };
+    setCreateDraft(nextDraft);
+    if (!formContext || !shouldResolveConfigChange(formContext.configSpec, fieldKey)) {
+      return;
+    }
+    await resolveIntegrationDraftConfig(
+      formContext.pluginId,
+      nextDraft,
+      instanceFormMode === 'edit' ? (editingInstanceId ?? undefined) : undefined,
+    );
   }
 
   function updateSecret(fieldKey: string, value: string) {
@@ -532,7 +696,7 @@ function SettingsIntegrationsContent() {
               <select
                 className="form-select"
                 value={selectedGatewayId}
-                onChange={(event) => updateValue(field.key, event.target.value)}
+                onChange={(event) => void updateValue(field.key, event.target.value)}
               >
                 <option value="">{page('settings.integrations.modal.create.gateway.selectPlaceholder')}</option>
                 {openXiaoaiGatewayCandidates.map((candidate) => (
@@ -603,7 +767,7 @@ function SettingsIntegrationsContent() {
           <select
             className="form-select"
             value={createDraft.values[field.key] === true ? 'true' : 'false'}
-            onChange={(event) => updateValue(field.key, event.target.value === 'true')}
+            onChange={(event) => void updateValue(field.key, event.target.value === 'true')}
           >
             <option value="false">{page('settings.integrations.modal.config.booleanFalse')}</option>
             <option value="true">{page('settings.integrations.modal.config.booleanTrue')}</option>
@@ -620,7 +784,7 @@ function SettingsIntegrationsContent() {
           <select
             className="form-select"
             value={getScalarValue(createDraft.values, field.key)}
-            onChange={(event) => updateValue(field.key, event.target.value)}
+            onChange={(event) => void updateValue(field.key, event.target.value)}
           >
             <option value="">{page('settings.integrations.modal.config.selectPlaceholder')}</option>
             {(field.enum_options ?? []).map((option) => (
@@ -639,7 +803,7 @@ function SettingsIntegrationsContent() {
           <textarea
             className="form-input"
             value={getScalarValue(createDraft.values, field.key)}
-            onChange={(event) => updateValue(field.key, event.target.value)}
+            onChange={(event) => void updateValue(field.key, event.target.value)}
             placeholder={resolvePluginWidgetPlaceholder(widget, t) || undefined}
           />
           <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
@@ -654,7 +818,7 @@ function SettingsIntegrationsContent() {
           className="form-input"
           type={field.type === 'integer' || field.type === 'number' ? 'number' : 'text'}
           value={getScalarValue(createDraft.values, field.key)}
-          onChange={(event) => updateValue(field.key, event.target.value)}
+          onChange={(event) => void updateValue(field.key, event.target.value)}
           placeholder={resolvePluginWidgetPlaceholder(widget, t) || undefined}
         />
         <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
@@ -702,6 +866,11 @@ function SettingsIntegrationsContent() {
     }
 
     const payloadValues: Record<string, unknown> = {};
+    const clearFields = buildPluginClearFields(
+      formContext.configSpec,
+      createDraft.values,
+      formContext.configSpec.ui_schema.widgets,
+    );
     const clearSecretFields: string[] = [];
     for (const field of formContext.configSpec.config_schema.fields) {
       if (!isPluginFieldVisible(field.key, createDraft.values, formContext.configSpec.ui_schema.widgets)) {
@@ -734,6 +903,7 @@ function SettingsIntegrationsContent() {
       const payload = {
         display_name: createDraft.displayName.trim(),
         config: payloadValues,
+        clear_fields: clearFields,
         clear_secret_fields: clearSecretFields,
       };
       const instance = instanceFormMode === 'create'
@@ -823,7 +993,7 @@ function SettingsIntegrationsContent() {
       setSyncAllConfirmStep('first');
       setError('');
     } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.loadHaDevicesFailed'));
+      setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.loadDeviceCandidatesFailed'));
     } finally {
       setSyncAllLoading(false);
     }
@@ -875,7 +1045,7 @@ function SettingsIntegrationsContent() {
       setCandidateDomainFilter('all');
       setDeviceModalOpen(true);
     } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.loadHaDevicesFailed'));
+      setError(syncError instanceof Error ? syncError.message : page('settings.integrations.error.loadDeviceCandidatesFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -1191,13 +1361,17 @@ function SettingsIntegrationsContent() {
               <div className="integration-catalog-grid">
                 {catalog.map((item) => (
                     <div key={item.plugin_id} className="integration-catalog-card">
-                      <div className="integration-catalog-card__icon">
-                      {item.plugin_id.includes('home_assistant') || item.plugin_id.includes('open_xiaoai') ? (
-                        <Home size={24} />
-                      ) : (
-                        <Plug size={24} />
-                      )}
-                    </div>
+                  <div className="integration-catalog-card__icon">
+                    {item.icon_url ? (
+                      <img
+                        src={item.icon_url}
+                        alt={item.name}
+                        className="integration-catalog-card__icon-image"
+                      />
+                    ) : (
+                      <Plug size={24} />
+                    )}
+                  </div>
                     <div className="integration-catalog-card__body">
                       <div className="integration-catalog-card__header">
                         <h4 className="integration-catalog-card__title">{item.name}</h4>
@@ -1226,7 +1400,7 @@ function SettingsIntegrationsContent() {
                         className="btn btn--primary btn--sm"
                         type="button"
                         disabled={!item.config_schema_available}
-                        onClick={() => openCreateModal(item)}
+                        onClick={() => void openCreateModal(item)}
                       >
                         {page('settings.integrations.modal.catalog.choose')}
                       </button>

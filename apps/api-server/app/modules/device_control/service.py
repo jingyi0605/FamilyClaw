@@ -18,6 +18,7 @@ from app.modules.device_control.schemas import (
     DeviceControlPluginResult,
     DeviceControlRequest,
 )
+from app.modules.plugin import config_service as plugin_config_service
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import (
     PluginServiceError,
@@ -116,22 +117,6 @@ def _translate_plugin_error(exc: PluginServiceError) -> DeviceControlServiceErro
     )
 
 
-def _build_database_url(db: Session) -> str | None:
-    bind = db.get_bind()
-    if hasattr(bind, "url"):
-        return _render_database_url(bind.url)
-    engine = getattr(bind, "engine", None)
-    if engine is not None and hasattr(engine, "url"):
-        return _render_database_url(engine.url)
-    return None
-
-
-def _render_database_url(url: Any) -> str:
-    if hasattr(url, "render_as_string"):
-        return url.render_as_string(hide_password=False)
-    return str(url)
-
-
 def _build_payload(
     *,
     db: Session,
@@ -146,7 +131,6 @@ def _build_payload(
     capabilities = load_json(route_binding.capabilities)
     if not isinstance(capabilities, dict):
         capabilities = {}
-    database_url = _build_database_url(db)
 
     payload = DeviceControlPluginPayload(
         request_id=request.idempotency_key or new_uuid(),
@@ -177,7 +161,11 @@ def _build_payload(
         reason=request.reason,
         risk_level=risk_level,
         idempotency_key=request.idempotency_key,
-        system_context={"device_control": {"database_url": database_url}} if database_url else None,
+        runtime_config=_load_runtime_config(
+            db,
+            integration_instance_id=route_binding.integration_instance_id,
+            plugin_id=plugin_id,
+        ),
     )
     return payload
 
@@ -406,3 +394,19 @@ def _serialize_plugin_payload(payload: DeviceControlPluginPayload) -> dict[str, 
     if payload.system_context is not None:
         payload_dict["_system_context"] = payload.system_context
     return payload_dict
+
+
+def _load_runtime_config(
+    db: Session,
+    *,
+    integration_instance_id: str | None,
+    plugin_id: str,
+) -> dict[str, Any]:
+    if not integration_instance_id:
+        return {}
+    runtime_config = plugin_config_service.get_integration_instance_runtime_config(
+        db,
+        integration_instance_id=integration_instance_id,
+        plugin_id=plugin_id,
+    )
+    return runtime_config.values

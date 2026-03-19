@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from app.plugins.builtin.homeassistant_device_action.adapter import (
+    HomeAssistantRuntimeConfigError,
     append_last_action_at,
     build_home_assistant_client,
-    build_session_factory,
     error_result,
-    extract_database_url,
-    parse_payload,
+    parse_action_payload,
     success_result,
 )
 from app.plugins.builtin.homeassistant_device_action.client import HomeAssistantClientError
@@ -15,7 +14,9 @@ from app.plugins.builtin.homeassistant_device_action.mapper import (
     build_service_call,
 )
 
+
 ALLOWED_DEVICE_TYPES = {"light", "ac", "curtain", "speaker", "lock"}
+
 
 def run(payload: dict | None = None) -> dict:
     raw_payload = payload or {}
@@ -23,7 +24,7 @@ def run(payload: dict | None = None) -> dict:
     action = str(raw_payload.get("action") or "turn_on")
 
     try:
-        request = parse_payload(raw_payload)
+        request = parse_action_payload(raw_payload)
         plugin_id = request.plugin_id
         action = request.action
     except Exception as exc:
@@ -34,66 +35,58 @@ def run(payload: dict | None = None) -> dict:
             error_message=f"控制 payload 不合法: {exc}",
         )
 
-    database_url = extract_database_url(raw_payload)
-    if not database_url:
+    try:
+        service_call = build_service_call(request, allowed_device_types=ALLOWED_DEVICE_TYPES)
+        client = build_home_assistant_client(
+            runtime_config=request.runtime_config,
+            timeout_seconds=request.timeout_seconds,
+        )
+        response_payload = client.call_service(
+            domain=service_call.domain,
+            service=service_call.service,
+            data=service_call.service_data,
+        )
+    except HomeAssistantActionMappingError as exc:
+        return error_result(
+            plugin_id=request.plugin_id,
+            action=request.action,
+            error_code=exc.error_code,
+            error_message=exc.message,
+        )
+    except HomeAssistantRuntimeConfigError as exc:
+        return error_result(
+            plugin_id=request.plugin_id,
+            action=request.action,
+            error_code="integration_config_invalid",
+            error_message=str(exc),
+        )
+    except HomeAssistantClientError as exc:
+        return error_result(
+            plugin_id=request.plugin_id,
+            action=request.action,
+            error_code=_map_client_error(str(exc)),
+            error_message=str(exc),
+        )
+    except Exception as exc:
         return error_result(
             plugin_id=request.plugin_id,
             action=request.action,
             error_code="plugin_internal_error",
-            error_message="缺少插件运行时数据库上下文",
+            error_message=str(exc),
         )
 
-    session_factory, engine = build_session_factory(database_url)
-    try:
-        with session_factory() as db:
-            try:
-                service_call = build_service_call(request, allowed_device_types=ALLOWED_DEVICE_TYPES)
-                client = build_home_assistant_client(
-                    db,
-                    integration_instance_id=(request.binding.integration_instance_id or ""),
-                    timeout_seconds=request.timeout_seconds,
-                )
-                response_payload = client.call_service(
-                    domain=service_call.domain,
-                    service=service_call.service,
-                    data=service_call.service_data,
-                )
-            except HomeAssistantActionMappingError as exc:
-                return error_result(
-                    plugin_id=request.plugin_id,
-                    action=request.action,
-                    error_code=exc.error_code,
-                    error_message=exc.message,
-                )
-            except HomeAssistantClientError as exc:
-                return error_result(
-                    plugin_id=request.plugin_id,
-                    action=request.action,
-                    error_code=_map_client_error(str(exc)),
-                    error_message=str(exc),
-                )
-            except Exception as exc:
-                return error_result(
-                    plugin_id=request.plugin_id,
-                    action=request.action,
-                    error_code="plugin_internal_error",
-                    error_message=str(exc),
-                )
-
-            return success_result(
-                plugin_id=request.plugin_id,
-                action=request.action,
-                external_request={
-                    "domain": service_call.domain,
-                    "service": service_call.service,
-                    "entity_id": service_call.entity_id,
-                    "service_data": service_call.service_data,
-                },
-                external_response=response_payload,
-                normalized_state_patch=append_last_action_at(service_call.normalized_state_patch),
-            )
-    finally:
-        engine.dispose()
+    return success_result(
+        plugin_id=request.plugin_id,
+        action=request.action,
+        external_request={
+            "domain": service_call.domain,
+            "service": service_call.service,
+            "entity_id": service_call.entity_id,
+            "service_data": service_call.service_data,
+        },
+        external_response=response_payload,
+        normalized_state_patch=append_last_action_at(service_call.normalized_state_patch),
+    )
 
 
 def _map_client_error(message: str) -> str:

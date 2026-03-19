@@ -460,6 +460,39 @@ export type HouseholdSetupStatus = {
   updated_at: string;
 };
 
+export type MemberGuideStatus = {
+  member_id: string;
+  user_app_guide_version: number | null;
+  updated_at: string | null;
+};
+
+export type UserGuidePlacement = 'auto' | 'top' | 'bottom' | 'left' | 'right' | 'center';
+export type UserGuideRuntimeStatus =
+  | 'idle'
+  | 'pending_start'
+  | 'navigating'
+  | 'waiting_anchor'
+  | 'showing'
+  | 'completing'
+  | 'finished';
+
+export type UserGuideManifestStep = {
+  step_id: string;
+  route: string;
+  anchor_id: string | null;
+  title_key: string;
+  content_key: string;
+  placement: UserGuidePlacement;
+  required_role: Member['role'] | null;
+  optional: boolean;
+  runtime_targets?: Array<AppPlatformTarget['runtime']>;
+};
+
+export type UserGuideManifest = {
+  version: number;
+  steps: UserGuideManifestStep[];
+};
+
 export const ROOM_TYPE_OPTIONS = [
   { value: 'living_room', label: '客厅' },
   { value: 'bedroom', label: '卧室' },
@@ -559,62 +592,7 @@ export type Device = {
   updated_at: string;
 };
 
-export type HomeAssistantSyncResponse = {
-  household_id: string;
-  created_devices: number;
-  updated_devices: number;
-  created_bindings: number;
-  created_rooms: number;
-  assigned_rooms: number;
-  skipped_entities: number;
-  failed_entities: number;
-  devices: Device[];
-  failures: { entity_id: string | null; reason: string }[];
-};
-
-export type HomeAssistantDeviceCandidate = {
-  external_device_id: string;
-  primary_entity_id: string;
-  name: string;
-  room_name: string | null;
-  device_type: string;
-  entity_count: number;
-  already_synced: boolean;
-};
-
-export type HomeAssistantDeviceCandidatesResponse = {
-  household_id: string;
-  items: HomeAssistantDeviceCandidate[];
-};
-
-export type HomeAssistantConfig = {
-  household_id: string;
-  base_url: string | null;
-  token_configured: boolean;
-  sync_rooms_enabled: boolean;
-  last_device_sync_at: string | null;
-  updated_at: string | null;
-};
-
-export type HomeAssistantRoomSyncResponse = {
-  household_id: string;
-  created_rooms: number;
-  matched_entities: number;
-  skipped_entities: number;
-  rooms: Array<{ id: string; name: string }>;
-};
-
-export type HomeAssistantRoomCandidate = {
-  name: string;
-  entity_count: number;
-  exists_locally: boolean;
-  can_sync: boolean;
-};
-
-export type HomeAssistantRoomCandidatesResponse = {
-  household_id: string;
-  items: HomeAssistantRoomCandidate[];
-};
+export type PlatformHealthStatus = 'healthy' | 'degraded' | 'offline';
 
 export type ContextOverviewMemberState = {
   member_id: string;
@@ -659,7 +637,7 @@ export type ContextOverviewRead = {
   home_mode: 'home' | 'away' | 'night' | 'sleep' | 'custom';
   privacy_mode: 'balanced' | 'strict' | 'care';
   automation_level: 'manual' | 'assisted' | 'automatic';
-  home_assistant_status: 'healthy' | 'degraded' | 'offline';
+  platform_health_status: PlatformHealthStatus;
   voice_fast_path_enabled: boolean;
   guest_mode_enabled: boolean;
   child_protection_enabled: boolean;
@@ -702,7 +680,7 @@ export type ContextConfigRead = {
   home_mode: 'home' | 'away' | 'night' | 'sleep' | 'custom';
   privacy_mode: 'balanced' | 'strict' | 'care';
   automation_level: 'manual' | 'assisted' | 'automatic';
-  home_assistant_status: 'healthy' | 'degraded' | 'offline';
+  platform_health_status: PlatformHealthStatus;
   active_member_id: string | null;
   voice_fast_path_enabled: boolean;
   guest_mode_enabled: boolean;

@@ -303,8 +303,24 @@ class DeviceControlPhase1Tests(unittest.TestCase):
             db.flush()
 
             with patch(
-                "app.plugins.builtin.homeassistant_device_action.runtime.build_home_assistant_client_for_instance",
-                return_value=_FakeHomeAssistantClient(),
+                "app.modules.device.service.load_binding_live_state_maps_via_plugin",
+                return_value=type(
+                    "_LiveStateLoadResult",
+                    (),
+                    {
+                        "state_maps": {
+                            self.integration_instance_id: {
+                                "light.study_main": {
+                                    "entity_id": "light.study_main",
+                                    "state": "off",
+                                    "last_updated": "2026-03-17T09:00:00Z",
+                                    "attributes": {},
+                                }
+                            }
+                        },
+                        "unavailable_instance_ids": set(),
+                    },
+                )(),
             ):
                 entities = list_device_entities(db, device_id=device.id, view="all")
 
@@ -347,8 +363,15 @@ class DeviceControlPhase1Tests(unittest.TestCase):
             db.flush()
 
             with patch(
-                "app.plugins.builtin.homeassistant_device_action.runtime.build_home_assistant_client_for_instance",
-                side_effect=RuntimeError("home assistant unavailable"),
+                "app.modules.device.service.load_binding_live_state_maps_via_plugin",
+                return_value=type(
+                    "_LiveStateLoadResult",
+                    (),
+                    {
+                        "state_maps": {},
+                        "unavailable_instance_ids": {self.integration_instance_id},
+                    },
+                )(),
             ):
                 entities = list_device_entities(db, device_id=device.id, view="all")
 
@@ -356,7 +379,7 @@ class DeviceControlPhase1Tests(unittest.TestCase):
         self.assertEqual("unavailable", entities.items[0].state)
         self.assertEqual("离线", entities.items[0].state_display)
         self.assertTrue(entities.items[0].control.disabled)
-        self.assertEqual("设备离线，Home Assistant 当前不可用", entities.items[0].control.disabled_reason)
+        self.assertEqual("设备离线，集成平台当前不可用", entities.items[0].control.disabled_reason)
 
     def test_high_risk_action_requires_confirmation_before_plugin_execution(self) -> None:
         with self.SessionLocal() as db:

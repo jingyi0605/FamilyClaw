@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Taro, { useRouter } from '@tarojs/taro';
 import { getLocaleSourceLabel } from '@familyclaw/user-core';
 import { PageSection, ToggleSwitch, UiButton, UiCard, UiText, userAppFoundationTokens } from '@familyclaw/user-ui';
-import { GuardedPage, useHouseholdContext } from '../../runtime';
+import { GuardedPage, GuideAnchor, USER_GUIDE_ANCHOR_IDS, useHouseholdContext, useUserGuideContext } from '../../runtime';
 import { useI18n, useTheme } from '../../runtime/h5-shell';
 import type { ThemeRuntimeSelection, ThemeRuntimeThemeOption } from '../../runtime/shared/theme-plugin/types';
 import { SettingsPageShell } from './SettingsPageShell';
@@ -100,7 +100,7 @@ function useContextConfigSettings() {
         home_mode: config.home_mode,
         privacy_mode: config.privacy_mode,
         automation_level: config.automation_level,
-        home_assistant_status: config.home_assistant_status,
+        platform_health_status: config.platform_health_status,
         active_member_id: config.active_member_id,
         voice_fast_path_enabled: config.voice_fast_path_enabled,
         guest_mode_enabled: config.guest_mode_enabled,
@@ -137,6 +137,7 @@ function SettingsAppearanceSection() {
     getThemeVersionInfo,
   } = useTheme();
   const { t } = useI18n();
+  const { startGuide } = useUserGuideContext();
 
   return (
     <div className="settings-page">
@@ -205,6 +206,22 @@ function SettingsAppearanceSection() {
             );
           })}
         </div>
+        <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.settingsReplay}>
+          <UiCard style={{ marginTop: userAppFoundationTokens.spacing.md }}>
+            <UiText variant="label">{t('settings.guide.replayLabel')}</UiText>
+            <UiText tone="secondary" style={{ display: 'block', marginTop: userAppFoundationTokens.spacing.xs }}>
+              {t('settings.guide.replayDesc')}
+            </UiText>
+            <UiButton
+              variant="secondary"
+              size="sm"
+              style={{ marginTop: userAppFoundationTokens.spacing.sm }}
+              onClick={() => startGuide('manual')}
+            >
+              {t('settings.guide.replayAction')}
+            </UiButton>
+          </UiCard>
+        </GuideAnchor>
       </PageSection>
     </div>
   );

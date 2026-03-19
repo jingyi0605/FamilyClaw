@@ -25,11 +25,6 @@ import {
   ConversationTurnResponse,
   Device,
   HomeDashboardRead,
-  HomeAssistantConfig,
-  HomeAssistantDeviceCandidatesResponse,
-  HomeAssistantRoomCandidatesResponse,
-  HomeAssistantRoomSyncResponse,
-  HomeAssistantSyncResponse,
   Household,
   HouseholdAccountCreateResponse,
   HouseholdAccountListResponse,
@@ -42,6 +37,7 @@ import {
   Member,
   MemberDashboardLayoutRead,
   MemberDashboardLayoutItem,
+  MemberGuideStatus,
   MemberChannelBindingCreate,
   MemberChannelBindingRead,
   MemberChannelBindingUpdate,
@@ -598,6 +594,15 @@ export function createCoreApiClient(request: RequestClient) {
         body: JSON.stringify(payload),
       });
     },
+    getMemberGuideStatus(memberId: string) {
+      return request<MemberGuideStatus>(`/member-preferences/${encodeURIComponent(memberId)}/guide-status`);
+    },
+    upsertMemberGuideStatus(memberId: string, payload: Pick<MemberGuideStatus, 'user_app_guide_version'>) {
+      return request<MemberGuideStatus>(`/member-preferences/${encodeURIComponent(memberId)}/guide-status`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+    },
     listDevices(
       householdId: string,
       params?: {
@@ -628,50 +633,6 @@ export function createCoreApiClient(request: RequestClient) {
       return request<Device>(`/devices/${encodeURIComponent(deviceId)}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
-      });
-    },
-    getHomeAssistantConfig(householdId: string) {
-      return request<HomeAssistantConfig>(`/devices/ha-config/${encodeURIComponent(householdId)}`);
-    },
-    updateHomeAssistantConfig(householdId: string, payload: {
-      base_url: string | null;
-      access_token?: string | null;
-      clear_access_token?: boolean;
-      sync_rooms_enabled: boolean;
-    }) {
-      return request<HomeAssistantConfig>(`/devices/ha-config/${encodeURIComponent(householdId)}`, {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      });
-    },
-    listHomeAssistantDeviceCandidates(householdId: string) {
-      return request<HomeAssistantDeviceCandidatesResponse>(`/devices/ha-candidates/${encodeURIComponent(householdId)}`);
-    },
-    syncHomeAssistant(householdId: string) {
-      return request<HomeAssistantSyncResponse>('/devices/sync/ha', {
-        method: 'POST',
-        body: JSON.stringify({ household_id: householdId, external_device_ids: [] }),
-      });
-    },
-    syncSelectedHomeAssistantDevices(householdId: string, externalDeviceIds: string[]) {
-      return request<HomeAssistantSyncResponse>('/devices/sync/ha', {
-        method: 'POST',
-        body: JSON.stringify({ household_id: householdId, external_device_ids: externalDeviceIds }),
-      });
-    },
-    syncHomeAssistantRooms(householdId: string) {
-      return request<HomeAssistantRoomSyncResponse>('/devices/rooms/sync/ha', {
-        method: 'POST',
-        body: JSON.stringify({ household_id: householdId, room_names: [] }),
-      });
-    },
-    listHomeAssistantRoomCandidates(householdId: string) {
-      return request<HomeAssistantRoomCandidatesResponse>(`/devices/rooms/ha-candidates/${encodeURIComponent(householdId)}`);
-    },
-    syncSelectedHomeAssistantRooms(householdId: string, roomNames: string[]) {
-      return request<HomeAssistantRoomSyncResponse>('/devices/rooms/sync/ha', {
-        method: 'POST',
-        body: JSON.stringify({ household_id: householdId, room_names: roomNames }),
       });
     },
     getContextOverview(householdId: string) {

@@ -15,14 +15,15 @@ from app.modules.household.service import get_household_or_404
 from app.modules.integration import repository as integration_repository
 from app.modules.integration.discovery_service import mark_discovery_claimed
 from app.modules.integration.models import IntegrationInstance
+from app.modules.plugin import config_service as plugin_config_service
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import (
     PluginServiceError,
     execute_household_plugin,
+    get_household_plugin,
     require_available_household_plugin,
 )
 from app.modules.room.models import Room
-from app.plugins.builtin.homeassistant_device_action.runtime import get_home_assistant_runtime_config
 
 
 @dataclass(slots=True)
@@ -71,6 +72,12 @@ class RoomCandidate:
     entity_count: int
     exists_locally: bool
     can_sync: bool
+
+
+@dataclass(slots=True)
+class LiveStateLoadResult:
+    state_maps: dict[str, dict[str, dict[str, Any]]]
+    unavailable_instance_ids: set[str]
 
 
 class DeviceIntegrationServiceError(PluginServiceError):
@@ -314,6 +321,49 @@ async def async_sync_rooms_via_plugin(
     )
 
 
+def load_binding_live_state_maps_via_plugin(
+    db: Session,
+    *,
+    household_id: str,
+    bindings: list[DeviceBinding],
+) -> LiveStateLoadResult:
+    state_maps: dict[str, dict[str, dict[str, Any]]] = {}
+    unavailable_instance_ids: set[str] = set()
+    supported_instance_ids = _collect_live_state_supported_instance_ids(
+        db,
+        household_id=household_id,
+        bindings=bindings,
+    )
+    if not supported_instance_ids:
+        return LiveStateLoadResult(state_maps=state_maps, unavailable_instance_ids=unavailable_instance_ids)
+
+    for integration_instance_id in supported_instance_ids:
+        try:
+            result = _execute_integration_sync_plugin(
+                db,
+                household_id=household_id,
+                integration_instance_id=integration_instance_id,
+                sync_scope="live_state_snapshot",
+                selected_external_ids=[],
+                options={},
+            )
+        except DeviceIntegrationServiceError:
+            continue
+
+        live_state_map = result.live_state_maps.get(integration_instance_id)
+        if isinstance(live_state_map, dict):
+            state_maps[integration_instance_id] = {
+                entity_id: item
+                for entity_id, item in live_state_map.items()
+                if isinstance(entity_id, str) and entity_id.strip() and isinstance(item, dict)
+            }
+
+    return LiveStateLoadResult(
+        state_maps=state_maps,
+        unavailable_instance_ids=unavailable_instance_ids,
+    )
+
+
 def mark_integration_instance_sync_succeeded(db: Session, *, integration_instance_id: str) -> None:
     instance = integration_repository.get_integration_instance(db, integration_instance_id)
     if instance is None:
@@ -466,7 +516,6 @@ def _build_payload(
     selected_external_ids: list[str],
     options: dict[str, Any],
 ) -> IntegrationSyncPluginPayload:
-    database_url = _build_database_url(db)
     return IntegrationSyncPluginPayload(
         household_id=instance.household_id,
         plugin_id=instance.plugin_id,
@@ -474,7 +523,11 @@ def _build_payload(
         sync_scope=sync_scope,  # type: ignore[arg-type]
         selected_external_ids=[item for item in selected_external_ids if isinstance(item, str) and item.strip()],
         options=options,
-        system_context={"device_integration": {"database_url": database_url}} if database_url else None,
+        runtime_config=_load_runtime_config(
+            db,
+            integration_instance_id=instance.id,
+            plugin_id=instance.plugin_id,
+        ),
     )
 
 
@@ -709,22 +762,6 @@ def _serialize_payload(payload: IntegrationSyncPluginPayload) -> dict[str, Any]:
     return payload_dict
 
 
-def _build_database_url(db: Session) -> str | None:
-    bind = db.get_bind()
-    if hasattr(bind, "url"):
-        return _render_database_url(bind.url)
-    engine = getattr(bind, "engine", None)
-    if engine is not None and hasattr(engine, "url"):
-        return _render_database_url(engine.url)
-    return None
-
-
-def _render_database_url(url: Any) -> str:
-    if hasattr(url, "render_as_string"):
-        return url.render_as_string(hide_password=False)
-    return str(url)
-
-
 def _get_existing_binding(
     db: Session,
     *,
@@ -823,10 +860,74 @@ def _get_or_create_room_from_name(
 
 
 def _should_auto_assign_rooms(db: Session, *, instance: IntegrationInstance) -> bool:
-    if instance.plugin_id != "homeassistant":
+    runtime_config = _load_runtime_config(
+        db,
+        integration_instance_id=instance.id,
+        plugin_id=instance.plugin_id,
+    )
+    return bool(runtime_config.get("sync_rooms_enabled"))
+
+
+def _load_runtime_config(
+    db: Session,
+    *,
+    integration_instance_id: str,
+    plugin_id: str,
+) -> dict[str, Any]:
+    runtime_config = plugin_config_service.get_integration_instance_runtime_config(
+        db,
+        integration_instance_id=integration_instance_id,
+        plugin_id=plugin_id,
+    )
+    return runtime_config.values
+
+
+def _collect_live_state_supported_instance_ids(
+    db: Session,
+    *,
+    household_id: str,
+    bindings: list[DeviceBinding],
+) -> list[str]:
+    instance_ids: list[str] = []
+    seen_instance_ids: set[str] = set()
+    plugin_support_cache: dict[str, bool] = {}
+
+    for binding in bindings:
+        integration_instance_id = _normalize_optional_text(binding.integration_instance_id)
+        plugin_id = _normalize_optional_text(binding.plugin_id)
+        if not integration_instance_id or not plugin_id or integration_instance_id in seen_instance_ids:
+            continue
+        supports_live_state = plugin_support_cache.get(plugin_id)
+        if supports_live_state is None:
+            supports_live_state = _plugin_supports_live_state(
+                db,
+                household_id=household_id,
+                plugin_id=plugin_id,
+            )
+            plugin_support_cache[plugin_id] = supports_live_state
+        if not supports_live_state:
+            continue
+        seen_instance_ids.add(integration_instance_id)
+        instance_ids.append(integration_instance_id)
+    return instance_ids
+
+
+def _plugin_supports_live_state(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+) -> bool:
+    try:
+        plugin = get_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+        )
+    except PluginServiceError:
         return False
-    runtime_config = get_home_assistant_runtime_config(db, integration_instance_id=instance.id)
-    return bool(runtime_config.sync_rooms_enabled)
+    integration_capability = plugin.capabilities.integration
+    return bool(integration_capability and integration_capability.supports_live_state)
 
 
 def _resolve_vendor(*, platform: str, capabilities: dict[str, Any]) -> str:
@@ -836,6 +937,13 @@ def _resolve_vendor(*, platform: str, capabilities: dict[str, Any]) -> str:
             return value.strip()
     if platform == "open_xiaoai":
         return "xiaomi"
-    if platform == "home_assistant":
-        return "ha"
     return platform
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    normalized = value.strip()
+    return normalized or None

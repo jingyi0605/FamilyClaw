@@ -148,30 +148,61 @@ class DeviceIntegrationPhase3Tests(unittest.TestCase):
             self.assertEqual("light.living_room_main", bindings[0].external_entity_id)
             self.assertEqual(self.integration_instance_id, bindings[0].integration_instance_id)
 
-    def test_build_database_url_keeps_password_for_plugin_runtime(self) -> None:
-        engine = create_engine(
-            URL.create(
-                "postgresql+psycopg",
-                username="postgres",
-                password="secret-pass",
-                host="127.0.0.1",
-                port=5432,
-                database="familyclaw",
+    def test_payload_uses_runtime_config_instead_of_database_url(self) -> None:
+        with self.SessionLocal() as db:
+            instance = db.scalar(
+                select(IntegrationInstance).where(IntegrationInstance.id == self.integration_instance_id)
             )
-        )
-        SessionLocal = sessionmaker(bind=engine)
+            assert instance is not None
+            integration_payload = device_integration_service_module._build_payload(
+                db,
+                instance=instance,
+                sync_scope="device_candidates",
+                selected_external_ids=[],
+                options={},
+            )
+            device = DeviceBinding(
+                id="binding-1",
+                device_id="device-1",
+                integration_instance_id=self.integration_instance_id,
+                platform="home_assistant",
+                plugin_id="homeassistant",
+                binding_version=1,
+                external_entity_id="light.living_room_main",
+                external_device_id="ha-device-light-1",
+            )
+            control_payload = device_control_service_module._build_payload(
+                db=db,
+                request=device_control_service_module.DeviceControlRequest(
+                    household_id=self.household_id,
+                    device_id="device-1",
+                    action="turn_on",
+                    params={},
+                    reason="test.runtime-config",
+                ),
+                device=device_control_service_module.Device(
+                    id="device-1",
+                    household_id=self.household_id,
+                    room_id=None,
+                    name="测试灯",
+                    device_type="light",
+                    vendor="ha",
+                    status="active",
+                    controllable=1,
+                ),
+                plugin_id="homeassistant",
+                route_binding=device,
+                risk_level="low",
+                normalized_params={},
+                timeout_seconds=8,
+            )
 
-        with SessionLocal() as db:
-            integration_database_url = device_integration_service_module._build_database_url(db)
-            control_database_url = device_control_service_module._build_database_url(db)
-
-        self.assertIsNotNone(integration_database_url)
-        self.assertIsNotNone(control_database_url)
-        self.assertIn("secret-pass", integration_database_url or "")
-        self.assertIn("secret-pass", control_database_url or "")
-        self.assertNotIn("***", integration_database_url or "")
-        self.assertNotIn("***", control_database_url or "")
-        engine.dispose()
+        self.assertEqual("http://ha.local:8123", integration_payload.runtime_config.get("base_url"))
+        self.assertEqual("demo-token", integration_payload.runtime_config.get("access_token"))
+        self.assertIsNone(integration_payload.system_context)
+        self.assertEqual("http://ha.local:8123", control_payload.runtime_config.get("base_url"))
+        self.assertEqual("demo-token", control_payload.runtime_config.get("access_token"))
+        self.assertIsNone(control_payload.system_context)
 
     def test_candidate_endpoint_returns_structured_error_and_marks_instance_degraded(self) -> None:
         with patch(

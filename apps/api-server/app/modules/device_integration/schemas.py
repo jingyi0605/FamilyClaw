@@ -5,7 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-IntegrationSyncScope = Literal["device_candidates", "device_sync", "room_candidates", "room_sync"]
+IntegrationSyncScope = Literal["device_candidates", "device_sync", "room_candidates", "room_sync", "live_state_snapshot"]
 
 
 class IntegrationSyncPluginPayload(BaseModel):
@@ -16,6 +16,7 @@ class IntegrationSyncPluginPayload(BaseModel):
     sync_scope: IntegrationSyncScope
     selected_external_ids: list[str] = Field(default_factory=list)
     options: dict[str, Any] = Field(default_factory=dict)
+    runtime_config: dict[str, Any] = Field(default_factory=dict)
     system_context: dict[str, Any] | None = None
 
 
@@ -65,3 +66,5 @@ class IntegrationSyncPluginResult(BaseModel):
     rooms: list[RoomSyncItem] = Field(default_factory=list)
     failures: list[DeviceIntegrationFailureItem] = Field(default_factory=list)
     records: list[dict[str, Any]] = Field(default_factory=list)
+    live_state_maps: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
+    unavailable_instance_ids: list[str] = Field(default_factory=list)

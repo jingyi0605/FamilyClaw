@@ -41,7 +41,7 @@ def seed_homeassistant_integration_instance(
         household_id=household_id,
         integration_instance_id=instance.id,
         plugin_id=HOME_ASSISTANT_PLUGIN_ID,
-        scope_type="plugin",
+        scope_type="integration_instance",
         scope_key=instance.id,
         schema_version=1,
         data_json=(
@@ -78,6 +78,11 @@ def build_homeassistant_sync_payload(
         "sync_scope": sync_scope,
         "selected_external_ids": selected_external_ids or [],
         "options": {},
+        "runtime_config": {
+            "base_url": "http://ha.local:8123",
+            "access_token": "demo-token",
+            "sync_rooms_enabled": True,
+        },
     }
 
 

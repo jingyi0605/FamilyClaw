@@ -61,6 +61,8 @@ PluginConfigScopeType = Literal["plugin", "integration_instance", "channel_accou
 PluginConfigFieldType = Literal["string", "text", "integer", "number", "boolean", "enum", "multi_enum", "secret", "json"]
 PluginConfigWidgetType = Literal["input", "password", "textarea", "switch", "select", "multi_select", "json_editor"]
 PluginConfigVisibilityOperator = Literal["equals", "not_equals", "in", "truthy"]
+PluginConfigDynamicOptionSourceType = Literal["region_provider_list", "region_catalog_children"]
+RegionCatalogAdminLevel = Literal["province", "city", "district"]
 PluginDashboardCardPlacement = Literal["home"]
 PluginDashboardCardTemplateType = Literal["metric", "status_list", "timeline", "insight", "action_group"]
 PluginDashboardCardSize = Literal["half", "full"]
@@ -275,6 +277,7 @@ class PluginManifestIntegrationSpec(BaseModel):
     supports_discovery: bool = False
     supports_actions: bool = False
     supports_cards: bool = False
+    supports_live_state: bool = False
     auto_create_default_instance: bool = False
     default_instance_display_name: str | None = Field(default=None, max_length=100)
     default_instance_config: dict[str, Any] = Field(default_factory=dict)
@@ -514,6 +517,47 @@ class PluginManifestConfigFieldOption(BaseModel):
         return _normalize_i18n_key(value)
 
 
+class PluginManifestConfigFieldOptionSource(BaseModel):
+    source: PluginConfigDynamicOptionSourceType
+    country_code: str | None = Field(default=None, max_length=8)
+    provider_code: str | None = Field(default=None, max_length=100)
+    provider_field: str | None = Field(default=None, max_length=64)
+    parent_field: str | None = Field(default=None, max_length=64)
+    admin_level: RegionCatalogAdminLevel | None = None
+
+    @field_validator("country_code", "provider_code", "provider_field", "parent_field")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_source_constraints(self) -> "PluginManifestConfigFieldOptionSource":
+        if self.country_code is None:
+            raise ValueError("option_source.country_code 不能为空")
+
+        if self.source == "region_provider_list":
+            if self.provider_code or self.provider_field or self.parent_field or self.admin_level:
+                raise ValueError("region_provider_list 不接受 provider_code/provider_field/parent_field/admin_level")
+            return self
+
+        if (self.provider_code is None) == (self.provider_field is None):
+            raise ValueError("region_catalog_children 必须且只能声明 provider_code 或 provider_field 其中一个")
+        if self.admin_level is None:
+            raise ValueError("region_catalog_children 必须声明 admin_level")
+        if self.admin_level == "province":
+            if self.parent_field is not None:
+                raise ValueError("province 级联选项不需要 parent_field")
+            return self
+        if self.parent_field is None:
+            raise ValueError("city / district 级联选项必须声明 parent_field")
+        return self
+
+
 class PluginManifestConfigField(BaseModel):
     key: str = Field(min_length=1, max_length=64)
     label: str = Field(min_length=1, max_length=100)
@@ -524,6 +568,9 @@ class PluginManifestConfigField(BaseModel):
     description_key: str | None = Field(default=None, max_length=255)
     default: Any = None
     enum_options: list[PluginManifestConfigFieldOption] = Field(default_factory=list)
+    option_source: PluginManifestConfigFieldOptionSource | None = None
+    depends_on: list[str] = Field(default_factory=list)
+    clear_on_dependency_change: bool = False
     min_length: int | None = Field(default=None, ge=0)
     max_length: int | None = Field(default=None, ge=0)
     minimum: float | None = None
@@ -546,6 +593,11 @@ class PluginManifestConfigField(BaseModel):
     def validate_i18n_key(cls, value: str | None) -> str | None:
         return _normalize_i18n_key(value)
 
+    @field_validator("depends_on")
+    @classmethod
+    def validate_depends_on(cls, value: list[str]) -> list[str]:
+        return _normalize_text_list(value, field_name="depends_on")
+
     @model_validator(mode="after")
     def validate_field_constraints(self) -> "PluginManifestConfigField":
         string_like_types = {"string", "text", "secret"}
@@ -563,8 +615,14 @@ class PluginManifestConfigField(BaseModel):
             raise ValueError("只有字符串类字段才能声明 pattern")
         if self.enum_options and self.type not in {"enum", "multi_enum"}:
             raise ValueError("只有 enum / multi_enum 字段才能声明 enum_options")
-        if self.type in {"enum", "multi_enum"} and not self.enum_options:
-            raise ValueError("enum / multi_enum 字段必须声明 enum_options")
+        if self.option_source is not None and self.type not in {"enum", "multi_enum"}:
+            raise ValueError("只有 enum / multi_enum 字段才能声明 option_source")
+        if self.enum_options and self.option_source is not None:
+            raise ValueError("enum / multi_enum 字段不能同时声明 enum_options 和 option_source")
+        if self.type in {"enum", "multi_enum"} and not self.enum_options and self.option_source is None:
+            raise ValueError("enum / multi_enum 字段必须声明 enum_options 或 option_source")
+        if self.clear_on_dependency_change and not self.depends_on:
+            raise ValueError("clear_on_dependency_change = true 时必须声明 depends_on")
         if self.min_length is not None and self.max_length is not None and self.min_length > self.max_length:
             raise ValueError("min_length 不能大于 max_length")
         if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
@@ -845,6 +903,29 @@ class PluginManifestConfigSpec(BaseModel):
         for field_key in self.ui_schema.field_order:
             if field_key not in field_keys:
                 raise ValueError(f"ui_schema.field_order 引用了不存在的字段: {field_key}")
+
+        for field in self.config_schema.fields:
+            for dependency_field in field.depends_on:
+                if dependency_field not in field_keys:
+                    raise ValueError(f"字段 {field.key} 的 depends_on 引用了不存在的字段: {dependency_field}")
+                if dependency_field == field.key:
+                    raise ValueError(f"字段 {field.key} 不能依赖自己")
+            if field.option_source is None:
+                continue
+            if field.option_source.provider_field is not None:
+                if field.option_source.provider_field not in field_keys:
+                    raise ValueError(
+                        f"字段 {field.key} 的 option_source.provider_field 引用了不存在的字段: {field.option_source.provider_field}"
+                    )
+                if field.option_source.provider_field == field.key:
+                    raise ValueError(f"字段 {field.key} 不能把自己声明为 provider_field")
+            if field.option_source.parent_field is not None:
+                if field.option_source.parent_field not in field_keys:
+                    raise ValueError(
+                        f"字段 {field.key} 的 option_source.parent_field 引用了不存在的字段: {field.option_source.parent_field}"
+                    )
+                if field.option_source.parent_field == field.key:
+                    raise ValueError(f"字段 {field.key} 不能把自己声明为 parent_field")
 
         for field_key, widget in self.ui_schema.widgets.items():
             if field_key not in field_keys:
@@ -1251,6 +1332,7 @@ class PluginConfigUpdateRequest(BaseModel):
     scope_type: PluginConfigScopeType
     scope_key: str = Field(min_length=1, max_length=100)
     values: dict[str, Any] = Field(default_factory=dict)
+    clear_fields: list[str] = Field(default_factory=list)
     clear_secret_fields: list[str] = Field(default_factory=list)
 
     @field_validator("scope_key")
@@ -1261,10 +1343,26 @@ class PluginConfigUpdateRequest(BaseModel):
             raise ValueError("scope_key 不能为空")
         return normalized
 
-    @field_validator("clear_secret_fields")
+    @field_validator("clear_fields", "clear_secret_fields")
     @classmethod
-    def validate_clear_secret_fields(cls, value: list[str]) -> list[str]:
-        return _normalize_text_list(value, field_name="clear_secret_fields")
+    def validate_clear_field_lists(cls, value: list[str], info: Any) -> list[str]:
+        return _normalize_text_list(value, field_name=str(info.field_name))
+
+
+class PluginConfigResolveRequest(BaseModel):
+    scope_type: PluginConfigScopeType
+    scope_key: str | None = Field(default=None, max_length=100)
+    values: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("scope_key")
+    @classmethod
+    def validate_optional_scope_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("scope_key 不能为空")
+        return normalized
 
 
 class PluginRunnerConfig(BaseModel):
@@ -1601,6 +1699,25 @@ class PluginMountRead(BaseModel):
     enabled: bool
     created_at: str
     updated_at: str
+
+
+PluginPackageInstallAction = Literal["installed", "upgraded", "reinstalled"]
+
+
+class PluginPackageInstallRead(BaseModel):
+    household_id: str
+    plugin_id: str
+    plugin_name: str
+    version: str
+    previous_version: str | None = None
+    install_action: PluginPackageInstallAction
+    overwritten: bool = False
+    enabled: bool
+    source_type: Literal["third_party"] = "third_party"
+    execution_backend: Literal["subprocess_runner"] = "subprocess_runner"
+    plugin_root: str
+    manifest_path: str
+    message: str
 
 
 class PluginJobCreate(BaseModel):

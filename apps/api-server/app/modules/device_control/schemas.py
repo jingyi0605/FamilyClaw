@@ -53,6 +53,7 @@ class DeviceControlPluginPayload(BaseModel):
     reason: str
     risk_level: RiskLevel
     idempotency_key: str | None = None
+    runtime_config: dict[str, Any] = Field(default_factory=dict)
     system_context: dict[str, Any] | None = None
 
 

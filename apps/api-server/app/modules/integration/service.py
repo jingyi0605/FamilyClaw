@@ -254,6 +254,7 @@ def create_integration_instance(
         plugin_id=payload.plugin_id,
         integration_instance_id=instance.id,
         values=normalized_config,
+        clear_fields=payload.clear_fields,
         clear_secret_fields=payload.clear_secret_fields,
         updated_by=updated_by,
     )
@@ -302,6 +303,7 @@ def update_integration_instance(
         plugin_id=plugin.id,
         integration_instance_id=instance.id,
         values=normalized_config,
+        clear_fields=payload.clear_fields,
         clear_secret_fields=payload.clear_secret_fields,
         updated_by=updated_by,
     )
@@ -494,12 +496,20 @@ def _execute_configure_action(
     updated_by: str | None,
 ) -> IntegrationActionResultRead:
     raw_values = payload.payload.get("values")
+    clear_fields = payload.payload.get("clear_fields")
     clear_secret_fields = payload.payload.get("clear_secret_fields")
     if raw_values is not None and not isinstance(raw_values, dict):
         raise PluginServiceError(
             "configure.payload.values 必须是对象",
             error_code="integration_action_payload_invalid",
             field="payload.values",
+            status_code=400,
+        )
+    if clear_fields is not None and not isinstance(clear_fields, list):
+        raise PluginServiceError(
+            "configure.payload.clear_fields 必须是数组",
+            error_code="integration_action_payload_invalid",
+            field="payload.clear_fields",
             status_code=400,
         )
     if clear_secret_fields is not None and not isinstance(clear_secret_fields, list):
@@ -516,6 +526,11 @@ def _execute_configure_action(
         plugin_id=plugin.id,
         integration_instance_id=instance.id,
         values=(raw_values if isinstance(raw_values, dict) else {}),
+        clear_fields=(
+            [item for item in clear_fields if isinstance(item, str)]
+            if isinstance(clear_fields, list)
+            else []
+        ),
         clear_secret_fields=(
             [item for item in clear_secret_fields if isinstance(item, str)]
             if isinstance(clear_secret_fields, list)
@@ -737,14 +752,12 @@ def _execute_plugin_managed_sync_action(
         "sync_scope": sync_scope,
         "selected_external_ids": selected_external_ids,
         "options": normalized_options,
+        "runtime_config": plugin_config_service.get_integration_instance_runtime_config(
+            db,
+            integration_instance_id=instance.id,
+            plugin_id=plugin.id,
+        ).values,
     }
-    database_url = _build_database_url(db)
-    if database_url:
-        request_payload["_system_context"] = {
-            "integration_runtime": {
-                "database_url": database_url,
-            }
-        }
     if _should_inject_db_session(plugin):
         system_context = request_payload.setdefault("_system_context", {})
         if isinstance(system_context, dict):
@@ -960,10 +973,13 @@ def _is_integration_plugin(plugin: PluginRegistryItem) -> bool:
 
 def _build_resource_support(plugin: PluginRegistryItem) -> IntegrationResourceSupportRead:
     supports_device = any(permission.startswith("device.") for permission in plugin.permissions)
+    integration_capability = plugin.capabilities.integration
+    entity_types = integration_capability.entity_types if integration_capability is not None else []
+    domains = integration_capability.domains if integration_capability is not None else []
     return IntegrationResourceSupportRead(
         device=supports_device,
-        entity=(plugin.id == "homeassistant"),
-        helper=(plugin.id == "homeassistant"),
+        entity=bool(entity_types),
+        helper=any(domain == "helper" for domain in domains),
     )
 
 
@@ -972,8 +988,15 @@ def _build_search_text(plugin: PluginRegistryItem) -> str:
 
 
 def _build_plugin_description(plugin: PluginRegistryItem) -> str | None:
-    if plugin.id == "homeassistant":
-        return "通过正式集成实例接入 Home Assistant，并把设备同步到统一平台资源链路。"
+    integration_capability = plugin.capabilities.integration
+    if integration_capability is None:
+        return None
+    if integration_capability.supports_discovery and integration_capability.supports_actions:
+        return f"通过 {plugin.name} 接入外部平台，并把可用资源同步到统一目录。"
+    if integration_capability.supports_discovery:
+        return f"通过 {plugin.name} 接入外部平台，并在当前家庭里发现可管理资源。"
+    if integration_capability.supports_actions:
+        return f"通过 {plugin.name} 接入外部平台，并执行统一的资源动作。"
     if plugin.id == "open-xiaoai-speaker":
         return "把一个小爱网关实例接入平台，并在该实例下发现和管理多台小爱音箱。"
     return None
@@ -1067,22 +1090,6 @@ def _load_resource_counts_by_instance(
         entry = counts[integration_instance_id]
         entry.device += 1
     return counts
-
-
-def _build_database_url(db: Session) -> str | None:
-    bind = db.get_bind()
-    if hasattr(bind, "url"):
-        return _render_database_url(bind.url)
-    engine = getattr(bind, "engine", None)
-    if engine is not None and hasattr(engine, "url"):
-        return _render_database_url(engine.url)
-    return None
-
-
-def _render_database_url(url: Any) -> str:
-    if hasattr(url, "render_as_string"):
-        return url.render_as_string(hide_password=False)
-    return str(url)
 
 
 def _should_inject_db_session(plugin: PluginRegistryItem) -> bool:

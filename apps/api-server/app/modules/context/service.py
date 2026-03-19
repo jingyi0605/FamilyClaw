@@ -182,7 +182,7 @@ def _build_default_context_config(members: list[Member], rooms: list[Room]) -> C
         home_mode="home",
         privacy_mode="balanced",
         automation_level="assisted",
-        home_assistant_status="healthy",
+        platform_health_status="healthy",
         active_member_id=first_home_member.member_id if first_home_member else None,
         voice_fast_path_enabled=True,
         guest_mode_enabled=False,
@@ -302,7 +302,7 @@ def _normalize_context_config(
         home_mode=payload.home_mode,
         privacy_mode=payload.privacy_mode,
         automation_level=payload.automation_level,
-        home_assistant_status=payload.home_assistant_status,
+        platform_health_status=payload.platform_health_status,
         active_member_id=active_member_id,
         voice_fast_path_enabled=payload.voice_fast_path_enabled,
         guest_mode_enabled=payload.guest_mode_enabled,
@@ -618,20 +618,20 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
             )
         )
 
-    if config_read.home_assistant_status == "offline":
+    if config_read.platform_health_status == "offline":
         insights.append(
             ContextOverviewInsight(
                 code="ha_offline",
-                title="Home Assistant 离线",
+                title="集成平台离线",
                 message="设备控制与状态同步目前不可依赖，页面只适合做只读判断。",
                 tone="danger",
             )
         )
-    elif config_read.home_assistant_status == "degraded":
+    elif config_read.platform_health_status == "degraded":
         insights.append(
             ContextOverviewInsight(
                 code="ha_degraded",
-                title="Home Assistant 部分降级",
+                title="集成平台部分降级",
                 message="设备同步和动作执行处于降级状态，需要关注失败日志。",
                 tone="warning",
             )
@@ -667,7 +667,7 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
             )
         )
 
-    degraded = live_snapshot_count == 0 or config_read.home_assistant_status != "healthy"
+    degraded = live_snapshot_count == 0 or config_read.platform_health_status != "healthy"
 
     return ContextOverviewRead(
         household_id=household.id,
@@ -675,7 +675,7 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
         home_mode=config_read.home_mode,
         privacy_mode=config_read.privacy_mode,
         automation_level=config_read.automation_level,
-        home_assistant_status=config_read.home_assistant_status,
+        platform_health_status=config_read.platform_health_status,
         voice_fast_path_enabled=config_read.voice_fast_path_enabled,
         guest_mode_enabled=config_read.guest_mode_enabled,
         child_protection_enabled=config_read.child_protection_enabled,

@@ -5,9 +5,9 @@ from typing import Any
 
 from app.modules.device_integration.schemas import IntegrationSyncPluginPayload
 from app.plugins.builtin.homeassistant_device_action.adapter import (
+    HomeAssistantRuntimeConfigError,
     build_home_assistant_client,
-    build_session_factory,
-    extract_database_url,
+    parse_integration_payload,
 )
 from app.plugins.builtin.homeassistant_device_action.client import HomeAssistantClientError
 
@@ -37,42 +37,48 @@ DOMAIN_PRIORITY = {
 def sync(payload: dict | None = None) -> dict:
     raw_payload = payload or {}
     try:
-        request = IntegrationSyncPluginPayload.model_validate(raw_payload)
+        request = parse_integration_payload(raw_payload)
     except Exception as exc:
         return _plugin_error_result(
             plugin_id=str(raw_payload.get("plugin_id") or "homeassistant"),
             reason=f"接入 payload 不合法: {exc}",
         )
 
-    database_url = extract_database_url(raw_payload)
-    if not database_url:
-        return _plugin_error_result(
-            plugin_id=request.plugin_id,
-            reason="缺少插件运行时数据库上下文",
-        )
-
-    session_factory, engine = build_session_factory(database_url)
     try:
-        with session_factory() as db:
-            try:
-                client = build_home_assistant_client(
-                    db,
-                    integration_instance_id=request.integration_instance_id,
-                    timeout_seconds=15,
-                )
-                device_registry, entity_registry, area_registry, states = _fetch_home_assistant_payloads(client)
-                return _build_sync_result(
-                    request=request,
-                    device_registry=device_registry,
-                    entity_registry=entity_registry,
-                    area_registry=area_registry,
-                    states=states,
-                    base_url=client.get_base_url(),
-                )
-            except HomeAssistantClientError as exc:
-                return _plugin_error_result(plugin_id=request.plugin_id, reason=str(exc))
-    finally:
-        engine.dispose()
+        client = build_home_assistant_client(
+            runtime_config=request.runtime_config,
+            timeout_seconds=15,
+        )
+        if request.sync_scope == "live_state_snapshot":
+            return _build_live_state_result(
+                request=request,
+                states=client.get_states(),
+            )
+        device_registry, entity_registry, area_registry, states = _fetch_home_assistant_payloads(client)
+        return _build_sync_result(
+            request=request,
+            device_registry=device_registry,
+            entity_registry=entity_registry,
+            area_registry=area_registry,
+            states=states,
+            base_url=client.get_base_url(),
+        )
+    except HomeAssistantRuntimeConfigError as exc:
+        return _plugin_error_result(plugin_id=request.plugin_id, reason=str(exc))
+    except HomeAssistantClientError as exc:
+        if request.sync_scope == "live_state_snapshot":
+            return _build_live_state_unavailable_result(
+                request=request,
+                reason=str(exc),
+            )
+        return _plugin_error_result(plugin_id=request.plugin_id, reason=str(exc))
+    except Exception as exc:
+        if request.sync_scope == "live_state_snapshot":
+            return _build_live_state_unavailable_result(
+                request=request,
+                reason=str(exc),
+            )
+        return _plugin_error_result(plugin_id=request.plugin_id, reason=str(exc))
 
 
 def _fetch_home_assistant_payloads(client) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
@@ -159,6 +165,7 @@ def _build_sync_result(
                             supported_device_type=mapped_device_type,
                         ),
                         "domain": domain,
+                        "vendor_code": "ha",
                         "manufacturer": _normalize_optional_text(ha_device.get("manufacturer")),
                         "model": _normalize_optional_text(ha_device.get("model")),
                         "sw_version": _normalize_optional_text(ha_device.get("sw_version")),
@@ -186,6 +193,37 @@ def _build_sync_result(
         "rooms": rooms,
         "failures": failures,
         "records": records,
+    }
+
+
+def _build_live_state_result(
+    *,
+    request: IntegrationSyncPluginPayload,
+    states: list[dict],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "integration-sync-result.v1",
+        "plugin_id": request.plugin_id,
+        "platform": "home_assistant",
+        "live_state_maps": {
+            request.integration_instance_id: _build_state_map(states),
+        },
+        "unavailable_instance_ids": [],
+    }
+
+
+def _build_live_state_unavailable_result(
+    *,
+    request: IntegrationSyncPluginPayload,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "integration-sync-result.v1",
+        "plugin_id": request.plugin_id,
+        "platform": "home_assistant",
+        "failures": [{"external_ref": request.integration_instance_id, "reason": reason}],
+        "live_state_maps": {},
+        "unavailable_instance_ids": [request.integration_instance_id],
     }
 
 

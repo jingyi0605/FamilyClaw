@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -10,6 +11,8 @@ from app.modules.channel.models import ChannelPluginAccount
 from app.modules.device.models import Device
 from app.modules.integration import repository as integration_repository
 from app.modules.integration.models import IntegrationInstance
+from app.modules.region.providers import region_provider_registry
+from app.modules.region.service import RegionServiceError, list_region_catalog
 
 from . import repository
 from .config_crypto import decrypt_plugin_config_secrets, encrypt_plugin_config_secrets
@@ -23,6 +26,7 @@ from .schemas import (
     PluginConfigUpdateRequest,
     PluginConfigView,
     PluginManifestConfigField,
+    PluginManifestConfigFieldOption,
     PluginManifestConfigSpec,
     PluginRegistryItem,
 )
@@ -38,6 +42,16 @@ PLUGIN_CONFIG_SCOPE_INVALID = "plugin_config_scope_invalid"
 PLUGIN_CONFIG_INSTANCE_NOT_FOUND = "plugin_config_instance_not_found"
 PLUGIN_CONFIG_VALIDATION_FAILED = "plugin_config_validation_failed"
 PLUGIN_CONFIG_SECRET_INVALID = "plugin_config_secret_invalid"
+
+
+@dataclass(slots=True)
+class IntegrationInstanceRuntimeConfig:
+    household_id: str
+    integration_instance_id: str
+    plugin_id: str
+    values: dict[str, Any]
+    last_synced_at: str | None
+    updated_at: str | None
 
 
 def list_plugin_config_scopes(
@@ -82,6 +96,75 @@ def get_plugin_config_form(
     )
 
 
+def resolve_plugin_config_form(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    scope_type: str,
+    scope_key: str | None,
+    values: dict[str, Any],
+) -> PluginConfigFormRead:
+    plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
+    config_spec = _require_config_spec(plugin, scope_type=scope_type)
+    normalized_scope_key = _normalize_optional_scope_key(scope_type=config_spec.scope_type, scope_key=scope_key)
+    scope_context = _resolve_scope_context(
+        db,
+        household_id=household_id,
+        plugin=plugin,
+        config_spec=config_spec,
+        scope_key=normalized_scope_key,
+        allow_missing_scope=True,
+    )
+    stored_data, stored_secret_data, has_persisted_record = _load_config_payloads(
+        db,
+        household_id=household_id,
+        plugin=plugin,
+        config_spec=config_spec,
+        instance=(
+            repository.get_plugin_config_instance(
+                db,
+                household_id=household_id,
+                plugin_id=plugin.id,
+                scope_type=config_spec.scope_type,
+                scope_key=normalized_scope_key,
+            )
+            if normalized_scope_key is not None
+            else None
+        ),
+        scope_context=scope_context,
+    )
+    next_data = dict(stored_data)
+    field_map = config_spec.config_schema.field_map()
+    for field_key, value in values.items():
+        field = field_map.get(field_key)
+        if field is None or field.type == "secret":
+            continue
+        next_data[field_key] = value
+
+    resolved_spec, field_errors, view_values, secret_fields, state = _build_form_state(
+        db,
+        household_id=household_id,
+        config_spec=config_spec,
+        stored_data=next_data,
+        stored_secret_data=stored_secret_data,
+        has_persisted_record=has_persisted_record,
+    )
+    return PluginConfigFormRead(
+        plugin_id=plugin.id,
+        config_spec=resolved_spec,
+        view=PluginConfigView(
+            scope_type=config_spec.scope_type,
+            scope_key=normalized_scope_key or _draft_scope_key(config_spec.scope_type),
+            schema_version=resolved_spec.schema_version,
+            state=state,
+            values=view_values,
+            secret_fields=secret_fields,
+            field_errors=field_errors,
+        ),
+    )
+
+
 def save_plugin_config_form(
     db: Session,
     *,
@@ -120,6 +203,24 @@ def save_plugin_config_form(
     next_secret_data = dict(stored_secret_data)
     field_map = config_spec.config_schema.field_map()
 
+    for field_key in payload.clear_fields:
+        field = field_map.get(field_key)
+        if field is None or field.type == "secret":
+            raise PluginServiceError(
+                f"字段 {field_key} 不是可清空的普通字段。",
+                error_code=PLUGIN_CONFIG_VALIDATION_FAILED,
+                field=field_key,
+                status_code=400,
+            )
+        if field_key in payload.values:
+            raise PluginServiceError(
+                f"字段 {field_key} 不能同时提交新值和清空请求。",
+                error_code=PLUGIN_CONFIG_VALIDATION_FAILED,
+                field=field_key,
+                status_code=400,
+            )
+        next_data.pop(field_key, None)
+
     for field_key in payload.clear_secret_fields:
         field = field_map.get(field_key)
         if field is None or field.type != "secret":
@@ -151,7 +252,9 @@ def save_plugin_config_form(
             continue
         next_data[field_key] = value
 
-    field_errors, values, secret_fields, state = _build_view_payload(
+    resolved_spec, field_errors, values, secret_fields, state = _build_form_state(
+        db,
+        household_id=household_id,
         config_spec=config_spec,
         stored_data=next_data,
         stored_secret_data=next_secret_data,
@@ -216,11 +319,11 @@ def save_plugin_config_form(
 
     return PluginConfigFormRead(
         plugin_id=plugin.id,
-        config_spec=config_spec,
+        config_spec=resolved_spec,
         view=PluginConfigView(
             scope_type=config_spec.scope_type,
             scope_key=scope_key,
-            schema_version=config_spec.schema_version,
+            schema_version=resolved_spec.schema_version,
             state=state,
             values=values,
             secret_fields=secret_fields,
@@ -252,7 +355,9 @@ def get_integration_instance_plugin_config_form(
             scope_type="plugin",
         )
     stored_data, stored_secret_data = _load_config_instance_payload(instance)
-    field_errors, values, secret_fields, state = _build_view_payload(
+    resolved_spec, field_errors, values, secret_fields, state = _build_form_state(
+        db,
+        household_id=household_id,
         config_spec=config_spec,
         stored_data=stored_data,
         stored_secret_data=stored_secret_data,
@@ -260,16 +365,72 @@ def get_integration_instance_plugin_config_form(
     )
     return PluginConfigFormRead(
         plugin_id=plugin.id,
-        config_spec=config_spec,
+        config_spec=resolved_spec,
         view=PluginConfigView(
             scope_type=config_spec.scope_type,
             scope_key=integration_instance_id,
-            schema_version=config_spec.schema_version,
+            schema_version=resolved_spec.schema_version,
             state=state,
             values=values,
             secret_fields=secret_fields,
             field_errors=field_errors,
         ),
+    )
+
+
+def get_integration_instance_runtime_config(
+    db: Session,
+    *,
+    integration_instance_id: str,
+    plugin_id: str,
+) -> IntegrationInstanceRuntimeConfig:
+    integration_instance = integration_repository.get_integration_instance(db, integration_instance_id)
+    if integration_instance is None or integration_instance.plugin_id != plugin_id:
+        raise PluginServiceError(
+            f"集成实例不存在: {integration_instance_id}",
+            error_code="integration_instance_not_found",
+            field="integration_instance_id",
+            status_code=404,
+        )
+
+    plugin = get_household_plugin(
+        db,
+        household_id=integration_instance.household_id,
+        plugin_id=plugin_id,
+    )
+    config_spec = next((item for item in plugin.config_specs if item.scope_type == "integration_instance"), None)
+    runtime_values: dict[str, Any] = {}
+    updated_at: str | None = integration_instance.updated_at
+    if config_spec is not None:
+        instance = repository.get_plugin_config_instance_for_integration_instance(
+            db,
+            integration_instance_id=integration_instance_id,
+            plugin_id=plugin.id,
+            scope_type=config_spec.scope_type,
+        )
+        if instance is None:
+            instance = repository.get_plugin_config_instance_for_integration_instance(
+                db,
+                integration_instance_id=integration_instance_id,
+                plugin_id=plugin.id,
+                scope_type="plugin",
+            )
+        stored_data, stored_secret_data = _load_config_instance_payload(instance)
+        runtime_values = _build_runtime_payload(
+            config_spec=config_spec,
+            values=stored_data,
+            secret_data=stored_secret_data,
+        )
+        if instance is not None:
+            updated_at = instance.updated_at
+
+    return IntegrationInstanceRuntimeConfig(
+        household_id=integration_instance.household_id,
+        integration_instance_id=integration_instance.id,
+        plugin_id=plugin.id,
+        values=runtime_values,
+        last_synced_at=integration_instance.last_synced_at,
+        updated_at=updated_at,
     )
 
 
@@ -280,6 +441,7 @@ def save_integration_instance_plugin_config_form(
     plugin_id: str,
     integration_instance_id: str,
     values: dict[str, Any],
+    clear_fields: list[str],
     clear_secret_fields: list[str],
     updated_by: str | None = None,
 ) -> PluginConfigFormRead:
@@ -303,6 +465,24 @@ def save_integration_instance_plugin_config_form(
     next_data = dict(stored_data)
     next_secret_data = dict(stored_secret_data)
     field_map = config_spec.config_schema.field_map()
+
+    for field_key in clear_fields:
+        field = field_map.get(field_key)
+        if field is None or field.type == "secret":
+            raise PluginServiceError(
+                f"字段 {field_key} 不是可清空的普通字段。",
+                error_code=PLUGIN_CONFIG_VALIDATION_FAILED,
+                field=field_key,
+                status_code=400,
+            )
+        if field_key in values:
+            raise PluginServiceError(
+                f"字段 {field_key} 不能同时提交新值和清空请求。",
+                error_code=PLUGIN_CONFIG_VALIDATION_FAILED,
+                field=field_key,
+                status_code=400,
+            )
+        next_data.pop(field_key, None)
 
     for field_key in clear_secret_fields:
         field = field_map.get(field_key)
@@ -335,7 +515,9 @@ def save_integration_instance_plugin_config_form(
             continue
         next_data[field_key] = value
 
-    field_errors, view_values, secret_fields, state = _build_view_payload(
+    resolved_spec, field_errors, view_values, secret_fields, state = _build_form_state(
+        db,
+        household_id=household_id,
         config_spec=config_spec,
         stored_data=next_data,
         stored_secret_data=next_secret_data,
@@ -391,11 +573,11 @@ def save_integration_instance_plugin_config_form(
     )
     return PluginConfigFormRead(
         plugin_id=plugin.id,
-        config_spec=config_spec,
+        config_spec=resolved_spec,
         view=PluginConfigView(
             scope_type=config_spec.scope_type,
             scope_key=integration_instance_id,
-            schema_version=config_spec.schema_version,
+            schema_version=resolved_spec.schema_version,
             state=state,
             values=view_values,
             secret_fields=secret_fields,
@@ -544,7 +726,9 @@ def _build_plugin_config_form(
         instance=instance,
         scope_context=scope_context,
     )
-    field_errors, values, secret_fields, state = _build_view_payload(
+    resolved_spec, field_errors, values, secret_fields, state = _build_form_state(
+        db,
+        household_id=household_id,
         config_spec=config_spec,
         stored_data=stored_data,
         stored_secret_data=stored_secret_data,
@@ -552,17 +736,42 @@ def _build_plugin_config_form(
     )
     return PluginConfigFormRead(
         plugin_id=plugin.id,
-        config_spec=config_spec,
+        config_spec=resolved_spec,
         view=PluginConfigView(
             scope_type=config_spec.scope_type,
             scope_key=scope_key,
-            schema_version=config_spec.schema_version,
+            schema_version=resolved_spec.schema_version,
             state=state,
             values=values,
             secret_fields=secret_fields,
             field_errors=field_errors,
         ),
     )
+
+
+def _build_form_state(
+    db: Session,
+    *,
+    household_id: str,
+    config_spec: PluginManifestConfigSpec,
+    stored_data: dict[str, Any],
+    stored_secret_data: dict[str, Any],
+    has_persisted_record: bool,
+) -> tuple[PluginManifestConfigSpec, dict[str, str], dict[str, Any], dict[str, Any], PluginConfigState]:
+    effective_values = _build_effective_non_secret_values(config_spec=config_spec, stored_data=stored_data)
+    resolved_spec = _resolve_dynamic_config_spec(
+        db,
+        household_id=household_id,
+        config_spec=config_spec,
+        current_values=effective_values,
+    )
+    field_errors, values, secret_fields, state = _build_view_payload(
+        config_spec=resolved_spec,
+        stored_data=stored_data,
+        stored_secret_data=stored_secret_data,
+        has_persisted_record=has_persisted_record,
+    )
+    return resolved_spec, field_errors, values, secret_fields, state
 
 
 def _load_config_payloads(
@@ -572,7 +781,7 @@ def _load_config_payloads(
     plugin: PluginRegistryItem,
     config_spec: PluginManifestConfigSpec,
     instance: PluginConfigInstance | None,
-    scope_context: ChannelPluginAccount | Device | None,
+    scope_context: ChannelPluginAccount | Device | IntegrationInstance | None,
 ) -> tuple[dict[str, Any], dict[str, Any], bool]:
     legacy_data: dict[str, Any] = {}
     legacy_secret_data: dict[str, Any] = {}
@@ -597,6 +806,9 @@ def _load_config_payloads(
 
     if isinstance(scope_context, Device):
         return legacy_data, legacy_secret_data, legacy_has_record
+
+    if isinstance(scope_context, IntegrationInstance):
+        return {}, {}, False
 
     raw_payload = load_json(scope_context.config_json)
     if not isinstance(raw_payload, dict):
@@ -651,6 +863,87 @@ def _build_view_payload(
     return field_errors, values, secret_fields, state
 
 
+def _build_effective_non_secret_values(
+    *,
+    config_spec: PluginManifestConfigSpec,
+    stored_data: dict[str, Any],
+) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for field in config_spec.config_schema.fields:
+        if field.type == "secret":
+            continue
+        has_value = field.key in stored_data or field.default is not None
+        actual_value = stored_data.get(field.key, field.default)
+        if has_value and actual_value is not None:
+            values[field.key] = actual_value
+    return values
+
+
+def _resolve_dynamic_config_spec(
+    db: Session,
+    *,
+    household_id: str,
+    config_spec: PluginManifestConfigSpec,
+    current_values: dict[str, Any],
+) -> PluginManifestConfigSpec:
+    resolved_spec = config_spec.model_copy(deep=True)
+    for field in resolved_spec.config_schema.fields:
+        if field.option_source is None:
+            continue
+        field.enum_options = _resolve_dynamic_field_options(
+            db,
+            household_id=household_id,
+            field=field,
+            current_values=current_values,
+        )
+    return resolved_spec
+
+
+def _resolve_dynamic_field_options(
+    db: Session,
+    *,
+    household_id: str,
+    field: PluginManifestConfigField,
+    current_values: dict[str, Any],
+) -> list[PluginManifestConfigFieldOption]:
+    option_source = field.option_source
+    if option_source is None:
+        return field.enum_options
+
+    if option_source.source == "region_provider_list":
+        options: list[PluginManifestConfigFieldOption] = []
+        for provider in region_provider_registry.list(household_id=household_id):
+            if provider.country_code != option_source.country_code:
+                continue
+            label = (provider.plugin_name or "").strip() or provider.provider_code
+            options.append(PluginManifestConfigFieldOption(label=label, value=provider.provider_code))
+        return options
+
+    provider_code = option_source.provider_code or _read_option_source_text(current_values.get(option_source.provider_field or ""))
+    if provider_code is None:
+        return []
+    parent_region_code = _read_option_source_text(current_values.get(option_source.parent_field or ""))
+    try:
+        nodes = list_region_catalog(
+            db,
+            provider_code=provider_code,
+            country_code=option_source.country_code or "",
+            household_id=household_id,
+            parent_region_code=parent_region_code,
+            admin_level=option_source.admin_level,
+        )
+    except RegionServiceError:
+        return []
+    return [PluginManifestConfigFieldOption(label=node.name, value=node.region_code) for node in nodes]
+
+
+def _read_option_source_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 def _validate_field_value(
     field: PluginManifestConfigField,
     actual_value: Any,
@@ -691,6 +984,25 @@ def _extract_persisted_secret_data(
     return {key: value for key, value in secret_data.items() if key in field_keys}
 
 
+def _build_runtime_payload(
+    *,
+    config_spec: PluginManifestConfigSpec,
+    values: dict[str, Any],
+    secret_data: dict[str, Any],
+) -> dict[str, Any]:
+    runtime_payload = dict(values)
+    for field in config_spec.config_schema.fields:
+        if field.type == "secret":
+            if field.key in secret_data:
+                runtime_payload[field.key] = secret_data[field.key]
+            elif field.default is not None:
+                runtime_payload[field.key] = field.default
+            continue
+        if field.key not in runtime_payload and field.default is not None:
+            runtime_payload[field.key] = field.default
+    return runtime_payload
+
+
 def _sync_runtime_scope_config(
     db: Session,
     *,
@@ -719,12 +1031,15 @@ def _sync_runtime_scope_config(
     if config_spec.scope_type != "channel_account":
         return
 
-    runtime_payload = dict(values)
-    for field in config_spec.config_schema.fields:
-        if field.type != "secret":
-            continue
-        if secret_fields.get(field.key, {}).get("has_value"):
-            runtime_payload[field.key] = secret_data.get(field.key, field.default)
+    runtime_payload = _build_runtime_payload(
+        config_spec=config_spec,
+        values=values,
+        secret_data={
+            key: secret_data.get(key, field.default)
+            for key, field in config_spec.config_schema.field_map().items()
+            if field.type == "secret" and secret_fields.get(key, {}).get("has_value")
+        },
+    )
     scope_context.config_json = dump_json(runtime_payload) or "{}"
     scope_context.updated_at = utc_now_iso()
 
@@ -747,6 +1062,20 @@ def _load_config_instance_payload(instance: PluginConfigInstance | None) -> tupl
     stored_data = load_json(instance.data_json)
     data_payload = stored_data if isinstance(stored_data, dict) else {}
     return data_payload, decrypt_plugin_config_secrets(instance.secret_data_encrypted)
+
+
+def _draft_scope_key(scope_type: str) -> str:
+    if scope_type == "plugin":
+        return PLUGIN_SCOPE_KEY
+    return "__draft__"
+
+
+def _normalize_optional_scope_key(*, scope_type: str, scope_key: str | None) -> str | None:
+    if scope_type == "plugin":
+        return PLUGIN_SCOPE_KEY
+    if scope_key is None:
+        return None
+    return _normalize_scope_key(scope_type=scope_type, scope_key=scope_key)
 
 
 def _normalize_scope_key(*, scope_type: str, scope_key: str) -> str:
@@ -776,8 +1105,18 @@ def _resolve_scope_context(
     household_id: str,
     plugin: PluginRegistryItem,
     config_spec: PluginManifestConfigSpec,
-    scope_key: str,
+    scope_key: str | None,
+    allow_missing_scope: bool = False,
 ) -> ChannelPluginAccount | Device | IntegrationInstance | None:
+    if scope_key is None:
+        if allow_missing_scope:
+            return None
+        raise PluginServiceError(
+            "scope_key 不能为空。",
+            error_code=PLUGIN_CONFIG_SCOPE_INVALID,
+            field="scope_key",
+            status_code=400,
+        )
     if config_spec.scope_type == "plugin":
         return None
 

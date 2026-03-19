@@ -228,7 +228,7 @@ def _build_overview() -> ContextOverviewRead:
         home_mode="home",
         privacy_mode="balanced",
         automation_level="assisted",
-        home_assistant_status="healthy",
+        platform_health_status="healthy",
         voice_fast_path_enabled=True,
         guest_mode_enabled=False,
         child_protection_enabled=True,

@@ -2612,7 +2612,7 @@ def _build_free_chat_prompt_context(
             "household_context": (
                 f"当前家庭概况：活跃成员 {overview.active_member.name if overview.active_member else '暂无'}；"
                 f"家庭模式 {overview.home_mode}；"
-                f"Home Assistant 状态 {overview.home_assistant_status}。"
+                f"集成平台状态 {overview.platform_health_status}。"
             ),
         },
         memory_bundle=memory_bundle,

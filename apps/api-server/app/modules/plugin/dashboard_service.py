@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -400,7 +401,7 @@ def _build_builtin_home_cards(
     if context is not None:
         weather_message = (
             f"{_format_home_mode(locale_messages, context.home_mode)}，"
-            f"{_format_home_assistant_status(locale_messages, context.home_assistant_status)}。"
+            f"{_format_platform_health_status(locale_messages, context.platform_health_status)}。"
         )
         weather_highlights = [
             _resolve_builtin_dashboard_text(
@@ -1432,7 +1433,7 @@ def _format_home_mode(locale_messages: dict[str, str], value: str) -> str:
     return _resolve_builtin_dashboard_text(locale_messages, key)
 
 
-def _format_home_assistant_status(locale_messages: dict[str, str], value: str) -> str:
+def _format_platform_health_status(locale_messages: dict[str, str], value: str) -> str:
     key = (
         f"home.assistantStatus.{value}"
         if value in {"healthy", "degraded", "offline"}

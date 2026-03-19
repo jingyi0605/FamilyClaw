@@ -16,6 +16,7 @@ from app.modules.device.entity_store import (
     update_binding_entity_state_snapshot,
 )
 from app.modules.device.models import Device, DeviceBinding, DeviceEntityFavorite
+from app.modules.device_integration.service import load_binding_live_state_maps_via_plugin
 from app.modules.device.schemas import (
     DeviceActionLogListResponse,
     DeviceActionLogRead,
@@ -35,12 +36,12 @@ from app.modules.household.service import get_household_or_404
 from app.modules.room.models import Room
 
 
-HA_OFFLINE_STATE = "unavailable"
-HA_OFFLINE_REASON = "设备离线，Home Assistant 当前不可用"
+PLATFORM_OFFLINE_STATE = "unavailable"
+PLATFORM_OFFLINE_REASON = "设备离线，集成平台当前不可用"
 
 
 @dataclass(slots=True)
-class HomeAssistantStateLoadResult:
+class LiveStateLoadResult:
     state_maps: dict[str, dict[str, dict[str, Any]]]
     unavailable_instance_ids: set[str]
 
@@ -172,7 +173,7 @@ def list_device_entities(
 ) -> DeviceEntityListResponse:
     device = get_device_or_404(db, device_id)
     bindings = _load_device_bindings(db, device_id=device.id)
-    state_load_result = _load_live_home_assistant_state_maps(db, bindings=bindings)
+    state_load_result = _load_live_state_maps(db, household_id=device.household_id, bindings=bindings)
     entities = _resolve_device_entities(
         db,
         device=device,
@@ -183,7 +184,7 @@ def list_device_entities(
     if view == "favorites":
         entities = [item for item in entities if item.favorite]
     device_read = DeviceRead.model_validate(device)
-    if _device_has_unavailable_home_assistant_binding(
+    if _device_has_unavailable_platform_binding(
         bindings=bindings,
         unavailable_instance_ids=state_load_result.unavailable_instance_ids,
     ):
@@ -322,7 +323,7 @@ def _resolve_device_entities(
         capabilities = _load_binding_capabilities(binding)
         binding_entity_rows = list_binding_entity_rows(db, binding_id=binding.id)
         raw_entities = [build_entity_payload_from_row(row) for row in binding_entity_rows]
-        if _binding_is_home_assistant_unavailable(
+        if _binding_is_platform_unavailable(
             binding=binding,
             unavailable_instance_ids=unavailable_instance_ids,
         ):
@@ -540,8 +541,8 @@ def _build_unavailable_entity_snapshot(
         "entity_id": entity_id,
         "name": raw_entity.get("name") or entity_id,
         "domain": domain,
-        "state": HA_OFFLINE_STATE,
-        "state_display": _friendly_state_display(HA_OFFLINE_STATE),
+        "state": PLATFORM_OFFLINE_STATE,
+        "state_display": _friendly_state_display(PLATFORM_OFFLINE_STATE),
         "unit": raw_entity.get("unit"),
         "metadata": {
             **(raw_entity.get("metadata") if isinstance(raw_entity.get("metadata"), dict) else {}),
@@ -551,7 +552,7 @@ def _build_unavailable_entity_snapshot(
             _build_canonical_control_payload(
                 device=device,
                 domain=domain,
-                state=HA_OFFLINE_STATE,
+                state=PLATFORM_OFFLINE_STATE,
                 raw_control=raw_entity.get("control") if isinstance(raw_entity.get("control"), dict) else None,
                 attributes={},
             )
@@ -576,8 +577,8 @@ def _build_unavailable_fallback_entity_snapshot(
         "entity_id": entity_id,
         "name": capabilities.get("name") or device.name,
         "domain": domain,
-        "state": HA_OFFLINE_STATE,
-        "state_display": _friendly_state_display(HA_OFFLINE_STATE),
+        "state": PLATFORM_OFFLINE_STATE,
+        "state_display": _friendly_state_display(PLATFORM_OFFLINE_STATE),
         "unit": None,
         "metadata": {
             "fallback": True,
@@ -589,7 +590,7 @@ def _build_unavailable_fallback_entity_snapshot(
             _build_canonical_control_payload(
                 device=device,
                 domain=domain,
-                state=HA_OFFLINE_STATE,
+                state=PLATFORM_OFFLINE_STATE,
                 raw_control=None,
                 attributes={},
             )
@@ -711,7 +712,7 @@ def _default_control_for_device(*, device: Device, state: str) -> dict[str, Any]
 def _mark_control_unavailable(payload: dict[str, Any]) -> dict[str, Any]:
     result = dict(payload)
     result["disabled"] = True
-    result["disabled_reason"] = HA_OFFLINE_REASON
+    result["disabled_reason"] = PLATFORM_OFFLINE_REASON
     return result
 
 
@@ -1019,68 +1020,37 @@ def _load_device_bindings(db: Session, *, device_id: str) -> list[DeviceBinding]
     )
 
 
-def _load_live_home_assistant_state_maps(
+def _load_live_state_maps(
     db: Session,
     *,
+    household_id: str,
     bindings: list[DeviceBinding],
-) -> HomeAssistantStateLoadResult:
-    instance_ids = {
-        binding.integration_instance_id
-        for binding in bindings
-        if binding.platform == "home_assistant" and binding.integration_instance_id
-    }
-    if not instance_ids:
-        return HomeAssistantStateLoadResult(state_maps={}, unavailable_instance_ids=set())
-    try:
-        from app.plugins.builtin.homeassistant_device_action.runtime import build_home_assistant_client_for_instance
-    except ImportError:
-        return HomeAssistantStateLoadResult(state_maps={}, unavailable_instance_ids=set())
-    state_maps: dict[str, dict[str, dict[str, Any]]] = {}
-    unavailable_instance_ids: set[str] = set()
-    for integration_instance_id in instance_ids:
-        try:
-            client = build_home_assistant_client_for_instance(
-                db,
-                integration_instance_id=integration_instance_id,
-                timeout_seconds=5,
-            )
-            raw_states = client.get_states()
-        except Exception:
-            unavailable_instance_ids.add(integration_instance_id)
-            continue
-        state_maps[integration_instance_id] = {
-            entity_id: item
-            for item in raw_states
-            if isinstance(item, dict)
-            for entity_id in [_normalize_optional_text(item.get("entity_id"))]
-            if entity_id
-        }
-    return HomeAssistantStateLoadResult(
-        state_maps=state_maps,
-        unavailable_instance_ids=unavailable_instance_ids,
+) -> LiveStateLoadResult:
+    return load_binding_live_state_maps_via_plugin(
+        db,
+        household_id=household_id,
+        bindings=bindings,
     )
 
 
-def _binding_is_home_assistant_unavailable(
+def _binding_is_platform_unavailable(
     *,
     binding: DeviceBinding,
     unavailable_instance_ids: set[str],
 ) -> bool:
-    if binding.platform != "home_assistant":
-        return False
     integration_instance_id = _normalize_optional_text(binding.integration_instance_id)
     if not integration_instance_id:
         return False
     return integration_instance_id in unavailable_instance_ids
 
 
-def _device_has_unavailable_home_assistant_binding(
+def _device_has_unavailable_platform_binding(
     *,
     bindings: list[DeviceBinding],
     unavailable_instance_ids: set[str],
 ) -> bool:
     return any(
-        _binding_is_home_assistant_unavailable(
+        _binding_is_platform_unavailable(
             binding=binding,
             unavailable_instance_ids=unavailable_instance_ids,
         )

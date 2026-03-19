@@ -8,10 +8,6 @@ from sqlalchemy.orm import Session
 from app.modules.device.entity_store import build_binding_entity_ids
 from app.modules.device.models import Device, DeviceBinding
 
-
-HOME_ASSISTANT_PLUGIN_ID = "homeassistant"
-
-
 @dataclass(slots=True)
 class DevicePluginRoute:
     plugin_id: str
@@ -24,13 +20,6 @@ class DevicePluginRoutingError(ValueError):
         self.message = message
         self.error_code = error_code
         self.field = field
-
-
-def resolve_home_assistant_action_plugin_id(device_type: str) -> str:
-    _ = device_type
-    return HOME_ASSISTANT_PLUGIN_ID
-
-
 def _binding_matches_entity(db: Session, binding: DeviceBinding, requested_entity_id: str) -> bool:
     entity_id = requested_entity_id.strip()
     if not entity_id:

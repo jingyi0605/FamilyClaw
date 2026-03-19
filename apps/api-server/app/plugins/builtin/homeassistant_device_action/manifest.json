@@ -24,6 +24,7 @@
       "supports_discovery": true,
       "supports_actions": true,
       "supports_cards": false,
+      "supports_live_state": true,
       "entity_types": ["device.state", "sensor.temperature", "sensor.humidity"],
       "default_cache_ttl_seconds": 300,
       "max_stale_seconds": 1800

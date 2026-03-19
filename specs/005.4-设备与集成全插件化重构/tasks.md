@@ -99,8 +99,8 @@
 
 ## 阶段 2：后端主链彻底收口到统一插件体系
 
-- [ ] 2.1 给设备类插件接入统一插件配置，不再直读旧 HA 专表
-  - 状态：IN_PROGRESS
+- [x] 2.1 给设备类插件接入统一插件配置，不再直读旧 HA 专表
+  - 状态：DONE
   - 这一步到底做什么：让 `homeassistant` 插件改为读取统一插件配置实例，删除插件内部对 `HouseholdHaConfig` 和 `database_url` 偷读路径的依赖。
   - 做完你能看到什么：插件运行时终于像插件，而不是回库偷配置的特权模块。
   - 先依赖什么：1.3
@@ -119,12 +119,12 @@
   - 怎么验证：
     - 插件配置测试
     - grep 检查 `HouseholdHaConfig` 依赖面
-  - 当前执行说明：`homeassistant` 插件已经改为读取真实集成实例上的插件配置；`plugin_config_instances.integration_instance_id` 和 `device_bindings.integration_instance_id` 已经落地，插件目录下的 runtime / connector / executor 都按实例读取配置和更新状态，旧 `HouseholdHaConfig` 桥接已移除。
+  - 当前执行说明：实例级插件配置链路和 `integration_instance_id` 归属已经落地，`runtime.py` 旧特权实现已删除，`adapter.py` / `integration.py` 已改成直接消费宿主注入的 `runtime_config`；插件目录 grep 已清零 `repository`、`config_crypto` 和 `database_url` 越界路径。
   - 对应需求：`requirements.md` 需求 5、需求 6、需求 7
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L59)
 
-- [ ] 2.2 建统一集成实例服务和资源查询服务
-  - 状态：IN_PROGRESS
+- [x] 2.2 建统一集成实例服务和资源查询服务
+  - 状态：DONE
   - 这一步到底做什么：新增或重构后端服务，统一管理插件目录、集成实例、资源列表、资源详情。
   - 做完你能看到什么：页面可以只调用统一服务，不再分别找 HA、设备、音箱、上下文接口拼数据。
   - 先依赖什么：2.1
@@ -143,7 +143,7 @@
   - 怎么验证：
     - 后端集成测试
     - API 契约测试
-  - 当前执行说明：真实 `integration_instances` 模型、仓储、接口和页面视图已经落地；`/integrations/instances/{id}/actions` 已按实例执行，`homeassistant` 已接通 `configure`、`device_candidates`、`device_sync`、`room_candidates`、`room_sync`，设备资源查询和绑定归属也已经按 `integration_instance_id` 收口。
+  - 当前执行说明：真实 `integration_instances` 模型、仓储、接口和实例动作链路已经落地，资源查询和绑定归属也已经按 `integration_instance_id` 收口；核心侧原本残留的 `device/service.py`、`device_integration/service.py`、`integration/service.py`、`context/*` 和对话层 HA 专名逻辑也已清理完成，宿主主链已经按统一插件体系工作。
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 3、需求 4、需求 5
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L48)
 
@@ -335,7 +335,7 @@
   - 怎么验证：
     - grep 检查关键字
     - 后端和前端回归测试
-  - 当前执行说明：前端旧 `HomeAssistant*` 类型和旧 HA API 调用已经从设置页删除；后端旧 `devices/ha-*` / `sync/ha` / `rooms/ha-*` 路由已经删除，`app/modules/ha_integration/` 旧模块也已经从应用代码里删除，相关测试已改到插件目录新实现。
+  - 当前执行说明：前端旧 `HomeAssistant*` 类型和旧 HA API 调用已经从 `user-app` 与 `packages/user-core/src` 删除；后端旧 `devices/ha-*` / `sync/ha` / `rooms/ha-*` 路由已经删除，`app/modules/ha_integration/` 旧模块也已经从应用代码里删除；核心和前端顶层剩余的 HA 专名边界也已清理完成。当前只剩 `packages/user-core/src/api/create-api-client.ts` 的受控兼容归一化桥接，以及 `context/schemas.py` 的旧字段兼容输出。编译产物和历史生成文件不作为这项 source-level 收尾阻塞。
   - 对应需求：`requirements.md` 需求 6、需求 8
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L184)
 
@@ -380,7 +380,7 @@
   - 怎么验证：
     - grep `ha-config|sync/ha|HomeAssistantConfig|household_ha_configs`
     - 全量回归测试
-  - 当前执行说明：应用代码、测试代码和前端设置页里对 `ha_integration`、`HouseholdHaConfig`、旧 `sync/ha` 路由和旧 `HomeAssistantConfig` 类型的直接引用已经清零；但全量回归测试还没跑完，这一项先保持 IN_PROGRESS。
+  - 当前执行说明：旧 `ha_integration` 模块、旧 `sync/ha` 路由、旧 `HouseholdHaConfig` 和旧 `HomeAssistantConfig` 这批源码入口已经清掉；目前与 HA 相关的保留项只剩插件实现本体、`context/schemas.py` 中用于旧客户端兼容的 `home_assistant_status` 桥接字段，以及 `packages/user-core/src/api/create-api-client.ts` 的前端兼容归一化桥接。因此这项对 HA 收尾已经通过，但整份 `005.4` 仍需继续承载音箱与更广义资源收口任务，所以保持 `IN_PROGRESS`。
   - 对应需求：`requirements.md` 需求 6、需求 7、需求 8
   - 对应设计：[design.md](/C:/Code/FamilyClaw/specs/005.4-设备与集成全插件化重构/design.md#L255)
 
@@ -401,7 +401,7 @@
     - `apps/api-server/tests/`
     - `apps/user-app/src/pages/settings/**/__tests__/`
   - 这一步先不做什么：不新增业务能力。
-  - 当前执行说明：已新增 `tests/homeassistant_test_support.py`，并回写多组后端测试到实例级链路；前端 `typecheck` 已通过，后端关键文件和相关测试已 `py_compile`，`tests.test_plugin_observation_ingest` 与 `tests.test_agent_memory_insight` 已通过，其他更重的回归还要继续补。
+  - 当前执行说明：已新增 `tests/homeassistant_test_support.py`，并回写多组后端测试到实例级链路；`py -3 -m compileall ...`、`npm run typecheck:user-app` 已通过，`tests.test_device_integration_phase3.DeviceIntegrationPhase3Tests`、`tests.test_device_control_phase1.DeviceControlPhase1Tests`、`tests.test_device_control_phase2.DeviceControlPhase2Tests` 共 22 个关键后端回归已通过。更广义的 005.4 测试补强仍继续推进。
   - 怎么算完成：
     1. 后端统一主链有测试
     2. 页面核心流程有测试

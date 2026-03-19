@@ -1316,7 +1316,7 @@ class ConversationFoundationTests(unittest.TestCase):
         get_context_overview_mock.return_value = SimpleNamespace(
             active_member=SimpleNamespace(name="Owner"),
             home_mode="home",
-            home_assistant_status="online",
+            platform_health_status="offline",
         )
         build_memory_context_bundle_mock.return_value = SimpleNamespace(
             capability="conversation_free_chat",

@@ -1,11 +1,11 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 HomeMode = Literal["home", "away", "night", "sleep", "custom"]
 PrivacyMode = Literal["balanced", "strict", "care"]
 AutomationLevel = Literal["manual", "assisted", "automatic"]
-HomeAssistantStatus = Literal["healthy", "degraded", "offline"]
+IntegrationHealthStatus = Literal["healthy", "degraded", "offline"]
 PresenceStatus = Literal["home", "away", "unknown"]
 ActivityStatus = Literal["active", "focused", "resting", "sleeping", "idle"]
 RoomScenePreset = Literal["auto", "welcome", "focus", "rest", "quiet"]
@@ -33,10 +33,11 @@ class ContextConfigRoomSetting(BaseModel):
 
 
 class ContextConfigUpsert(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     home_mode: HomeMode = "home"
     privacy_mode: PrivacyMode = "balanced"
     automation_level: AutomationLevel = "assisted"
-    home_assistant_status: HomeAssistantStatus = "healthy"
+    platform_health_status: IntegrationHealthStatus = "healthy"
     active_member_id: str | None = None
     voice_fast_path_enabled: bool = True
     guest_mode_enabled: bool = False
@@ -125,12 +126,13 @@ class ContextOverviewInsight(BaseModel):
 
 
 class ContextOverviewRead(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     household_id: str
     household_name: str
     home_mode: HomeMode
     privacy_mode: PrivacyMode
     automation_level: AutomationLevel
-    home_assistant_status: HomeAssistantStatus
+    platform_health_status: IntegrationHealthStatus
     voice_fast_path_enabled: bool
     guest_mode_enabled: bool
     child_protection_enabled: bool
