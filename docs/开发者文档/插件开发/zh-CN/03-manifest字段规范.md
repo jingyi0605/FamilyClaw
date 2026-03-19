@@ -1,8 +1,18 @@
+---
+title: manifest字段规范
+version: 2.0.0
+updated_at: 2026-03-19
+version_history:
+  - version: 2.0.0
+    date: 2026-03-19
+    note: 补充插件配置动态选项源、字段联动依赖和普通字段 clear_fields 语义。
+---
+
 # 03-manifest字段规范
 
-这份文档只保留稳定规则，不复制一大坨容易漂移的字段大表。
+这份文档只写稳定边界，不重复抄代码实现细节。
 
-精确字段形状看代码事实来源：
+代码事实来源仍然是：
 
 - `apps/api-server/app/modules/plugin/schemas.py`
 
@@ -19,19 +29,136 @@
 - `entrypoints`
 - `capabilities`
 
-如果需要配置，再加：
+如果插件需要配置，再加：
 
 - `config_specs`
 - `locales`
 
-### `config_specs` 的文案怎么写
+## 2. `config_specs` 现在能声明什么
 
-插件配置表单现在允许“原文 + 词典 key”并存。
+配置字段仍然分成两层：
 
-最小规则是：
+- `config_schema`：数据语义
+- `ui_schema`：展示提示
 
-- 保留可读原文作为兜底，比如 `title`、`label`、`help_text`
-- 如果要接入插件自己的词典，再额外写对应 key
+当前正式作用域：
+
+- `plugin`
+- `integration_instance`
+- `device`
+- `channel_account`
+
+## 3. 枚举字段不再只有静态选项
+
+以前 `enum` / `multi_enum` 只能写死 `enum_options`。
+
+现在正式支持两种写法，二选一：
+
+### 3.1 静态选项
+
+```json
+{
+  "key": "mode",
+  "type": "enum",
+  "enum_options": [
+    { "label": "严格", "value": "strict" },
+    { "label": "宽松", "value": "loose" }
+  ]
+}
+```
+
+### 3.2 动态选项源
+
+```json
+{
+  "key": "provider_code",
+  "type": "enum",
+  "option_source": {
+    "source": "region_provider_list",
+    "country_code": "CN"
+  }
+}
+```
+
+死规矩：
+
+- `enum_options` 和 `option_source` 不能同时写
+- 只有 `enum` / `multi_enum` 能写 `option_source`
+
+## 4. 动态选项源规范
+
+### 4.1 `region_provider_list`
+
+用途：列出当前家庭可用的地区 provider。
+
+字段：
+
+- `source`: 固定为 `region_provider_list`
+- `country_code`: 目标国家，例如 `CN`
+
+### 4.2 `region_catalog_children`
+
+用途：按 provider 和父级地区拉子级目录。
+
+字段：
+
+- `source`: 固定为 `region_catalog_children`
+- `country_code`: 目标国家
+- `provider_code` 或 `provider_field`: 二选一
+- `parent_field`: 当级联到 `city` / `district` 时必填
+- `admin_level`: `province` / `city` / `district`
+
+示例：
+
+```json
+{
+  "key": "city_code",
+  "type": "enum",
+  "depends_on": ["provider_code", "province_code"],
+  "clear_on_dependency_change": true,
+  "option_source": {
+    "source": "region_catalog_children",
+    "country_code": "CN",
+    "provider_field": "provider_code",
+    "parent_field": "province_code",
+    "admin_level": "city"
+  }
+}
+```
+
+## 5. 字段联动怎么声明
+
+如果一个字段依赖别的字段，正式用下面两个字段表达：
+
+- `depends_on`
+- `clear_on_dependency_change`
+
+例子：
+
+```json
+{
+  "key": "district_code",
+  "type": "enum",
+  "depends_on": ["provider_code", "province_code", "city_code"],
+  "clear_on_dependency_change": true,
+  "option_source": {
+    "source": "region_catalog_children",
+    "country_code": "CN",
+    "provider_field": "provider_code",
+    "parent_field": "city_code",
+    "admin_level": "district"
+  }
+}
+```
+
+含义很直接：
+
+- 上游字段一变，宿主要重新解析这个字段的可选项
+- 如果当前值已经不在新候选里，宿主应该把它清掉
+
+## 6. 文案字段怎么写
+
+插件配置表单允许“原文 + 词典 key”并存。
 
 当前正式支持的 key 字段包括：
 
@@ -46,163 +173,21 @@
 - `config_specs[].ui_schema.widgets[].help_text_key`
 - `config_specs[].ui_schema.submit_text_key`
 
-推荐做法很简单：
+推荐做法：
 
-- 有多语言需求的官方插件和第三方插件，写原文和 key 两套
-- 宿主优先用 key 走家庭级 plugin locales
-- 没命中词典时，回退原文，不把 key 直接甩给用户
+- 给用户看的原文一定要有，别只塞 key
+- 有多语言时再补 key
+- 宿主先走 key，没命中再退回原文
 
-补一条边界：
+## 7. 天气插件该怎么写
 
-- 这套“原文 + key”规则不只用于 `config_specs`，也用于卡片 payload 内的用户可见字段；插件如果要在卡片里显示自己的专属文案，也必须走同样的思路。
+天气插件现在的正确写法不是把省市区整包塞进 manifest。
 
-## 2. `types` 只能写什么
+正确路线是：
 
-### 普通插件类型
+1. `provider_code` 走 `region_provider_list`
+2. `province_code` 走 `region_catalog_children(province)`
+3. `city_code` 依赖 `provider_code + province_code`
+4. `district_code` 依赖 `provider_code + city_code`
 
-- `integration`
-- `action`
-- `agent-skill`
-- `channel`
-- `region-provider`
-- `ai-provider`
-- `locale-pack`
-- `theme-pack`
-
-### 独占槽位
-
-- `memory_engine`
-- `memory_provider`
-- `context_engine`
-
-不要再写：
-
-- `connector`
-- `memory-ingestor`
-
-## 3. `entrypoints` 怎么看
-
-当前正式执行入口 key 主要有：
-
-- `integration`
-- `action`
-- `agent_skill`
-- `channel`
-- `region_provider`
-- `ai_provider`
-- `memory_engine`
-- `memory_provider`
-- `context_engine`
-
-### 对 `ai-provider` 的特殊说明
-
-`ai-provider` 现在已经是“声明 + driver”的正式插件类型。
-
-必须满足：
-
-- 声明 `entrypoints.ai_provider`
-- 在 `capabilities.ai_provider` 里写供应商声明
-- builtin AI 供应商使用真实 manifest，不再使用虚拟条目
-
-不要再把 `ai-provider` 设计成“只有静态元数据、没有执行边界”的类型。
-
-## 4. `capabilities` 讲什么
-
-`capabilities` 用来声明正式能力边界，比如：
-
-- `integration.*`
-- `channel.*`
-- `region_provider.*`
-- `ai_provider.*`
-
-槽位型插件额外声明：
-
-- `slot_name`
-- `exclusive`
-- `fallback_required`
-- `input_contract_version`
-- `output_contract_version`
-
-### 对 `integration` 的补充提醒
-
-现在已经落地、而且插件作者需要真的写出来的字段，不止 `domains` 和 `instance_model` 这几个老名字。
-
-如果是持续状态型插件，至少把下面这些能力边界想清楚：
-
-- `instance_model`
-  - 当前常见模型是 `multi_instance`
-- `refresh_mode`
-- `supports_discovery`
-- `supports_actions`
-- `supports_cards`
-- `entity_types`
-- `default_cache_ttl_seconds`
-- `max_stale_seconds`
-
-如果插件启用后要自动帮当前家庭建一个默认实例，还应该声明：
-
-- `auto_create_default_instance`
-- `default_instance_display_name`
-- `default_instance_config`
-
-如果插件会为多台设备或多个实例动态产出卡片，`dashboard_cards` 里还应该声明：
-
-- 固定卡片用 `card_key`
-- 动态多卡片用 `card_key_prefix`
-
-天气插件现在就是这个模式：
-
-- 默认实例自动创建
-- 同一个插件允许多地区实例
-- 每个天气设备都可以产出自己的卡片快照
-
-## 5. `locales` 现在怎么用
-
-`locales` 不再是 `locale-pack` 独占字段。
-
-现在统一规则是：
-
-- `locale-pack` 必须至少声明一个 `locales`
-- 普通插件也可以声明自己的 `locales`
-- `manifest.locales[].resource` 必须指向插件目录内真实存在的资源文件
-
-普通插件声明 `locales` 的目的很直接：
-
-- 给自己的卡片标题、配置文案、错误提示补词典
-- 给自己卡片 payload 里的 `label_key` 这类字段补词典
-- 不需要再单独拆一个语言包插件才能翻译自己
-
-### 同一个 `locale_id` 怎么合并
-
-宿主不会再对同一个 `locale_id` 整包二选一，而是按消息 key 合并。
-
-冲突优先级是：
-
-- `builtin`
-- `official`
-- `third_party`
-
-如果多个插件都提供了同一个消息 key，按上面的优先级覆盖；同优先级再按插件 id 稳定排序。
-
-`locale-pack` 还有一个特殊规则：
-
-- locale 元信息的归属优先给 `locale-pack`
-- 如果当前没有 `locale-pack` 提供该 `locale_id`，再退回到最高优先级的普通插件
-
-## 6. 版本字段和兼容字段怎么理解
-
-当前插件系统里，下面这些字段是正式边界：
-
-- `version`
-- `installed_version`
-- `compatibility`
-- `update_state`
-
-其中：
-
-- `version` 是插件声明版本
-- `installed_version` 是当前实际安装版本
-- `compatibility` 用于承载兼容性说明
-- `update_state` 用于承载最小升级状态
-
-不要再把版本治理理解成“只有一个 `version` 字符串”。
+这样后续装了新的地区 provider，宿主就能直接把它列出来，天气插件不用再改代码。
