@@ -13,7 +13,6 @@ from app.modules.channel.models import ChannelConversationBinding
 from app.modules.channel.service import ChannelServiceError
 from app.modules.conversation.models import ConversationSession
 from app.modules.conversation.schemas import ConversationSessionCreate
-from app.modules.conversation.service import create_conversation_session
 _INBOUND_COMMAND_PATTERN = re.compile(r"^/(?P<name>new|reset)(?:@[A-Za-z0-9_]{3,})?$", re.IGNORECASE)
 
 InboundConversationCommandName = Literal["new", "reset"]
@@ -154,6 +153,8 @@ def _create_conversation_session(
     title: str,
     actor_id: str,
 ) -> ConversationSession:
+    from app.modules.conversation.service import create_conversation_session
+
     detail = create_conversation_session(
         db,
         payload=ConversationSessionCreate(

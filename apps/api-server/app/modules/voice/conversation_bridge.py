@@ -10,14 +10,6 @@ from app.modules.conversation.inbound_command_service import (
     parse_inbound_conversation_command,
 )
 from app.modules.conversation.schemas import ConversationSessionCreate, ConversationMessageRead
-from app.modules.conversation.service import (
-    append_conversation_debug_log,
-    conversation_turn_exists,
-    create_conversation_session,
-    get_conversation_session_detail,
-    record_conversation_turn_source,
-    run_conversation_realtime_turn,
-)
 from app.modules.voice.identity_service import VoiceIdentityResolution
 from app.modules.voice.registry import VoiceSessionState, VoiceTerminalState
 from app.modules.voice.service import (
@@ -85,6 +77,15 @@ class VoiceConversationBridge:
         transcript_text: str,
         identity: VoiceIdentityResolution | None = None,
     ) -> VoiceConversationBridgeResult:
+        from app.modules.conversation.service import (
+            append_conversation_debug_log,
+            conversation_turn_exists,
+            create_conversation_session,
+            get_conversation_session_detail,
+            record_conversation_turn_source,
+            run_conversation_realtime_turn,
+        )
+
         actor = self._build_actor(session=session, identity=identity)
         terminal_type, terminal_code = resolve_voice_terminal_binding_key(terminal=terminal)
         inbound_command = parse_inbound_conversation_command(transcript_text)
