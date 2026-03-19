@@ -53,10 +53,10 @@ class AgentChunkPayload(_StrictModel):
     @field_validator("text")
     @classmethod
     def validate_text(cls, value: str) -> str:
-        trimmed = value.strip()
-        if not trimmed:
-            raise ValueError("agent.chunk.text 不能为空")
-        lowered = trimmed.lower()
+        # 流式 chunk 允许只包含空格或换行，这些同样属于用户可见文本。
+        if value == "":
+            raise ValueError("agent.chunk.text 不能为空字符串")
+        lowered = value.lower()
         for marker in FORBIDDEN_TEXT_PROTOCOL_MARKERS:
             if marker in lowered:
                 raise ValueError("agent.chunk.text 只能承载纯展示文本，不能混入控制协议")

@@ -18,12 +18,21 @@ class RealtimeProtocolTests(unittest.TestCase):
         self.assertEqual("agent.chunk", event.type)
         self.assertEqual("你好，我会先了解你的偏好。", event.payload.text)
 
+        whitespace_event = build_bootstrap_realtime_event(
+            event_type="agent.chunk",
+            session_id="session-1",
+            request_id="request-1",
+            seq=2,
+            payload={"text": "\n\n"},
+        )
+        self.assertEqual("\n\n", whitespace_event.payload.text)
+
         with self.assertRaises(ValidationError):
             build_bootstrap_realtime_event(
                 event_type="agent.chunk",
                 session_id="session-1",
                 request_id="request-1",
-                seq=2,
+                seq=3,
                 payload={"text": "你好\n---\n<config>{}</config>"},
             )
 

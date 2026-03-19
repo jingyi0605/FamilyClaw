@@ -328,6 +328,36 @@ class RealtimeWsTests(unittest.TestCase):
         final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
         self.assertEqual("你好，我是小管家。", final_snapshot["messages"][1]["content"])
 
+    def test_conversation_whitespace_chunk_does_not_mark_turn_failed(self) -> None:
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[{"type": "user.message", "session_id": self.conversation_session_id, "request_id": "conversation-request-whitespace-chunk", "payload": {"text": "还记得我的喜好吗"}}],
+        )
+
+        from app.modules.conversation import service as conversation_service_module
+        from app.modules.conversation.orchestrator import ConversationIntent, ConversationOrchestratorResult
+
+        async def _fake_stream_orchestrated_turn(_db, **kwargs):
+            _ = kwargs
+            yield ("chunk", "我记得呀，")
+            yield ("chunk", "\n\n")
+            yield ("chunk", "你喜欢吃芒果。")
+            yield ("done", ConversationOrchestratorResult(intent=ConversationIntent.FREE_CHAT, text="我记得呀，\n\n你喜欢吃芒果。", degraded=False, facts=[], suggestions=[], memory_candidate_payloads=[], config_suggestion=None, action_payloads=[], ai_trace_id="trace-whitespace", ai_provider_code="mock-provider", effective_agent_id=None, effective_agent_name="小白"))
+
+        with patch.object(conversation_service_module, "stream_orchestrated_turn", side_effect=_fake_stream_orchestrated_turn), patch.object(
+            conversation_service_module,
+            "aextract_proposal_batch",
+            return_value=ProposalBatchExtractionOutput(),
+        ):
+            asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
+
+        self.assertNotIn("agent.error", [item["type"] for item in websocket.sent_messages])
+        final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
+        self.assertEqual("completed", final_snapshot["messages"][1]["status"])
+        self.assertEqual("我记得呀，\n\n你喜欢吃芒果。", final_snapshot["messages"][1]["content"])
+
     def test_conversation_stale_socket_failure_does_not_lose_reply(self) -> None:
         websocket = _FakeWebSocket(
             household_id=self.household_id,
