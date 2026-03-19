@@ -6,7 +6,6 @@ function normalizeBase(rawBase?: string) {
   }
 
   let normalized = rawBase.trim()
-
   if (!normalized) {
     return '/'
   }
@@ -71,8 +70,8 @@ const zhThemeConfig = createThemeConfig({
   nav: [
     { text: '快速开始', link: '/快速开始/文档总览' },
     { text: '安装部署', link: '/安装部署/概览' },
-    { text: '使用指南', link: '/使用指南/仪表盘' },
-    { text: '开发文档', link: '/开发文档/环境准备' },
+    { text: '使用手册', link: '/使用指南/首次登录与初始化' },
+    { text: '开发手册', link: '/开发文档/环境准备' },
     { text: '沟通交流', link: '/沟通交流/官方网站' }
   ],
   sidebar: {
@@ -92,29 +91,31 @@ const zhThemeConfig = createThemeConfig({
         text: '安装部署',
         items: [
           { text: '概览', link: '/安装部署/概览' },
-          { text: 'Docker安装', link: '/安装部署/Docker安装' },
+          { text: 'Docker 安装', link: '/安装部署/Docker安装' },
           { text: '源码安装', link: '/安装部署/源码安装' },
-          { text: 'NAS部署', link: '/安装部署/NAS部署' },
-          { text: 'Ubuntu部署', link: '/安装部署/Ubuntu部署' },
-          { text: 'Windows部署', link: '/安装部署/Windows部署' }
+          { text: 'NAS 部署', link: '/安装部署/NAS部署' },
+          { text: 'Ubuntu 部署', link: '/安装部署/Ubuntu部署' },
+          { text: 'Windows 部署', link: '/安装部署/Windows部署' }
         ]
       }
     ],
     '/使用指南/': [
       {
-        text: '使用指南',
+        text: '使用手册',
         items: [
+          { text: '首次登录', link: '/使用指南/首次登录与初始化' },
           { text: '仪表盘', link: '/使用指南/仪表盘' },
           { text: '家庭', link: '/使用指南/家庭' },
-          { text: '对话', link: '/使用指南/对话' },
-          { text: '记忆', link: '/使用指南/记忆' },
-          { text: '设置', link: '/使用指南/设置' }
+          { text: '助手与对话', link: '/使用指南/对话' },
+          { text: '记忆与计划任务', link: '/使用指南/记忆' },
+          { text: '设置', link: '/使用指南/设置' },
+          { text: '插件', link: '/使用指南/插件' }
         ]
       }
     ],
     '/开发文档/': [
       {
-        text: '开发文档',
+        text: '开发总览',
         items: [
           { text: '环境准备', link: '/开发文档/环境准备' },
           { text: '后端开发', link: '/开发文档/后端开发' },
@@ -122,7 +123,7 @@ const zhThemeConfig = createThemeConfig({
         ]
       },
       {
-        text: '插件开发专题',
+        text: '插件专题',
         items: [
           { text: '插件规范', link: '/开发文档/插件规范' },
           { text: '目录结构', link: '/开发文档/目录结构' },
@@ -155,7 +156,7 @@ const zhThemeConfig = createThemeConfig({
   lightModeSwitchTitle: '切换到浅色模式',
   darkModeSwitchTitle: '切换到深色模式',
   langMenuLabel: '语言',
-  footerMessage: '文档源文件保存在仓库内，站点只是展示层。'
+  footerMessage: '文档源文件保存在仓库中，站点只是展示层。'
 })
 
 const enThemeConfig = createThemeConfig({
@@ -249,12 +250,11 @@ const enThemeConfig = createThemeConfig({
   footerMessage: 'Source files live in the repository; this site is only the presentation layer.'
 })
 
-// 先把路由和栏目稳定下来，后面补正文时不需要反复改导航。
 export default defineConfig({
   base: normalizeBase(process.env.DOCS_BASE),
   lang: 'zh-CN',
   title: 'FamilyClaw 文档中心',
-  description: 'FamilyClaw 项目快速开始、安装部署、使用指南、开发文档与沟通交流。',
+  description: 'FamilyClaw 官方文档，覆盖快速开始、安装部署、使用手册、开发手册与沟通交流。',
   cleanUrls: true,
   lastUpdated: true,
   themeConfig: zhThemeConfig,
