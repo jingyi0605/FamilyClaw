@@ -10,8 +10,9 @@ COPY packages ./packages
 RUN npm config set registry https://registry.npmmirror.com \
     && npm ci --legacy-peer-deps --ignore-scripts
 
-# 复制 apps/user-app 并安装其依赖，然后构建
+# 复制 apps/user-app 和构建所需的 builtin 插件
 COPY apps/user-app ./apps/user-app
+COPY apps/api-server/app/plugins/builtin ./apps/api-server/app/plugins/builtin
 WORKDIR /workspace/apps/user-app
 RUN npm ci --legacy-peer-deps && npm run build:h5
 

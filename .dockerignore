@@ -13,6 +13,7 @@ node_modules
 
 apps/user-app/dist
 apps/api-server/data/openclaw-main
+apps/api-server/data/plugins/official
 docs/Documentation/.vitepress/cache
 docs/Documentation/.vitepress/dist
 familyclaw
