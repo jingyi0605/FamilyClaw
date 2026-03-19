@@ -17,6 +17,7 @@ from app.modules.scheduler.worker import ScheduledTaskWorker
 setup_logging(
     settings.log_level,
     conversation_debug_enabled=settings.conversation_debug_log_enabled,
+    channel_debug_enabled=settings.channel_debug_log_enabled,
 )
 logger = logging.getLogger(__name__)
 plugin_job_worker = PluginJobWorker()

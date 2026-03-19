@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     auth_session_touch_interval_seconds: int = 60
     auth_legacy_header_enabled: bool = True
     conversation_debug_log_enabled: bool = False
+    channel_debug_log_enabled: bool = False
     conversation_lane_shadow_enabled: bool = False
     conversation_lane_takeover_enabled: bool = True
     conversation_proposal_shadow_enabled: bool = False
