@@ -49,11 +49,14 @@ from app.modules.ai_gateway.schemas import (
     AiCapabilityRouteRead,
     AiCapabilityRouteUpsert,
     AiProviderAdapterRead,
+    AiProviderModelDiscoveryRead,
+    AiProviderModelDiscoveryRequest,
     AiProviderProfileCreate,
     AiProviderProfileRead,
     AiProviderProfileUpdate,
 )
 from app.modules.ai_gateway.provider_config_service import list_provider_adapters
+from app.modules.ai_gateway.provider_model_discovery_service import discover_provider_models_for_household
 from app.modules.ai_gateway.service import (
     AiGatewayConfigurationError,
     AiGatewayNotFoundError,
@@ -126,6 +129,32 @@ def list_household_ai_provider_adapters_endpoint(
 ) -> list[AiProviderAdapterRead]:
     ensure_actor_can_access_household(actor, household_id)
     return list_provider_adapters_for_household(db, household_id=household_id)
+
+
+@router.post("/{household_id}/provider-adapters/{adapter_code}/discover-models", response_model=AiProviderModelDiscoveryRead)
+def discover_household_ai_provider_models_endpoint(
+    household_id: str,
+    adapter_code: str,
+    payload: AiProviderModelDiscoveryRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> AiProviderModelDiscoveryRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        return discover_provider_models_for_household(
+            db,
+            household_id=household_id,
+            adapter_code=adapter_code,
+            values=payload.values,
+        )
+    except AiGatewayConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PluginServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
 
 @router.get("/{household_id}/provider-profiles", response_model=list[AiProviderProfileRead])

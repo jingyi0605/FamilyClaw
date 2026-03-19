@@ -60,7 +60,22 @@ class AiProviderAdapterRead(BaseModel):
     default_supported_capabilities: list[AiCapability] = Field(default_factory=list)
     supported_model_types: list[AiProviderModelType] = Field(default_factory=list)
     llm_workflow: str = "openai_chat_completions"
+    supports_model_discovery: bool = False
     field_schema: list[AiProviderFieldRead] = Field(default_factory=list)
+
+
+class AiProviderDiscoveredModelRead(BaseModel):
+    id: str
+    label: str
+
+
+class AiProviderModelDiscoveryRequest(BaseModel):
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class AiProviderModelDiscoveryRead(BaseModel):
+    adapter_code: str
+    models: list[AiProviderDiscoveredModelRead] = Field(default_factory=list)
 
 
 class AiProviderProfileConfigBase(BaseModel):

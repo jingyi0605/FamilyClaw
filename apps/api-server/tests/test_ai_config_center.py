@@ -90,13 +90,18 @@ class AiConfigCenterTests(unittest.TestCase):
         adapters = list_provider_adapters()
 
         adapter_codes = {item.adapter_code for item in adapters}
-        self.assertTrue({"chatgpt", "glm", "siliconflow", "kimi", "minimax"}.issubset(adapter_codes))
+        self.assertTrue({"chatgpt", "glm", "siliconflow", "kimi", "minimax", "ollama", "lmstudio", "localai"}.issubset(adapter_codes))
 
         chatgpt = next(item for item in adapters if item.adapter_code == "chatgpt")
         field_keys = {field.key for field in chatgpt.field_schema}
         self.assertNotIn("provider_code", field_keys)
         self.assertIn("model_name", field_keys)
         self.assertIn("secret_ref", field_keys)
+
+        ollama = next(item for item in adapters if item.adapter_code == "ollama")
+        self.assertTrue(ollama.supports_model_discovery)
+        self.assertEqual("local_gateway", ollama.transport_type)
+        self.assertEqual("local_only", ollama.default_privacy_level)
 
     def test_provider_adapter_catalog_aligns_builtin_defaults(self) -> None:
         adapters = {item.adapter_code: item for item in list_provider_adapters()}
@@ -120,6 +125,15 @@ class AiConfigCenterTests(unittest.TestCase):
         byteplus_coding = adapters["byteplus-coding"]
         byteplus_coding_defaults = {field.key: field.default_value for field in byteplus_coding.field_schema}
         self.assertEqual("https://ark.ap-southeast.bytepluses.com/api/coding/v3", byteplus_coding_defaults["base_url"])
+
+        lmstudio = adapters["lmstudio"]
+        lmstudio_defaults = {field.key: field.default_value for field in lmstudio.field_schema}
+        self.assertEqual("http://127.0.0.1:1234/v1", lmstudio_defaults["base_url"])
+        self.assertEqual(False, next(field.required for field in lmstudio.field_schema if field.key == "secret_ref"))
+
+        localai = adapters["localai"]
+        localai_defaults = {field.key: field.default_value for field in localai.field_schema}
+        self.assertEqual("http://127.0.0.1:8080/v1", localai_defaults["base_url"])
 
     def test_create_siliconflow_qwen_provider_does_not_write_vendor_defaults_into_profile(self) -> None:
         provider = create_provider_profile(

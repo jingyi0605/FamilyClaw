@@ -8,6 +8,8 @@ import type {
   AiCapabilityRouteUpsertPayload,
   AiCapability,
   AiProviderAdapter,
+  AiProviderModelDiscoveryPayload,
+  AiProviderModelDiscoveryResult,
   AiProviderProfile,
   AiProviderProfileCreatePayload,
   AiProviderProfileUpdatePayload,
@@ -114,6 +116,15 @@ export const settingsApi = {
   },
   listAiProviderAdapters(householdId: string) {
     return request<AiProviderAdapter[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-adapters`);
+  },
+  discoverAiProviderModels(householdId: string, adapterCode: string, payload: AiProviderModelDiscoveryPayload) {
+    return request<AiProviderModelDiscoveryResult>(
+      `/ai-config/${encodeURIComponent(householdId)}/provider-adapters/${encodeURIComponent(adapterCode)}/discover-models`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
   },
   listHouseholdAiProviders(householdId: string) {
     return request<AiProviderProfile[]>(`/ai-config/${encodeURIComponent(householdId)}/provider-profiles`);

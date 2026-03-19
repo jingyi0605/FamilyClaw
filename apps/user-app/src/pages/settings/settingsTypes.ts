@@ -85,7 +85,22 @@ export type AiProviderAdapter = {
   default_supported_capabilities: AiCapability[];
   supported_model_types: AiProviderModelType[];
   llm_workflow: string;
+  supports_model_discovery: boolean;
   field_schema: AiProviderField[];
+};
+
+export type AiProviderDiscoveredModel = {
+  id: string;
+  label: string;
+};
+
+export type AiProviderModelDiscoveryPayload = {
+  values: Record<string, unknown>;
+};
+
+export type AiProviderModelDiscoveryResult = {
+  adapter_code: string;
+  models: AiProviderDiscoveredModel[];
 };
 
 export type AiProviderProfile = {

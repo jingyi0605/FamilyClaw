@@ -70,6 +70,7 @@ function buildRegistryAdapter(plugin: PluginRegistryItem): AiProviderAdapter | n
       (item): item is AiProviderModelType => AI_PROVIDER_MODEL_TYPES.includes(item as AiProviderModelType),
     ),
     llm_workflow: capability.llm_workflow,
+    supports_model_discovery: Boolean(capability.runtime_capability?.supports_model_discovery),
     field_schema: capability.field_schema
       .filter(field => !HIDDEN_PROVIDER_FIELD_KEYS.has(String(field.key ?? '')))
       .map((field) => ({
@@ -212,6 +213,11 @@ export function AiProviderConfigPanel(props: {
     chooseProviderPluginDesc: getPageMessage(locale, 'settings.ai.provider.chooseProviderPluginDesc'),
     supportedModelTypes: getPageMessage(locale, 'settings.ai.provider.supportedModelTypes'),
     llmWorkflow: getPageMessage(locale, 'settings.ai.provider.llmWorkflow'),
+    refreshModels: getPageMessage(locale, 'settings.ai.provider.refreshModels'),
+    discoveringModels: getPageMessage(locale, 'settings.ai.provider.discoveringModels'),
+    discoveredModels: getPageMessage(locale, 'settings.ai.provider.discoveredModels'),
+    noModelsDiscovered: getPageMessage(locale, 'settings.ai.provider.noModelsDiscovered'),
+    discoveryHint: getPageMessage(locale, 'settings.ai.provider.discoveryHint'),
     back: getPageMessage(locale, 'settings.ai.provider.back'),
     summaryTitle: getPageMessage(locale, 'settings.ai.provider.summaryTitle'),
     summaryDesc: getPageMessage(locale, 'settings.ai.provider.summaryDesc'),
@@ -252,6 +258,7 @@ export function AiProviderConfigPanel(props: {
           plugin_name: item.plugin_name ?? item.display_name,
           supported_model_types: item.supported_model_types ?? ['llm'],
           llm_workflow: item.llm_workflow ?? item.api_family,
+          supports_model_discovery: item.supports_model_discovery ?? false,
         })));
         setProviders(providerRows);
         setRoutes(routeRows);

@@ -1,9 +1,14 @@
 import json
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.ai_gateway.models import AiProviderProfile
 from app.plugins.builtin.ai_provider_glm.driver import _prepare_request as prepare_glm_request
+from app.plugins.builtin.ai_provider_lmstudio.driver import build_driver as build_lmstudio_driver
+from app.plugins.builtin.ai_provider_localai.driver import build_driver as build_localai_driver
+from app.plugins.builtin.ai_provider_ollama.driver import build_driver as build_ollama_driver
 from app.plugins.builtin.ai_provider_openrouter.driver import _prepare_request as prepare_openrouter_request
 from app.plugins.builtin.ai_provider_siliconflow.driver import _prepare_request as prepare_siliconflow_request
 
@@ -141,6 +146,45 @@ class AiProviderBuiltinDriverSpecialsTests(unittest.TestCase):
             },
             prepared_payload,
         )
+
+    def test_ollama_driver_discovers_models_from_native_tags_endpoint(self) -> None:
+        driver = build_ollama_driver()
+
+        with patch("app.plugins._local_openai_provider_helpers.httpx.get") as mock_get:
+            mock_get.return_value = SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"models": [{"name": "qwen3:8b"}, {"name": "llama3.2:latest"}]},
+            )
+            models = driver.discover_models(values={"base_url": "http://127.0.0.1:11434/v1", "secret_ref": ""})
+
+        self.assertEqual(["qwen3:8b", "llama3.2:latest"], models)
+        self.assertEqual("http://127.0.0.1:11434/api/tags", mock_get.call_args.args[0])
+
+    def test_lmstudio_driver_discovers_models_from_openai_models_endpoint(self) -> None:
+        driver = build_lmstudio_driver()
+
+        with patch("app.plugins._local_openai_provider_helpers.httpx.get") as mock_get:
+            mock_get.return_value = SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"data": [{"id": "qwen2.5-7b-instruct"}, {"id": "phi-4-mini"}]},
+            )
+            models = driver.discover_models(values={"base_url": "http://127.0.0.1:1234/v1", "secret_ref": ""})
+
+        self.assertEqual(["qwen2.5-7b-instruct", "phi-4-mini"], models)
+        self.assertEqual("http://127.0.0.1:1234/v1/models", mock_get.call_args.args[0])
+
+    def test_localai_driver_discovers_models_from_openai_models_endpoint(self) -> None:
+        driver = build_localai_driver()
+
+        with patch("app.plugins._local_openai_provider_helpers.httpx.get") as mock_get:
+            mock_get.return_value = SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"data": [{"id": "localai-model"}]},
+            )
+            models = driver.discover_models(values={"base_url": "http://127.0.0.1:8080/v1", "secret_ref": ""})
+
+        self.assertEqual(["localai-model"], models)
+        self.assertEqual("http://127.0.0.1:8080/v1/models", mock_get.call_args.args[0])
 
     @staticmethod
     def _build_profile(

@@ -8,6 +8,7 @@ import type { AiCapabilityRoute, AiProviderAdapter, AiProviderField, AiProviderF
 import { AiProviderSelectDialog } from '../settings/components/AiProviderSelectDialog';
 import { getAiProviderLogo } from '../settings/components/AiProviderLogos';
 import { getLocalizedAdapterMeta } from '../settings/components/aiProviderCatalog';
+import { useAiProviderModelDiscovery } from '../settings/components/useAiProviderModelDiscovery';
 
 const HIDDEN_SETUP_FIELDS = new Set(['provider_code', 'latency_budget_ms']);
 
@@ -26,6 +27,9 @@ const ADAPTER_DESCRIPTION_KEYS: Record<string, string> = {
   'doubao-coding': 'settings.ai.provider.adapter.doubaoCoding',
   byteplus: 'settings.ai.provider.adapter.byteplus',
   'byteplus-coding': 'settings.ai.provider.adapter.byteplusCoding',
+  ollama: 'settings.ai.provider.adapter.ollama',
+  lmstudio: 'settings.ai.provider.adapter.lmstudio',
+  localai: 'settings.ai.provider.adapter.localai',
 };
 
 const FIELD_LABEL_KEYS: Record<string, string> = {
@@ -116,6 +120,13 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
     () => (currentAdapter ? getAiProviderLogo(currentAdapter.adapter_code) : null),
     [currentAdapter],
   );
+  const modelDiscovery = useAiProviderModelDiscovery({
+    householdId: props.householdId,
+    adapter: currentAdapter,
+    form,
+    onFormChange: setForm,
+    discoverModels: setupApi.discoverAiProviderModels,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -220,16 +231,66 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
             <div className="setup-form-grid">
               {currentAdapter.field_schema.filter(field => !HIDDEN_SETUP_FIELDS.has(field.key)).map(field => {
                 const localizedField = getLocalizedField(field, locale);
+                const inputId = `${props.householdId}-${field.key}`;
+                const discoveryMessage = modelDiscovery.error
+                  ? modelDiscovery.error
+                  : modelDiscovery.status.startsWith('found:')
+                    ? getPageMessage(locale, 'settings.ai.provider.discoveredModels').replace('{count}', modelDiscovery.status.slice('found:'.length))
+                    : modelDiscovery.status === 'empty'
+                      ? getPageMessage(locale, 'settings.ai.provider.noModelsDiscovered')
+                      : getPageMessage(locale, 'settings.ai.provider.discoveryHint');
+
+                if (field.key === 'model_name') {
+                  const datalistId = `${inputId}-options`;
+                  return (
+                    <div key={field.key} className="form-group">
+                      <div className="ai-provider-model-field__label-row">
+                        <label htmlFor={inputId}>{localizedField.label}</label>
+                        {modelDiscovery.supportsModelDiscovery ? (
+                          <button
+                            className="btn btn--outline btn--sm"
+                            type="button"
+                            onClick={modelDiscovery.refreshModels}
+                            disabled={modelDiscovery.discovering}
+                          >
+                            {modelDiscovery.discovering
+                              ? getPageMessage(locale, 'settings.ai.provider.discoveringModels')
+                              : getPageMessage(locale, 'settings.ai.provider.refreshModels')}
+                          </button>
+                        ) : null}
+                      </div>
+                      <input
+                        id={inputId}
+                        className="form-input"
+                        type="text"
+                        list={modelDiscovery.models.length > 0 ? datalistId : undefined}
+                        value={readProviderFormValue(form, field.key)}
+                        onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))}
+                        placeholder={localizedField.placeholder ?? undefined}
+                      />
+                      {modelDiscovery.models.length > 0 ? (
+                        <datalist id={datalistId}>
+                          {modelDiscovery.models.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+                        </datalist>
+                      ) : null}
+                      {localizedField.help_text ? <p className="ai-config-muted">{localizedField.help_text}</p> : null}
+                      {modelDiscovery.supportsModelDiscovery ? (
+                        <p className={modelDiscovery.error ? 'ai-config-muted form-error' : 'ai-config-muted'}>{discoveryMessage}</p>
+                      ) : null}
+                    </div>
+                  );
+                }
+
                 return (
                   <div key={field.key} className="form-group">
-                    <label htmlFor={`${props.householdId}-${field.key}`}>{localizedField.label}</label>
+                    <label htmlFor={inputId}>{localizedField.label}</label>
                     {field.field_type === 'select' ? (
-                      <select id={`${props.householdId}-${field.key}`} className="form-select" value={readProviderFormValue(form, field.key)} onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))}>
+                      <select id={inputId} className="form-select" value={readProviderFormValue(form, field.key)} onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))}>
                         <option value="">{t('setup.providerSetup.selectPlaceholder')}</option>
                         {localizedField.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     ) : (
-                      <input id={`${props.householdId}-${field.key}`} className="form-input" type={field.field_type === 'secret' ? 'password' : field.field_type === 'number' ? 'number' : 'text'} value={readProviderFormValue(form, field.key)} onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))} placeholder={localizedField.placeholder ?? undefined} />
+                      <input id={inputId} className="form-input" type={field.field_type === 'secret' ? 'password' : field.field_type === 'number' ? 'number' : 'text'} value={readProviderFormValue(form, field.key)} onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))} placeholder={localizedField.placeholder ?? undefined} />
                     )}
                     {localizedField.help_text ? <p className="ai-config-muted">{localizedField.help_text}</p> : null}
                   </div>

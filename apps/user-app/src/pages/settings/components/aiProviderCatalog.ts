@@ -41,6 +41,9 @@ export function getLocalizedAdapterMeta(adapter: AiProviderAdapter, locale: stri
     'doubao-coding': 'settings.ai.provider.adapter.doubaoCoding',
     byteplus: 'settings.ai.provider.adapter.byteplus',
     'byteplus-coding': 'settings.ai.provider.adapter.byteplusCoding',
+    ollama: 'settings.ai.provider.adapter.ollama',
+    lmstudio: 'settings.ai.provider.adapter.lmstudio',
+    localai: 'settings.ai.provider.adapter.localai',
   } as Record<string, string | undefined>)[adapter.adapter_code];
 
   return {

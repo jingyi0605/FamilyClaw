@@ -187,6 +187,45 @@ export function BytePlusLogo(props: IconProps) {
   );
 }
 
+// Ollama
+export function OllamaLogo(props: IconProps) {
+  return (
+    <svg viewBox="0 0 32 32" {...props}>
+      <rect width="32" height="32" rx="10" fill="#111827" />
+      <circle cx="11" cy="12" r="3" fill="white" />
+      <circle cx="21" cy="12" r="3" fill="white" />
+      <rect x="9" y="17" width="14" height="7" rx="3.5" fill="white" />
+    </svg>
+  );
+}
+
+// LM Studio
+export function LMStudioLogo(props: IconProps) {
+  return (
+    <svg viewBox="0 0 32 32" {...props}>
+      <rect width="32" height="32" rx="8" fill="#F97316" />
+      <path fill="white" d="M9 8h4v12h10v4H9V8zm10 0h4v8h-4V8z" />
+    </svg>
+  );
+}
+
+// LocalAI
+export function LocalAILogo(props: IconProps) {
+  return (
+    <svg viewBox="0 0 32 32" {...props}>
+      <defs>
+        <linearGradient id="localaiGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#059669" />
+          <stop offset="100%" stopColor="#0F766E" />
+        </linearGradient>
+      </defs>
+      <rect width="32" height="32" rx="8" fill="url(#localaiGradient)" />
+      <path fill="white" d="M10 8h4v12h8v4H10V8zm8 0h4v8h-4V8z" />
+      <circle cx="20" cy="21" r="2" fill="#A7F3D0" />
+    </svg>
+  );
+}
+
 // Default/Generic AI
 export function DefaultAiLogo(props: IconProps) {
   return (
@@ -222,6 +261,9 @@ export const AI_PROVIDER_LOGO_MAP: Record<string, React.FC<IconProps>> = {
   byteplus: BytePlusLogo,
   'byteplus-coding': BytePlusLogo,
   volcengine: BytePlusLogo,
+  ollama: OllamaLogo,
+  lmstudio: LMStudioLogo,
+  localai: LocalAILogo,
 };
 
 export function getAiProviderLogo(adapterCode: string): React.FC<IconProps> {

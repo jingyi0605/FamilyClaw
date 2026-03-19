@@ -34,6 +34,7 @@ def list_provider_adapters_from_plugins(plugin_items: list[PluginRegistryItem]) 
                 "default_supported_capabilities": runtime_capability.get("default_supported_capabilities", []),
                 "supported_model_types": capability.supported_model_types,
                 "llm_workflow": capability.llm_workflow,
+                "supports_model_discovery": bool(runtime_capability.get("supports_model_discovery")),
                 "field_schema": capability.field_schema,
             }
         )
@@ -54,6 +55,7 @@ def _build_adapter_reads(rows: list[dict[str, object]]) -> list[AiProviderAdapte
             default_supported_capabilities=list(row.get("default_supported_capabilities", [])),
             supported_model_types=list(row.get("supported_model_types", [])),
             llm_workflow=str(row.get("llm_workflow", row["api_family"])),
+            supports_model_discovery=bool(row.get("supports_model_discovery")),
             field_schema=[
                 AiProviderFieldRead(
                     key=str(field["key"]),

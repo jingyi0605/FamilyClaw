@@ -17,6 +17,7 @@ function createAdapter(overrides: Partial<AiProviderAdapter> = {}): AiProviderAd
     default_supported_capabilities: ['text', 'vision'],
     supported_model_types: ['llm', 'vision'],
     llm_workflow: 'chat',
+    supports_model_discovery: false,
     field_schema: [],
     ...overrides,
   };

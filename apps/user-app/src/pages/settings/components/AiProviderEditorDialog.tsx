@@ -5,6 +5,7 @@ import {
   readProviderFormValue,
 } from '../../setup/setupAiConfig';
 import type { AiProviderAdapter } from '../settingsTypes';
+import { settingsApi } from '../settingsApi';
 import { SettingsDialog } from './SettingsSharedBlocks';
 import {
   getLocalizedAdapterMeta,
@@ -14,6 +15,7 @@ import {
   getLocalizedWorkflowLabel,
 } from './aiProviderCatalog';
 import { getAiProviderLogo } from './AiProviderLogos';
+import { useAiProviderModelDiscovery } from './useAiProviderModelDiscovery';
 
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
 
@@ -48,6 +50,11 @@ export function AiProviderEditorDialog(props: {
     saveProvider: string;
     submitAddProvider: string;
     llmWorkflow: string;
+    refreshModels: string;
+    discoveringModels: string;
+    discoveredModels: string;
+    noModelsDiscovered: string;
+    discoveryHint: string;
     back: string;
     cancel: string;
     saving: string;
@@ -90,6 +97,13 @@ export function AiProviderEditorDialog(props: {
   const localizedCapabilityOptions = getLocalizedCapabilityOptions(locale);
   const adapterMeta = currentAdapter ? getLocalizedAdapterMeta(currentAdapter, locale) : null;
   const Logo = currentAdapter ? getAiProviderLogo(currentAdapter.adapter_code) : null;
+  const modelDiscovery = useAiProviderModelDiscovery({
+    householdId,
+    adapter: currentAdapter,
+    form,
+    onFormChange,
+    discoverModels: settingsApi.discoverAiProviderModels,
+  });
 
   // 编辑态直接显示编辑标题，新建态把供应商名字带进标题里。
   const dialogTitle = editingProviderId
@@ -212,6 +226,59 @@ export function AiProviderEditorDialog(props: {
                           <span className="ai-editor-checkbox__label">{localizedField.label}</span>
                         </label>
                         {localizedField.help_text ? <p className="ai-editor-hint">{localizedField.help_text}</p> : null}
+                      </div>
+                    );
+                  }
+
+                  if (field.key === 'model_name') {
+                    const datalistId = `${inputId}-options`;
+                    const discoveryMessage = modelDiscovery.error
+                      ? modelDiscovery.error
+                      : modelDiscovery.status.startsWith('found:')
+                        ? copy.discoveredModels.replace('{count}', modelDiscovery.status.slice('found:'.length))
+                        : modelDiscovery.status === 'empty'
+                          ? copy.noModelsDiscovered
+                          : copy.discoveryHint;
+
+                    return (
+                      <div key={field.key} className="form-group form-group--compact">
+                        <div className="ai-provider-model-field__label-row">
+                          <label htmlFor={inputId}>{localizedField.label}</label>
+                          {modelDiscovery.supportsModelDiscovery ? (
+                            <button
+                              className="btn btn--outline btn--sm"
+                              type="button"
+                              onClick={modelDiscovery.refreshModels}
+                              disabled={modelDiscovery.discovering}
+                            >
+                              {modelDiscovery.discovering ? copy.discoveringModels : copy.refreshModels}
+                            </button>
+                          ) : null}
+                        </div>
+                        <input
+                          id={inputId}
+                          className="form-input form-input--compact"
+                          type="text"
+                          list={modelDiscovery.models.length > 0 ? datalistId : undefined}
+                          value={fieldValue}
+                          onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
+                          placeholder={localizedField.placeholder ?? undefined}
+                        />
+                        {modelDiscovery.models.length > 0 ? (
+                          <datalist id={datalistId}>
+                            {modelDiscovery.models.map(model => (
+                              <option key={model.id} value={model.id}>
+                                {model.label}
+                              </option>
+                            ))}
+                          </datalist>
+                        ) : null}
+                        {localizedField.help_text ? <p className="ai-editor-hint">{localizedField.help_text}</p> : null}
+                        {modelDiscovery.supportsModelDiscovery ? (
+                          <p className={modelDiscovery.error ? 'ai-editor-hint form-error' : 'ai-editor-hint'}>
+                            {discoveryMessage}
+                          </p>
+                        ) : null}
                       </div>
                     );
                   }

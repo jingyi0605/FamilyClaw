@@ -121,6 +121,16 @@ export function buildCreateProviderPayload(form: ReturnType<typeof buildProvider
   };
 }
 
+export function buildProviderModelDiscoveryPayload(form: ReturnType<typeof buildProviderFormState>, adapter: AiProviderAdapter) {
+  return {
+    values: {
+      base_url: form.baseUrl.trim(),
+      secret_ref: form.secretRef.trim(),
+      ...buildDynamicExtraConfig(form.dynamicFields, adapter),
+    },
+  };
+}
+
 export function buildUpdateProviderPayload(form: ReturnType<typeof buildProviderFormState>, adapter: AiProviderAdapter): AiProviderProfileUpdatePayload {
   return {
     display_name: form.displayName.trim(),
