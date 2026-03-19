@@ -20,8 +20,8 @@ import { USER_GUIDE_DEFAULT_ANCHOR_TIMEOUT_MS } from './shared/user-guide/consta
 import {
   clearGuideSessionCheckpoint,
   clearPendingGuideAutoStart,
-  consumePendingGuideAutoStart,
   readGuideSessionCheckpoint,
+  readPendingGuideAutoStart,
   saveGuideSessionCheckpoint,
 } from './shared/user-guide/localState';
 import { USER_APP_GUIDE_VERSION, userAppGuideManifestV1 } from './shared/user-guide/manifest';
@@ -52,7 +52,7 @@ type UserGuideContextValue = {
   session: UserGuideSession | null;
   refreshGuideStatus: () => Promise<MemberGuideStatus | null>;
   setCurrentRoute: (route: string) => void;
-  startGuide: (source?: UserGuideLaunchSource) => void;
+  startGuide: (source?: UserGuideLaunchSource) => boolean;
   nextStep: () => void;
   previousStep: () => void;
   markCurrentStepReady: () => void;
@@ -203,6 +203,7 @@ export function UserGuideProvider(props: { children: ReactNode }) {
     });
     setCurrentStepDisplayMode('page');
     setSession(nextSession);
+    return Boolean(nextSession);
   }, [actor?.member_role, currentRoute, platformAdapter.runtimeTarget]);
 
   useEffect(() => {
@@ -437,16 +438,22 @@ export function UserGuideProvider(props: { children: ReactNode }) {
     let cancelled = false;
 
     const maybeAutoStartGuide = async () => {
-      const pendingLaunch = await consumePendingGuideAutoStart(appStorage);
+      const pendingLaunch = await readPendingGuideAutoStart(appStorage);
       if (cancelled || !pendingLaunch) {
         return;
       }
 
       if (!shouldAutoStartGuide(guideStatus, USER_APP_GUIDE_VERSION, { justCompletedSetup: true })) {
+        await clearPendingGuideAutoStart(appStorage);
         return;
       }
 
-      startGuide(pendingLaunch.source);
+      const started = startGuide(pendingLaunch.source);
+      if (!started) {
+        return;
+      }
+
+      await clearPendingGuideAutoStart(appStorage);
     };
 
     void maybeAutoStartGuide();

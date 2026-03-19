@@ -197,7 +197,8 @@ function resolveGuardResult(options: {
     if (
       setup.setupStatus &&
       !setup.setupStatus.is_required &&
-      setup.setupStatus.missing_requirements.length === 0
+      setup.setupStatus.missing_requirements.length === 0 &&
+      setup.setupStatus.current_step !== 'finish'
     ) {
       return {
         kind: 'redirect',

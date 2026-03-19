@@ -26,14 +26,7 @@ export async function clearPendingGuideAutoStart(storage: KeyValueStorage) {
   await storage.removeItem(USER_GUIDE_AUTO_START_STORAGE_KEY);
 }
 
-export async function consumePendingGuideAutoStart(storage: KeyValueStorage): Promise<PendingGuideLaunchPayload | null> {
-  const rawValue = await storage.getItem(USER_GUIDE_AUTO_START_STORAGE_KEY);
-  if (!rawValue) {
-    return null;
-  }
-
-  await storage.removeItem(USER_GUIDE_AUTO_START_STORAGE_KEY);
-
+function parsePendingGuideLaunchPayload(rawValue: string): PendingGuideLaunchPayload | null {
   try {
     const parsed = JSON.parse(rawValue) as Partial<PendingGuideLaunchPayload> | null;
     if (!parsed || parsed.source !== 'auto_after_setup') {
@@ -47,6 +40,25 @@ export async function consumePendingGuideAutoStart(storage: KeyValueStorage): Pr
   } catch {
     return null;
   }
+}
+
+export async function readPendingGuideAutoStart(storage: KeyValueStorage): Promise<PendingGuideLaunchPayload | null> {
+  const rawValue = await storage.getItem(USER_GUIDE_AUTO_START_STORAGE_KEY);
+  if (!rawValue) {
+    return null;
+  }
+
+  return parsePendingGuideLaunchPayload(rawValue);
+}
+
+export async function consumePendingGuideAutoStart(storage: KeyValueStorage): Promise<PendingGuideLaunchPayload | null> {
+  const rawValue = await storage.getItem(USER_GUIDE_AUTO_START_STORAGE_KEY);
+  if (!rawValue) {
+    return null;
+  }
+
+  await storage.removeItem(USER_GUIDE_AUTO_START_STORAGE_KEY);
+  return parsePendingGuideLaunchPayload(rawValue);
 }
 
 export async function saveGuideSessionCheckpoint(

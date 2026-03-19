@@ -7,6 +7,7 @@ import {
   clearPendingGuideAutoStart,
   consumePendingGuideAutoStart,
   markPendingGuideAutoStart,
+  readPendingGuideAutoStart,
   readGuideSessionCheckpoint,
   saveGuideSessionCheckpoint,
 } from '../localState';
@@ -58,6 +59,18 @@ test('consumePendingGuideAutoStart 遇到脏数据时会安全返回 null', asyn
   const payload = await consumePendingGuideAutoStart(storage);
 
   assert.equal(payload, null);
+});
+
+test('readPendingGuideAutoStart 只读取标记，不会提前消费', async () => {
+  const storage = createMemoryStorage();
+
+  await markPendingGuideAutoStart(storage);
+  const pendingLaunch = await readPendingGuideAutoStart(storage);
+  const consumedLaunch = await consumePendingGuideAutoStart(storage);
+
+  assert.equal(pendingLaunch?.source, 'auto_after_setup');
+  assert.equal(consumedLaunch?.source, 'auto_after_setup');
+  assert.equal(await consumePendingGuideAutoStart(storage), null);
 });
 
 test('saveGuideSessionCheckpoint 和 readGuideSessionCheckpoint 会保留最近一步', async () => {
