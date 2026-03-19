@@ -1,5 +1,5 @@
 import { FeaturePlaceholder } from '../../components/FeaturePlaceholder';
-import { GuardedPage, useI18n } from '../../runtime';
+import { GuardedPage, GuideAnchor, USER_GUIDE_ANCHOR_IDS, useI18n } from '../../runtime';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 
 export default function AssistantPage() {
@@ -7,12 +7,14 @@ export default function AssistantPage() {
 
   return (
     <GuardedPage mode="protected" path="/pages/assistant/index">
-      <FeaturePlaceholder
-        title={getPageMessage(locale, 'assistant.placeholder.title')}
-        description={getPageMessage(locale, 'assistant.placeholder.description')}
-        parityStatus="h5_ready"
-        blockingReason={getPageMessage(locale, 'assistant.placeholder.blockingReason')}
-      />
+      <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.assistantOverview}>
+        <FeaturePlaceholder
+          title={getPageMessage(locale, 'assistant.placeholder.title')}
+          description={getPageMessage(locale, 'assistant.placeholder.description')}
+          parityStatus="h5_ready"
+          blockingReason={getPageMessage(locale, 'assistant.placeholder.blockingReason')}
+        />
+      </GuideAnchor>
     </GuardedPage>
   );
 }

@@ -13,7 +13,7 @@ import {
   getDeviceRuntimeBadgeTone,
   normalizeDeviceDisplayStatus,
 } from '../device-management/deviceStatusDisplay';
-import { useHouseholdContext, useI18n } from '../../runtime';
+import { GuideAnchor, USER_GUIDE_ANCHOR_IDS, useHouseholdContext, useI18n } from '../../runtime';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { api } from './api';
 import { formatRoomType, ROOM_TYPE_OPTIONS } from './roomTypes';
@@ -517,32 +517,34 @@ export function FamilyLayout() {
 
   return (
     <FamilyWorkspaceContext.Provider value={value}>
-      <div className="page page--family">
-        <PageHeader title={t('nav.family')} description={workspace.errors.length > 0 ? getFamilyMessage(locale, 'family.partialLoadFailed') : undefined} />
-        <nav className="family-tabs">
-          {familyTabs.map(tab => (
-            <a
-              key={tab.key}
-              href={tab.hash}
-              className={`family-tab ${activeTab === tab.key ? 'family-tab--active' : ''}`}
-              onClick={event => {
-                event.preventDefault();
-                window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${tab.hash}`);
-                setActiveTab(tab.key);
-              }}
-            >
-              {t(tab.labelKey)}
-            </a>
-          ))}
-        </nav>
-        <div className="family-content">
-          {activeTab === 'overview' ? <FamilyOverview /> : null}
-          {activeTab === 'rooms' ? <FamilyRooms /> : null}
-          {activeTab === 'devices' ? <FamilyDevices /> : null}
-          {activeTab === 'members' ? <FamilyMembers /> : null}
-          {activeTab === 'relationships' ? <FamilyRelationships /> : null}
+      <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.familyOverview}>
+        <div className="page page--family">
+          <PageHeader title={t('nav.family')} description={workspace.errors.length > 0 ? getFamilyMessage(locale, 'family.partialLoadFailed') : undefined} />
+          <nav className="family-tabs">
+            {familyTabs.map(tab => (
+              <a
+                key={tab.key}
+                href={tab.hash}
+                className={`family-tab ${activeTab === tab.key ? 'family-tab--active' : ''}`}
+                onClick={event => {
+                  event.preventDefault();
+                  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${tab.hash}`);
+                  setActiveTab(tab.key);
+                }}
+              >
+                {t(tab.labelKey)}
+              </a>
+            ))}
+          </nav>
+          <div className="family-content">
+            {activeTab === 'overview' ? <FamilyOverview /> : null}
+            {activeTab === 'rooms' ? <FamilyRooms /> : null}
+            {activeTab === 'devices' ? <FamilyDevices /> : null}
+            {activeTab === 'members' ? <FamilyMembers /> : null}
+            {activeTab === 'relationships' ? <FamilyRelationships /> : null}
+          </div>
         </div>
-      </div>
+      </GuideAnchor>
     </FamilyWorkspaceContext.Provider>
   );
 }

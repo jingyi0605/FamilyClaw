@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MemberPreferenceUpsert(BaseModel):
@@ -16,4 +16,14 @@ class MemberPreferenceUpsert(BaseModel):
 class MemberPreferenceRead(MemberPreferenceUpsert):
     member_id: str
     updated_at: str | None = None
+
+
+class MemberGuideStatusRead(BaseModel):
+    member_id: str
+    user_app_guide_version: int | None = None
+    updated_at: str | None = None
+
+
+class MemberGuideStatusUpsert(BaseModel):
+    user_app_guide_version: int = Field(ge=1)
 

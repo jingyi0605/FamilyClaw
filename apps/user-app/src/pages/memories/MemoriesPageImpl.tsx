@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import Taro from '@tarojs/taro';
-import { useAuthContext, useHouseholdContext, useI18n } from '../../runtime';
+import { GuideAnchor, USER_GUIDE_ANCHOR_IDS, useAuthContext, useHouseholdContext, useI18n } from '../../runtime';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, EmptyState, PageHeader } from '../family/base';
 import { api } from './api';
@@ -593,44 +593,46 @@ export function MemoriesPageImpl() {
               ))}
             </nav>
 
-            <div className="memory-list">
-              {loading ? (
-                <EmptyState
-                  icon={LOADING_ICON}
-                  title={t('common.loading')}
-                  description={getPageMessage(locale, 'memory.loadingRealData')}
-                />
-              ) : filtered.length > 0 ? (
-                filtered.map(memory => (
-                  <Card
-                    key={memory.id}
-                    className={`memory-item-card ${selectedId === memory.id ? 'memory-item-card--selected' : ''}`}
-                    onClick={() => setSelectedId(memory.id)}
-                  >
-                    <div className="memory-item-card__top">
-                      <span className="memory-item-card__icon">
-                        {typeMap[(memory.memory_type === 'growth' ? 'event' : memory.memory_type) as MemoryFilterType]?.icon ?? MEMORY_FALLBACK_ICON}
-                      </span>
-                      <h3 className="memory-item-card__title">{memory.title}</h3>
-                      <span className={`badge badge--${memory.status === 'active' ? 'success' : 'warning'}`}>
-                        {formatStatus(memory.status, locale)}
-                      </span>
-                    </div>
-                    <p className="memory-item-card__content">{memory.summary}</p>
-                    <div className="memory-item-card__meta">
-                      <span>{formatMetaItem(t('memory.source'), summarizeSource(memory, locale), locale)}</span>
-                      <span>{formatMetaItem(t('memory.updatedAt'), formatRelativeTime(memory.updated_at, locale), locale)}</span>
-                    </div>
-                  </Card>
-                ))
-              ) : (
-                <EmptyState
-                  icon={MEMORY_FALLBACK_ICON}
-                  title={t('memory.noResults')}
-                  description={error || t('memory.noResultsHint')}
-                />
-              )}
-            </div>
+            <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.memoriesOverview}>
+              <div className="memory-list">
+                {loading ? (
+                  <EmptyState
+                    icon={LOADING_ICON}
+                    title={t('common.loading')}
+                    description={getPageMessage(locale, 'memory.loadingRealData')}
+                  />
+                ) : filtered.length > 0 ? (
+                  filtered.map(memory => (
+                    <Card
+                      key={memory.id}
+                      className={`memory-item-card ${selectedId === memory.id ? 'memory-item-card--selected' : ''}`}
+                      onClick={() => setSelectedId(memory.id)}
+                    >
+                      <div className="memory-item-card__top">
+                        <span className="memory-item-card__icon">
+                          {typeMap[(memory.memory_type === 'growth' ? 'event' : memory.memory_type) as MemoryFilterType]?.icon ?? MEMORY_FALLBACK_ICON}
+                        </span>
+                        <h3 className="memory-item-card__title">{memory.title}</h3>
+                        <span className={`badge badge--${memory.status === 'active' ? 'success' : 'warning'}`}>
+                          {formatStatus(memory.status, locale)}
+                        </span>
+                      </div>
+                      <p className="memory-item-card__content">{memory.summary}</p>
+                      <div className="memory-item-card__meta">
+                        <span>{formatMetaItem(t('memory.source'), summarizeSource(memory, locale), locale)}</span>
+                        <span>{formatMetaItem(t('memory.updatedAt'), formatRelativeTime(memory.updated_at, locale), locale)}</span>
+                      </div>
+                    </Card>
+                  ))
+                ) : (
+                  <EmptyState
+                    icon={MEMORY_FALLBACK_ICON}
+                    title={t('memory.noResults')}
+                    description={error || t('memory.noResultsHint')}
+                  />
+                )}
+              </div>
+            </GuideAnchor>
 
             <div className={`memory-detail ${selectedMemory ? 'memory-detail--open' : ''}`}>
               {selectedMemory ? (

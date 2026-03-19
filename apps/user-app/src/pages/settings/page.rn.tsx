@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Taro, { useRouter } from '@tarojs/taro';
-import { GuardedPage, useHouseholdContext, useI18n } from '../../runtime/index.rn';
+import { GuardedPage, GuideAnchor, USER_GUIDE_ANCHOR_IDS, useHouseholdContext, useI18n, useUserGuideContext } from '../../runtime/index.rn';
 import { useTheme } from '../../runtime/h5-shell/index.rn';
 import {
   RnCard,
@@ -10,6 +10,7 @@ import {
   RnSection,
   RnTabBar,
   RnText,
+  RnButton,
   rnFoundationTokens,
   rnSemanticTokens,
 } from '../../runtime/rn-shell';
@@ -372,10 +373,12 @@ const languageStyles = StyleSheet.create({
 function AboutSection({
   versionInfo,
   loading,
+  onReplayGuide,
   t,
 }: {
   versionInfo: SystemVersionRead | null;
   loading: boolean;
+  onReplayGuide: () => void;
   t: T;
 }) {
   const currentVersion = versionInfo?.current_version ?? '-';
@@ -399,6 +402,20 @@ function AboutSection({
           </RnText>
         </View>
       ) : null}
+
+      <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.settingsReplay}>
+        <RnCard variant="muted" style={aboutStyles.replayCard}>
+          <RnText variant="label">{t('settings.guide.replayLabel')}</RnText>
+          <RnText variant="body" tone="secondary" style={aboutStyles.replayDesc}>
+            {t('settings.guide.replayDesc')}
+          </RnText>
+          <Pressable style={aboutStyles.replayButton} onPress={onReplayGuide}>
+            <RnText variant="caption" style={aboutStyles.replayButtonText}>
+              {t('settings.guide.replayAction')}
+            </RnText>
+          </Pressable>
+        </RnCard>
+      </GuideAnchor>
     </RnSection>
   );
 }
@@ -417,6 +434,24 @@ const aboutStyles = StyleSheet.create({
   },
   updateBadge: {
     marginTop: rnFoundationTokens.spacing.sm,
+  },
+  replayCard: {
+    marginTop: rnFoundationTokens.spacing.md,
+  },
+  replayDesc: {
+    marginTop: rnFoundationTokens.spacing.xs,
+  },
+  replayButton: {
+    marginTop: rnFoundationTokens.spacing.sm,
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    backgroundColor: rnSemanticTokens.action.primary,
+    paddingHorizontal: rnFoundationTokens.spacing.md,
+    paddingVertical: rnFoundationTokens.spacing.sm,
+  },
+  replayButtonText: {
+    color: '#fff9f2',
+    fontWeight: '700',
   },
 });
 
@@ -438,6 +473,7 @@ function SettingsContent() {
     refreshCurrentHousehold,
     refreshHouseholds,
   } = useHouseholdContext();
+  const { startGuide } = useUserGuideContext();
 
   const initialSection = router.params?.section ?? 'appearance';
   const [activeSection, setActiveSection] = useState<SettingsSection>(
@@ -568,7 +604,12 @@ function SettingsContent() {
       ) : null}
 
       {activeSection === 'about' ? (
-        <AboutSection versionInfo={versionInfo} loading={versionLoading} t={t} />
+        <AboutSection
+          versionInfo={versionInfo}
+          loading={versionLoading}
+          onReplayGuide={() => startGuide('manual')}
+          t={t}
+        />
       ) : null}
 
       <RnTabBar />

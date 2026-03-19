@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -53,5 +53,6 @@ class MemberPreference(Base):
     reminder_channel_preference: Mapped[str | None] = mapped_column(Text, nullable=True)
     sleep_schedule: Mapped[str | None] = mapped_column(Text, nullable=True)
     birthday_is_lunar: Mapped[bool] = mapped_column(nullable=False, default=False)
+    user_app_guide_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
 

@@ -1,5 +1,5 @@
 import { RnRoutePlaceholder } from '../../components/RnRoutePlaceholder';
-import { useI18n } from '../../runtime/index.rn';
+import { USER_GUIDE_ANCHOR_IDS, useI18n } from '../../runtime/index.rn';
 
 export default function MemoriesPage() {
   const { t } = useI18n();
@@ -9,6 +9,7 @@ export default function MemoriesPage() {
       mode="protected"
       path="/pages/memories/index"
       title={t('nav.memories')}
+      guideAnchorId={USER_GUIDE_ANCHOR_IDS.memoriesOverview}
     />
   );
 }

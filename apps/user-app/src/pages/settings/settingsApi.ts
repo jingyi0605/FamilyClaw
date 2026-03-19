@@ -44,10 +44,12 @@ import type {
   MarketplaceSourceSyncResultRead,
   HouseholdVoiceprintSummaryRead,
   PluginConfigFormRead,
+  PluginConfigResolveRequest,
   MemberChannelBindingCreate,
   MemberChannelBindingRead,
   MemberChannelBindingUpdate,
   PluginJobListRead,
+  PluginPackageInstallRead,
   PluginRegistryItem,
   PluginRegistrySnapshot,
   PluginStateUpdateRequest,
@@ -64,6 +66,44 @@ const request = createRequestClient({
 });
 
 const coreApi = createCoreApiClient(request);
+
+function resolveApiErrorMessage(payload: unknown, fallbackMessage: string): string {
+  if (typeof payload === 'string' && payload.trim()) {
+    return payload;
+  }
+  if (payload && typeof payload === 'object' && 'detail' in payload) {
+    const detail = (payload as { detail?: unknown }).detail;
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail;
+    }
+    if (detail && typeof detail === 'object' && 'detail' in detail) {
+      const nestedDetail = (detail as { detail?: unknown }).detail;
+      if (typeof nestedDetail === 'string' && nestedDetail.trim()) {
+        return nestedDetail;
+      }
+    }
+  }
+  return fallbackMessage;
+}
+
+async function readApiPayload(response: Response): Promise<unknown> {
+  if (response.status === 204 || response.status === 205) {
+    return undefined;
+  }
+  const contentType = response.headers.get('content-type') ?? '';
+  const text = await response.text().catch(() => '');
+  if (!text.trim()) {
+    return undefined;
+  }
+  if (!contentType.includes('application/json')) {
+    return text;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
 
 export { ApiError };
 
@@ -324,6 +364,7 @@ export const settingsApi = {
       scope_type: 'plugin' | 'channel_account' | 'device' | 'integration_instance';
       scope_key: string;
       values: Record<string, unknown>;
+      clear_fields?: string[];
       clear_secret_fields: string[];
     },
   ) {
@@ -331,6 +372,19 @@ export const settingsApi = {
       `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config`,
       {
         method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  resolveHouseholdPluginConfigForm(
+    householdId: string,
+    pluginId: string,
+    payload: PluginConfigResolveRequest,
+  ) {
+    return request<PluginConfigFormRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config/resolve`,
+      {
+        method: 'POST',
         body: JSON.stringify(payload),
       },
     );
@@ -535,6 +589,26 @@ export const settingsApi = {
         body: JSON.stringify(payload),
       },
     );
+  },
+  async installPluginPackage(householdId: string, file: File, options?: { overwrite?: boolean }) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('overwrite', options?.overwrite ? 'true' : 'false');
+
+    const response = await fetch(`/api/v1/ai-config/${encodeURIComponent(householdId)}/plugin-packages`, {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    });
+    const payload = await readApiPayload(response);
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        resolveApiErrorMessage(payload, `Request failed with status ${response.status}`),
+        payload,
+      );
+    }
+    return payload as PluginPackageInstallRead;
   },
   listMarketplaceSources() {
     return request<MarketplaceSourceRead[]>('/plugin-marketplace/sources');

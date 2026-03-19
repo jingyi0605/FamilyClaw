@@ -7,6 +7,9 @@ export {
   useOptionalHouseholdContext,
 } from './household';
 export { SetupProvider, useOptionalSetupContext, useSetupContext } from './setup';
+export { UserGuideProvider, useOptionalUserGuideContext, useUserGuideContext } from './user-guide';
+export { GuideAnchor } from './shared/user-guide/GuideAnchor';
+export { USER_GUIDE_ANCHOR_IDS } from './shared/user-guide/constants';
 export {
   APP_ROUTES,
   MAIN_NAV_ITEMS,

@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "noEmit": false,
+    "outDir": ".tmp/guide-runtime-tests",
+    "types": ["node"],
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "src/runtime/shared/user-guide/__tests__/**/*.ts"
+  ]
+}

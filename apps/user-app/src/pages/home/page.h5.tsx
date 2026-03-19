@@ -33,6 +33,7 @@ import {
   X,
 } from 'lucide-react';
 import './styles-entry';
+import { GuideAnchor, USER_GUIDE_ANCHOR_IDS } from '../../runtime';
 import { useI18n } from '../../runtime/h5-shell';
 import type { ShellMessageKey } from '../../runtime/h5-shell/i18n/I18nProvider';
 import {
@@ -1195,27 +1196,29 @@ export default function HomePage() {
         )}
       </div>
 
-      <div className="dashboard-header-bar">
-        <div className="dashboard-header-bar__left">
-          <span className="dashboard-header-bar__greeting">
-            {t('home.welcome')}，{memberDisplayName}
-          </span>
-          {error ? <span className="text-text-secondary">{error}</span> : null}
+      <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.homeOverview}>
+        <div className="dashboard-header-bar">
+          <div className="dashboard-header-bar__left">
+            <span className="dashboard-header-bar__greeting">
+              {t('home.welcome')}，{memberDisplayName}
+            </span>
+            {error ? <span className="text-text-secondary">{error}</span> : null}
+          </div>
+          <div className="dashboard-header-bar__right">
+            <span className="dashboard-header-bar__time">
+              {new Date().toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' })}
+            </span>
+            <button
+              className={`edit-dashboard-btn ${editMode ? 'edit-dashboard-btn--active' : ''}`}
+              type="button"
+              disabled={savingLayout}
+              onClick={() => setEditMode(!editMode)}
+            >
+              {editMode ? t('home.finishEditDashboard') : t('home.editDashboard')}
+            </button>
+          </div>
         </div>
-        <div className="dashboard-header-bar__right">
-          <span className="dashboard-header-bar__time">
-            {new Date().toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' })}
-          </span>
-          <button
-            className={`edit-dashboard-btn ${editMode ? 'edit-dashboard-btn--active' : ''}`}
-            type="button"
-            disabled={savingLayout}
-            onClick={() => setEditMode(!editMode)}
-          >
-            {editMode ? t('home.finishEditDashboard') : t('home.editDashboard')}
-          </button>
-        </div>
-      </div>
+      </GuideAnchor>
 
       {editMode && hiddenItems.length > 0 ? (
         <div className="add-cards-bar animate-slide-down">

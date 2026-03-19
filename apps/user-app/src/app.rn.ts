@@ -1,7 +1,7 @@
 import { Fragment, createElement, type ReactNode } from 'react';
 import './app.scss';
 import { useEffect } from 'react';
-import { AuthProvider, HouseholdProvider, SetupProvider, useAuthContext, useHouseholdContext } from './runtime/index.rn';
+import { AuthProvider, HouseholdProvider, SetupProvider, UserGuideProvider, useAuthContext, useHouseholdContext } from './runtime/index.rn';
 import { I18nProvider, ThemeProvider, useI18n } from './runtime/h5-shell/index.rn';
 
 function AuthLocaleReset() {
@@ -41,10 +41,14 @@ function RuntimeProviders(props: { children?: ReactNode }) {
         ThemeProvider,
         null,
         createElement(
-          Fragment,
+          UserGuideProvider,
           null,
-          actor?.authenticated ? createElement(HouseholdLocaleSync, null) : null,
-          props.children,
+          createElement(
+            Fragment,
+            null,
+            actor?.authenticated ? createElement(HouseholdLocaleSync, null) : null,
+            props.children,
+          ),
         ),
       ),
     ),

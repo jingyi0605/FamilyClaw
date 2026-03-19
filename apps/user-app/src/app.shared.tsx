@@ -4,6 +4,7 @@ import {
   AuthProvider,
   HouseholdProvider,
   SetupProvider,
+  UserGuideProvider,
   useAuthContext,
   useHouseholdContext,
 } from './runtime/runtime-safe';
@@ -48,10 +49,14 @@ function RuntimeProviders(props: { children?: ReactNode }) {
         ThemeProvider,
         null,
         createElement(
-          Fragment,
+          UserGuideProvider,
           null,
-          actor?.authenticated ? createElement(HouseholdLocaleSync, null) : null,
-          props.children,
+          createElement(
+            Fragment,
+            null,
+            actor?.authenticated ? createElement(HouseholdLocaleSync, null) : null,
+            props.children,
+          ),
         ),
       ),
     ),

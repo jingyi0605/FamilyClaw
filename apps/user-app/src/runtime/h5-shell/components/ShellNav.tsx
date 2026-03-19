@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { useAuthContext } from '../../auth';
 import { useHouseholdContext } from '../../household';
+import { GuideAnchor } from '../../shared/user-guide/GuideAnchor';
+import { USER_GUIDE_ANCHOR_IDS } from '../../shared/user-guide/constants';
 import { useI18n } from '../i18n/I18nProvider';
 
 const navItems: {
@@ -93,30 +95,32 @@ export function ShellNav(props: { collapsed: boolean; onToggleCollapse: () => vo
         {!props.collapsed ? <span className="shell-nav__name">FamilyClaw</span> : null}
       </div>
 
-      <nav className="shell-nav__links">
-        {navItems.map((item) => {
-          const isActive = item.aliases.includes(currentPath);
-          const label = t(item.labelKey);
-          return (
-            <button
-              key={item.url}
-              type="button"
-              className={`shell-nav__link ${isActive ? 'shell-nav__link--active' : ''}`}
-              title={label}
-              onClick={() => {
-                // 如果已经是当前页面，不做任何操作
-                if (isActive) {
-                  return;
-                }
-                void Taro.redirectTo({ url: item.url });
-              }}
-            >
-              <span className="shell-nav__link-icon">{item.icon}</span>
-              <span className="shell-nav__link-label">{label}</span>
-            </button>
-          );
-        })}
-      </nav>
+      <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.shellNavigation}>
+        <nav className="shell-nav__links">
+          {navItems.map((item) => {
+            const isActive = item.aliases.includes(currentPath);
+            const label = t(item.labelKey);
+            return (
+              <button
+                key={item.url}
+                type="button"
+                className={`shell-nav__link ${isActive ? 'shell-nav__link--active' : ''}`}
+                title={label}
+                onClick={() => {
+                  // 如果已经是当前页面，不做任何操作
+                  if (isActive) {
+                    return;
+                  }
+                  void Taro.redirectTo({ url: item.url });
+                }}
+              >
+                <span className="shell-nav__link-icon">{item.icon}</span>
+                <span className="shell-nav__link-label">{label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </GuideAnchor>
 
       <div className="shell-nav__footer">
         <div className={`shell-nav__user-menu ${userMenuOpen ? 'is-open' : ''}`}>

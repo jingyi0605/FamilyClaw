@@ -5,7 +5,7 @@
  * 视觉风格与 H5 品牌保持一致：温暖、层次分明、家庭感。
  */
 import { View, StyleSheet } from 'react-native';
-import { useI18n } from '../../runtime/index.rn';
+import { GuideAnchor, USER_GUIDE_ANCHOR_IDS, useI18n } from '../../runtime/index.rn';
 import {
   buildCardMap,
   buildVisibleLayoutItems,
@@ -227,6 +227,10 @@ const styles = StyleSheet.create({
   stateHint: {
     marginTop: rnFoundationTokens.spacing.sm,
   },
+
+  guideAnchor: {
+    flex: 1,
+  },
 });
 
 /* ─── 页面主体 ─── */
@@ -239,19 +243,20 @@ function HomeContent() {
 
   return (
     <RnPageShell safeAreaBottom={false}>
-      <WelcomeBanner memberDisplayName={memberDisplayName} t={t} />
+      <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.homeOverview} style={styles.guideAnchor}>
+        <WelcomeBanner memberDisplayName={memberDisplayName} t={t} />
 
-      {error ? (
-        <RnCard variant="warning">
-          <RnText variant="body" tone="warning">{error}</RnText>
-        </RnCard>
-      ) : null}
+        {error ? (
+          <RnCard variant="warning">
+            <RnText variant="body" tone="warning">{error}</RnText>
+          </RnCard>
+        ) : null}
 
-      {loading && !dashboard ? (
-        <RnSection title={t('common.loading')}>
-          <RnText variant="body" tone="secondary">{t('common.loading')}</RnText>
-        </RnSection>
-      ) : null}
+        {loading && !dashboard ? (
+          <RnSection title={t('common.loading')}>
+            <RnText variant="body" tone="secondary">{t('common.loading')}</RnText>
+          </RnSection>
+        ) : null}
 
       {!loading && visibleItems.length === 0 ? (
         <RnEmptyState
@@ -267,7 +272,8 @@ function HomeContent() {
         return <DashboardCard key={item.card_ref} card={card} t={t} />;
       })}
 
-      <RnTabBar />
+        <RnTabBar />
+      </GuideAnchor>
     </RnPageShell>
   );
 }

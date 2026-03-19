@@ -1,5 +1,12 @@
 import { CoreApiClient } from '../api';
-import { AppPlatformTarget, AuthActor, Household, HouseholdSetupStatus, PluginLocaleListResponse } from '../domain/types';
+import {
+  AppPlatformTarget,
+  AuthActor,
+  Household,
+  HouseholdSetupStatus,
+  MemberGuideStatus,
+  PluginLocaleListResponse,
+} from '../domain/types';
 import { getStoredHouseholdId, persistHouseholdId } from '../state';
 
 type StorageAdapter = {
@@ -13,6 +20,7 @@ export type BootstrapSnapshot = {
   households: Household[];
   currentHousehold: Household | null;
   setupStatus: HouseholdSetupStatus | null;
+  guideStatus: MemberGuideStatus | null;
   platformTarget: AppPlatformTarget;
   locales: PluginLocaleListResponse['items'];
 };
@@ -38,6 +46,7 @@ export async function loadBootstrapSnapshot(options: {
       households: [],
       currentHousehold: null,
       setupStatus: null,
+      guideStatus: null,
       platformTarget,
       locales: [],
     } satisfies BootstrapSnapshot;
@@ -54,8 +63,9 @@ export async function loadBootstrapSnapshot(options: {
 
   await persistHouseholdId(storage, currentHousehold?.id ?? '');
 
-  const [setupStatus, locales] = await Promise.all([
+  const [setupStatus, guideStatus, locales] = await Promise.all([
     currentHousehold ? client.getHouseholdSetupStatus(currentHousehold.id).catch(() => null) : Promise.resolve(null),
+    actor.member_id ? client.getMemberGuideStatus(actor.member_id).catch(() => null) : Promise.resolve(null),
     currentHousehold ? client.listHouseholdLocales(currentHousehold.id).then(result => result.items).catch(() => []) : Promise.resolve([]),
   ]);
 
@@ -64,6 +74,7 @@ export async function loadBootstrapSnapshot(options: {
     households: householdsResponse.items,
     currentHousehold,
     setupStatus,
+    guideStatus,
     platformTarget,
     locales,
   } satisfies BootstrapSnapshot;

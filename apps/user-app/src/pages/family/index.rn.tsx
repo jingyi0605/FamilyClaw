@@ -1,5 +1,5 @@
 import { RnRoutePlaceholder } from '../../components/RnRoutePlaceholder';
-import { useI18n } from '../../runtime/index.rn';
+import { USER_GUIDE_ANCHOR_IDS, useI18n } from '../../runtime/index.rn';
 
 export default function FamilyPage() {
   const { t } = useI18n();
@@ -9,6 +9,7 @@ export default function FamilyPage() {
       mode="protected"
       path="/pages/family/index"
       title={t('nav.family')}
+      guideAnchorId={USER_GUIDE_ANCHOR_IDS.familyOverview}
     />
   );
 }

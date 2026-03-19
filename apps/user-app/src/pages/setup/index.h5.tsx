@@ -25,6 +25,8 @@ import {
   useSetupContext,
   useTheme,
 } from '../../runtime';
+import { appStorage } from '../../runtime/core';
+import { markPendingGuideAutoStart } from '../../runtime/shared/user-guide/localState';
 import './styles-entry';
 
 const WELCOME_SEEN_KEY = 'familyclaw_welcome_seen';
@@ -868,7 +870,9 @@ export default function SetupPageH5() {
             type="button"
             className="btn btn--primary btn--large"
             onClick={() => {
-              void enterApp();
+              void markPendingGuideAutoStart(appStorage)
+                .catch(() => undefined)
+                .then(() => enterApp());
             }}
           >
             {t('setup.finish.enterApp')}

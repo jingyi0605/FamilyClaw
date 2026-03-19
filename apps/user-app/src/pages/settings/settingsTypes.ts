@@ -471,11 +471,22 @@ export type PluginConfigScopeType = 'plugin' | 'channel_account' | 'device' | 'i
 export type PluginConfigFieldType = 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'enum' | 'multi_enum' | 'secret' | 'json';
 export type PluginConfigWidgetType = 'input' | 'password' | 'textarea' | 'switch' | 'select' | 'multi_select' | 'json_editor';
 export type PluginConfigVisibleOperator = 'equals' | 'not_equals' | 'in' | 'truthy';
+export type PluginConfigDynamicOptionSourceType = 'region_provider_list' | 'region_catalog_children';
+export type RegionCatalogAdminLevel = 'province' | 'city' | 'district';
 
 export type PluginConfigEnumOption = {
   label: string;
   label_key?: string | null;
   value: string;
+};
+
+export type PluginManifestConfigFieldOptionSource = {
+  source: PluginConfigDynamicOptionSourceType;
+  country_code?: string | null;
+  provider_code?: string | null;
+  provider_field?: string | null;
+  parent_field?: string | null;
+  admin_level?: RegionCatalogAdminLevel | null;
 };
 
 export type PluginManifestConfigField = {
@@ -488,6 +499,9 @@ export type PluginManifestConfigField = {
   description_key?: string | null;
   default?: unknown;
   enum_options?: PluginConfigEnumOption[];
+  option_source?: PluginManifestConfigFieldOptionSource | null;
+  depends_on?: string[];
+  clear_on_dependency_change?: boolean;
   min_length?: number | null;
   max_length?: number | null;
   minimum?: number | null;
@@ -560,6 +574,12 @@ export type PluginConfigFormRead = {
   plugin_id: string;
   config_spec: PluginManifestConfigSpec;
   view: PluginConfigView;
+};
+
+export type PluginConfigResolveRequest = {
+  scope_type: PluginConfigScopeType;
+  scope_key?: string | null;
+  values: Record<string, unknown>;
 };
 
 export type PluginVersionGovernanceRead = {
@@ -684,6 +704,24 @@ export type PluginRegistrySnapshot = {
 
 export type PluginStateUpdateRequest = {
   enabled: boolean;
+};
+
+export type PluginPackageInstallAction = 'installed' | 'upgraded' | 'reinstalled';
+
+export type PluginPackageInstallRead = {
+  household_id: string;
+  plugin_id: string;
+  plugin_name: string;
+  version: string;
+  previous_version: string | null;
+  install_action: PluginPackageInstallAction;
+  overwritten: boolean;
+  enabled: boolean;
+  source_type: PluginSourceType;
+  execution_backend: string | null;
+  plugin_root: string;
+  manifest_path: string;
+  message: string;
 };
 
 export type IntegrationResourceType = 'device' | 'entity' | 'helper';
@@ -841,12 +879,14 @@ export type IntegrationInstanceCreateRequest = {
   plugin_id: string;
   display_name: string;
   config: Record<string, unknown>;
+  clear_fields: string[];
   clear_secret_fields: string[];
 };
 
 export type IntegrationInstanceUpdateRequest = {
   display_name: string;
   config: Record<string, unknown>;
+  clear_fields: string[];
   clear_secret_fields: string[];
 };
 

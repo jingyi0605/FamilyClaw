@@ -25,6 +25,7 @@ export {
   type LocaleDefinition,
   type LocaleId,
 } from './locale';
+export { loadMemberGuideStatus } from './guide';
 export { loadSetupStatus } from './setup';
 export {
   DEFAULT_THEME_ID,

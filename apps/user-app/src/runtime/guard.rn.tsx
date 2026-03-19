@@ -11,6 +11,7 @@ import {
   rnFoundationTokens,
 } from './rn-shell';
 import { useOptionalSetupContext } from './setup';
+import { useOptionalUserGuideContext } from './user-guide';
 
 type GuardMode = 'entry' | 'login' | 'protected' | 'setup';
 
@@ -227,6 +228,8 @@ export function GuardedPage(props: PropsWithChildren<{ mode: GuardMode; path: st
   const { actor, authLoading } = useAuthContext();
   const household = useOptionalHouseholdContext();
   const setup = useOptionalSetupContext();
+  const guide = useOptionalUserGuideContext();
+  const setGuideCurrentRoute = guide?.setCurrentRoute;
   const latestRedirect = useRef('');
 
   const guardResult = useMemo(() => resolveGuardResult({
@@ -252,6 +255,14 @@ export function GuardedPage(props: PropsWithChildren<{ mode: GuardMode; path: st
     latestRedirect.current = guardResult.url;
     void replacePage(guardResult.url);
   }, [guardResult]);
+
+  useEffect(() => {
+    if (guardResult.kind !== 'ready') {
+      return;
+    }
+
+    setGuideCurrentRoute?.(props.path);
+  }, [guardResult.kind, props.path, setGuideCurrentRoute]);
 
   if (guardResult.kind === 'ready') {
     return <>{props.children}</>;
