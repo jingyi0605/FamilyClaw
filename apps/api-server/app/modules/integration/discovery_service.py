@@ -47,7 +47,7 @@ def find_open_xiaoai_instance_by_gateway_id(db: Session, *, gateway_id: str) -> 
 
     stmt = select(PluginConfigInstance).where(
         PluginConfigInstance.plugin_id == OPEN_XIAOAI_PLUGIN_ID,
-        PluginConfigInstance.scope_type == "plugin",
+        PluginConfigInstance.scope_type.in_(("plugin", "integration_instance")),
         PluginConfigInstance.integration_instance_id.is_not(None),
     )
     for config in db.scalars(stmt).all():

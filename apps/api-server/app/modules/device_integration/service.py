@@ -24,6 +24,7 @@ from app.modules.plugin.service import (
     require_available_household_plugin,
 )
 from app.modules.room.models import Room
+from app.modules.voice.binding_service import OPEN_XIAOAI_PLUGIN_ID
 
 
 @dataclass(slots=True)
@@ -516,6 +517,11 @@ def _build_payload(
     selected_external_ids: list[str],
     options: dict[str, Any],
 ) -> IntegrationSyncPluginPayload:
+    runtime_config = _load_runtime_config(
+        db,
+        integration_instance_id=instance.id,
+        plugin_id=instance.plugin_id,
+    )
     return IntegrationSyncPluginPayload(
         household_id=instance.household_id,
         plugin_id=instance.plugin_id,
@@ -523,11 +529,8 @@ def _build_payload(
         sync_scope=sync_scope,  # type: ignore[arg-type]
         selected_external_ids=[item for item in selected_external_ids if isinstance(item, str) and item.strip()],
         options=options,
-        runtime_config=_load_runtime_config(
-            db,
-            integration_instance_id=instance.id,
-            plugin_id=instance.plugin_id,
-        ),
+        runtime_config=runtime_config,
+        system_context=_build_system_context(db, plugin_id=instance.plugin_id),
     )
 
 
@@ -880,6 +883,37 @@ def _load_runtime_config(
         plugin_id=plugin_id,
     )
     return runtime_config.values
+
+
+def _build_system_context(db: Session, *, plugin_id: str) -> dict[str, Any] | None:
+    if plugin_id != OPEN_XIAOAI_PLUGIN_ID:
+        return None
+
+    # 小爱网关同步需要回查宿主 discovery 表，插件里必须拿到数据库 URL 才能开短连接。
+    database_url = _resolve_database_url(db)
+    if database_url is None:
+        return None
+    return {
+        "device_integration": {
+            "database_url": database_url,
+        }
+    }
+
+
+def _resolve_database_url(db: Session) -> str | None:
+    bind = db.get_bind()
+    if hasattr(bind, "url"):
+        return _render_database_url(bind.url)
+    engine = getattr(bind, "engine", None)
+    if engine is not None and hasattr(engine, "url"):
+        return _render_database_url(engine.url)
+    return None
+
+
+def _render_database_url(url: Any) -> str:
+    if hasattr(url, "render_as_string"):
+        return url.render_as_string(hide_password=False)
+    return str(url)
 
 
 def _collect_live_state_supported_instance_ids(

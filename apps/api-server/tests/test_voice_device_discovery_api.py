@@ -18,9 +18,10 @@ from app.db.session import get_db
 from app.modules.device.models import DeviceBinding
 from app.modules.device_control.schemas import DeviceControlRequest
 from app.modules.device_control.service import execute_device_control
+from app.modules.device_integration import service as device_integration_service_module
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
-from app.modules.integration.models import IntegrationDiscovery
+from app.modules.integration.models import IntegrationDiscovery, IntegrationInstance
 
 
 def _build_alembic_config(database_url: str) -> Config:
@@ -180,6 +181,33 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         self.assertEqual(2, len(bindings))
         self.assertEqual({"open-xiaoai-speaker"}, {item.plugin_id for item in bindings})
         self.assertEqual({"open_xiaoai"}, {item.platform for item in bindings})
+
+    def test_open_xiaoai_sync_payload_includes_database_runtime_context(self) -> None:
+        response = self._create_instance(gateway_id="gateway-runtime-context")
+        instance_id = response.json()["id"]
+
+        with self.SessionLocal() as db:
+            instance = db.scalar(
+                select(IntegrationInstance).where(IntegrationInstance.id == instance_id)
+            )
+            self.assertIsNotNone(instance)
+            assert instance is not None
+            payload = device_integration_service_module._build_payload(
+                db,
+                instance=instance,
+                sync_scope="device_sync",
+                selected_external_ids=["SN900"],
+                options={},
+            )
+
+        self.assertEqual(
+            {
+                "device_integration": {
+                    "database_url": self.database_url,
+                }
+            },
+            payload.system_context,
+        )
 
     def test_discovery_report_returns_claimed_binding_after_sync(self) -> None:
         response = self._create_instance(gateway_id="gateway-study")
