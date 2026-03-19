@@ -43,8 +43,6 @@ docker run -d \
 - `FAMILYCLAW_VOICE_GATEWAY_TOKEN`：语音网关鉴权 token，语音不用可留默认，但建议替换。
 - `-v /srv/familyclaw-data:/data`：持久化数据库、插件、日志等。
 
-【配图占位：Docker 命令与参数解释】
-
 ## 启动后验证
 
 1. 等 60 秒，执行 `docker ps`，容器状态应为 `Up`。
