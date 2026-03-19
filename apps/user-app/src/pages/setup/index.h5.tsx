@@ -481,7 +481,7 @@ export default function SetupPageH5() {
           display: 'flex',
           gap: '6px',
           justifyContent: 'center',
-          margin: '0 0 0.5rem',
+          margin: '0 0 0rem',
         }}
       >
         {themeList.map(theme => (

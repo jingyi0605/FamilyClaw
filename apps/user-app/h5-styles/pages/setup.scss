@@ -105,7 +105,7 @@
 .butler-bootstrap__avatar-emoji { font-size: 2rem; line-height: 1; }
 .butler-bootstrap__avatar-emoji--large { font-size: 3rem; }
 .setup-wizard-container { max-width: 800px; margin: 0 auto; padding: 0.75rem; width: 100%; box-sizing: border-box; }
-.setup-stepper { display: flex; justify-content: space-between; margin-bottom: 0.75rem; position: relative; z-index: 1; }
+.setup-stepper { display: flex; justify-content: space-between; margin-bottom: 0.25rem; position: relative; z-index: 1; }
 .setup-stepper::before { content: ''; position: absolute; top: 11px; left: 16px; right: 16px; height: 2px; background: var(--border-light); z-index: -1; }
 .setup-step { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; background: var(--bg-app); padding: 0 6px; }
 .setup-step__indicator { width: 24px; height: 24px; border-radius: 50%; background: var(--bg-card); border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: var(--font-size-xs); color: var(--text-secondary); transition: all var(--transition); }
