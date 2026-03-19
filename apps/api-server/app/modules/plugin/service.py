@@ -14,9 +14,10 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.dependencies import ActorContext
-from app.core.blocking import BlockingCallPolicy, run_blocking_db
+from app.core.blocking import BlockingCallPolicy, run_blocking, run_blocking_db
 from app.core.config import settings
 from app.core.config import BASE_DIR
+from app.db.engine import build_database_engine
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.audit.service import write_audit_log
 # NOTE: get_household_or_404 延迟导入，避免循环依赖 (household → region → plugin → household)
@@ -1644,7 +1645,8 @@ async def aexecute_household_plugin(
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
 ) -> PluginExecutionResult:
-    return await run_blocking_db(
+    return await _run_plugin_with_isolated_thread_session(
+        db,
         lambda thread_db: execute_household_plugin(
             thread_db,
             household_id=household_id,
@@ -1655,13 +1657,10 @@ async def aexecute_household_plugin(
             execution_backend=execution_backend,
             runner_config=runner_config,
         ),
-        session_factory=_build_thread_session_factory(db),
         policy=_build_plugin_blocking_policy(
             label="plugin.aexecute_household_plugin",
             runner_config=runner_config,
         ),
-        executor=PLUGIN_EXECUTOR_POOL,
-        logger=logger,
         context={
             "household_id": household_id,
             "plugin_id": request.plugin_id,
@@ -2198,7 +2197,8 @@ async def arun_plugin_sync_pipeline(
 ) -> PluginSyncPipelineResult:
     from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
-    execution = await run_blocking_db(
+    execution = await _run_plugin_with_isolated_thread_session(
+        db,
         lambda thread_db: execute_household_plugin(
             thread_db,
             household_id=household_id,
@@ -2209,13 +2209,10 @@ async def arun_plugin_sync_pipeline(
             execution_backend=execution_backend,
             runner_config=runner_config,
         ),
-        session_factory=_build_thread_session_factory(db),
         policy=_build_plugin_blocking_policy(
             label="plugin.arun_plugin_sync_pipeline",
             runner_config=runner_config,
         ),
-        executor=PLUGIN_EXECUTOR_POOL,
-        logger=logger,
         context={
             "household_id": household_id,
             "plugin_id": request.plugin_id,
@@ -2365,6 +2362,67 @@ def _build_thread_session_factory(db: Session) -> sessionmaker[Session]:
         future=True,
         class_=Session,
     )
+
+
+async def _run_plugin_with_isolated_thread_session(
+    db: Session,
+    callback: Any,
+    *,
+    policy: BlockingCallPolicy,
+    context: dict[str, Any],
+) -> Any:
+    database_url = _build_thread_database_url(db)
+
+    def _run_in_thread() -> Any:
+        if database_url is None:
+            with _build_thread_session_factory(db)() as thread_db:
+                try:
+                    return callback(thread_db)
+                except Exception:
+                    thread_db.rollback()
+                    raise
+
+        engine = build_database_engine(database_url)
+        session_factory = sessionmaker(
+            bind=engine,
+            autoflush=False,
+            autocommit=False,
+            future=True,
+            class_=Session,
+        )
+        try:
+            with session_factory() as thread_db:
+                try:
+                    return callback(thread_db)
+                except Exception:
+                    thread_db.rollback()
+                    raise
+        finally:
+            engine.dispose()
+
+    return await run_blocking(
+        _run_in_thread,
+        policy=policy,
+        executor=PLUGIN_EXECUTOR_POOL,
+        logger=logger,
+        context=context,
+    )
+
+
+def _build_thread_database_url(db: Session) -> str | None:
+    bind = db.get_bind()
+    if hasattr(bind, "url"):
+        return _render_database_url(bind.url)
+    engine = getattr(bind, "engine", None)
+    if engine is not None and hasattr(engine, "url"):
+        return _render_database_url(engine.url)
+    return None
+
+
+def _render_database_url(url: Any) -> str:
+    if hasattr(url, "render_as_string"):
+        return url.render_as_string(hide_password=False)
+    return str(url)
 
 
 def _build_plugin_blocking_policy(
