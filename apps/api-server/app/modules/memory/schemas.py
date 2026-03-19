@@ -149,12 +149,52 @@ class MemoryQueryRequest(BaseModel):
     visibility: MemoryVisibility | None = None
     query: str | None = Field(default=None, max_length=200)
     limit: int = Field(default=10, ge=1, le=500)
+    group_limit: int = Field(default=3, ge=1, le=20)
 
 
 class MemoryQueryHit(BaseModel):
     card: MemoryCardRead
-    score: int = Field(ge=0)
+    score: float = Field(ge=0)
+    rank: int = Field(default=0, ge=1)
+    group_name: str = "stable_facts"
+    layer: str = "L3"
+    memory_id: str
+    source_kind: str = "memory_card"
+    source_id: str
+    fts_score: float | None = Field(default=None, ge=0)
+    vector_score: float | None = Field(default=None, ge=0)
+    reason: dict[str, Any] = Field(default_factory=dict)
     matched_terms: list[str] = Field(default_factory=list)
+
+
+class MemoryRecallHit(BaseModel):
+    memory_id: str
+    source_id: str
+    source_kind: str
+    group_name: str
+    layer: str
+    title: str
+    summary: str
+    memory_type: str | None = None
+    visibility: str | None = None
+    subject_member_id: str | None = None
+    updated_at: str | None = None
+    occurred_at: str | None = None
+    score: float = Field(ge=0)
+    rank: int = Field(default=0, ge=1)
+    fts_score: float | None = Field(default=None, ge=0)
+    vector_score: float | None = Field(default=None, ge=0)
+    reason: dict[str, Any] = Field(default_factory=dict)
+    matched_terms: list[str] = Field(default_factory=list)
+
+
+class MemoryRecallBundleRead(BaseModel):
+    stable_facts: list[MemoryRecallHit] = Field(default_factory=list)
+    recent_events: list[MemoryRecallHit] = Field(default_factory=list)
+    session_summary: list[MemoryRecallHit] = Field(default_factory=list)
+    external_knowledge: list[MemoryRecallHit] = Field(default_factory=list)
+    degraded: bool = False
+    degrade_reasons: list[str] = Field(default_factory=list)
 
 
 class MemoryQueryResponse(BaseModel):
@@ -163,6 +203,9 @@ class MemoryQueryResponse(BaseModel):
     total: int
     query: str | None = None
     items: list[MemoryQueryHit] = Field(default_factory=list)
+    recall: MemoryRecallBundleRead = Field(default_factory=MemoryRecallBundleRead)
+    degraded: bool = False
+    degrade_reasons: list[str] = Field(default_factory=list)
 
 
 class MemoryHotSummaryItem(BaseModel):
@@ -209,6 +252,7 @@ class MemoryContextBundleRead(BaseModel):
     live_summary: MemoryContextLiveSummary
     hot_summary: MemoryHotSummaryRead
     query_result: MemoryQueryResponse
+    recall: MemoryRecallBundleRead = Field(default_factory=MemoryRecallBundleRead)
     masked_sections: list[str] = Field(default_factory=list)
     degraded: bool = False
 

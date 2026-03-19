@@ -61,7 +61,7 @@ class PluginRawRecordTests(unittest.TestCase):
         )
         self.db.commit()
 
-        self.assertEqual(2, len(saved_rows))
+        self.assertEqual(3, len(saved_rows))
         self.assertTrue(all(row.plugin_id == "health-basic-reader" for row in saved_rows))
         self.assertTrue(all(row.run_id == execution_result.run_id for row in saved_rows))
 
@@ -71,8 +71,8 @@ class PluginRawRecordTests(unittest.TestCase):
             plugin_id="health-basic-reader",
             run_id=execution_result.run_id,
         )
-        self.assertEqual(2, len(listed_rows))
-        self.assertEqual({"steps", "sleep"}, {row.record_type for row in listed_rows})
+        self.assertEqual(3, len(listed_rows))
+        self.assertEqual({"steps", "sleep", "heart_rate"}, {row.record_type for row in listed_rows})
 
 
 if __name__ == "__main__":

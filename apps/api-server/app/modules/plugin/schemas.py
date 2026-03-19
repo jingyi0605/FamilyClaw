@@ -103,6 +103,15 @@ def _normalize_text_list(values: list[str], *, field_name: str) -> list[str]:
     return normalized
 
 
+def _normalize_i18n_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("i18n key 不能为空")
+    return normalized
+
+
 class PluginManifestEntrypoints(BaseModel):
     integration: str | None = None
     action: str | None = None
@@ -167,11 +176,17 @@ class PluginManifestThemePackSpec(BaseModel):
     theme_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
-    tokens_resource: str = Field(min_length=1, max_length=255)
+    tokens_resource: str | None = Field(default=None, max_length=255)
+    # 兼容旧字段，内部统一为 tokens_resource。
+    entry_resource: str | None = Field(default=None, max_length=255)
+    resource_source: Literal["builtin_bundle", "managed_plugin_dir"]
+    resource_version: str = Field(min_length=1, max_length=64)
+    theme_schema_version: int = Field(ge=1, le=1000)
+    platform_targets: list[Literal["h5", "rn"]] = Field(default_factory=list)
     preview: dict[str, Any] = Field(default_factory=dict)
     fallback_theme_id: str | None = Field(default=None, max_length=64)
 
-    @field_validator("theme_id", "display_name", "tokens_resource", "fallback_theme_id")
+    @field_validator("theme_id", "display_name", "tokens_resource", "entry_resource", "resource_version", "fallback_theme_id")
     @classmethod
     def validate_optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -190,6 +205,45 @@ class PluginManifestThemePackSpec(BaseModel):
         if not normalized:
             raise ValueError("description 不能为空字符串")
         return normalized
+
+    @field_validator("entry_resource", "tokens_resource")
+    @classmethod
+    def validate_tokens_resource(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        resource_path = Path(value)
+        if resource_path.is_absolute():
+            raise ValueError("主题资源路径必须是插件目录内的相对路径")
+        if ".." in resource_path.parts:
+            raise ValueError("主题资源路径不能跳出插件目录")
+        return value.replace("\\", "/")
+
+    @field_validator("platform_targets")
+    @classmethod
+    def validate_platform_targets(cls, value: list[Literal["h5", "rn"]]) -> list[Literal["h5", "rn"]]:
+        if not value:
+            raise ValueError("platform_targets 至少要声明一个目标端")
+        deduped: list[Literal["h5", "rn"]] = []
+        for item in value:
+            if item not in deduped:
+                deduped.append(item)
+        return deduped
+
+    @model_validator(mode="after")
+    def normalize_resource_alias(self) -> "PluginManifestThemePackSpec":
+        if self.tokens_resource is None and self.entry_resource is None:
+            raise ValueError("theme-pack 插件必须声明 tokens_resource（兼容字段 entry_resource 也可）")
+        if self.tokens_resource is None and self.entry_resource is not None:
+            self.tokens_resource = self.entry_resource
+        if self.entry_resource is None and self.tokens_resource is not None:
+            self.entry_resource = self.tokens_resource
+        return self
+
+    @model_validator(mode="after")
+    def validate_fallback_theme(self) -> "PluginManifestThemePackSpec":
+        if self.fallback_theme_id is not None and self.fallback_theme_id == self.theme_id:
+            raise ValueError("fallback_theme_id 不能等于 theme_id")
+        return self
 
 
 class PluginManifestAiProviderSpec(BaseModel):
@@ -426,12 +480,7 @@ class PluginManifestDashboardCardSpec(BaseModel):
     @field_validator("title_key", "subtitle_key", "empty_state_key")
     @classmethod
     def validate_i18n_key(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("i18n key 不能为空")
-        return normalized
+        return _normalize_i18n_key(value)
 
     @field_validator("allowed_actions")
     @classmethod
@@ -448,6 +497,7 @@ class PluginManifestDashboardCardSpec(BaseModel):
 
 class PluginManifestConfigFieldOption(BaseModel):
     label: str = Field(min_length=1, max_length=100)
+    label_key: str | None = Field(default=None, max_length=255)
     value: str = Field(min_length=1, max_length=100)
 
     @field_validator("label", "value")
@@ -458,13 +508,20 @@ class PluginManifestConfigFieldOption(BaseModel):
             raise ValueError("字段不能为空")
         return normalized
 
+    @field_validator("label_key")
+    @classmethod
+    def validate_label_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
+
 
 class PluginManifestConfigField(BaseModel):
     key: str = Field(min_length=1, max_length=64)
     label: str = Field(min_length=1, max_length=100)
+    label_key: str | None = Field(default=None, max_length=255)
     type: PluginConfigFieldType
     required: bool = False
     description: str | None = Field(default=None, max_length=255)
+    description_key: str | None = Field(default=None, max_length=255)
     default: Any = None
     enum_options: list[PluginManifestConfigFieldOption] = Field(default_factory=list)
     min_length: int | None = Field(default=None, ge=0)
@@ -483,6 +540,11 @@ class PluginManifestConfigField(BaseModel):
         if not normalized:
             raise ValueError("字段不能为空")
         return normalized
+
+    @field_validator("label_key", "description_key")
+    @classmethod
+    def validate_i18n_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
 
     @model_validator(mode="after")
     def validate_field_constraints(self) -> "PluginManifestConfigField":
@@ -645,7 +707,9 @@ class PluginManifestVisibilityRule(BaseModel):
 class PluginManifestFieldUiSchema(BaseModel):
     widget: PluginConfigWidgetType | None = None
     placeholder: str | None = Field(default=None, max_length=255)
+    placeholder_key: str | None = Field(default=None, max_length=255)
     help_text: str | None = Field(default=None, max_length=255)
+    help_text_key: str | None = Field(default=None, max_length=255)
     visible_when: list[PluginManifestVisibilityRule] = Field(default_factory=list)
 
     @field_validator("placeholder", "help_text")
@@ -658,11 +722,18 @@ class PluginManifestFieldUiSchema(BaseModel):
             raise ValueError("字段不能为空")
         return normalized
 
+    @field_validator("placeholder_key", "help_text_key")
+    @classmethod
+    def validate_i18n_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
+
 
 class PluginManifestUiSection(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=100)
+    title_key: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=255)
+    description_key: str | None = Field(default=None, max_length=255)
     fields: list[str] = Field(default_factory=list)
 
     @field_validator("id", "title", "description")
@@ -675,6 +746,11 @@ class PluginManifestUiSection(BaseModel):
             raise ValueError("字段不能为空")
         return normalized
 
+    @field_validator("title_key", "description_key")
+    @classmethod
+    def validate_i18n_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
+
     @field_validator("fields")
     @classmethod
     def validate_fields(cls, value: list[str]) -> list[str]:
@@ -685,6 +761,7 @@ class PluginManifestUiSchema(BaseModel):
     sections: list[PluginManifestUiSection] = Field(default_factory=list)
     field_order: list[str] = Field(default_factory=list)
     submit_text: str | None = Field(default=None, max_length=50)
+    submit_text_key: str | None = Field(default=None, max_length=255)
     widgets: dict[str, PluginManifestFieldUiSchema] = Field(default_factory=dict)
 
     @field_validator("field_order")
@@ -701,6 +778,11 @@ class PluginManifestUiSchema(BaseModel):
         if not normalized:
             raise ValueError("submit_text 不能为空")
         return normalized
+
+    @field_validator("submit_text_key")
+    @classmethod
+    def validate_submit_text_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
 
     @field_validator("sections")
     @classmethod
@@ -719,7 +801,9 @@ class PluginManifestUiSchema(BaseModel):
 class PluginManifestConfigSpec(BaseModel):
     scope_type: PluginConfigScopeType
     title: str = Field(min_length=1, max_length=100)
+    title_key: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=255)
+    description_key: str | None = Field(default=None, max_length=255)
     schema_version: int = Field(ge=1)
     config_schema: PluginManifestConfigSchema
     ui_schema: PluginManifestUiSchema
@@ -733,6 +817,11 @@ class PluginManifestConfigSpec(BaseModel):
         if not normalized:
             raise ValueError("字段不能为空")
         return normalized
+
+    @field_validator("title_key", "description_key")
+    @classmethod
+    def validate_i18n_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
 
     @model_validator(mode="after")
     def validate_schema_references(self) -> "PluginManifestConfigSpec":
@@ -1247,6 +1336,45 @@ class PluginLocaleRead(BaseModel):
 class PluginLocaleListRead(BaseModel):
     household_id: str
     items: list[PluginLocaleRead] = Field(default_factory=list)
+
+
+class PluginThemeRegistryItemRead(BaseModel):
+    plugin_id: str
+    plugin_name: str
+    source_type: PluginSourceType
+    enabled: bool
+    disabled_reason: str | None = None
+    state: Literal["ready", "disabled", "invalid", "stale"] = "ready"
+    theme_id: str
+    display_name: str
+    description: str | None = None
+    resource_source: Literal["builtin_bundle", "managed_plugin_dir"]
+    tokens_resource: str
+    resource_version: str
+    theme_schema_version: int
+    platform_targets: list[Literal["h5", "rn"]] = Field(default_factory=list)
+    preview: dict[str, Any] = Field(default_factory=dict)
+    fallback_theme_id: str | None = None
+
+
+class PluginThemeRegistrySnapshotRead(BaseModel):
+    household_id: str
+    items: list[PluginThemeRegistryItemRead] = Field(default_factory=list)
+
+
+class PluginThemeResourceRead(BaseModel):
+    household_id: str
+    plugin_id: str
+    theme_id: str
+    display_name: str
+    description: str | None = None
+    preview: dict[str, Any] = Field(default_factory=dict)
+    source_type: PluginSourceType
+    resource_source: Literal["builtin_bundle", "managed_plugin_dir"]
+    resource_version: str
+    theme_schema_version: int
+    platform_targets: list[Literal["h5", "rn"]] = Field(default_factory=list)
+    tokens: dict[str, Any] = Field(default_factory=dict)
 
 
 class HomeDashboardCardActionRead(BaseModel):

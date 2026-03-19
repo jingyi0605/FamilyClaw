@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 import sys
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session, sessionmaker
@@ -20,7 +20,10 @@ from app.core.config import BASE_DIR
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.audit.service import write_audit_log
 # NOTE: get_household_or_404 延迟导入，避免循环依赖 (household → region → plugin → household)
-from app.modules.memory.service import upsert_plugin_observation_memory
+from app.modules.memory.service import (
+    upsert_knowledge_document_from_observation,
+    upsert_plugin_observation_memory,
+)
 from app.modules.region.plugin_runtime import get_runtime_region_provider_spec, sync_household_plugin_region_providers
 from app.modules.region.service import resolve_household_region_context
 from app.modules.plugin.executors import get_executor, load_entrypoint_callable, resolve_execution_backend
@@ -53,9 +56,11 @@ from app.modules.plugin.schemas import (
     PluginRunRead,
     PluginSourceType,
     PluginSyncPipelineResult,
+    PluginThemeRegistryItemRead,
+    PluginThemeRegistrySnapshotRead,
+    PluginThemeResourceRead,
 )
 from app.modules.plugin.job_service import create_plugin_job
-from app.modules.plugin.theme_registry import THEME_REGISTRY_SOURCE_PATH, list_theme_catalog
 from app.modules.plugin.versioning import resolve_non_market_version_governance
 
 
@@ -70,6 +75,9 @@ LOCALE_SOURCE_PRIORITY: dict[PluginSourceType, int] = {
 }
 PLUGIN_DISABLED_ERROR_CODE = "plugin_disabled"
 PLUGIN_NOT_VISIBLE_ERROR_CODE = "plugin_not_visible_in_household"
+PLUGIN_THEME_NOT_FOUND_ERROR_CODE = "plugin_theme_not_found"
+PLUGIN_THEME_RESOURCE_INVALID_ERROR_CODE = "plugin_theme_resource_invalid"
+PLUGIN_THEME_RESOURCE_UNAVAILABLE_ERROR_CODE = "plugin_theme_resource_unavailable"
 PLUGIN_STATE_OVERRIDE_INVALID_ERROR_CODE = "plugin_state_override_invalid"
 PLUGIN_EFFECTIVE_STATE_UNRESOLVED_ERROR_CODE = "plugin_effective_state_unresolved"
 logger = logging.getLogger(__name__)
@@ -990,6 +998,191 @@ def _build_overridden_locale_plugin_ids(
     return overridden
 
 
+def list_registered_plugin_themes_for_household(
+    db: Session,
+    *,
+    household_id: str,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> PluginThemeRegistrySnapshotRead:
+    snapshot = list_registered_plugins_for_household(
+        db,
+        household_id=household_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
+    items: list[PluginThemeRegistryItemRead] = []
+    for plugin in snapshot.items:
+        if "theme-pack" not in plugin.types:
+            continue
+        spec = plugin.capabilities.theme_pack
+        if spec is None:
+            continue
+
+        state = "disabled" if not plugin.enabled else "ready"
+        if plugin.enabled:
+            try:
+                _load_theme_resource_tokens(plugin)
+            except PluginServiceError:
+                state = "invalid"
+
+        items.append(
+            PluginThemeRegistryItemRead(
+                plugin_id=plugin.id,
+                plugin_name=plugin.name,
+                source_type=plugin.source_type,
+                enabled=plugin.enabled,
+                disabled_reason=plugin.disabled_reason,
+                state=state,
+                theme_id=spec.theme_id,
+                display_name=spec.display_name,
+                description=spec.description,
+                resource_source=_resolve_theme_resource_source(plugin=plugin),
+                tokens_resource=spec.tokens_resource,
+                resource_version=spec.resource_version,
+                theme_schema_version=spec.theme_schema_version,
+                platform_targets=spec.platform_targets,
+                preview=spec.preview,
+                fallback_theme_id=spec.fallback_theme_id,
+            )
+        )
+
+    items.sort(key=lambda item: (item.theme_id, item.plugin_id))
+    return PluginThemeRegistrySnapshotRead(household_id=household_id, items=items)
+
+
+def get_plugin_theme_resource_for_household(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    theme_id: str,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
+) -> PluginThemeResourceRead:
+    plugin = require_available_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
+    spec = plugin.capabilities.theme_pack
+    if "theme-pack" not in plugin.types or spec is None:
+        raise PluginServiceError(
+            f"插件 {plugin_id} 不是主题插件。",
+            error_code=PLUGIN_THEME_NOT_FOUND_ERROR_CODE,
+            field="plugin_id",
+            status_code=404,
+        )
+    if spec.theme_id != theme_id:
+        raise PluginServiceError(
+            f"插件 {plugin_id} 不包含主题 {theme_id}。",
+            error_code=PLUGIN_THEME_NOT_FOUND_ERROR_CODE,
+            field="theme_id",
+            status_code=404,
+        )
+    payload = _load_theme_resource_payload(plugin)
+    return PluginThemeResourceRead(
+        household_id=household_id,
+        plugin_id=plugin.id,
+        theme_id=spec.theme_id,
+        display_name=spec.display_name,
+        description=spec.description,
+        preview=spec.preview,
+        source_type=plugin.source_type,
+        resource_source=_resolve_theme_resource_source(plugin=plugin),
+        resource_version=spec.resource_version,
+        theme_schema_version=spec.theme_schema_version,
+        platform_targets=spec.platform_targets,
+        tokens=cast(dict[str, Any], payload["tokens"]),
+    )
+
+
+def _resolve_theme_resource_path(plugin: PluginRegistryItem) -> Path:
+    spec = plugin.capabilities.theme_pack
+    if spec is None:
+        raise PluginServiceError(
+            f"插件 {plugin.id} 缺少主题能力声明。",
+            error_code=PLUGIN_THEME_RESOURCE_UNAVAILABLE_ERROR_CODE,
+            field="plugin_id",
+            status_code=404,
+        )
+    manifest_dir = Path(plugin.manifest_path).resolve().parent
+    if spec.tokens_resource is None:
+        raise PluginServiceError(
+            f"插件 {plugin.id} 缺少 tokens_resource 资源路径。",
+            error_code=PLUGIN_THEME_RESOURCE_INVALID_ERROR_CODE,
+            field="tokens_resource",
+            status_code=409,
+        )
+    resource_path = (manifest_dir / spec.tokens_resource).resolve()
+    if not _path_is_within(resource_path, manifest_dir):
+        raise PluginServiceError(
+            f"插件 {plugin.id} 的主题资源路径越界。",
+            error_code=PLUGIN_THEME_RESOURCE_INVALID_ERROR_CODE,
+            field="tokens_resource",
+            status_code=409,
+        )
+    return resource_path
+
+
+def _resolve_theme_resource_source(
+    *,
+    plugin: PluginRegistryItem,
+) -> Literal["builtin_bundle", "managed_plugin_dir"]:
+    spec = plugin.capabilities.theme_pack
+    if spec is not None and spec.resource_source is not None:
+        return spec.resource_source
+    if plugin.source_type == "builtin":
+        return "builtin_bundle"
+    return "managed_plugin_dir"
+
+
+def _load_theme_resource_payload(plugin: PluginRegistryItem) -> dict[str, Any]:
+    resource_path = _resolve_theme_resource_path(plugin)
+    if not resource_path.exists() or not resource_path.is_file():
+        raise PluginServiceError(
+            f"插件 {plugin.id} 的主题资源不存在。",
+            error_code=PLUGIN_THEME_RESOURCE_UNAVAILABLE_ERROR_CODE,
+            field="tokens_resource",
+            status_code=404,
+        )
+
+    try:
+        payload = json.loads(resource_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise PluginServiceError(
+            f"插件 {plugin.id} 的主题资源 JSON 解析失败: {exc.msg}",
+            error_code=PLUGIN_THEME_RESOURCE_INVALID_ERROR_CODE,
+            field="tokens_resource",
+            status_code=409,
+        )
+
+    if not isinstance(payload, dict):
+        raise PluginServiceError(
+            f"插件 {plugin.id} 的主题资源顶层必须是对象。",
+            error_code=PLUGIN_THEME_RESOURCE_INVALID_ERROR_CODE,
+            field="tokens_resource",
+            status_code=409,
+        )
+
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, dict):
+        raise PluginServiceError(
+            f"插件 {plugin.id} 的主题资源缺少 tokens 对象。",
+            error_code=PLUGIN_THEME_RESOURCE_INVALID_ERROR_CODE,
+            field="tokens",
+            status_code=409,
+        )
+    return cast(dict[str, Any], payload)
+
+
+def _load_theme_resource_tokens(plugin: PluginRegistryItem) -> dict[str, Any]:
+    payload = _load_theme_resource_payload(plugin)
+    return cast(dict[str, Any], payload["tokens"])
+
+
 def register_plugin_mount(
     db: Session,
     *,
@@ -1120,102 +1313,7 @@ def _discover_manifest_entries(root_dir: str | Path) -> list[tuple[Path, PluginM
 
 
 def _discover_registry_manifest_entries(root_dir: str | Path) -> list[tuple[Path, PluginManifest]]:
-    manifest_entries = _discover_manifest_entries(root_dir)
-    root = Path(root_dir).resolve()
-    if root != BUILTIN_PLUGIN_ROOT.resolve():
-        return manifest_entries
-    return _merge_virtual_registry_entries(
-        manifest_entries,
-        [
-            *_build_theme_registry_entries(),
-        ],
-        root=root,
-    )
-
-
-def _merge_virtual_registry_entries(
-    manifest_entries: list[tuple[Path, PluginManifest]],
-    extra_entries: list[tuple[Path, PluginManifest]],
-    *,
-    root: Path,
-) -> list[tuple[Path, PluginManifest]]:
-    merged_entries = list(manifest_entries)
-    seen_ids = {manifest.id for _, manifest in manifest_entries}
-    for manifest_path, manifest in extra_entries:
-        if manifest.id in seen_ids:
-            _log_plugin_registry_issue_once(
-                issue_key=f"virtual-manifest-duplicate-id:{root}:{manifest.id}",
-                message=(
-                    "兼容源插件 id 与现有插件冲突，已跳过兼容源结果。"
-                    f" plugin_id={manifest.id}"
-                    f" manifest_path={manifest_path}"
-                ),
-            )
-            continue
-        seen_ids.add(manifest.id)
-        merged_entries.append((manifest_path, manifest))
-    return merged_entries
-
-
-def _build_virtual_manifest_or_log(
-    *,
-    payload: dict[str, Any],
-    source_path: Path,
-    source_label: str,
-) -> PluginManifest | None:
-    try:
-        return PluginManifest.model_validate(payload)
-    except ValidationError as exc:
-        first_error = exc.errors()[0]
-        error_path = ".".join(str(part) for part in first_error.get("loc", ()))
-        error_message = first_error.get("msg", "兼容源 manifest 校验失败")
-        issue_key = f"virtual-manifest-invalid:{source_label}:{payload.get('id')}:{error_path}:{error_message}"
-        _log_plugin_registry_issue_once(
-            issue_key=issue_key,
-            message=(
-                "兼容源插件元数据无效，已从统一注册结果中跳过。"
-                f" source={source_label}"
-                f" plugin_id={payload.get('id')}"
-                f" source_path={source_path}"
-                f" error_path={error_path}"
-                f" error={error_message}"
-            ),
-        )
-        return None
-
-
-def _build_theme_registry_entries() -> list[tuple[Path, PluginManifest]]:
-    entries: list[tuple[Path, PluginManifest]] = []
-    for item in list_theme_catalog():
-        manifest = _build_virtual_manifest_or_log(
-            payload={
-                "id": item["plugin_id"],
-                "name": item["plugin_name"],
-                "version": item["plugin_version"],
-                "types": ["theme-pack"],
-                "permissions": [],
-                "risk_level": "low",
-                "triggers": [],
-                "entrypoints": {},
-                "capabilities": {
-                    "theme_pack": {
-                        "theme_id": item["theme_id"],
-                        "display_name": item["display_name"],
-                        "description": item["description"],
-                        "tokens_resource": item["tokens_resource"],
-                        "preview": item["preview"],
-                        "fallback_theme_id": item["fallback_theme_id"],
-                    }
-                },
-                "compatibility": item["compatibility"],
-            },
-            source_path=THEME_REGISTRY_SOURCE_PATH,
-            source_label="theme_registry",
-        )
-        if manifest is None:
-            continue
-        entries.append((THEME_REGISTRY_SOURCE_PATH, manifest))
-    return entries
+    return _discover_manifest_entries(root_dir)
 
 
 def resolve_plugin_execution_context(
@@ -1807,7 +1905,17 @@ def ingest_plugin_raw_records_to_memory(
             source_raw_record_id=source_raw_record_id,
             observation=observation,
         )
-        written_cards.append(card.model_dump(mode="json"))
+        knowledge_document = upsert_knowledge_document_from_observation(
+            db,
+            household_id=household_id,
+            subject_member_id=subject_member_id if isinstance(subject_member_id, str) else None,
+            source_plugin_id=plugin_id,
+            source_raw_record_id=source_raw_record_id,
+            observation=observation,
+        )
+        payload = card.model_dump(mode="json")
+        payload["knowledge_document_id"] = knowledge_document.id
+        written_cards.append(payload)
     return written_cards
 
 

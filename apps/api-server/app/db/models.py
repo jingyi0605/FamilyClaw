@@ -22,11 +22,13 @@ from app.modules.conversation.models import (
     ConversationActionRecord,
     ConversationDeviceControlShortcut,
     ConversationDebugLog,
+    ConversationMemoryRead,
     ConversationMemoryCandidate,
     ConversationMessage,
     ConversationProposalBatch,
     ConversationProposalItem,
     ConversationSession,
+    ConversationSessionSummary,
     ConversationTurnSource,
 )
 from app.modules.device.models import Device, DeviceBinding, DeviceEntityFavorite
@@ -35,7 +37,17 @@ from app.modules.household import lifecycle as household_lifecycle  # noqa: F401
 from app.modules.household.models import Household
 from app.modules.integration.models import IntegrationDiscovery, IntegrationInstance
 from app.modules.member.models import Member, MemberPreference
-from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember, MemoryCardRevision
+from app.modules.memory.models import (
+    EpisodicMemoryEntryRevision,
+    EpisodicMemoryEntry,
+    EventRecord,
+    KnowledgeDocument,
+    KnowledgeDocumentRevision,
+    MemoryCard,
+    MemoryCardMember,
+    MemoryCardRevision,
+    MemoryRecallDocument,
+)
 from app.modules.permission.models import MemberPermission
 from app.modules.plugin.models import (
     MemberDashboardLayout,
@@ -64,7 +76,6 @@ from app.modules.room.models import Room
 from app.modules.scheduler.models import ScheduledTaskDefinition, ScheduledTaskDelivery, ScheduledTaskRun
 from app.modules.voiceprint.models import MemberVoiceprintProfile, MemberVoiceprintSample, VoiceprintEnrollment
 from app.modules.voice.models import VoiceTerminalConversationBinding
-from official_weather.models import WeatherDeviceBinding
 
 __all__ = [
     "Account",
@@ -87,6 +98,7 @@ __all__ = [
     "ChannelPluginAccount",
     "ContextConfig",
     "ConversationSession",
+    "ConversationSessionSummary",
     "ConversationMessage",
     "ConversationMemoryCandidate",
     "ConversationProposalBatch",
@@ -94,6 +106,7 @@ __all__ = [
     "ConversationActionRecord",
     "ConversationDeviceControlShortcut",
     "ConversationDebugLog",
+    "ConversationMemoryRead",
     "ConversationTurnSource",
     "Device",
     "DeviceBinding",
@@ -120,6 +133,11 @@ __all__ = [
     "MemoryCard",
     "MemoryCardMember",
     "MemoryCardRevision",
+    "EpisodicMemoryEntry",
+    "EpisodicMemoryEntryRevision",
+    "KnowledgeDocument",
+    "KnowledgeDocumentRevision",
+    "MemoryRecallDocument",
     "MemberPresenceState",
     "MemberRelationship",
     "EventRecord",
@@ -144,5 +162,4 @@ __all__ = [
     "MemberVoiceprintProfile",
     "MemberVoiceprintSample",
     "VoiceTerminalConversationBinding",
-    "WeatherDeviceBinding",
 ]

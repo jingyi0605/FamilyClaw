@@ -1,29 +1,54 @@
 from __future__ import annotations
 
-import re
+from dataclasses import dataclass, field
 from threading import Lock
 
 from fastapi import HTTPException, status
+from sqlalchemy import Select, and_, desc, exists, false, func, literal, not_, or_, select, text, true
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import ActorContext
 from app.db.utils import utc_now_iso
 from app.modules.member.models import Member
-from app.modules.memory.repository import get_memory_card as repo_get_memory_card
-from app.modules.memory.repository import list_memory_cards as repo_list_memory_cards
-from app.modules.memory.service import _build_card_reads
+from app.modules.memory.models import MemoryCard, MemoryCardMember
+from app.modules.memory.recall_projection import (
+    MEMORY_RECALL_EMBEDDING_DIMENSION,
+    build_text_embedding,
+    build_tsquery_text,
+    compute_recency_score,
+    derive_memory_group,
+    extract_search_terms,
+    to_vector_literal,
+)
+from app.modules.memory.repository import (
+    get_memory_card as repo_get_memory_card,
+    is_pgvector_enabled,
+    list_memory_cards as repo_list_memory_cards,
+    list_memory_cards_by_ids,
+)
 from app.modules.memory.schemas import (
     MemoryHotSummaryItem,
     MemoryHotSummaryRead,
     MemoryQueryHit,
     MemoryQueryRequest,
     MemoryQueryResponse,
+    MemoryRecallBundleRead,
+    MemoryRecallHit,
 )
+from app.modules.memory.service import _build_card_reads
 from app.modules.permission.models import MemberPermission
 from app.modules.relationship.models import MemberRelationship
 
 _HOT_SUMMARY_LOCK = Lock()
 _HOT_SUMMARY_CACHE: dict[str, MemoryHotSummaryRead] = {}
+
+
+@dataclass(slots=True)
+class _HybridCandidate:
+    memory_id: str
+    matched_terms: list[str] = field(default_factory=list)
+    fts_score: float | None = None
+    vector_score: float | None = None
 
 
 def invalidate_memory_hot_summary(household_id: str) -> None:
@@ -158,68 +183,6 @@ def _is_card_visible(
     return False
 
 
-def _score_card(card, query: str | None, member_id: str | None) -> tuple[int, list[str]]:
-    score = 0
-    matched_terms: list[str] = []
-    searchable_text = " ".join(
-        part
-        for part in [card.title, card.summary, card.normalized_text or ""]
-        if isinstance(part, str)
-    ).lower()
-
-    if member_id and card.subject_member_id == member_id:
-        score += 40
-        matched_terms.append("subject_member")
-    if card.importance >= 4:
-        score += 10
-        matched_terms.append("importance")
-    if card.confidence >= 0.8:
-        score += 10
-        matched_terms.append("confidence")
-    if card.memory_type == "preference":
-        score += 3
-
-    if query:
-        tokens = _extract_query_terms(query)
-        for token in tokens:
-            if token and token in searchable_text:
-                score += 25
-                matched_terms.append(token)
-    return score, matched_terms
-
-
-def _extract_query_terms(query: str) -> list[str]:
-    normalized_query = query.strip().lower()
-    if not normalized_query:
-        return []
-
-    terms: list[str] = [normalized_query]
-    parts = [part.strip() for part in re.split(r"[\s,，。！？?、;；:：]+", normalized_query) if part.strip()]
-    terms.extend(parts)
-
-    chinese_chunks = re.findall(r"[\u4e00-\u9fff]{2,}", normalized_query)
-    for chunk in chinese_chunks:
-        terms.append(chunk)
-        if len(chunk) >= 2:
-            for index in range(len(chunk) - 1):
-                terms.append(chunk[index : index + 2])
-
-    unique_terms: list[str] = []
-    seen: set[str] = set()
-    stop_terms = {"什么", "一下", "请问", "吗", "呢", "呀", "最近"}
-    for term in terms:
-        cleaned = term.strip()
-        if len(cleaned) < 2:
-            continue
-        if cleaned in stop_terms:
-            continue
-        if cleaned in seen:
-            continue
-        seen.add(cleaned)
-        unique_terms.append(cleaned)
-    return unique_terms
-
-
 def query_memory_cards(
     db: Session,
     *,
@@ -231,15 +194,400 @@ def query_memory_cards(
     children_ids = _load_children_ids(db, requester_member_id)
     allow_scopes, deny_scopes = _load_memory_permission_scopes(db, requester_member_id, requester_role)
 
+    try:
+        return _query_memory_cards_impl(
+            db,
+            payload=payload,
+            actor=actor,
+            requester_member_id=requester_member_id,
+            requester_role=requester_role,
+            children_ids=children_ids,
+            allow_scopes=allow_scopes,
+            deny_scopes=deny_scopes,
+        )
+    except Exception:
+        fallback_hits = _build_visible_fallback_hits(
+            db,
+            payload=payload,
+            actor=actor,
+            requester_member_id=requester_member_id,
+            requester_role=requester_role,
+            children_ids=children_ids,
+            allow_scopes=allow_scopes,
+            deny_scopes=deny_scopes,
+        )
+        return _build_query_response(
+            payload=payload,
+            requester_member_id=requester_member_id,
+            hits=fallback_hits,
+            degraded=True,
+            degrade_reasons=["memory_recall_query_failed"],
+        )
+
+
+def _query_memory_cards_impl(
+    db: Session,
+    *,
+    payload: MemoryQueryRequest,
+    actor: ActorContext,
+    requester_member_id: str | None,
+    requester_role: str,
+    children_ids: set[str],
+    allow_scopes: set[str],
+    deny_scopes: set[str],
+) -> MemoryQueryResponse:
+    filters = _build_base_filters(
+        payload=payload,
+        actor=actor,
+        requester_member_id=requester_member_id,
+        requester_role=requester_role,
+        children_ids=children_ids,
+        allow_scopes=allow_scopes,
+        deny_scopes=deny_scopes,
+    )
+    query_terms = extract_search_terms(payload.query)
+    candidate_limit = max(payload.limit * 4, payload.group_limit * 4, 12)
+    candidate_map: dict[str, _HybridCandidate] = {}
+    degrade_reasons: list[str] = []
+
+    if payload.query:
+        ts_query_text = build_tsquery_text(payload.query)
+        if ts_query_text:
+            for memory_id, fts_score in _query_fts_candidates(
+                db,
+                filters=filters,
+                ts_query_text=ts_query_text,
+                limit=candidate_limit,
+            ):
+                candidate = candidate_map.setdefault(memory_id, _HybridCandidate(memory_id=memory_id, matched_terms=query_terms))
+                candidate.fts_score = float(fts_score or 0.0)
+
+        vector_degrade_reason = _query_vector_candidates(
+            db,
+            filters=filters,
+            query=payload.query,
+            limit=candidate_limit,
+            candidate_map=candidate_map,
+            matched_terms=query_terms,
+        )
+        if vector_degrade_reason is not None:
+            degrade_reasons.append(vector_degrade_reason)
+    else:
+        candidate_map = {
+            card.id: _HybridCandidate(memory_id=card.id)
+            for card in _list_visible_cards_for_summary(db, filters=filters, limit=max(candidate_limit, 20))
+        }
+
+    if not candidate_map:
+        return _build_query_response(
+            payload=payload,
+            requester_member_id=requester_member_id,
+            hits=[],
+            degraded=bool(degrade_reasons),
+            degrade_reasons=degrade_reasons,
+        )
+
+    cards = _build_card_reads(
+        db,
+        list(list_memory_cards_by_ids(db, memory_ids=list(candidate_map.keys()))),
+    )
+    hits = _rerank_hits(
+        cards=cards,
+        candidates=candidate_map,
+        payload=payload,
+        requester_member_id=requester_member_id,
+    )
+    return _build_query_response(
+        payload=payload,
+        requester_member_id=requester_member_id,
+        hits=hits,
+        degraded=bool(degrade_reasons),
+        degrade_reasons=degrade_reasons,
+    )
+
+
+def _build_query_response(
+    *,
+    payload: MemoryQueryRequest,
+    requester_member_id: str | None,
+    hits: list[MemoryQueryHit],
+    degraded: bool,
+    degrade_reasons: list[str],
+) -> MemoryQueryResponse:
+    grouped_hits = _group_hits(hits, group_limit=payload.group_limit)
+    flat_hits = sorted(
+        grouped_hits["stable_facts"] + grouped_hits["recent_events"],
+        key=lambda item: (item.score, item.card.updated_at, item.card.importance),
+        reverse=True,
+    )[: payload.limit]
+    return MemoryQueryResponse(
+        household_id=payload.household_id,
+        requester_member_id=requester_member_id,
+        total=len(hits),
+        query=payload.query,
+        items=flat_hits,
+        recall=MemoryRecallBundleRead(
+            stable_facts=[_to_recall_hit(item) for item in grouped_hits["stable_facts"]],
+            recent_events=[_to_recall_hit(item) for item in grouped_hits["recent_events"]],
+            degraded=degraded,
+            degrade_reasons=degrade_reasons,
+        ),
+        degraded=degraded,
+        degrade_reasons=degrade_reasons,
+    )
+
+
+def _group_hits(hits: list[MemoryQueryHit], *, group_limit: int) -> dict[str, list[MemoryQueryHit]]:
+    grouped: dict[str, list[MemoryQueryHit]] = {"stable_facts": [], "recent_events": []}
+    for group_name in grouped:
+        ranked = [item for item in hits if item.group_name == group_name]
+        ranked.sort(key=lambda item: (item.score, item.card.updated_at, item.card.importance), reverse=True)
+        for index, item in enumerate(ranked[:group_limit], start=1):
+            item.rank = index
+            grouped[group_name].append(item)
+    return grouped
+
+
+def _to_recall_hit(hit: MemoryQueryHit) -> MemoryRecallHit:
+    return MemoryRecallHit(
+        memory_id=hit.memory_id,
+        source_id=hit.source_id,
+        source_kind=hit.source_kind,
+        group_name=hit.group_name,
+        layer=hit.layer,
+        title=hit.card.title,
+        summary=hit.card.summary,
+        memory_type=hit.card.memory_type,
+        visibility=hit.card.visibility,
+        subject_member_id=hit.card.subject_member_id,
+        updated_at=hit.card.updated_at,
+        occurred_at=hit.card.last_observed_at or hit.card.effective_at or hit.card.updated_at,
+        score=hit.score,
+        rank=hit.rank,
+        fts_score=hit.fts_score,
+        vector_score=hit.vector_score,
+        reason=hit.reason,
+        matched_terms=hit.matched_terms,
+    )
+
+
+def _rerank_hits(
+    *,
+    cards,
+    candidates: dict[str, _HybridCandidate],
+    payload: MemoryQueryRequest,
+    requester_member_id: str | None,
+) -> list[MemoryQueryHit]:
+    hits: list[MemoryQueryHit] = []
+    for card in cards:
+        candidate = candidates.get(card.id)
+        if candidate is None:
+            continue
+        group_name = derive_memory_group(card.memory_type)
+        importance_score = round(card.importance / 5.0, 6)
+        confidence_score = round(card.confidence, 6)
+        recency_score = compute_recency_score(card.last_observed_at, card.effective_at, card.updated_at)
+        member_match_score = _compute_member_match_score(
+            card,
+            member_id=payload.member_id,
+            requester_member_id=requester_member_id,
+        )
+        visibility_score = _compute_visibility_score(
+            card,
+            requester_member_id=requester_member_id,
+        )
+        fts_score = round(candidate.fts_score or 0.0, 6)
+        vector_score = round(candidate.vector_score or 0.0, 6)
+        score = _compute_hybrid_score(
+            group_name=group_name,
+            fts_score=fts_score,
+            vector_score=vector_score,
+            importance_score=importance_score,
+            confidence_score=confidence_score,
+            recency_score=recency_score,
+            member_match_score=member_match_score,
+            visibility_score=visibility_score,
+        )
+        if payload.query and score <= 0:
+            continue
+        hits.append(
+            MemoryQueryHit(
+                card=card,
+                score=score,
+                rank=1,
+                group_name=group_name,
+                layer="L3",
+                memory_id=card.id,
+                source_kind="memory_card",
+                source_id=card.source_event_id or card.source_raw_record_id or card.id,
+                fts_score=fts_score if fts_score > 0 else None,
+                vector_score=vector_score if vector_score > 0 else None,
+                reason={
+                    "fts_score": fts_score,
+                    "vector_score": vector_score,
+                    "importance_score": importance_score,
+                    "confidence_score": confidence_score,
+                    "recency_score": recency_score,
+                    "member_match_score": member_match_score,
+                    "visibility_score": visibility_score,
+                },
+                matched_terms=candidate.matched_terms,
+            )
+        )
+    hits.sort(key=lambda item: (item.score, item.card.updated_at, item.card.importance), reverse=True)
+    return hits
+
+
+def _compute_hybrid_score(
+    *,
+    group_name: str,
+    fts_score: float,
+    vector_score: float,
+    importance_score: float,
+    confidence_score: float,
+    recency_score: float,
+    member_match_score: float,
+    visibility_score: float,
+) -> float:
+    if group_name == "recent_events":
+        score = (
+            fts_score * 0.28
+            + vector_score * 0.24
+            + recency_score * 0.22
+            + importance_score * 0.12
+            + confidence_score * 0.08
+            + member_match_score * 0.04
+            + visibility_score * 0.02
+        )
+    else:
+        score = (
+            fts_score * 0.34
+            + vector_score * 0.28
+            + importance_score * 0.16
+            + confidence_score * 0.12
+            + member_match_score * 0.05
+            + visibility_score * 0.03
+            + recency_score * 0.02
+        )
+    return round(max(score, 0.0), 6)
+
+
+def _compute_member_match_score(card, *, member_id: str | None, requester_member_id: str | None) -> float:
+    if member_id and card.subject_member_id == member_id:
+        return 1.0
+    if member_id and any(link.member_id == member_id for link in card.related_members):
+        return 0.8
+    if requester_member_id and card.subject_member_id == requester_member_id:
+        return 0.6
+    return 0.0
+
+
+def _compute_visibility_score(card, *, requester_member_id: str | None) -> float:
+    if requester_member_id and card.subject_member_id == requester_member_id and card.visibility in {"private", "sensitive"}:
+        return 1.0
+    if card.visibility == "family":
+        return 0.8
+    if card.visibility == "private":
+        return 0.9
+    if card.visibility == "sensitive":
+        return 0.95
+    return 0.6
+
+
+def _query_fts_candidates(
+    db: Session,
+    *,
+    filters: list,
+    ts_query_text: str,
+    limit: int,
+) -> list[tuple[str, float]]:
+    ts_query = func.to_tsquery("simple", ts_query_text)
+    rank_expr = func.ts_rank_cd(MemoryCard.search_tsv, ts_query).label("fts_score")
+    stmt = (
+        select(MemoryCard.id, rank_expr)
+        .where(*filters)
+        .where(MemoryCard.search_tsv.is_not(None))
+        .where(MemoryCard.search_tsv.op("@@")(ts_query))
+        .order_by(rank_expr.desc(), MemoryCard.updated_at.desc(), MemoryCard.id.desc())
+        .limit(limit)
+    )
+    return [(str(row.id), float(row.fts_score or 0.0)) for row in db.execute(stmt).all()]
+
+
+def _query_vector_candidates(
+    db: Session,
+    *,
+    filters: list,
+    query: str,
+    limit: int,
+    candidate_map: dict[str, _HybridCandidate],
+    matched_terms: list[str],
+) -> str | None:
+    if not is_pgvector_enabled(db):
+        return "pgvector_unavailable"
+
+    query_embedding = build_text_embedding(query)
+    query_embedding_literal = to_vector_literal(query_embedding)
+    if query_embedding_literal is None:
+        return "embedding_unavailable"
+
+    distance_expr = MemoryCard.embedding.op("<->")(
+        text(f"CAST(:query_embedding AS vector({MEMORY_RECALL_EMBEDDING_DIMENSION}))")
+    ).label("vector_distance")
+    stmt = (
+        select(MemoryCard.id, distance_expr)
+        .where(*filters)
+        .where(MemoryCard.embedding.is_not(None))
+        .order_by(distance_expr.asc(), MemoryCard.updated_at.desc(), MemoryCard.id.desc())
+        .limit(limit)
+    )
+    try:
+        rows = db.execute(stmt, {"query_embedding": query_embedding_literal}).all()
+    except Exception:
+        return "vector_query_failed"
+
+    for row in rows:
+        distance = float(row.vector_distance or 0.0)
+        vector_score = round(1.0 / (1.0 + max(distance, 0.0)), 6)
+        candidate = candidate_map.setdefault(str(row.id), _HybridCandidate(memory_id=str(row.id), matched_terms=matched_terms))
+        candidate.vector_score = vector_score
+    return None
+
+
+def _list_visible_cards_for_summary(db: Session, *, filters: list, limit: int):
+    stmt: Select[tuple[MemoryCard]] = (
+        select(MemoryCard)
+        .where(*filters)
+        .order_by(
+            MemoryCard.importance.desc(),
+            MemoryCard.confidence.desc(),
+            MemoryCard.updated_at.desc(),
+            MemoryCard.id.desc(),
+        )
+        .limit(limit)
+    )
+    return list(db.scalars(stmt).all())
+
+
+def _build_visible_fallback_hits(
+    db: Session,
+    *,
+    payload: MemoryQueryRequest,
+    actor: ActorContext,
+    requester_member_id: str | None,
+    requester_role: str,
+    children_ids: set[str],
+    allow_scopes: set[str],
+    deny_scopes: set[str],
+) -> list[MemoryQueryHit]:
     rows, _ = repo_list_memory_cards(
         db,
         household_id=payload.household_id,
         page=1,
-        page_size=500,
+        page_size=max(payload.limit * 2, payload.group_limit * 2, 12),
         memory_type=payload.memory_type,
     )
     cards = _build_card_reads(db, rows)
-
     visible_cards = [
         card
         for card in cards
@@ -253,8 +601,7 @@ def query_memory_cards(
             deny_scopes=deny_scopes,
         )
     ]
-
-    filtered_cards = []
+    hits: list[MemoryQueryHit] = []
     for card in visible_cards:
         if payload.member_id and card.subject_member_id != payload.member_id:
             continue
@@ -262,30 +609,102 @@ def query_memory_cards(
             continue
         if payload.visibility and card.visibility != payload.visibility:
             continue
-        filtered_cards.append(card)
+        recency_score = compute_recency_score(card.last_observed_at, card.effective_at, card.updated_at)
+        score = round(card.importance / 5.0 + card.confidence * 0.5 + recency_score * 0.2, 6)
+        hits.append(
+            MemoryQueryHit(
+                card=card,
+                score=score,
+                rank=1,
+                group_name=derive_memory_group(card.memory_type),
+                layer="L3",
+                memory_id=card.id,
+                source_kind="memory_card",
+                source_id=card.source_event_id or card.source_raw_record_id or card.id,
+                reason={"fallback": True, "recency_score": recency_score},
+                matched_terms=[],
+            )
+        )
+    hits.sort(key=lambda item: (item.score, item.card.updated_at, item.card.importance), reverse=True)
+    return hits
 
-    hits: list[MemoryQueryHit] = []
-    for card in filtered_cards:
-        score, matched_terms = _score_card(card, payload.query, payload.member_id)
-        if payload.query and score < 25:
-            continue
-        hits.append(MemoryQueryHit(card=card, score=score, matched_terms=matched_terms))
 
-    hits.sort(
-        key=lambda item: (
-            item.score,
-            item.card.updated_at,
-            item.card.importance,
-        ),
-        reverse=True,
+def _build_base_filters(
+    *,
+    payload: MemoryQueryRequest,
+    actor: ActorContext,
+    requester_member_id: str | None,
+    requester_role: str,
+    children_ids: set[str],
+    allow_scopes: set[str],
+    deny_scopes: set[str],
+) -> list:
+    filters = [MemoryCard.household_id == payload.household_id]
+    if payload.memory_type is not None:
+        filters.append(MemoryCard.memory_type == payload.memory_type)
+    if payload.status is not None:
+        filters.append(MemoryCard.status == payload.status)
+    if payload.visibility is not None:
+        filters.append(MemoryCard.visibility == payload.visibility)
+    if payload.member_id is not None:
+        filters.append(MemoryCard.subject_member_id == payload.member_id)
+    filters.append(
+        _build_visibility_predicate(
+            actor=actor,
+            requester_member_id=requester_member_id,
+            requester_role=requester_role,
+            children_ids=children_ids,
+            allow_scopes=allow_scopes,
+            deny_scopes=deny_scopes,
+        )
     )
-    return MemoryQueryResponse(
-        household_id=payload.household_id,
-        requester_member_id=requester_member_id,
-        total=len(hits),
-        query=payload.query,
-        items=hits[: payload.limit],
-    )
+    return filters
+
+
+def _build_visibility_predicate(
+    *,
+    actor: ActorContext,
+    requester_member_id: str | None,
+    requester_role: str,
+    children_ids: set[str],
+    allow_scopes: set[str],
+    deny_scopes: set[str],
+):
+    if actor.role == "admin":
+        return true()
+
+    is_self = false()
+    is_related_member = false()
+    if requester_member_id is not None:
+        is_self = MemoryCard.subject_member_id == requester_member_id
+        is_related_member = exists(
+            select(literal(1)).where(
+                MemoryCardMember.memory_id == MemoryCard.id,
+                MemoryCardMember.member_id == requester_member_id,
+            )
+        )
+    is_child = MemoryCard.subject_member_id.in_(tuple(children_ids)) if children_ids else false()
+
+    clauses = []
+    if "public" in allow_scopes and "public" not in deny_scopes:
+        clauses.append(MemoryCard.visibility == "public")
+    if "self" in allow_scopes and "self" not in deny_scopes:
+        clauses.append(and_(MemoryCard.visibility.in_(["family", "private"]), or_(is_self, is_related_member)))
+        clauses.append(and_(MemoryCard.visibility == "sensitive", is_self))
+    if "children" in allow_scopes and "children" not in deny_scopes:
+        clauses.append(and_(MemoryCard.visibility.in_(["family", "private"]), is_child))
+        if requester_role in {"adult", "elder", "admin"}:
+            clauses.append(and_(MemoryCard.visibility == "sensitive", is_child))
+    if "family" in allow_scopes and "family" not in deny_scopes:
+        clauses.append(
+            and_(
+                MemoryCard.visibility == "family",
+                not_(or_(is_self, is_related_member, is_child)),
+            )
+        )
+    if not clauses:
+        return false()
+    return or_(*clauses)
 
 
 def get_memory_hot_summary(
@@ -307,7 +726,9 @@ def get_memory_hot_summary(
         payload=MemoryQueryRequest(
             household_id=household_id,
             requester_member_id=effective_requester_member_id,
+            status="active",
             limit=12,
+            group_limit=5,
         ),
         actor=actor,
     )
@@ -335,7 +756,7 @@ def get_memory_hot_summary(
         recent_event_highlights=[
             item.card.summary
             for item in top_cards
-            if item.card.memory_type == "event"
+            if item.group_name == "recent_events"
         ][:3],
     )
     with _HOT_SUMMARY_LOCK:

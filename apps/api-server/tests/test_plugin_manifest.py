@@ -383,6 +383,142 @@ class PluginManifestTests(unittest.TestCase):
         self.assertIn("widget", str(context.exception))
         self.assertIn("api_key", str(context.exception))
 
+    def test_manifest_accepts_config_i18n_key_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "config-i18n-plugin",
+                        "name": "Config I18n Plugin",
+                        "version": "0.1.0",
+                        "types": ["integration"],
+                        "permissions": ["device.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"integration": "plugin.integration.sync"},
+                        "config_specs": [
+                            {
+                                "scope_type": "plugin",
+                                "title": "插件配置",
+                                "title_key": "plugin.config.title",
+                                "description": "插件配置说明",
+                                "description_key": "plugin.config.description",
+                                "schema_version": 1,
+                                "config_schema": {
+                                    "fields": [
+                                        {
+                                            "key": "mode",
+                                            "label": "模式",
+                                            "label_key": "plugin.config.fields.mode.label",
+                                            "description": "模式说明",
+                                            "description_key": "plugin.config.fields.mode.description",
+                                            "type": "enum",
+                                            "required": True,
+                                            "enum_options": [
+                                                {
+                                                    "value": "strict",
+                                                    "label": "严格",
+                                                    "label_key": "plugin.config.fields.mode.options.strict",
+                                                }
+                                            ],
+                                        }
+                                    ]
+                                },
+                                "ui_schema": {
+                                    "sections": [
+                                        {
+                                            "id": "basic",
+                                            "title": "基础设置",
+                                            "title_key": "plugin.config.sections.basic.title",
+                                            "description": "基础设置说明",
+                                            "description_key": "plugin.config.sections.basic.description",
+                                            "fields": ["mode"],
+                                        }
+                                    ],
+                                    "submit_text": "保存配置",
+                                    "submit_text_key": "plugin.config.submit",
+                                    "widgets": {
+                                        "mode": {
+                                            "widget": "select",
+                                            "placeholder": "请选择模式",
+                                            "placeholder_key": "plugin.config.fields.mode.placeholder",
+                                            "help_text": "这里选择模式",
+                                            "help_text_key": "plugin.config.fields.mode.help_text",
+                                        }
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        self.assertEqual("plugin.config.title", manifest.config_specs[0].title_key)
+        self.assertEqual(
+            "plugin.config.fields.mode.label",
+            manifest.config_specs[0].config_schema.fields[0].label_key,
+        )
+        self.assertEqual(
+            "plugin.config.fields.mode.options.strict",
+            manifest.config_specs[0].config_schema.fields[0].enum_options[0].label_key,
+        )
+        self.assertEqual(
+            "plugin.config.fields.mode.help_text",
+            manifest.config_specs[0].ui_schema.widgets["mode"].help_text_key,
+        )
+        self.assertEqual(
+            "plugin.config.submit",
+            manifest.config_specs[0].ui_schema.submit_text_key,
+        )
+
+    def test_manifest_rejects_blank_config_i18n_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-config-i18n-plugin",
+                        "name": "Broken Config I18n Plugin",
+                        "version": "0.1.0",
+                        "types": ["integration"],
+                        "permissions": ["device.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"integration": "plugin.integration.sync"},
+                        "config_specs": [
+                            {
+                                "scope_type": "plugin",
+                                "title": "插件配置",
+                                "title_key": "   ",
+                                "schema_version": 1,
+                                "config_schema": {
+                                    "fields": [
+                                        {"key": "name", "label": "名称", "type": "string", "required": True}
+                                    ]
+                                },
+                                "ui_schema": {
+                                    "sections": [
+                                        {"id": "basic", "title": "基础", "fields": ["name"]}
+                                    ]
+                                },
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("i18n key", str(context.exception))
+
     def test_manifest_rejects_duplicate_config_scope_type(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             manifest_path = Path(tempdir) / "manifest.json"
@@ -1156,6 +1292,41 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual("plugin_execution_failed", result.error_code)
         self.assertIn("demo plugin failure", result.error_message or "")
 
+    def test_theme_pack_manifest_requires_resource_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "theme-pack-missing-resource-meta",
+                        "name": "Theme Pack Missing Resource Meta",
+                        "version": "1.0.0",
+                        "types": ["theme-pack"],
+                        "permissions": [],
+                        "risk_level": "low",
+                        "triggers": [],
+                        "entrypoints": {},
+                        "capabilities": {
+                            "theme_pack": {
+                                "theme_id": "chun-he-jing-ming",
+                                "display_name": "春和景明",
+                                "tokens_resource": "themes/chun-he-jing-ming.json",
+                                "resource_source": "builtin_bundle",
+                                "theme_schema_version": 1,
+                                "platform_targets": ["h5", "rn"],
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("resource_version", str(context.exception))
+
     def test_registered_plugins_include_theme_and_real_ai_provider_entries(self) -> None:
         registry = list_registered_plugins(self.builtin_root)
 
@@ -1163,7 +1334,13 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(["theme-pack"], theme_plugin.types)
         self.assertEqual("1.0.0", theme_plugin.installed_version)
         self.assertEqual("chun-he-jing-ming", theme_plugin.capabilities.theme_pack.theme_id)
-        self.assertEqual("familyclaw-theme", theme_plugin.compatibility["selection_storage_key"])
+        self.assertEqual(
+            (self.builtin_root / "theme_chun_he_jing_ming_pack" / "manifest.json").resolve(),
+            Path(theme_plugin.manifest_path).resolve(),
+        )
+        self.assertEqual("1.0.0", theme_plugin.capabilities.theme_pack.resource_version)
+        self.assertEqual(1, theme_plugin.capabilities.theme_pack.theme_schema_version)
+        self.assertEqual(["h5", "rn"], theme_plugin.capabilities.theme_pack.platform_targets)
 
         ai_provider_plugin = next(item for item in registry.items if item.id == "builtin.provider.chatgpt")
         self.assertEqual(["ai-provider"], ai_provider_plugin.types)

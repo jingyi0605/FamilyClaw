@@ -74,6 +74,39 @@ class ConversationMessage(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
 
 
+class ConversationSessionSummary(Base):
+    __tablename__ = "conversation_session_summaries"
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_conversation_session_summaries_session_id"),
+        Index("idx_conversation_session_summaries_household_status", "household_id", "status"),
+        Index("idx_conversation_session_summaries_requester_status", "requester_member_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    household_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requester_member_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("members.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    open_topics_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    recent_confirmations_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    covered_message_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="stale")
+    generated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+
+
 class ConversationTurnSource(Base):
     __tablename__ = "conversation_turn_sources"
     __table_args__ = (
@@ -206,6 +239,32 @@ class ConversationDebugLog(Base):
     level: Mapped[str] = mapped_column(String(20), nullable=False, default="info")
     message: Mapped[str] = mapped_column(Text, nullable=False)
     payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
+
+
+class ConversationMemoryRead(Base):
+    __tablename__ = "conversation_memory_reads"
+    __table_args__ = (
+        Index("idx_conversation_memory_reads_session_request", "session_id", "request_id"),
+        Index("idx_conversation_memory_reads_group_rank", "group_name", "rank"),
+        Index("idx_conversation_memory_reads_memory_id", "memory_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    group_name: Mapped[str] = mapped_column(String(30), nullable=False)
+    layer: Mapped[str] = mapped_column(String(10), nullable=False, default="L3")
+    memory_id: Mapped[str] = mapped_column(Text, nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(30), nullable=False, default="memory_card")
+    source_id: Mapped[str] = mapped_column(Text, nullable=False)
+    score: Mapped[float] = mapped_column(nullable=False, default=0)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reason_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
 
 

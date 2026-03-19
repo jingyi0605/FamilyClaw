@@ -149,6 +149,7 @@ class ConversationOrchestratorResult:
     ai_provider_code: str | None
     effective_agent_id: str | None
     effective_agent_name: str | None
+    memory_trace_items: list[dict[str, Any]] = field(default_factory=list)
     intent_detection: ConversationIntentDetection | None = None
     lane_selection: ConversationLaneSelection | None = None
 
@@ -161,6 +162,14 @@ class ConversationOrchestratorResult:
                 if self.intent_detection is not None and self.intent_detection.lane_selection is not None
                 else _build_default_lane_selection(self.intent)
             )
+
+
+@dataclass
+class FreeChatPromptContext:
+    variables: dict[str, str]
+    memory_bundle: Any
+    memory_context_text: str
+    memory_trace_items: list[dict[str, Any]] = field(default_factory=list)
 
 
 def detect_conversation_intent(
@@ -1992,18 +2001,19 @@ async def _stream_non_qa_chat(
         return
 
     full_text = ""
+    prompt_context = _build_free_chat_prompt_context(
+        db,
+        session=session,
+        actor=actor,
+        user_message=message,
+        device_context_summary=device_context_summary,
+        request_context=request_context,
+        log_memory_context=True,
+    )
     async for event in stream_llm(
         db,
         task_type="free_chat",
-        variables=_build_free_chat_variables(
-            db,
-            session=session,
-            actor=actor,
-            user_message=message,
-            device_context_summary=device_context_summary,
-            request_context=request_context,
-            log_memory_context=True,
-        ),
+        variables=prompt_context.variables,
         household_id=session.household_id,
         conversation_history=conversation_history,
         request_context=request_context,
@@ -2018,12 +2028,13 @@ async def _stream_non_qa_chat(
                 ConversationOrchestratorResult(
                     intent=intent,
                     text=text,
-                    degraded=False,
+                    degraded=prompt_context.memory_bundle.degraded,
                     facts=[],
                     suggestions=[],
                     memory_candidate_payloads=[],
                     config_suggestion=None,
                     action_payloads=[],
+                    memory_trace_items=prompt_context.memory_trace_items,
                     ai_trace_id=None,
                     ai_provider_code=getattr(event.result, "provider", None) or None,
                     effective_agent_id=session.active_agent_id,
@@ -2048,18 +2059,19 @@ def _run_non_qa_chat(
     timeout_ms_override: int | None = None,
     honor_timeout_override: bool = False,
 ) -> ConversationOrchestratorResult:
+    prompt_context = _build_free_chat_prompt_context(
+        db,
+        session=session,
+        actor=actor,
+        user_message=message,
+        device_context_summary=device_context_summary,
+        request_context=request_context,
+        log_memory_context=True,
+    )
     result = invoke_llm(
         db,
         task_type="free_chat",
-        variables=_build_free_chat_variables(
-            db,
-            session=session,
-            actor=actor,
-            user_message=message,
-            device_context_summary=device_context_summary,
-            request_context=request_context,
-            log_memory_context=True,
-        ),
+        variables=prompt_context.variables,
         household_id=session.household_id,
         conversation_history=conversation_history,
         request_context=request_context,
@@ -2069,12 +2081,13 @@ def _run_non_qa_chat(
     return ConversationOrchestratorResult(
         intent=intent,
         text=result.text,
-        degraded=False,
+        degraded=prompt_context.memory_bundle.degraded,
         facts=[],
         suggestions=[],
         memory_candidate_payloads=[],
         config_suggestion=None,
         action_payloads=[],
+        memory_trace_items=prompt_context.memory_trace_items,
         ai_trace_id=None,
         ai_provider_code=getattr(result, "provider", None) or None,
         effective_agent_id=session.active_agent_id,
@@ -2094,14 +2107,14 @@ def _run_config_extraction(
     request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
     _ = actor
-    variables = _build_free_chat_variables(
+    variables = _build_free_chat_prompt_context(
         db,
         session=session,
         actor=actor,
         user_message=message,
         request_context=request_context,
         log_memory_context=False,
-    )
+    ).variables
     current_config = _build_current_config_snapshot(db, session=session, actor=actor, user_message=message)
     user_evidence = _build_user_only_conversation_excerpt(conversation_history, message)
     extraction_result = invoke_llm(
@@ -2163,14 +2176,14 @@ async def _arun_config_extraction(
     detection: ConversationIntentDetection,
     request_context: dict | None = None,
 ) -> ConversationOrchestratorResult:
-    variables = _build_free_chat_variables(
+    variables = _build_free_chat_prompt_context(
         db,
         session=session,
         actor=actor,
         user_message=message,
         request_context=request_context,
         log_memory_context=False,
-    )
+    ).variables
     current_config = _build_current_config_snapshot(db, session=session, actor=actor, user_message=message)
     user_evidence = _build_user_only_conversation_excerpt(conversation_history, message)
     extraction_result = await ainvoke_llm(
@@ -2526,6 +2539,27 @@ def _build_free_chat_variables(
     request_context: dict | None = None,
     log_memory_context: bool = False,
 ) -> dict[str, str]:
+    return _build_free_chat_prompt_context(
+        db,
+        session=session,
+        actor=actor,
+        user_message=user_message,
+        device_context_summary=device_context_summary,
+        request_context=request_context,
+        log_memory_context=log_memory_context,
+    ).variables
+
+
+def _build_free_chat_prompt_context(
+    db: Session,
+    *,
+    session: ConversationSession,
+    actor: ActorContext,
+    user_message: str,
+    device_context_summary: ConversationDeviceContextSummary | None = None,
+    request_context: dict | None = None,
+    log_memory_context: bool = False,
+) -> FreeChatPromptContext:
     agent_context = build_agent_runtime_context(
         db,
         household_id=session.household_id,
@@ -2540,6 +2574,7 @@ def _build_free_chat_variables(
         requester_member_id=session.requester_member_id,
         question=user_message,
         capability="conversation_free_chat",
+        session_id=session.id,
     )
     identity = agent_context.get("identity", {}) if isinstance(agent_context, dict) else {}
     agent = agent_context.get("agent", {}) if isinstance(agent_context, dict) else {}
@@ -2550,35 +2585,109 @@ def _build_free_chat_variables(
     ) or (overview.active_member.name if overview.active_member is not None else None)
     if overview.active_member is not None and active_member_display_name:
         overview.active_member.name = active_member_display_name
-    memory_highlights = memory_bundle.hot_summary.preference_highlights[:3] or memory_bundle.hot_summary.recent_event_highlights[:3]
-    memory_context_text = f"当前长期记忆摘要：{'；'.join(memory_highlights) if memory_highlights else '暂无明显长期记忆摘要。'}"
+    memory_trace_items = _build_memory_trace_items(memory_bundle)
+    memory_context_text = _build_memory_context_text(memory_bundle)
     if log_memory_context:
         _log_memory_context_usage(
             request_context=request_context,
             user_message=user_message,
             memory_bundle=memory_bundle,
-            memory_highlights=memory_highlights,
             memory_context_text=memory_context_text,
+            memory_trace_items=memory_trace_items,
         )
-    return {
-        "user_message": user_message,
-        "agent_context": (
-            f"当前角色：{agent.get('name') or 'AI 管家'}。\n"
-            f"角色定位：{identity.get('role_summary') or '家庭 AI 管家'}。\n"
-            f"说话风格：{identity.get('speaking_style') or '自然亲切'}。"
-        ),
-        "memory_context": memory_context_text,
-        "device_context": (
-            device_context_summary.to_prompt_text()
-            if device_context_summary is not None
-            else "最近对话里没有可靠的设备上下文。"
-        ),
-        "household_context": (
-            f"当前家庭概况：活跃成员 {overview.active_member.name if overview.active_member else '暂无'}；"
-            f"家庭模式 {overview.home_mode}；"
-            f"Home Assistant 状态 {overview.home_assistant_status}。"
-        ),
-    }
+    return FreeChatPromptContext(
+        variables={
+            "user_message": user_message,
+            "agent_context": (
+                f"当前角色：{agent.get('name') or 'AI 管家'}。\n"
+                f"角色定位：{identity.get('role_summary') or '家庭 AI 管家'}。\n"
+                f"说话风格：{identity.get('speaking_style') or '自然亲切'}。"
+            ),
+            "memory_context": memory_context_text,
+            "device_context": (
+                device_context_summary.to_prompt_text()
+                if device_context_summary is not None
+                else "最近对话里没有可靠的设备上下文。"
+            ),
+            "household_context": (
+                f"当前家庭概况：活跃成员 {overview.active_member.name if overview.active_member else '暂无'}；"
+                f"家庭模式 {overview.home_mode}；"
+                f"Home Assistant 状态 {overview.home_assistant_status}。"
+            ),
+        },
+        memory_bundle=memory_bundle,
+        memory_context_text=memory_context_text,
+        memory_trace_items=memory_trace_items,
+    )
+
+
+def _build_memory_context_text(memory_bundle) -> str:
+    session_lines = _render_memory_group_lines(
+        memory_bundle.recall.session_summary,
+        empty_text="暂无可用的当前会话摘要。",
+    )
+    stable_lines = _render_memory_group_lines(
+        memory_bundle.recall.stable_facts,
+        empty_text="暂无命中的稳定事实。",
+    )
+    recent_lines = _render_memory_group_lines(
+        memory_bundle.recall.recent_events,
+        empty_text="暂无命中的最近事件。",
+    )
+    knowledge_lines = _render_memory_group_lines(
+        memory_bundle.recall.external_knowledge,
+        empty_text="暂无命中的外部知识。",
+    )
+    degraded_hint = ""
+    if memory_bundle.recall.degraded:
+        degraded_hint = f"\n召回降级：{'；'.join(memory_bundle.recall.degrade_reasons) or '已退回关键词路径'}。"
+    return (
+        "请优先依据下面命中的长期记忆回答，不能自行脑补没有命中的事实。\n"
+        f"[session_summary]\n{session_lines}\n"
+        f"[stable_facts]\n{stable_lines}\n"
+        f"[recent_events]\n{recent_lines}\n"
+        f"[external_knowledge]\n{knowledge_lines}"
+        f"{degraded_hint}"
+    )
+
+
+def _render_memory_group_lines(group_hits, *, empty_text: str) -> str:
+    if not group_hits:
+        return empty_text
+    lines: list[str] = []
+    for index, hit in enumerate(group_hits, start=1):
+        lines.append(f"{index}. {hit.title}：{hit.summary}")
+    return "\n".join(lines)
+
+
+def _build_memory_trace_items(memory_bundle) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for hit in [
+        *memory_bundle.recall.session_summary,
+        *memory_bundle.recall.stable_facts,
+        *memory_bundle.recall.recent_events,
+        *memory_bundle.recall.external_knowledge,
+    ]:
+        items.append(
+            {
+                "memory_id": hit.memory_id,
+                "source_id": hit.source_id,
+                "source_kind": hit.source_kind,
+                "group": hit.group_name,
+                "layer": hit.layer,
+                "score": hit.score,
+                "rank": hit.rank,
+                "reason": hit.reason,
+            }
+        )
+    items.sort(
+        key=lambda item: (
+            item["group"],
+            item["rank"],
+            item["memory_id"],
+        )
+    )
+    return items
 
 
 def _build_intent_detection_variables(
@@ -3003,8 +3112,8 @@ def _log_memory_context_usage(
     request_context: dict | None,
     user_message: str,
     memory_bundle,
-    memory_highlights: list[str],
     memory_context_text: str,
+    memory_trace_items: list[dict[str, Any]],
 ) -> None:
     top_memories = [
         {
@@ -3018,18 +3127,22 @@ def _log_memory_context_usage(
     ]
     query_hits = [
         {
-            "memory_id": hit.card.id,
-            "title": hit.card.title,
-            "memory_type": hit.card.memory_type,
+            "memory_id": hit.memory_id,
+            "source_id": hit.source_id,
+            "title": hit.title,
+            "group": hit.group_name,
             "score": hit.score,
+            "rank": hit.rank,
             "matched_terms": hit.matched_terms,
-            "summary": hit.card.summary,
+            "summary": hit.summary,
         }
-        for hit in memory_bundle.query_result.items
+        for hit in [
+            *memory_bundle.recall.session_summary,
+            *memory_bundle.recall.stable_facts,
+            *memory_bundle.recall.recent_events,
+            *memory_bundle.recall.external_knowledge,
+        ]
     ]
-    highlight_source = "preference_highlights" if memory_bundle.hot_summary.preference_highlights[:3] else (
-        "recent_event_highlights" if memory_bundle.hot_summary.recent_event_highlights[:3] else "none"
-    )
     _log_orchestrator_debug_event(
         request_context=request_context,
         stage="memory_context.read",
@@ -3039,12 +3152,25 @@ def _log_memory_context_usage(
             "capability": memory_bundle.capability,
             "total_visible_cards": memory_bundle.hot_summary.total_visible_cards,
             "top_memories": top_memories,
-            "preference_highlights": memory_bundle.hot_summary.preference_highlights[:3],
-            "recent_event_highlights": memory_bundle.hot_summary.recent_event_highlights[:3],
+            "stable_fact_hits": [
+                {"memory_id": hit.memory_id, "score": hit.score, "rank": hit.rank}
+                for hit in memory_bundle.recall.stable_facts
+            ],
+            "session_summary_hits": [
+                {"memory_id": hit.memory_id, "score": hit.score, "rank": hit.rank}
+                for hit in memory_bundle.recall.session_summary
+            ],
+            "recent_event_hits": [
+                {"memory_id": hit.memory_id, "score": hit.score, "rank": hit.rank}
+                for hit in memory_bundle.recall.recent_events
+            ],
+            "external_knowledge_hits": [
+                {"memory_id": hit.memory_id, "score": hit.score, "rank": hit.rank}
+                for hit in memory_bundle.recall.external_knowledge
+            ],
             "query_result_total": memory_bundle.query_result.total,
             "query_hits": query_hits,
-            "injected_highlight_source": highlight_source,
-            "injected_highlights": memory_highlights,
+            "trace_items": memory_trace_items,
             "injected_memory_context": memory_context_text,
         },
     )

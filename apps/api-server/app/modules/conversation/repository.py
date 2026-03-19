@@ -7,11 +7,13 @@ from app.modules.conversation.models import (
     ConversationActionRecord,
     ConversationDeviceControlShortcut,
     ConversationDebugLog,
+    ConversationMemoryRead,
     ConversationMemoryCandidate,
     ConversationMessage,
     ConversationProposalBatch,
     ConversationProposalItem,
     ConversationSession,
+    ConversationSessionSummary,
     ConversationTurnSource,
 )
 
@@ -46,6 +48,37 @@ def list_sessions(
 def add_message(db: Session, row: ConversationMessage) -> ConversationMessage:
     db.add(row)
     return row
+
+
+def add_session_summary(db: Session, row: ConversationSessionSummary) -> ConversationSessionSummary:
+    db.add(row)
+    return row
+
+
+def get_session_summary(db: Session, *, session_id: str) -> ConversationSessionSummary | None:
+    stmt: Select[tuple[ConversationSessionSummary]] = select(ConversationSessionSummary).where(
+        ConversationSessionSummary.session_id == session_id
+    )
+    return db.scalar(stmt)
+
+
+def list_session_summaries(
+    db: Session,
+    *,
+    household_id: str,
+    requester_member_id: str | None = None,
+    status: str | None = None,
+) -> Sequence[ConversationSessionSummary]:
+    stmt: Select[tuple[ConversationSessionSummary]] = (
+        select(ConversationSessionSummary)
+        .where(ConversationSessionSummary.household_id == household_id)
+        .order_by(ConversationSessionSummary.updated_at.desc(), ConversationSessionSummary.id.desc())
+    )
+    if requester_member_id is not None:
+        stmt = stmt.where(ConversationSessionSummary.requester_member_id == requester_member_id)
+    if status is not None:
+        stmt = stmt.where(ConversationSessionSummary.status == status)
+    return list(db.scalars(stmt).all())
 
 
 def add_turn_source(db: Session, row: ConversationTurnSource) -> ConversationTurnSource:
@@ -181,6 +214,32 @@ def claim_next_event_seq(db: Session, *, session: ConversationSession) -> int:
 def add_debug_log(db: Session, row: ConversationDebugLog) -> ConversationDebugLog:
     db.add(row)
     return row
+
+
+def add_memory_read(db: Session, row: ConversationMemoryRead) -> ConversationMemoryRead:
+    db.add(row)
+    return row
+
+
+def list_memory_reads(
+    db: Session,
+    *,
+    session_id: str,
+    request_id: str | None = None,
+) -> Sequence[ConversationMemoryRead]:
+    stmt: Select[tuple[ConversationMemoryRead]] = (
+        select(ConversationMemoryRead)
+        .where(ConversationMemoryRead.session_id == session_id)
+        .order_by(
+            ConversationMemoryRead.created_at.asc(),
+            ConversationMemoryRead.group_name.asc(),
+            ConversationMemoryRead.rank.asc(),
+            ConversationMemoryRead.id.asc(),
+        )
+    )
+    if request_id is not None:
+        stmt = stmt.where(ConversationMemoryRead.request_id == request_id)
+    return list(db.scalars(stmt).all())
 
 
 def add_device_control_shortcut(

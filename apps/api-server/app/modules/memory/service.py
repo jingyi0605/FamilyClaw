@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from typing import cast
 
@@ -11,7 +12,22 @@ from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 # NOTE: get_household_or_404 延迟导入，避免循环依赖
 from app.modules.member.models import Member
 from app.modules.memory import repository
-from app.modules.memory.models import EventRecord, MemoryCard, MemoryCardMember, MemoryCardRevision
+from app.modules.memory.models import (
+    EpisodicMemoryEntryRevision,
+    EpisodicMemoryEntry,
+    EventRecord,
+    KnowledgeDocument,
+    KnowledgeDocumentRevision,
+    MemoryCard,
+    MemoryCardMember,
+    MemoryCardRevision,
+)
+from app.modules.memory.recall_projection import (
+    MEMORY_RECALL_PROJECTION_VERSION,
+    build_memory_card_search_text,
+    build_text_embedding,
+    to_vector_literal,
+)
 from app.modules.memory.schemas import (
     EventRecordCreate,
     EventRecordRead,
@@ -32,6 +48,17 @@ from app.modules.room.models import Room
 VALID_MEMORY_TYPES = {"fact", "event", "preference", "relation", "growth", "observation"}
 VALID_MEMORY_STATUS = {"active", "pending_review", "invalidated", "deleted"}
 VALID_MEMORY_VISIBILITY = {"public", "family", "private", "sensitive"}
+VALID_KNOWLEDGE_DOCUMENT_SOURCE_KINDS = {"plugin_raw_record", "doc", "rule"}
+RECENT_EVENT_MEMORY_TYPES = {"event", "growth", "observation"}
+PROMOTION_WINDOW_DAYS = 30
+PROMOTION_THRESHOLD_BY_TYPE = {
+    "fact": 1,
+    "preference": 1,
+    "relation": 1,
+    "event": 2,
+    "growth": 2,
+    "observation": 2,
+}
 SUPPORTED_EVENT_MEMORY_TYPES = {
     "memory_manual_created": "fact",
     "member_fact_observed": "fact",
@@ -72,6 +99,20 @@ def _get_room_in_household_or_400(db: Session, room_id: str, household_id: str) 
             detail="room must belong to the same household",
         )
     return room
+
+
+def _normalize_subject_member_id_for_household(
+    db: Session,
+    *,
+    household_id: str,
+    subject_member_id: str | None,
+) -> str | None:
+    if not isinstance(subject_member_id, str):
+        return None
+    normalized_subject_member_id = subject_member_id.strip()
+    if not normalized_subject_member_id:
+        return None
+    return _get_member_in_household_or_400(db, normalized_subject_member_id, household_id).id
 
 
 def _normalize_memory_type(value: Any, default: str) -> str:
@@ -262,6 +303,125 @@ def _record_revision(
             created_at=utc_now_iso(),
         ),
     )
+
+
+def _build_episodic_memory_entry_snapshot(row: EpisodicMemoryEntry) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "household_id": row.household_id,
+        "subject_member_id": row.subject_member_id,
+        "source_kind": row.source_kind,
+        "source_id": row.source_id,
+        "title": row.title,
+        "summary": row.summary,
+        "content": load_json(row.content_json),
+        "visibility": row.visibility,
+        "importance": row.importance,
+        "confidence": row.confidence,
+        "promotion_key": row.promotion_key,
+        "occurred_at": row.occurred_at,
+        "status": row.status,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _record_episodic_memory_entry_revision(
+    db: Session,
+    *,
+    entry_id: str,
+    action: str,
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+    reason: str | None,
+    actor_type: str,
+    actor_id: str | None,
+) -> None:
+    repository.add_episodic_memory_entry_revision(
+        db,
+        EpisodicMemoryEntryRevision(
+            id=new_uuid(),
+            entry_id=entry_id,
+            revision_no=repository.get_next_episodic_memory_entry_revision_no(db, entry_id=entry_id),
+            action=action,
+            before_json=dump_json(jsonable_encoder(before)) if before is not None else None,
+            after_json=dump_json(jsonable_encoder(after)) if after is not None else None,
+            reason=reason,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            created_at=utc_now_iso(),
+        ),
+    )
+
+
+def _build_knowledge_document_snapshot(row: KnowledgeDocument) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "household_id": row.household_id,
+        "source_kind": row.source_kind,
+        "source_ref": row.source_ref,
+        "title": row.title,
+        "summary": row.summary,
+        "body_text": row.body_text,
+        "visibility": row.visibility,
+        "updated_at": row.updated_at,
+        "status": row.status,
+    }
+
+
+def _record_knowledge_document_revision(
+    db: Session,
+    *,
+    document_id: str,
+    action: str,
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+    reason: str | None,
+    actor_type: str,
+    actor_id: str | None,
+) -> None:
+    repository.add_knowledge_document_revision(
+        db,
+        KnowledgeDocumentRevision(
+            id=new_uuid(),
+            document_id=document_id,
+            revision_no=repository.get_next_knowledge_document_revision_no(db, document_id=document_id),
+            action=action,
+            before_json=dump_json(jsonable_encoder(before)) if before is not None else None,
+            after_json=dump_json(jsonable_encoder(after)) if after is not None else None,
+            reason=reason,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            created_at=utc_now_iso(),
+        ),
+    )
+    db.flush()
+
+
+def _refresh_memory_card_projection(db: Session, *, row: MemoryCard) -> None:
+    search_text = build_memory_card_search_text(
+        memory_type=row.memory_type,
+        title=row.title,
+        summary=row.summary,
+        normalized_text=row.normalized_text,
+        content_json=row.content_json,
+    )
+    embedding_literal = to_vector_literal(build_text_embedding(search_text))
+    projection_updated_at = utc_now_iso()
+    repository.refresh_memory_card_projection(
+        db,
+        memory_id=row.id,
+        search_text=search_text,
+        embedding_literal=embedding_literal,
+        projection_version=MEMORY_RECALL_PROJECTION_VERSION,
+        projection_updated_at=projection_updated_at,
+    )
+    row.search_text = search_text or None
+    row.projection_version = MEMORY_RECALL_PROJECTION_VERSION
+    row.projection_updated_at = projection_updated_at
+    from app.modules.memory.recall_document_service import sync_memory_card_recall_document
+
+    sync_memory_card_recall_document(db, row=row)
     db.flush()
 
 
@@ -353,6 +513,285 @@ def _derive_event_candidate(event: EventRecord) -> dict[str, Any] | None:
     }
 
 
+def _derive_promotion_key(*, candidate: dict[str, Any]) -> str | None:
+    content = candidate.get("content")
+    if isinstance(content, dict):
+        raw_key = content.get("promotion_key")
+        if isinstance(raw_key, str) and raw_key.strip():
+            return raw_key.strip()
+        category = content.get("category")
+        if isinstance(category, str) and category.strip():
+            subject_key = candidate.get("subject_member_id") or content.get("subject_id") or "global"
+            return f"{candidate['memory_type']}:{subject_key}:{category.strip().lower()}"
+
+    if candidate["memory_type"] in RECENT_EVENT_MEMORY_TYPES:
+        return _build_memory_dedupe_key(
+            household_id=candidate["household_id"],
+            memory_type=candidate["memory_type"],
+            subject_member_id=candidate.get("subject_member_id"),
+            title=candidate["title"],
+            summary=candidate["summary"],
+        )
+    return _build_memory_dedupe_key(
+        household_id=candidate["household_id"],
+        memory_type=candidate["memory_type"],
+        subject_member_id=candidate.get("subject_member_id"),
+        title=candidate["title"],
+        summary=candidate["summary"],
+    )
+
+
+def _upsert_episodic_entry_from_event(
+    db: Session,
+    *,
+    event: EventRecord,
+    candidate: dict[str, Any],
+) -> EpisodicMemoryEntry:
+    subject_member_id = _normalize_subject_member_id_for_household(
+        db,
+        household_id=event.household_id,
+        subject_member_id=candidate.get("subject_member_id"),
+    )
+    row = repository.get_episodic_memory_entry_by_source(
+        db,
+        household_id=event.household_id,
+        source_kind="event",
+        source_id=event.id,
+    )
+    content = dict(candidate.get("content") or {})
+    content["memory_type"] = candidate["memory_type"]
+    content["related_members"] = candidate.get("related_members", [])
+    now = utc_now_iso()
+    if row is None:
+        row = EpisodicMemoryEntry(
+            id=new_uuid(),
+            household_id=event.household_id,
+            subject_member_id=subject_member_id,
+            source_kind="event",
+            source_id=event.id,
+            title=candidate["title"],
+            summary=candidate["summary"],
+            content_json=dump_json(jsonable_encoder(content)) or "{}",
+            visibility=candidate["visibility"],
+            importance=candidate["importance"],
+            confidence=candidate["confidence"],
+            promotion_key=_derive_promotion_key(candidate=candidate),
+            occurred_at=event.occurred_at,
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+        repository.add_episodic_memory_entry(db, row)
+        db.flush()
+        _record_episodic_memory_entry_revision(
+            db,
+            entry_id=row.id,
+            action="create",
+            before=None,
+            after=_build_episodic_memory_entry_snapshot(row),
+            reason="由事件记录沉淀为 L2 情节记忆",
+            actor_type="system",
+            actor_id=event.source_type,
+        )
+    else:
+        before = _build_episodic_memory_entry_snapshot(row)
+        row.subject_member_id = subject_member_id
+        row.title = candidate["title"]
+        row.summary = candidate["summary"]
+        row.content_json = dump_json(jsonable_encoder(content)) or "{}"
+        row.visibility = candidate["visibility"]
+        row.importance = candidate["importance"]
+        row.confidence = candidate["confidence"]
+        row.promotion_key = _derive_promotion_key(candidate=candidate)
+        row.occurred_at = event.occurred_at
+        row.status = "active"
+        row.updated_at = now
+        db.add(row)
+        db.flush()
+        _record_episodic_memory_entry_revision(
+            db,
+            entry_id=row.id,
+            action="update",
+            before=before,
+            after=_build_episodic_memory_entry_snapshot(row),
+            reason="事件链路刷新 L2 情节记忆",
+            actor_type="system",
+            actor_id=event.source_type,
+        )
+    db.flush()
+    from app.modules.memory.recall_document_service import sync_episodic_memory_recall_document
+
+    sync_episodic_memory_recall_document(db, row=row)
+    db.flush()
+    return row
+
+
+def upsert_episodic_memory_from_session_summary(
+    db: Session,
+    *,
+    summary_id: str,
+    household_id: str,
+    requester_member_id: str | None,
+    summary: str,
+    open_topics: list[str],
+    recent_confirmations: list[str],
+    generated_at: str,
+    updated_at: str,
+) -> EpisodicMemoryEntry:
+    normalized_requester_member_id = _normalize_subject_member_id_for_household(
+        db,
+        household_id=household_id,
+        subject_member_id=requester_member_id,
+    )
+    row = repository.get_episodic_memory_entry_by_source(
+        db,
+        household_id=household_id,
+        source_kind="session_summary",
+        source_id=summary_id,
+    )
+    content = {
+        "memory_type": "event",
+        "open_topics": open_topics,
+        "recent_confirmations": recent_confirmations,
+        "source_summary_id": summary_id,
+    }
+    title = "会话进展摘要"
+    now = utc_now_iso()
+    if row is None:
+        row = EpisodicMemoryEntry(
+            id=new_uuid(),
+            household_id=household_id,
+            subject_member_id=normalized_requester_member_id,
+            source_kind="session_summary",
+            source_id=summary_id,
+            title=title,
+            summary=summary,
+            content_json=dump_json(content) or "{}",
+            visibility="private",
+            importance=2,
+            confidence=0.75,
+            promotion_key=None,
+            occurred_at=generated_at,
+            status="active",
+            created_at=now,
+            updated_at=updated_at,
+        )
+        repository.add_episodic_memory_entry(db, row)
+        db.flush()
+        _record_episodic_memory_entry_revision(
+            db,
+            entry_id=row.id,
+            action="create",
+            before=None,
+            after=_build_episodic_memory_entry_snapshot(row),
+            reason="由会话摘要沉淀为 L2 情节记忆",
+            actor_type="system",
+            actor_id="session_summary",
+        )
+    else:
+        before = _build_episodic_memory_entry_snapshot(row)
+        row.subject_member_id = normalized_requester_member_id
+        row.title = title
+        row.summary = summary
+        row.content_json = dump_json(content) or "{}"
+        row.visibility = "private"
+        row.importance = 2
+        row.confidence = 0.75
+        row.occurred_at = generated_at
+        row.status = "active"
+        row.updated_at = updated_at
+        db.add(row)
+        db.flush()
+        _record_episodic_memory_entry_revision(
+            db,
+            entry_id=row.id,
+            action="update",
+            before=before,
+            after=_build_episodic_memory_entry_snapshot(row),
+            reason="会话摘要刷新 L2 情节记忆",
+            actor_type="system",
+            actor_id="session_summary",
+        )
+    db.flush()
+    from app.modules.memory.recall_document_service import sync_episodic_memory_recall_document
+
+    sync_episodic_memory_recall_document(db, row=row)
+    db.flush()
+    return row
+
+
+def _build_promoted_memory_candidate(entries: list[EpisodicMemoryEntry]) -> dict[str, Any]:
+    ordered_entries = sorted(entries, key=lambda item: (item.occurred_at, item.updated_at, item.id))
+    latest = ordered_entries[-1]
+    latest_content = load_json(latest.content_json)
+    memory_type = latest_content.get("memory_type") if isinstance(latest_content, dict) else None
+    normalized_memory_type = (
+        memory_type if isinstance(memory_type, str) and memory_type in VALID_MEMORY_TYPES else "fact"
+    )
+    source_pairs = [
+        {"episodic_entry_id": item.id, "source_kind": item.source_kind, "source_id": item.source_id}
+        for item in ordered_entries
+    ]
+    summary = latest.summary
+    if len(ordered_entries) > 1:
+        summary = f"{latest.summary}（近{PROMOTION_WINDOW_DAYS}天重复命中 {len(ordered_entries)} 次）"
+    return {
+        "household_id": latest.household_id,
+        "memory_type": normalized_memory_type if normalized_memory_type not in RECENT_EVENT_MEMORY_TYPES else "fact",
+        "title": latest.title,
+        "summary": summary,
+        "content": {
+            "promoted_from": "episodic_memory_entries",
+            "promotion_key": latest.promotion_key,
+            "source_entries": source_pairs,
+            "latest_summary": latest.summary,
+        },
+        "status": "active",
+        "visibility": latest.visibility,
+        "importance": max(item.importance for item in ordered_entries),
+        "confidence": round(sum(item.confidence for item in ordered_entries) / len(ordered_entries), 6),
+        "subject_member_id": latest.subject_member_id,
+        "source_event_id": latest.source_id if latest.source_kind == "event" else None,
+        "source_plugin_id": None,
+        "source_raw_record_id": None,
+        "dedupe_key": f"promotion:{latest.household_id}:{latest.promotion_key or latest.id}",
+        "effective_at": ordered_entries[0].occurred_at,
+        "last_observed_at": latest.occurred_at,
+        "related_members": latest_content.get("related_members", []) if isinstance(latest_content, dict) else [],
+        "reason": "由情节记忆重复命中提升为语义记忆",
+    }
+
+
+def promote_episodic_to_semantic(
+    db: Session,
+    *,
+    household_id: str,
+    promotion_key: str | None,
+    threshold: int,
+) -> MemoryCardRead | None:
+    if not promotion_key:
+        return None
+    occurred_at_gte = (datetime.now(UTC) - timedelta(days=PROMOTION_WINDOW_DAYS)).isoformat().replace("+00:00", "Z")
+    entries = list(
+        repository.list_episodic_memory_entries_by_promotion_key(
+            db,
+            household_id=household_id,
+            promotion_key=promotion_key,
+            statuses=["active"],
+            occurred_at_gte=occurred_at_gte,
+        )
+    )
+    if len(entries) < max(threshold, 1):
+        return None
+    return _upsert_memory_card(
+        db,
+        candidate=_build_promoted_memory_candidate(entries),
+        actor_type="system",
+        actor_id=None,
+        revision_action="update_observed",
+    )
+
+
 def _upsert_memory_card(
     db: Session,
     *,
@@ -440,6 +879,7 @@ def _upsert_memory_card(
             related_members=candidate.get("related_members", []),
         )
         db.flush()
+        _refresh_memory_card_projection(db, row=row)
         after = _build_card_reads(db, [row])[0]
         _record_revision(
             db,
@@ -491,6 +931,7 @@ def _upsert_memory_card(
         )
         db.flush()
 
+    _refresh_memory_card_projection(db, row=existing)
     after = _build_card_reads(db, [existing])[0]
     _record_revision(
         db,
@@ -555,12 +996,17 @@ def ingest_event_record(db: Session, payload: EventRecordCreate) -> tuple[EventR
             event.processing_status = "ignored"
             event.processed_at = utc_now_iso()
             return event, False
-        _upsert_memory_card(
+        episodic_entry = _upsert_episodic_entry_from_event(
             db,
+            event=event,
             candidate=candidate,
-            actor_type="system",
-            actor_id=None,
-            revision_action="update_observed",
+        )
+        threshold = PROMOTION_THRESHOLD_BY_TYPE.get(candidate["memory_type"], 2)
+        promote_episodic_to_semantic(
+            db,
+            household_id=event.household_id,
+            promotion_key=episodic_entry.promotion_key,
+            threshold=threshold,
         )
         event.processing_status = "processed"
         event.failure_reason = None
@@ -680,6 +1126,7 @@ def correct_memory_card(
     db.add(row)
     db.flush()
 
+    _refresh_memory_card_projection(db, row=row)
     after = _build_card_reads(db, [row])[0]
     _record_revision(
         db,
@@ -756,6 +1203,158 @@ def ingest_event_record_best_effort(db: Session, payload: EventRecordCreate) -> 
             return event.id, event.processing_status
     except Exception:
         return None, None
+
+
+def upsert_knowledge_document_from_observation(
+    db: Session,
+    *,
+    household_id: str,
+    subject_member_id: str | None,
+    source_plugin_id: str,
+    source_raw_record_id: str,
+    observation: dict[str, Any],
+) -> KnowledgeDocument:
+    normalized_subject_member_id = _normalize_subject_member_id_for_household(
+        db,
+        household_id=household_id,
+        subject_member_id=subject_member_id,
+    )
+    subject_type = observation.get("subject_type") if isinstance(observation.get("subject_type"), str) else None
+    subject_id = observation.get("subject_id") if isinstance(observation.get("subject_id"), str) else None
+    category = observation.get("category") if isinstance(observation.get("category"), str) else None
+    observed_at = observation.get("observed_at") if isinstance(observation.get("observed_at"), str) else utc_now_iso()
+    unit = observation.get("unit") if isinstance(observation.get("unit"), str) else None
+    value = observation.get("value")
+    if not category or value is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="observation 缺少 category 或 value")
+
+    from app.modules.plugin.models import PluginRawRecord
+
+    raw_record = db.get(PluginRawRecord, source_raw_record_id)
+    if raw_record is None or raw_record.household_id != household_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source raw record not found")
+
+    title_subject = subject_id or normalized_subject_member_id or "未指定对象"
+    title = f"{title_subject} 的 {category} 外部记录"
+    summary_parts = [category, str(value)]
+    if unit:
+        summary_parts.append(unit)
+    summary = " / ".join(summary_parts)
+    body_text = " ".join(
+        part
+        for part in [
+            title,
+            summary,
+            subject_type,
+            subject_id,
+            source_plugin_id,
+            dump_json(load_json(raw_record.payload_json)) or "",
+        ]
+        if isinstance(part, str) and part.strip()
+    )
+    return upsert_knowledge_document(
+        db,
+        household_id=household_id,
+        source_kind="plugin_raw_record",
+        source_ref=source_raw_record_id,
+        title=title,
+        summary=summary,
+        body_text=body_text,
+        visibility="family",
+        updated_at=observed_at,
+        status="active",
+        reason="由插件原始记录导入为 L4 外部知识",
+        actor_type="plugin",
+        actor_id=source_plugin_id,
+    )
+
+
+def upsert_knowledge_document(
+    db: Session,
+    *,
+    household_id: str,
+    source_kind: str,
+    source_ref: str,
+    title: str,
+    summary: str,
+    body_text: str,
+    visibility: str = "family",
+    updated_at: str | None = None,
+    status: str = "active",
+    reason: str | None = None,
+    actor_type: str = "system",
+    actor_id: str | None = None,
+) -> KnowledgeDocument:
+    normalized_source_kind = source_kind.strip() if isinstance(source_kind, str) else ""
+    if normalized_source_kind not in VALID_KNOWLEDGE_DOCUMENT_SOURCE_KINDS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported knowledge source kind")
+    normalized_source_ref = source_ref.strip() if isinstance(source_ref, str) else ""
+    if not normalized_source_ref:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="knowledge source ref is required")
+    normalized_title = title.strip() if isinstance(title, str) else ""
+    normalized_summary = summary.strip() if isinstance(summary, str) else ""
+    normalized_body_text = body_text.strip() if isinstance(body_text, str) else ""
+    if not normalized_title or not normalized_summary or not normalized_body_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="knowledge document title/summary/body_text is required")
+    normalized_visibility = _normalize_memory_visibility(visibility, default="family")
+    normalized_status = status.strip() if isinstance(status, str) and status.strip() else "active"
+    row = repository.get_knowledge_document_by_source(
+        db,
+        household_id=household_id,
+        source_kind=normalized_source_kind,
+        source_ref=normalized_source_ref,
+    )
+    if row is None:
+        row = KnowledgeDocument(
+            id=new_uuid(),
+            household_id=household_id,
+            source_kind=normalized_source_kind,
+            source_ref=normalized_source_ref,
+            title=normalized_title,
+            summary=normalized_summary,
+            body_text=normalized_body_text,
+            visibility=normalized_visibility,
+            updated_at=updated_at or utc_now_iso(),
+            status=normalized_status,
+        )
+        repository.add_knowledge_document(db, row)
+        db.flush()
+        _record_knowledge_document_revision(
+            db,
+            document_id=row.id,
+            action="create",
+            before=None,
+            after=_build_knowledge_document_snapshot(row),
+            reason=reason or "创建 L4 外部知识",
+            actor_type=actor_type,
+            actor_id=actor_id,
+        )
+    else:
+        before = _build_knowledge_document_snapshot(row)
+        row.title = normalized_title
+        row.summary = normalized_summary
+        row.body_text = normalized_body_text
+        row.visibility = normalized_visibility
+        row.updated_at = updated_at or utc_now_iso()
+        row.status = normalized_status
+        db.add(row)
+        db.flush()
+        _record_knowledge_document_revision(
+            db,
+            document_id=row.id,
+            action="update",
+            before=before,
+            after=_build_knowledge_document_snapshot(row),
+            reason=reason or "更新 L4 外部知识",
+            actor_type=actor_type,
+            actor_id=actor_id,
+        )
+    db.flush()
+    from app.modules.memory.recall_document_service import sync_knowledge_document_recall_document
+
+    sync_knowledge_document_recall_document(db, row=row)
+    db.flush()
+    return row
 
 
 def upsert_plugin_observation_memory(

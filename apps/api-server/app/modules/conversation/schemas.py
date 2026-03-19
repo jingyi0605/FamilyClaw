@@ -22,6 +22,7 @@ ConversationProposalStatus = Literal[
     "failed",
 ]
 ConversationDebugLogLevel = Literal["info", "warning", "error"]
+ConversationSessionSummaryStatus = Literal["fresh", "stale", "rebuilding", "failed"]
 
 
 class ConversationSessionCreate(BaseModel):
@@ -126,6 +127,20 @@ class ConversationProposalBatchRead(BaseModel):
     items: list[ConversationProposalItemRead] = Field(default_factory=list)
 
 
+class ConversationSessionSummaryRead(BaseModel):
+    id: str
+    session_id: str
+    household_id: str
+    requester_member_id: str | None = None
+    summary: str
+    open_topics: list[str] = Field(default_factory=list)
+    recent_confirmations: list[str] = Field(default_factory=list)
+    covered_message_seq: int = Field(default=0, ge=0)
+    status: ConversationSessionSummaryStatus
+    generated_at: str
+    updated_at: str
+
+
 class ConversationSessionRead(BaseModel):
     id: str
     household_id: str
@@ -146,6 +161,7 @@ class ConversationSessionRead(BaseModel):
 class ConversationSessionDetailRead(ConversationSessionRead):
     messages: list[ConversationMessageRead] = Field(default_factory=list)
     proposal_batches: list[ConversationProposalBatchRead] = Field(default_factory=list)
+    session_summary: ConversationSessionSummaryRead | None = None
 
 
 class ConversationSessionListResponse(BaseModel):

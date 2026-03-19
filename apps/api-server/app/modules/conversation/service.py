@@ -23,11 +23,13 @@ from app.modules.conversation.device_context_summary import (
 from app.modules.conversation.models import (
     ConversationActionRecord,
     ConversationDebugLog,
+    ConversationMemoryRead,
     ConversationMemoryCandidate,
     ConversationMessage,
     ConversationProposalBatch,
     ConversationProposalItem,
     ConversationSession,
+    ConversationSessionSummary,
     ConversationTurnSource,
 )
 from app.modules.conversation.orchestrator import (
@@ -46,6 +48,7 @@ from app.modules.conversation.proposal_pipeline import (
     persist_proposal_batch,
 )
 from app.modules.conversation.proposal_analyzers import ProposalDraft
+from app.modules.conversation.session_summary_service import get_session_summary_read, maybe_refresh_session_summary
 from app.modules.conversation.schemas import (
     ConversationActionExecutionRead,
     ConversationDebugLogListRead,
@@ -61,6 +64,7 @@ from app.modules.conversation.schemas import (
     ConversationSessionDetailRead,
     ConversationSessionListResponse,
     ConversationSessionRead,
+    ConversationSessionSummaryRead,
     ConversationTurnCreate,
     ConversationTurnRead,
 )
@@ -511,6 +515,12 @@ def create_conversation_turn(
                 "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
             },
         )
+        _refresh_session_summary_after_turn(
+            db,
+            session=session,
+            request_id=request_id,
+            trigger_reason="turn_completed",
+        )
         _append_debug_log(
             db,
             session=session,
@@ -655,6 +665,12 @@ async def acreate_conversation_turn(
                 "proposal_batch_id": None if proposal_pipeline_result is None else proposal_pipeline_result.batch_id,
                 "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
             },
+        )
+        _refresh_session_summary_after_turn(
+            db,
+            session=session,
+            request_id=request_id,
+            trigger_reason="turn_completed",
         )
         _append_debug_log(
             db,
@@ -1495,6 +1511,12 @@ def _complete_assistant_message(
     session.active_agent_id = result.effective_agent_id or session.active_agent_id
     session.last_message_at = now
     session.updated_at = now
+    _persist_memory_trace_for_turn(
+        db,
+        session=session,
+        request_id=assistant_message.request_id,
+        trace_items=result.memory_trace_items,
+    )
     db.flush()
 
 
@@ -1715,9 +1737,114 @@ def _build_orchestrator_debug_payload(result: ConversationOrchestratorResult) ->
         "suggestions_count": len(result.suggestions),
         "memory_candidate_count": len(result.memory_candidate_payloads),
         "action_payload_count": len(result.action_payloads),
+        "memory_trace_count": len(result.memory_trace_items),
+        "memory_trace_groups": _summarize_memory_trace_groups(result.memory_trace_items),
         "has_config_suggestion": bool(result.config_suggestion),
         "degraded": result.degraded,
     }
+
+
+def _persist_memory_trace_for_turn(
+    db: Session,
+    *,
+    session: ConversationSession,
+    request_id: str | None,
+    trace_items: list[dict],
+) -> None:
+    if not request_id or not trace_items:
+        return
+    try:
+        for item in trace_items:
+            repository.add_memory_read(
+                db,
+                ConversationMemoryRead(
+                    id=new_uuid(),
+                    session_id=session.id,
+                    request_id=request_id,
+                    group_name=str(item.get("group") or "stable_facts"),
+                    layer=str(item.get("layer") or "L3"),
+                    memory_id=str(item.get("memory_id") or ""),
+                    source_kind=str(item.get("source_kind") or "memory_card"),
+                    source_id=str(item.get("source_id") or item.get("memory_id") or ""),
+                    score=float(item.get("score") or 0.0),
+                    rank=int(item.get("rank") or 0),
+                    reason_json=dump_json(item.get("reason") if isinstance(item.get("reason"), dict) else {}) or "{}",
+                    created_at=utc_now_iso(),
+                ),
+            )
+    except Exception:
+        logger.exception(
+            "会话记忆 trace 落库失败 session_id=%s request_id=%s trace_count=%s",
+            session.id,
+            request_id,
+            len(trace_items),
+        )
+
+
+def _refresh_session_summary_after_turn(
+    db: Session,
+    *,
+    session: ConversationSession,
+    request_id: str | None,
+    trigger_reason: str,
+    force: bool = False,
+) -> ConversationSessionSummaryRead | None:
+    try:
+        summary = maybe_refresh_session_summary(
+            db,
+            session_id=session.id,
+            trigger_reason=trigger_reason,
+            force=force,
+        )
+    except Exception as exc:
+        logger.exception(
+            "会话摘要后处理失败 session_id=%s request_id=%s trigger_reason=%s",
+            session.id,
+            request_id,
+            trigger_reason,
+        )
+        _append_debug_log(
+            db,
+            session=session,
+            request_id=request_id,
+            stage="session_summary.failed",
+            source="session_summary",
+            level="error",
+            message="会话摘要刷新失败，但主链路继续运行。",
+            payload={
+                "trigger_reason": trigger_reason,
+                "error": str(exc),
+            },
+        )
+        return None
+
+    if summary is None:
+        return None
+
+    _append_debug_log(
+        db,
+        session=session,
+        request_id=request_id,
+        stage="session_summary.updated",
+        source="session_summary",
+        message="会话摘要已检查并更新。",
+        payload={
+            "trigger_reason": trigger_reason,
+            "status": summary.status,
+            "covered_message_seq": summary.covered_message_seq,
+            "open_topic_count": len(summary.open_topics),
+            "recent_confirmation_count": len(summary.recent_confirmations),
+        },
+    )
+    return summary
+
+
+def _summarize_memory_trace_groups(trace_items: list[dict]) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for item in trace_items:
+        group_name = str(item.get("group") or "unknown")
+        summary[group_name] = summary.get(group_name, 0) + 1
+    return summary
 
 
 def _serialize_action_records_for_debug(
@@ -1942,6 +2069,12 @@ def _persist_realtime_proposal_pipeline_sync(
             "proposal_batch_id": pipeline_result.batch_id,
             "proposal_count": len(pipeline_result.drafts),
         },
+    )
+    _refresh_session_summary_after_turn(
+        db,
+        session=session,
+        request_id=request_id,
+        trigger_reason="realtime_postprocess_completed",
     )
     if pipeline_result.batch_id is None:
         return ConversationRealtimeProposalPostprocessResult(snapshot=None)
@@ -2619,6 +2752,12 @@ def _finish_conversation_realtime_turn_sync(
             "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
         },
     )
+    _refresh_session_summary_after_turn(
+        db,
+        session=session,
+        request_id=request_id,
+        trigger_reason="realtime_turn_completed",
+    )
     session.current_request_id = None
     session.last_event_seq = max(session.last_event_seq, last_event_seq)
     session.updated_at = utc_now_iso()
@@ -3168,6 +3307,12 @@ def _finish_conversation_realtime_turn_sync(
             "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
         },
     )
+    _refresh_session_summary_after_turn(
+        db,
+        session=session,
+        request_id=request_id,
+        trigger_reason="realtime_turn_completed",
+    )
     session.current_request_id = None
     session.last_event_seq = max(session.last_event_seq, last_event_seq)
     session.updated_at = utc_now_iso()
@@ -3505,6 +3650,12 @@ async def run_conversation_realtime_turn(
                 "proposal_batch_id": None if proposal_pipeline_result is None else proposal_pipeline_result.batch_id,
                 "proposal_count": 0 if proposal_pipeline_result is None else len(proposal_pipeline_result.drafts),
             },
+        )
+        _refresh_session_summary_after_turn(
+            db,
+            session=session,
+            request_id=request_id,
+            trigger_reason="realtime_turn_completed",
         )
         session.current_request_id = None
         session.updated_at = utc_now_iso()
@@ -3883,10 +4034,12 @@ def _to_session_detail_read(db: Session, row: ConversationSession) -> Conversati
     session_read = _to_session_read(db, row)
     messages = [_to_message_read(item) for item in repository.list_messages(db, session_id=row.id)]
     proposal_batches = [_to_proposal_batch_read(db, item) for item in repository.list_proposal_batches(db, session_id=row.id)]
+    session_summary = get_session_summary_read(db, session_id=row.id)
     return ConversationSessionDetailRead(
         **session_read.model_dump(mode="json"),
         messages=messages,
         proposal_batches=proposal_batches,
+        session_summary=session_summary,
     )
 
 
