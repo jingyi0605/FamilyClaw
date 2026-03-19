@@ -11,19 +11,25 @@ outline: deep
 
 ## Current core modules
 
-- Dashboard: the main summary and action entry point.
-- Households: manage households, members, rooms, and permissions.
-- Conversations: the main interaction surface between users and the system.
-- Memory: long-term context and observable records.
-- Settings: system behavior, integrations, and runtime configuration.
+- Dashboard: family overview, reminders, weather and health cards, plus quick entry points.
+- Family: manages family data, members, rooms, and permissions. This is the root of everything else.
+- Conversations: the text conversation entry is available, and the voice gateway is optional on port `4399`.
+- Memory: long-term memory for events, preferences, and relationships, with query and revision support.
+- Settings: one place for AI providers, themes, plugins, accounts, timezone, and language.
+- Plugins: AI providers, channels, theme packs, and more are managed as plugins, with enable, disable, and configuration support.
+
+![fc-doc-20260319T231506.webp](../../快速开始/assets/fc-doc-20260319T231506.webp)
+Placeholder for screenshot: main product interface overview
+
+![fc-doc-20260319T231556.webp](../../快速开始/assets/fc-doc-20260319T231556.webp)
 
 ## Capability boundary
 
-- The host owns rules, entry points, and standard data semantics.
-- Plugins own third-party integration and capability extensions.
+- Host system: rules, permissions, scheduling, standard data models, logs, and auditing.
+- Plugins: connect to third-party APIs, devices, and models, then produce standardized entities, cards, and action results.
 
-## Suggested next reading
+## Recommended follow-up reading
 
-- Need user workflows: go to [User Guide](../user-guide/dashboard.md).
-- Need installation paths: go to [Installation](../installation-deployment/overview.md).
-- Need extension rules: go to [Developer Docs](../developer-docs/plugin-development.md).
+- If you want click-by-click guidance, read the [User Guide](../user-guide/dashboard.md).
+- If you want it running, read [Installation](../installation-deployment/overview.md).
+- If you want to customize it, read the [Developer Docs](../developer-docs/environment-setup.md) and the plugin topics.

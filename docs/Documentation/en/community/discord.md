@@ -9,16 +9,4 @@ outline: deep
 
 # Discord
 
-## What this page solves
-
-- It gives international users and cross-region contributors one stable discussion entry point.
-
-## Suggested scope
-
-- Invite link
-- Channel usage
-- Language expectations
-
-## Completion standard
-
-- International readers know where to join the community instead of asking whether Discord exists.
+Waiting for the server to be created.

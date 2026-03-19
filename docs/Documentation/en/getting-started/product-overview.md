@@ -9,24 +9,25 @@ outline: deep
 
 # Product Overview
 
-## What FamilyClaw is for
+## What the product is for
 
-FamilyClaw is meant to be a maintainable family AI platform, not a pile of disconnected features. It keeps households, conversations, memory, plugins, and unified entry points inside one consistent system.
+FamilyClaw = family context + conversation + long-term memory + plugin ecosystem + one unified entry point.
 
-## Core points to explain first
+- Family is the center: families, members, rooms, and permissions form the base data model.
+- Conversation is the main interaction: the web entry is already available, and the voice gateway is optional.
+- Memory is the core asset: conversations, events, and preferences become searchable family memory.
+- Plugins extend the system: AI providers, communication channels, theme packs, and more are all connected as plugins.
+- The docs stay aligned: Chinese uses the root path and English uses `/en/`, but both follow the same information architecture.
 
-- One household model: household, member, room, and permission data stay aligned.
-- One workspace: dashboard, conversations, memory, and settings work on the same base data.
-- One plugin system: third-party capability stays in plugins instead of leaking special cases into the host.
-- One docs site: Chinese at `/`, English at `/en/`.
+![fc-doc-20260319T231627.webp](../../快速开始/assets/fc-doc-20260319T231627.webp)
 
 ## What this page does not do
 
-- It does not explain installation steps.
-- It does not explain every UI flow.
-- It does not replace backend design docs.
+- It does not explain installation steps. Go to Installation.
+- It does not explain which buttons to click. Go to the User Guide.
+- It does not explain backend implementation details. Go to the Developer Docs.
 
-## Suggested next pages
+## Recommended next steps
 
-- Need the fastest first run: read [Quick Start](./quick-start.md).
-- Need the major user-facing capabilities: read [Core Features](./core-features.md).
+- If you want the fastest way to run it, read [Quick Start](./quick-start.md).
+- If you want to see the major capabilities, read [Core Features](./core-features.md).

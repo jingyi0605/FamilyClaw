@@ -11,22 +11,42 @@ outline: deep
 
 ## What this page solves
 
-- It gives a first-time reader the shortest path to a working system or a useful preview.
+- It gives a first-time reader the shortest path to a usable web experience.
+- It tells a new user what to do first, which command to run, and what success should look like.
 
-## Shortest path
+## Choose your path
 
-1. Pick one route first:
-   - Fast evaluation: [Docker Installation](../installation-deployment/docker-installation.md)
-   - Source-level development: [Environment Setup](../developer-docs/environment-setup.md)
-   - Product walkthrough: [Dashboard](../user-guide/dashboard.md)
-2. Finish the matching setup page.
-3. Open the dashboard and verify that the main workspace loads.
+1. If you just want it running as fast as possible, use [Docker Installation](../installation-deployment/docker-installation.md). One `docker run` command is enough.
+2. If you need local development or code changes, follow [Source Installation](../installation-deployment/source-installation.md) and bring up backend plus frontend.
+3. If you only want to inspect the UI first, open the [Dashboard](../user-guide/dashboard.md) page and check the screenshots.
 
-## First task after startup
+## Shortest runnable path: Docker
 
-- Confirm the household and member setup.
-- Open settings and complete the base configuration.
+1. Prepare a machine that can run Docker, with at least 2 GB of memory, plus port `8080` for the web app and optionally `4399` for the voice gateway.
+2. Run this command:
+
+```bash
+docker run -d \
+  --name familyclaw \
+  -p 8080:8080 \
+  -p 4399:4399 \
+  -e FAMILYCLAW_DB_PASSWORD='change-me' \
+  -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' \
+  -v /srv/familyclaw-data:/data \
+  jingyi0605/familyclaw:0.1.0
+```
+
+3. About one minute later, open `http://<server-ip>:8080` in a browser. If the login page appears, the system is up.
+4. The initial account is `user` / `user`. After login, follow the setup flow to change the account and password.
+
+Placeholder for screenshot: login page after Docker startup
+
+## First thing to do after startup
+
+- Open Settings and complete timezone, language, and the default AI provider.
+- Open Family settings and make sure at least one member exists. If not, complete the setup wizard.
 
 ## Completion standard
 
-- The reader knows which page to open next instead of guessing.
+- You can open the web home page in a browser and log in successfully.
+- You have either completed family setup once or reached the state that says setup is already complete.

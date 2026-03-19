@@ -163,7 +163,7 @@ const enThemeConfig = createThemeConfig({
   nav: [
     { text: 'Getting Started', link: '/en/getting-started/docs-overview' },
     { text: 'Installation', link: '/en/installation-deployment/overview' },
-    { text: 'User Guide', link: '/en/user-guide/dashboard' },
+    { text: 'User Guide', link: '/en/user-guide/first-login-and-setup' },
     { text: 'Developer Docs', link: '/en/developer-docs/environment-setup' },
     { text: 'Community', link: '/en/community/official-website' }
   ],
@@ -196,11 +196,13 @@ const enThemeConfig = createThemeConfig({
       {
         text: 'User Guide',
         items: [
+          { text: 'First Login & Setup', link: '/en/user-guide/first-login-and-setup' },
           { text: 'Dashboard', link: '/en/user-guide/dashboard' },
-          { text: 'Households', link: '/en/user-guide/households' },
+          { text: 'Family', link: '/en/user-guide/households' },
           { text: 'Conversations', link: '/en/user-guide/conversations' },
           { text: 'Memory', link: '/en/user-guide/memory' },
-          { text: 'Settings', link: '/en/user-guide/settings' }
+          { text: 'Settings', link: '/en/user-guide/settings' },
+          { text: 'Plugins', link: '/en/user-guide/plugins' }
         ]
       }
     ],

@@ -9,18 +9,38 @@ outline: deep
 
 # Windows Deployment
 
-## Best fit
+## Suitable for
 
-- Local demos
-- Light verification
-- Windows-based development machines
+- Local demos or lightweight testing on Windows 10 or 11.
+- Development machines that need a quick way to open the web interface.
 
-## Suggested focus
+## Recommended path: Docker Desktop
 
-- Docker Desktop path
-- Native dependency caveats
-- Path, port, and firewall differences
+1. Install Docker Desktop and enable the WSL2 backend.
+2. Reserve a data directory such as `D:\familyclaw-data`.
+3. Open PowerShell as Administrator and run:
+   ```powershell
+   docker run -d `
+     --name familyclaw `
+     -p 8080:8080 `
+     -p 4399:4399 `
+     -e FAMILYCLAW_DB_PASSWORD='change-me' `
+     -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' `
+     -v D:/familyclaw-data:/data `
+     jingyi0605/familyclaw:0.1.0
+   ```
+   Use `/` in the mounted path on Windows.
+4. Open `http://localhost:8080` in a browser. If the login page appears, startup succeeded.
 
-## Completion standard
+Placeholder for screenshot: Docker Desktop container list
 
-- Windows users know what to prepare and which issues are platform differences rather than product bugs.
+## Source path, optional
+
+- The recommended way is to use Ubuntu inside WSL2 and follow [Source Installation](./source-installation.md).
+- Native Windows with Python 3.11 plus PostgreSQL is possible, but you must handle `psycopg`, Taro, and Node dependencies yourself. WSL is the safer default.
+
+## Common issues
+
+- The container does not start: confirm Docker Desktop is running and WSL2 is enabled.
+- Port conflicts: change the mapping to something like `-p 18080:8080`.
+- Mounted path errors: use a forward-slash path such as `D:/familyclaw-data:/data`.
