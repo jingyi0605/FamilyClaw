@@ -212,6 +212,7 @@ cp apps/api-server/.env.example apps/api-server/.env
 cd apps
 bash start-api-server.sh
 # 脚本会自动创建虚拟环境、安装依赖、运行数据库迁移
+# 请在 Git Bash 中执行；Windows 上如果 PATH 里只有 py，脚本会自动回退到 py -3.11
 
 # 4. 启动前端（新开一个终端）
 cd ..  # 回到项目根目录
@@ -228,6 +229,7 @@ npm run dev:user-app:h5
 ```bash
 cd apps
 bash start-open-xiaoai-gateway.sh
+# 请在 Git Bash 中执行；Windows 上如果 PATH 里只有 py，脚本也会自动识别
 ```
 
 ### 关键配置说明
@@ -569,6 +571,7 @@ cp apps/api-server/.env.example apps/api-server/.env
 cd apps
 bash start-api-server.sh
 # The script auto-creates a virtual environment, installs dependencies, and runs migrations
+# Run this in Git Bash; on Windows the script also falls back to py -3.11 when python is not on PATH
 
 # 4. Start the frontend (in a new terminal)
 cd ..  # Back to project root
@@ -585,6 +588,7 @@ If you have a Xiaomi XiaoAI speaker, start the gateway to let the AI butler spea
 ```bash
 cd apps
 bash start-open-xiaoai-gateway.sh
+# Run this in Git Bash; on Windows the script also detects py automatically
 ```
 
 ### Key Configuration

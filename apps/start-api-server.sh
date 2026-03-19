@@ -6,24 +6,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 API_DIR="${PROJECT_ROOT}/apps/api-server"
 VENV_DIR="${API_DIR}/.venv"
-# Windows 使用 Scripts 目录，Unix 使用 bin 目录
+HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-8000}"
+RELOAD_DIR="${RELOAD_DIR:-app}"
+DEPS_HASH_FILE="${VENV_DIR}/.deps.sha256"
+PYTHON_CMD=()
+PYTHON_CMD_DESC=""
+
+# Windows 使用 Scripts 目录，Unix 使用 bin 目录。
 if [[ "${OSTYPE}" == "msys" || "${OSTYPE}" == "win32" ]]; then
   VENV_BIN_DIR="Scripts"
 else
   VENV_BIN_DIR="bin"
 fi
-# 默认使用 python3.11，若不存在则回退到 python（兼容 Windows）
-if [[ -z "${PYTHON_BIN:-}" ]]; then
-  if command -v python3.11 >/dev/null 2>&1; then
-    PYTHON_BIN="python3.11"
-  else
-    PYTHON_BIN="python"
-  fi
-fi
-HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8000}"
-RELOAD_DIR="${RELOAD_DIR:-app}"
-DEPS_HASH_FILE="${VENV_DIR}/.deps.sha256"
 
 log() {
   printf '[api-start] %s\n' "$1"
@@ -34,16 +29,63 @@ fail() {
   exit 1
 }
 
-ensure_python() {
-  if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-    fail "未找到 ${PYTHON_BIN}，请先安装 Python 3.11，或通过 PYTHON_BIN 指定解释器。"
+resolve_python() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+      fail "未找到 ${PYTHON_BIN}，请先安装 Python 3.11，或通过 PYTHON_BIN 指定可执行文件路径。"
+    fi
+
+    PYTHON_CMD=("${PYTHON_BIN}")
+    PYTHON_CMD_DESC="${PYTHON_BIN}"
+    return
   fi
+
+  if command -v python3.11 >/dev/null 2>&1; then
+    PYTHON_CMD=("python3.11")
+    PYTHON_CMD_DESC="python3.11"
+    return
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    PYTHON_CMD=("python")
+    PYTHON_CMD_DESC="python"
+    return
+  fi
+
+  # Windows Git Bash 经常只有 py，没有 python/python3.11。
+  if command -v py >/dev/null 2>&1; then
+    if py -3.11 -c "import sys" >/dev/null 2>&1; then
+      PYTHON_CMD=("py" "-3.11")
+      PYTHON_CMD_DESC="py -3.11"
+      return
+    fi
+
+    PYTHON_CMD=("py")
+    PYTHON_CMD_DESC="py"
+    return
+  fi
+
+  PYTHON_CMD=()
+  PYTHON_CMD_DESC=""
+}
+
+run_python() {
+  "${PYTHON_CMD[@]}" "$@"
+}
+
+ensure_python() {
+  resolve_python
+  if [[ ${#PYTHON_CMD[@]} -eq 0 ]]; then
+    fail "未找到 Python 解释器，请先安装 Python 3.11，或通过 PYTHON_BIN 指定可执行文件路径。"
+  fi
+
+  log "使用 Python 解释器: ${PYTHON_CMD_DESC}"
 }
 
 ensure_venv() {
   if [[ ! -x "${VENV_DIR}/${VENV_BIN_DIR}/python" && ! -x "${VENV_DIR}/${VENV_BIN_DIR}/python.exe" ]]; then
     log "创建虚拟环境 ${VENV_DIR}"
-    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+    run_python -m venv "${VENV_DIR}"
   fi
 }
 
@@ -86,7 +128,7 @@ dependencies_need_install() {
 
 install_dependencies() {
   local current_hash="$1"
-  log "检测到新依赖或环境未初始化，正在安装依赖"
+  log "检测到新依赖或虚拟环境未初始化，开始安装依赖"
   python -m pip install --upgrade pip
   python -m pip install -e .
   printf '%s' "${current_hash}" > "${DEPS_HASH_FILE}"
@@ -145,10 +187,10 @@ ensure_database() {
 
   case "${current_rev}" in
     unversioned|empty)
-      log "数据库未初始化迁移版本，执行迁移"
+      log "数据库还没有迁移版本，开始执行迁移"
       ;;
     *)
-      log "数据库当前版本 ${current_rev}，目标版本 ${head_rev}，执行迁移"
+      log "数据库当前版本 ${current_rev}，目标版本 ${head_rev}，开始执行迁移"
       ;;
   esac
 
@@ -168,7 +210,7 @@ start_server() {
   runtime_mode="$(voice_runtime_mode)"
   log "语音 runtime 模式: ${runtime_mode}"
   if [[ "${runtime_mode}" == "embedded" ]]; then
-    log "当前为本地默认模式，只需启动 api-server"
+    log "当前为本地默认模式，只需要启动 api-server"
   else
     log "当前为禁用模式，语音 runtime 将按现有降级语义处理"
   fi
