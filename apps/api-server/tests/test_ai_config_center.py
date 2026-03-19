@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -222,6 +223,83 @@ class AiConfigCenterTests(unittest.TestCase):
             {"memory": "ask", "config": "ask", "action": "ask"},
             json.loads(second_runtime.autonomous_action_policy_json),
         )
+
+    def test_default_entry_rejects_agent_with_conversation_disabled(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Policy Guard Home", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+        agent = create_agent(
+            self.db,
+            household_id=household.id,
+            payload=AgentCreate(
+                display_name="Guard Butler",
+                agent_type="butler",
+                self_identity="I am Guard Butler",
+                role_summary="负责家庭事务",
+                personality_traits=["calm"],
+                service_focus=["问答"],
+                default_entry=False,
+            ),
+        )
+        self.db.flush()
+
+        with self.assertRaises(HTTPException) as ctx:
+            upsert_agent_runtime_policy(
+                self.db,
+                household_id=household.id,
+                agent_id=agent.id,
+                payload=AgentRuntimePolicyUpsert(
+                    conversation_enabled=False,
+                    default_entry=True,
+                    routing_tags=[],
+                    memory_scope=None,
+                ),
+            )
+
+        self.assertEqual(409, ctx.exception.status_code)
+        self.assertIn("conversation_enabled", str(ctx.exception.detail))
+
+    def test_default_entry_rejects_inactive_agent(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Inactive Guard Home", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+        agent = create_agent(
+            self.db,
+            household_id=household.id,
+            payload=AgentCreate(
+                display_name="Inactive Butler",
+                agent_type="butler",
+                self_identity="I am inactive Butler",
+                role_summary="负责家庭事务",
+                personality_traits=["steady"],
+                service_focus=["提醒"],
+                default_entry=False,
+            ),
+        )
+        agent_row = agent_repository.get_agent_by_household_and_id(self.db, household_id=household.id, agent_id=agent.id)
+        assert agent_row is not None
+        agent_row.status = "inactive"
+        self.db.flush()
+
+        with self.assertRaises(HTTPException) as ctx:
+            upsert_agent_runtime_policy(
+                self.db,
+                household_id=household.id,
+                agent_id=agent.id,
+                payload=AgentRuntimePolicyUpsert(
+                    conversation_enabled=True,
+                    default_entry=True,
+                    routing_tags=[],
+                    memory_scope=None,
+                ),
+            )
+
+        self.assertEqual(409, ctx.exception.status_code)
+        self.assertIn("must be active", str(ctx.exception.detail))
 
     def test_setup_status_moves_forward_after_formal_ai_config_completed(self) -> None:
         household = create_household(
