@@ -226,6 +226,7 @@ class IntegrationInstanceCreateRequest(BaseModel):
     plugin_id: str = Field(min_length=1)
     display_name: str = Field(min_length=1, max_length=100)
     config: dict[str, Any] = Field(default_factory=dict)
+    clear_fields: list[str] = Field(default_factory=list)
     clear_secret_fields: list[str] = Field(default_factory=list)
 
 
@@ -234,6 +235,7 @@ class IntegrationInstanceUpdateRequest(BaseModel):
 
     display_name: str = Field(min_length=1, max_length=100)
     config: dict[str, Any] = Field(default_factory=dict)
+    clear_fields: list[str] = Field(default_factory=list)
     clear_secret_fields: list[str] = Field(default_factory=list)
 
 

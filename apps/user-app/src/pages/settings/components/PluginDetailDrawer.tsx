@@ -187,6 +187,9 @@ export function PluginDetailDrawer(props: {
     targetVersion: string,
   ) => Promise<PluginVersionOperationResultRead>;
   isToggling: boolean;
+  onDelete: (plugin: PluginRegistryItem) => Promise<void>;
+  isDeleting: boolean;
+  canDelete: boolean;
 }) {
   const {
     plugin,
@@ -198,6 +201,9 @@ export function PluginDetailDrawer(props: {
     onToggle,
     onOperateMarketplaceVersion,
     isToggling,
+    onDelete,
+    isDeleting,
+    canDelete,
   } = props;
   const { locale } = useI18n();
   const [jobs, setJobs] = useState<PluginJobListItemRead[]>([]);
@@ -210,6 +216,7 @@ export function PluginDetailDrawer(props: {
   const [versionStatus, setVersionStatus] = useState('');
   const [selectedTargetVersion, setSelectedTargetVersion] = useState('');
   const [operatingVersion, setOperatingVersion] = useState<PluginVersionOperationType | null>(null);
+  const [actionError, setActionError] = useState('');
   const copy = useMemo(() => ({
     jobsLoadFailed: getPageMessage(locale, 'settings.plugin.jobs.loadFailed'),
     versionLoadFailed: getPageMessage(locale, 'settings.plugin.versionSwitch.loadFailed'),
@@ -249,6 +256,10 @@ export function PluginDetailDrawer(props: {
     processing: getPageMessage(locale, 'settings.plugin.processing'),
     disable: getPageMessage(locale, 'settings.plugin.disable'),
     enable: getPageMessage(locale, 'settings.plugin.enable'),
+    delete: getPageMessage(locale, 'settings.plugin.delete'),
+    deleting: getPageMessage(locale, 'settings.plugin.deleting'),
+    deleteConfirmMessage: getPageMessage(locale, 'settings.plugin.deleteConfirmMessage', { plugin: plugin?.name ?? '' }),
+    deleteFailed: getPageMessage(locale, 'settings.plugin.deleteFailed'),
     targetVersion: getPageMessage(locale, 'settings.plugin.versionSwitch.targetVersion'),
     targetVersionPlaceholder: getPageMessage(locale, 'settings.plugin.versionSwitch.targetVersionPlaceholder'),
     loadingVersionInfo: getPageMessage(locale, 'settings.plugin.versionSwitch.loading'),
@@ -257,7 +268,7 @@ export function PluginDetailDrawer(props: {
     rollback: getPageMessage(locale, 'plugins.marketplace.action.rollback'),
     upgradeProcessing: getPageMessage(locale, 'plugins.marketplace.action.upgrading'),
     rollbackProcessing: getPageMessage(locale, 'plugins.marketplace.action.rollingBack'),
-  }), [locale]);
+  }), [locale, plugin?.name]);
 
   useEffect(() => {
     if (!householdId || !plugin || !isOpen) {
@@ -369,6 +380,14 @@ export function PluginDetailDrawer(props: {
     plugin,
   ]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      setActionError('');
+      return;
+    }
+    setActionError('');
+  }, [isOpen, plugin?.id]);
+
   if (!isOpen || !plugin) {
     return null;
   }
@@ -386,6 +405,14 @@ export function PluginDetailDrawer(props: {
     && selectedTargetVersion
     && selectedTargetVersion !== installedVersion,
   );
+  const isBusy = isToggling || isDeleting || operatingVersion !== null;
+
+  function handleClose() {
+    if (isBusy) {
+      return;
+    }
+    onClose();
+  }
 
   async function handleMarketplaceVersionOperation(operation: PluginVersionOperationType) {
     if (!marketplaceItem || !selectedTargetVersion) {
@@ -414,8 +441,30 @@ export function PluginDetailDrawer(props: {
     }
   }
 
+  async function handleDelete() {
+    if (!canDelete) {
+      return;
+    }
+    const activePlugin = plugin;
+    if (!activePlugin) {
+      return;
+    }
+
+    setActionError('');
+
+    if (typeof window !== 'undefined' && !window.confirm(copy.deleteConfirmMessage)) {
+      return;
+    }
+
+    try {
+      await onDelete(activePlugin);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : copy.deleteFailed);
+    }
+  }
+
   return (
-    <div className="task-form-overlay" onClick={onClose}>
+    <div className="task-form-overlay" onClick={handleClose}>
       <div className="task-form-drawer plugin-detail-drawer" onClick={(event) => event.stopPropagation()}>
         <div className="task-form-drawer__header">
           <div className="plugin-detail-drawer__title-area">
@@ -428,10 +477,11 @@ export function PluginDetailDrawer(props: {
               </span>
             </div>
           </div>
-          <button className="btn btn--ghost btn--sm" type="button" onClick={onClose} aria-label={copy.close}>X</button>
+          <button className="btn btn--ghost btn--sm" type="button" onClick={handleClose} aria-label={copy.close} disabled={isBusy}>X</button>
         </div>
 
         <div className="task-form-drawer__body">
+          {actionError ? <div className="settings-note settings-note--error">{actionError}</div> : null}
           {plugin.source_type === 'third_party' ? (
             <div className="plugin-detail-drawer__alert plugin-detail-drawer__alert--warning">
               <span className="plugin-detail-drawer__alert-icon">!</span>
@@ -536,7 +586,7 @@ export function PluginDetailDrawer(props: {
                           className="marketplace-source-form__input"
                           value={selectedTargetVersion}
                           onChange={(event) => setSelectedTargetVersion(event.target.value)}
-                          disabled={versionLoading || operatingVersion !== null}
+                          disabled={versionLoading || isBusy}
                         >
                           <option value="">{copy.targetVersionPlaceholder}</option>
                           {selectableTargets.map((item) => (
@@ -562,7 +612,7 @@ export function PluginDetailDrawer(props: {
                       className="btn btn--primary btn--sm"
                       type="button"
                       onClick={() => void handleMarketplaceVersionOperation('upgrade')}
-                      disabled={!canOperateMarketplaceVersion || operatingVersion !== null}
+                      disabled={!canOperateMarketplaceVersion || isBusy}
                     >
                       {operatingVersion === 'upgrade' ? copy.upgradeProcessing : copy.upgrade}
                     </button>
@@ -570,7 +620,7 @@ export function PluginDetailDrawer(props: {
                       className="btn btn--outline btn--sm"
                       type="button"
                       onClick={() => void handleMarketplaceVersionOperation('rollback')}
-                      disabled={!canOperateMarketplaceVersion || operatingVersion !== null}
+                      disabled={!canOperateMarketplaceVersion || isBusy}
                     >
                       {operatingVersion === 'rollback' ? copy.rollbackProcessing : copy.rollback}
                     </button>
@@ -671,8 +721,13 @@ export function PluginDetailDrawer(props: {
         </div>
 
         <div className="task-form-drawer__footer">
-          <button className="btn btn--ghost" type="button" onClick={onClose}>{copy.close}</button>
-          <button className="btn btn--primary" type="button" onClick={() => onToggle(plugin)} disabled={isToggling}>
+          {canDelete ? (
+            <button className="btn btn--danger" type="button" onClick={() => void handleDelete()} disabled={isBusy}>
+              {isDeleting ? copy.deleting : copy.delete}
+            </button>
+          ) : null}
+          <button className="btn btn--ghost" type="button" onClick={handleClose} disabled={isBusy}>{copy.close}</button>
+          <button className="btn btn--primary" type="button" onClick={() => onToggle(plugin)} disabled={isBusy}>
             {isToggling ? copy.processing : isEnabled ? copy.disable : copy.enable}
           </button>
         </div>

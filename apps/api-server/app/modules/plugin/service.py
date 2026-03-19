@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import io
 import logging
 import json
 from pathlib import Path
 import shutil
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 import sys
 from typing import Any, Literal, cast
+import zipfile
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session, sessionmaker
@@ -49,6 +52,7 @@ from app.modules.plugin.schemas import (
     PluginLocaleListRead,
     PluginLocaleRead,
     PluginMountCreate,
+    PluginPackageInstallRead,
     PluginMountRead,
     PluginMountUpdate,
     PluginStateUpdateRequest,
@@ -525,6 +529,92 @@ def _copy_plugin_tree(*, source_root: Path, target_root: Path) -> None:
     shutil.copytree(source_root, target_root)
 
 
+def _normalize_release_version_fragment(version: str) -> str:
+    normalized = "".join(char if char.isalnum() or char in {"-", "_", "."} else "-" for char in version.strip())
+    normalized = normalized.strip("-._")
+    return normalized or "version"
+
+
+def _build_manual_release_dirname(version: str) -> str:
+    release_version = _normalize_release_version_fragment(version)
+    release_stamp = utc_now_iso().replace("-", "").replace(":", "").replace(".", "").replace("+00:00", "Z")
+    return f"{release_version}--{release_stamp}--{new_uuid()[:8]}"
+
+
+def _build_manual_release_root(*, household_id: str, manifest: PluginManifest) -> Path:
+    storage_root = _get_plugin_storage_root()
+    release_dirname = _build_manual_release_dirname(manifest.version)
+    return (storage_root / "third_party" / "manual" / household_id / manifest.id / release_dirname).resolve()
+
+
+def _extract_plugin_package_archive(*, content: bytes, destination: Path) -> None:
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile as exc:
+        raise PluginServiceError(
+            "上传的文件不是合法的 ZIP 插件包。",
+            error_code="plugin_package_invalid",
+            field="file",
+            status_code=400,
+        ) from exc
+
+    extracted_file_count = 0
+    with archive:
+        for member in archive.infolist():
+            member_name = member.filename.strip()
+            if not member_name:
+                continue
+            member_path = Path(*Path(member_name).parts)
+            if Path(member_name).is_absolute() or ".." in member_path.parts:
+                raise PluginServiceError(
+                    "ZIP 包里包含越界路径，不能继续安装。",
+                    error_code="plugin_package_invalid",
+                    field="file",
+                    status_code=400,
+                )
+            if member.is_dir():
+                continue
+            target_path = (destination / member_path).resolve()
+            if not _path_is_within(target_path, destination):
+                raise PluginServiceError(
+                    "ZIP 包里包含越界路径，不能继续安装。",
+                    error_code="plugin_package_invalid",
+                    field="file",
+                    status_code=400,
+                )
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(member) as source_file, target_path.open("wb") as target_file:
+                shutil.copyfileobj(source_file, target_file)
+            extracted_file_count += 1
+
+    if extracted_file_count == 0:
+        raise PluginServiceError(
+            "上传的 ZIP 包里没有可安装文件。",
+            error_code="plugin_package_invalid",
+            field="file",
+            status_code=400,
+        )
+
+
+def _resolve_plugin_package_root(extracted_root: Path) -> Path:
+    direct_manifest_path = (extracted_root / "manifest.json").resolve()
+    if direct_manifest_path.is_file():
+        return extracted_root
+
+    child_directories = [child for child in extracted_root.iterdir() if child.is_dir()]
+    if len(child_directories) == 1:
+        candidate_root = child_directories[0].resolve()
+        if (candidate_root / "manifest.json").is_file():
+            return candidate_root
+
+    raise PluginServiceError(
+        "ZIP 包顶层必须直接包含 manifest.json，或者只包含一个插件目录。",
+        error_code="plugin_package_invalid",
+        field="file",
+        status_code=400,
+    )
+
+
 def _resolve_managed_plugin_root(
     *,
     household_id: str,
@@ -593,6 +683,22 @@ def _normalize_optional_path(value: str | None) -> str | None:
     if not normalized:
         return None
     return str(Path(normalized).resolve())
+
+
+def _remap_existing_mount_working_dir(
+    *,
+    previous_plugin_root: str,
+    previous_working_dir: str | None,
+    next_plugin_root: Path,
+) -> str:
+    if previous_working_dir is None:
+        return str(next_plugin_root)
+    previous_root = Path(previous_plugin_root).resolve()
+    resolved_previous_working_dir = Path(previous_working_dir).resolve()
+    if _path_is_within(resolved_previous_working_dir, previous_root):
+        relative_working_dir = resolved_previous_working_dir.relative_to(previous_root)
+        return str((next_plugin_root / relative_working_dir).resolve())
+    return previous_working_dir
 
 
 def _validate_region_provider_mount_conflicts(
@@ -1266,6 +1372,177 @@ def update_plugin_mount(
     return _to_plugin_mount_read(row)
 
 
+def install_plugin_package(
+    db: Session,
+    *,
+    household_id: str,
+    file_name: str,
+    content: bytes,
+    overwrite: bool = False,
+) -> PluginPackageInstallRead:
+    from app.modules.household.service import get_household_or_404
+    from app.modules.plugin_marketplace.service import get_marketplace_instance_for_household_plugin
+
+    get_household_or_404(db, household_id)
+
+    normalized_file_name = file_name.strip() or "plugin.zip"
+    if not normalized_file_name.lower().endswith(".zip"):
+        raise PluginServiceError(
+            "现在只支持上传 ZIP 插件包。",
+            error_code="plugin_package_invalid",
+            field="file",
+            status_code=400,
+        )
+    if not content:
+        raise PluginServiceError(
+            "上传的 ZIP 包是空的。",
+            error_code="plugin_package_invalid",
+            field="file",
+            status_code=400,
+        )
+
+    target_root: Path | None = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="plugin-package-") as temp_dir:
+            extracted_root = (Path(temp_dir).resolve() / "extracted").resolve()
+            extracted_root.mkdir(parents=True, exist_ok=True)
+            _extract_plugin_package_archive(content=content, destination=extracted_root)
+            package_root = _resolve_plugin_package_root(extracted_root)
+            manifest_path = _resolve_manifest_path(str(package_root), None)
+            manifest = load_plugin_manifest(manifest_path)
+
+            if manifest.id in {item.id for item in list_registered_plugins().items}:
+                raise PluginServiceError(
+                    f"插件 id 与内置插件冲突，不能继续安装: {manifest.id}",
+                    error_code="plugin_id_conflict",
+                    field="file",
+                    status_code=409,
+                )
+
+            existing_mount = repository.get_plugin_mount(db, household_id=household_id, plugin_id=manifest.id)
+            is_overwrite_install = existing_mount is not None
+            if get_marketplace_instance_for_household_plugin(db, household_id=household_id, plugin_id=manifest.id) is not None:
+                raise PluginServiceError(
+                    f"插件 {manifest.id} 当前由插件市场管理，不能直接用 ZIP 覆盖。",
+                    error_code="plugin_source_mismatch",
+                    field="plugin_id",
+                    status_code=409,
+                )
+            if existing_mount is not None and existing_mount.source_type != "third_party":
+                raise PluginServiceError(
+                    f"插件 {manifest.id} 当前不是第三方手动安装来源，不能直接用 ZIP 覆盖。",
+                    error_code="plugin_source_mismatch",
+                    field="plugin_id",
+                    status_code=409,
+                )
+            if existing_mount is not None and not overwrite:
+                raise PluginServiceError(
+                    f"插件 {manifest.id} 已经存在，覆盖升级请勾选 overwrite。",
+                    error_code="plugin_package_conflict",
+                    field="overwrite",
+                    status_code=409,
+                )
+
+            previous_manifest = None
+            if existing_mount is not None:
+                previous_manifest = _load_mount_manifest_or_log(
+                    household_id=household_id,
+                    mount=existing_mount,
+                    operation="install_plugin_package",
+                )
+
+            _validate_region_provider_mount_conflicts(
+                db,
+                household_id=household_id,
+                manifest=manifest,
+                skip_plugin_id=manifest.id if existing_mount is not None else None,
+            )
+
+            target_root = _build_manual_release_root(household_id=household_id, manifest=manifest)
+            relative_manifest_path = manifest_path.resolve().relative_to(package_root.resolve())
+            _copy_plugin_tree(source_root=package_root, target_root=target_root)
+            target_manifest_path = (target_root / relative_manifest_path).resolve()
+
+            with db.begin_nested():
+                if existing_mount is None:
+                    existing_mount = PluginMount(
+                        id=new_uuid(),
+                        household_id=household_id,
+                        plugin_id=manifest.id,
+                        source_type="third_party",
+                        execution_backend="subprocess_runner",
+                        manifest_path=str(target_manifest_path),
+                        plugin_root=str(target_root),
+                        python_path=sys.executable,
+                        working_dir=str(target_root),
+                        timeout_seconds=30,
+                        stdout_limit_bytes=65536,
+                        stderr_limit_bytes=65536,
+                        enabled=False,
+                        created_at=utc_now_iso(),
+                        updated_at=utc_now_iso(),
+                    )
+                    repository.add_plugin_mount(db, existing_mount)
+                else:
+                    previous_plugin_root = existing_mount.plugin_root
+                    previous_working_dir = existing_mount.working_dir
+                    existing_mount.source_type = "third_party"
+                    existing_mount.execution_backend = "subprocess_runner"
+                    existing_mount.manifest_path = str(target_manifest_path)
+                    existing_mount.plugin_root = str(target_root)
+                    existing_mount.python_path = sys.executable
+                    existing_mount.working_dir = _remap_existing_mount_working_dir(
+                        previous_plugin_root=previous_plugin_root,
+                        previous_working_dir=previous_working_dir,
+                        next_plugin_root=target_root,
+                    )
+                    existing_mount.updated_at = utc_now_iso()
+
+                db.flush()
+                sync_household_plugin_region_providers(db, household_id)
+
+                previous_version = previous_manifest.version if previous_manifest is not None else None
+                install_action: Literal["installed", "upgraded", "reinstalled"]
+                if previous_version is None:
+                    install_action = "installed"
+                elif previous_version == manifest.version:
+                    install_action = "reinstalled"
+                else:
+                    install_action = "upgraded"
+
+                message = (
+                    f"插件 {manifest.name} 已安装，后续执行会直接使用当前挂载。"
+                    if install_action == "installed"
+                    else f"插件 {manifest.name} 已覆盖更新，后续执行会直接使用新挂载。"
+                )
+                return PluginPackageInstallRead(
+                    household_id=household_id,
+                    plugin_id=manifest.id,
+                    plugin_name=manifest.name,
+                    version=manifest.version,
+                    previous_version=previous_version,
+                    install_action=install_action,
+                    overwritten=is_overwrite_install,
+                    enabled=existing_mount.enabled,
+                    source_type="third_party",
+                    execution_backend="subprocess_runner",
+                    plugin_root=existing_mount.plugin_root,
+                    manifest_path=existing_mount.manifest_path,
+                    message=message,
+                )
+    except Exception as exc:
+        if target_root is not None and target_root.exists():
+            shutil.rmtree(target_root, ignore_errors=True)
+        if isinstance(exc, PluginManifestValidationError):
+            raise PluginServiceError(
+                str(exc),
+                error_code="plugin_package_invalid",
+                field="file",
+                status_code=400,
+            ) from exc
+        raise
+
+
 def delete_plugin_mount(db: Session, *, household_id: str, plugin_id: str) -> None:
     from app.modules.household.service import get_household_or_404
     get_household_or_404(db, household_id)
@@ -1275,6 +1552,172 @@ def delete_plugin_mount(db: Session, *, household_id: str, plugin_id: str) -> No
     repository.delete_plugin_mount(db, row)
     db.flush()
     sync_household_plugin_region_providers(db, household_id)
+
+
+def _collect_household_plugin_delete_blockers(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+) -> dict[str, int]:
+    from app.modules.channel import repository as channel_repository
+    from app.modules.integration import repository as integration_repository
+
+    blockers: dict[str, int] = {}
+
+    integration_instances = integration_repository.list_integration_instances(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+    )
+    if integration_instances:
+        blockers["integration_instances"] = len(integration_instances)
+
+    channel_accounts = channel_repository.list_channel_plugin_accounts(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+    )
+    if channel_accounts:
+        blockers["channel_accounts"] = len(channel_accounts)
+
+    scope_devices = repository.list_plugin_scope_devices(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+    )
+    if scope_devices:
+        blockers["device_bindings"] = len(scope_devices)
+
+    integration_discoveries = integration_repository.list_integration_discoveries(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+    )
+    if integration_discoveries:
+        blockers["integration_discoveries"] = len(integration_discoveries)
+
+    return blockers
+
+
+def _remove_plugin_installation_directories(paths: list[Path]) -> None:
+    unique_paths: list[Path] = []
+    seen: set[str] = set()
+    for path in sorted(paths, key=lambda item: (len(str(item)), str(item)), reverse=True):
+        path_key = str(path)
+        if path_key in seen:
+            continue
+        seen.add(path_key)
+        unique_paths.append(path)
+
+    for path in unique_paths:
+        try:
+            if path.exists():
+                shutil.rmtree(path, ignore_errors=True)
+        except Exception:
+            logger.warning("插件安装目录删除失败: %s", path, exc_info=True)
+
+
+def _resolve_plugin_install_cleanup_paths(
+    *,
+    household_id: str,
+    plugin_id: str,
+    mount: PluginMount | None,
+    marketplace_instance: Any | None,
+) -> list[Path]:
+    cleanup_paths: list[Path] = []
+
+    if mount is not None:
+        manual_root = (_get_plugin_storage_root() / "third_party" / "manual" / household_id / plugin_id).resolve()
+        mounted_root = Path(mount.plugin_root).resolve()
+        if mounted_root.exists() and _path_is_within(mounted_root, manual_root):
+            cleanup_paths.append(manual_root)
+
+    if marketplace_instance is not None:
+        marketplace_root = Path(settings.plugin_marketplace_install_root).resolve()
+        installed_root = Path(marketplace_instance.plugin_root).resolve()
+        if installed_root.exists() and _path_is_within(installed_root, marketplace_root):
+            cleanup_paths.append(installed_root.parent if installed_root.parent.name == plugin_id else installed_root)
+
+    return cleanup_paths
+
+
+def delete_household_plugin_installation(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+) -> None:
+    from app.modules.household.service import get_household_or_404
+    from app.modules.plugin_marketplace import repository as marketplace_repository
+
+    get_household_or_404(db, household_id)
+
+    plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
+    if plugin.source_type == "builtin":
+        raise PluginServiceError(
+            f"内置插件不能删除: {plugin_id}",
+            error_code="plugin_builtin_delete_forbidden",
+            field="plugin_id",
+            status_code=409,
+        )
+
+    blockers = _collect_household_plugin_delete_blockers(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+    )
+    if blockers:
+        raise PluginServiceError(
+            "插件仍被现有业务引用，请先解除引用后再删除。",
+            error_code="plugin_in_use",
+            field="plugin_id",
+            field_errors={key: str(value) for key, value in blockers.items()},
+            status_code=409,
+        )
+
+    mount = repository.get_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
+    marketplace_instance = marketplace_repository.get_marketplace_instance_for_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+    )
+    cleanup_paths = _resolve_plugin_install_cleanup_paths(
+        household_id=household_id,
+        plugin_id=plugin_id,
+        mount=mount,
+        marketplace_instance=marketplace_instance,
+    )
+
+    for row in repository.list_plugin_config_instances(db, household_id=household_id, plugin_id=plugin_id):
+        repository.delete_plugin_config_instance(db, row)
+
+    override = repository.get_plugin_state_override(db, household_id=household_id, plugin_id=plugin_id)
+    if override is not None:
+        repository.delete_plugin_state_override(db, override)
+
+    for row in repository.list_plugin_dashboard_card_snapshots(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+    ):
+        repository.delete_plugin_dashboard_card_snapshot(db, row)
+
+    if marketplace_instance is not None:
+        marketplace_repository.delete_marketplace_instance(db, marketplace_instance)
+        for task in marketplace_repository.list_marketplace_install_tasks(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+        ):
+            marketplace_repository.delete_marketplace_install_task(db, task)
+
+    if mount is not None:
+        repository.delete_plugin_mount(db, mount)
+
+    db.flush()
+    sync_household_plugin_region_providers(db, household_id)
+    _remove_plugin_installation_directories(cleanup_paths)
 
 
 def _discover_manifest_entries(root_dir: str | Path) -> list[tuple[Path, PluginManifest]]:

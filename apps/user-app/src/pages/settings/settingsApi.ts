@@ -590,6 +590,11 @@ export const settingsApi = {
       },
     );
   },
+  deletePlugin(householdId: string, pluginId: string) {
+    return request<void>(`/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}`, {
+      method: 'DELETE',
+    });
+  },
   async installPluginPackage(householdId: string, file: File, options?: { overwrite?: boolean }) {
     const formData = new FormData();
     formData.append('file', file);

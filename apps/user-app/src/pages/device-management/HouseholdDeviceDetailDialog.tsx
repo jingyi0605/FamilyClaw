@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Taro from '@tarojs/taro';
-import { useAuthContext } from '../../runtime';
+import { useAuthContext, useI18n } from '../../runtime';
+import {
+  resolvePluginConfigSectionDescription,
+  resolvePluginConfigSectionTitle,
+  resolvePluginConfigSpecDescription,
+  resolvePluginConfigSubmitText,
+  resolvePluginFieldLabel,
+  resolvePluginMaybeKey,
+  resolvePluginOptionLabel,
+  resolvePluginWidgetHelpText,
+  resolvePluginWidgetPlaceholder,
+} from '../settings/pluginConfigI18n';
 import { Card, ToggleSwitch } from '../family/base';
 import {
   getDeviceEnabledBadgeTone,
@@ -223,6 +234,7 @@ export function HouseholdDeviceDetailDialog({
   onDeleted,
 }: Props) {
   const { actor } = useAuthContext();
+  const { t } = useI18n();
   const [entityView, setEntityView] = useState<EntityView>('favorites');
   const [activeDetailTab, setActiveDetailTab] = useState<DeviceDetailTabKey>('controls');
   const [detailView, setDetailView] = useState<DeviceDetailViewRead | null>(null);
@@ -279,13 +291,13 @@ export function HouseholdDeviceDetailDialog({
     for (const tab of detailView?.plugin_tabs ?? []) {
       items.push({
         key: `plugin:${tab.plugin_id}:${tab.tab_key}`,
-        label: tab.title,
-        description: tab.description,
+        label: resolvePluginMaybeKey(tab.title, t),
+        description: resolvePluginMaybeKey(tab.description, t),
         pluginTab: tab,
       });
     }
     return items;
-  }, [detailView?.builtin_tabs, detailView?.plugin_tabs, page]);
+  }, [detailView?.builtin_tabs, detailView?.plugin_tabs, page, t]);
   const activePluginTab = useMemo(
     () => detailTabs.find((item) => item.key === activeDetailTab)?.pluginTab ?? null,
     [activeDetailTab, detailTabs],
@@ -778,7 +790,7 @@ export function HouseholdDeviceDetailDialog({
         )),
       } : current);
       updatePluginDraft(tab, () => buildPluginTabDraft(response));
-      onStatus(page('settings.integrations.status.pluginDeviceConfigSaved', { name: tab.title }));
+      onStatus(page('settings.integrations.status.pluginDeviceConfigSaved', { name: resolvePluginMaybeKey(tab.title, t) }));
       await onReload();
     } catch (error) {
       const resolved = extractPluginErrorMessage(error, page('settings.integrations.error.savePluginDeviceConfigFailed'));
@@ -902,8 +914,8 @@ export function HouseholdDeviceDetailDialog({
         <div key={field.key} className="integration-device-detail__toggle-card">
           <ToggleSwitch
             checked={value === true}
-            label={field.label}
-            description={widget?.help_text ?? field.description ?? ''}
+            label={resolvePluginFieldLabel(field, t)}
+            description={resolvePluginWidgetHelpText(widget, field, t)}
             disabled={draft.saving}
             onChange={(nextValue) => updatePluginDraft(tab, (current) => ({
               ...current,
@@ -911,7 +923,7 @@ export function HouseholdDeviceDetailDialog({
               fieldErrors: { ...current.fieldErrors, [field.key]: '' },
             }))}
           />
-          {fieldError ? <div className="form-error">{fieldError}</div> : null}
+          {fieldError ? <div className="form-error">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
     }
@@ -919,7 +931,7 @@ export function HouseholdDeviceDetailDialog({
     if (field.type === 'enum') {
       return (
         <div key={field.key} className="form-group">
-          <label>{field.label}</label>
+          <label>{resolvePluginFieldLabel(field, t)}</label>
           <select
             className="form-select"
             value={typeof value === 'string' ? value : ''}
@@ -932,11 +944,11 @@ export function HouseholdDeviceDetailDialog({
           >
             <option value="">{page('settings.integrations.pluginConfig.selectPlaceholder')}</option>
             {(field.enum_options ?? []).map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>{resolvePluginOptionLabel(option, t)}</option>
             ))}
           </select>
-          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
-          {fieldError ? <div className="form-error">{fieldError}</div> : null}
+          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {fieldError ? <div className="form-error">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
     }
@@ -944,11 +956,11 @@ export function HouseholdDeviceDetailDialog({
     if (field.type === 'text') {
       return (
         <div key={field.key} className="form-group">
-          <label>{field.label}</label>
+          <label>{resolvePluginFieldLabel(field, t)}</label>
           <textarea
             className="form-input"
             value={typeof value === 'string' ? value : ''}
-            placeholder={widget?.placeholder ?? undefined}
+            placeholder={resolvePluginWidgetPlaceholder(widget, t) || undefined}
             disabled={draft.saving}
             onChange={(event) => updatePluginDraft(tab, (current) => ({
               ...current,
@@ -956,20 +968,20 @@ export function HouseholdDeviceDetailDialog({
               fieldErrors: { ...current.fieldErrors, [field.key]: '' },
             }))}
           />
-          <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
-          {fieldError ? <div className="form-error">{fieldError}</div> : null}
+          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {fieldError ? <div className="form-error">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
     }
 
     return (
       <div key={field.key} className="form-group">
-        <label>{field.label}</label>
+        <label>{resolvePluginFieldLabel(field, t)}</label>
         <input
           className="form-input"
           type={field.type === 'secret' ? 'password' : (field.type === 'integer' || field.type === 'number' ? 'number' : 'text')}
           value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
-          placeholder={widget?.placeholder ?? undefined}
+          placeholder={resolvePluginWidgetPlaceholder(widget, t) || undefined}
           disabled={draft.saving}
           onChange={(event) => updatePluginDraft(tab, (current) => ({
             ...current,
@@ -977,8 +989,8 @@ export function HouseholdDeviceDetailDialog({
             fieldErrors: { ...current.fieldErrors, [field.key]: '' },
           }))}
         />
-        <div className="form-help">{widget?.help_text ?? field.description ?? ''}</div>
-        {fieldError ? <div className="form-error">{fieldError}</div> : null}
+        <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+        {fieldError ? <div className="form-error">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
       </div>
     );
   }
@@ -993,16 +1005,18 @@ export function HouseholdDeviceDetailDialog({
     return (
       <div className="speaker-device-detail-dialog__panel">
         <div className="speaker-device-detail-dialog__panel-header">
-          <h4>{tab.title}</h4>
-          <p>{tab.description || tab.config_form.config_spec.description || page('settings.integrations.pluginConfig.desc')}</p>
+          <h4>{resolvePluginMaybeKey(tab.title, t)}</h4>
+          <p>{resolvePluginMaybeKey(tab.description, t) || resolvePluginConfigSpecDescription(tab.config_form.config_spec, t) || page('settings.integrations.pluginConfig.desc')}</p>
         </div>
         <div className="settings-form">
-          {draft.error ? <div className="form-error">{draft.error}</div> : null}
+          {draft.error ? <div className="form-error">{resolvePluginMaybeKey(draft.error, t)}</div> : null}
           {tab.config_form.config_spec.ui_schema.sections.length > 0
             ? tab.config_form.config_spec.ui_schema.sections.map((section) => (
               <div key={section.id} className="integration-device-detail__plugin-section">
-                <h4>{section.title}</h4>
-                {section.description ? <p className="integration-status__detail">{section.description}</p> : null}
+                <h4>{resolvePluginConfigSectionTitle(section, t)}</h4>
+                {resolvePluginConfigSectionDescription(section, t) ? (
+                  <p className="integration-status__detail">{resolvePluginConfigSectionDescription(section, t)}</p>
+                ) : null}
                 {section.fields.map((fieldKey) => {
                   const field = fieldMap.get(fieldKey);
                   if (!field) {
@@ -1028,7 +1042,7 @@ export function HouseholdDeviceDetailDialog({
             >
               {draft.saving
                 ? page('settings.integrations.action.saving')
-                : (tab.config_form.config_spec.ui_schema.submit_text || page('settings.integrations.action.savePluginDeviceConfig'))}
+                : (resolvePluginConfigSubmitText(tab.config_form.config_spec, t) || page('settings.integrations.action.savePluginDeviceConfig'))}
             </button>
           </div>
         </div>

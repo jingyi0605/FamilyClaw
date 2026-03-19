@@ -36,12 +36,18 @@ def get_channel_plugin_account_by_account_code(
     return db.scalar(stmt)
 
 
-def list_channel_plugin_accounts(db: Session, *, household_id: str) -> list[ChannelPluginAccount]:
-    stmt: Select[tuple[ChannelPluginAccount]] = (
-        select(ChannelPluginAccount)
-        .where(ChannelPluginAccount.household_id == household_id)
-        .order_by(ChannelPluginAccount.created_at.desc(), ChannelPluginAccount.id.desc())
+def list_channel_plugin_accounts(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str | None = None,
+) -> list[ChannelPluginAccount]:
+    stmt: Select[tuple[ChannelPluginAccount]] = select(ChannelPluginAccount).where(
+        ChannelPluginAccount.household_id == household_id,
     )
+    if plugin_id is not None:
+        stmt = stmt.where(ChannelPluginAccount.plugin_id == plugin_id)
+    stmt = stmt.order_by(ChannelPluginAccount.created_at.desc(), ChannelPluginAccount.id.desc())
     return list(db.scalars(stmt).all())
 
 

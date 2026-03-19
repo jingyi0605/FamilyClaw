@@ -111,6 +111,7 @@ class RegionProviderRegistry:
 class CnMainlandRegionProvider(RegionProvider):
     provider_code = BUILTIN_CN_MAINLAND_PROVIDER
     country_code = BUILTIN_CN_MAINLAND_COUNTRY
+    plugin_name = "中国大陆"
 
     def list_children(
         self,
@@ -219,6 +220,7 @@ class JsonFileCnMainlandRegionProvider(RegionProvider):
     provider_code = BUILTIN_CN_MAINLAND_PROVIDER
     country_code = BUILTIN_CN_MAINLAND_COUNTRY
     source_type = "json_file"
+    plugin_name = "中国大陆"
 
     def __init__(self) -> None:
         self._data: list[RegionNodeRead] | None = None

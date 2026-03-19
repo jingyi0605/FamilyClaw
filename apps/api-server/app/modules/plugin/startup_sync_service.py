@@ -179,12 +179,12 @@ def _sync_manual_plugin_mounts(
             logger.warning("Startup plugin sync skipped manual plugin because household does not exist household_id=%s", household_id)
             skipped += 1
             continue
-        for plugin_dir in sorted(path for path in household_dir.iterdir() if path.is_dir()):
-            manifest_path = (plugin_dir / "manifest.json").resolve()
-            if not manifest_path.is_file():
-                logger.warning("Startup plugin sync skipped manual plugin because manifest is missing plugin_root=%s", plugin_dir)
+        for plugin_dir in _iter_manual_plugin_roots(household_dir):
+            resolved_manual_root = _resolve_manual_plugin_runtime_root(plugin_dir)
+            if resolved_manual_root is None:
                 skipped += 1
                 continue
+            plugin_root, manifest_path = resolved_manual_root
             try:
                 manifest = load_plugin_manifest(manifest_path)
             except PluginManifestValidationError as exc:
@@ -209,7 +209,7 @@ def _sync_manual_plugin_mounts(
                 db,
                 household_id=household_id,
                 source_type="third_party",
-                plugin_root=plugin_dir.resolve(),
+                plugin_root=plugin_root.resolve(),
                 manifest_path=manifest_path,
                 builtin_plugin_ids=builtin_plugin_ids,
                 enabled_on_create=False,
@@ -224,6 +224,74 @@ def _sync_manual_plugin_mounts(
             elif status == "skipped":
                 skipped += 1
     return created, updated, skipped
+
+
+def _resolve_manual_plugin_runtime_root(plugin_dir: Path) -> tuple[Path, Path] | None:
+    candidates: list[tuple[Path, Path]] = []
+
+    def _add_candidate(root: Path) -> None:
+        manifest_path = (root / "manifest.json").resolve()
+        if not manifest_path.is_file():
+            return
+        candidates.append((root.resolve(), manifest_path))
+
+    _add_candidate(plugin_dir)
+    for child in sorted((child for child in plugin_dir.iterdir() if child.is_dir()), key=lambda path: path.name):
+        _add_candidate(child)
+        if child.name == "releases":
+            for release_dir in sorted((release_dir for release_dir in child.iterdir() if release_dir.is_dir()), key=lambda path: path.name):
+                _add_candidate(release_dir)
+
+    if not candidates:
+        logger.warning(
+            "Startup plugin sync skipped manual plugin because no manifest was found in plugin directory or release directories plugin_root=%s",
+            plugin_dir,
+        )
+        return None
+
+    candidates.sort(key=_manual_release_sort_key, reverse=True)
+    chosen_root, manifest_path = candidates[0]
+    return chosen_root, manifest_path
+
+
+def _iter_manual_plugin_roots(household_dir: Path) -> list[Path]:
+    plugin_dirs: list[Path] = []
+    seen: set[str] = set()
+
+    def _add_candidate(candidate: Path) -> None:
+        if not candidate.is_dir():
+            return
+        resolved = candidate.resolve()
+        key = str(resolved)
+        if key in seen:
+            return
+        seen.add(key)
+        plugin_dirs.append(candidate)
+
+    for child in sorted(household_dir.iterdir(), key=lambda path: path.name):
+        if not child.is_dir():
+            continue
+        if child.name == "releases":
+            for release_child in sorted(child.iterdir(), key=lambda path: path.name):
+                _add_candidate(release_child)
+            continue
+        _add_candidate(child)
+    return plugin_dirs
+
+
+def _manual_release_sort_key(candidate: tuple[Path, Path]) -> tuple[int, str, float]:
+    release_stamp = _extract_manual_release_stamp(candidate[0].name)
+    fallback_mtime = candidate[0].stat().st_mtime
+    if release_stamp is None:
+        return 0, "", fallback_mtime
+    return 1, release_stamp, fallback_mtime
+
+
+def _extract_manual_release_stamp(dirname: str) -> str | None:
+    parts = dirname.split("--")
+    if len(parts) >= 2 and parts[1]:
+        return parts[1]
+    return None
 
 
 def _sync_marketplace_plugins(
@@ -319,6 +387,7 @@ def _sync_marketplace_plugins(
                         enabled_on_create=False,
                         changed_household_ids=changed_household_ids,
                         theme_pack_registry_household_ids=theme_pack_registry_household_ids,
+                        execution_backend="subprocess_runner",
                         manifest=manifest,
                     )
                     if mount_status == "created":
@@ -412,6 +481,7 @@ def _upsert_plugin_mount_from_disk(
     enabled_on_create: bool,
     changed_household_ids: set[str],
     theme_pack_registry_household_ids: set[str],
+    execution_backend: str | None = None,
     manifest=None,
 ) -> str:
     current_manifest = manifest
@@ -456,7 +526,7 @@ def _upsert_plugin_mount_from_disk(
     manifest_path_value = str(manifest_path.resolve())
     working_dir_value = plugin_root_value
     python_path_value = sys.executable
-    execution_backend_value = "in_process" if source_type == "official" else "subprocess_runner"
+    execution_backend_value = execution_backend or ("in_process" if source_type == "official" else "subprocess_runner")
     now = utc_now_iso()
 
     if existing is None:

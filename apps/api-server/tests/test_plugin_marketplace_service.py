@@ -16,7 +16,7 @@ from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.plugin.config_service import save_plugin_config_form
 from app.modules.plugin.schemas import PluginConfigUpdateRequest, PluginStateUpdateRequest
-from app.modules.plugin.service import get_household_plugin
+from app.modules.plugin.service import delete_household_plugin_installation, get_household_plugin, list_plugin_mounts
 from app.modules.plugin_marketplace.github_client import GitHubMarketplaceClientError
 from app.modules.plugin_marketplace.repository import list_marketplace_entry_snapshots, list_marketplace_install_tasks
 from app.modules.plugin_marketplace.schemas import (
@@ -28,6 +28,7 @@ from app.modules.plugin_marketplace.service import (
     PluginMarketplaceServiceError,
     add_marketplace_source,
     create_marketplace_install_task,
+    ensure_builtin_marketplace_source,
     get_marketplace_instance_for_household_plugin,
     list_marketplace_catalog,
     operate_marketplace_instance_version,
@@ -38,6 +39,7 @@ from app.modules.plugin_marketplace.service import (
 
 
 MARKET_REPO_URL = "https://github.com/demo/marketplace"
+OFFICIAL_MARKET_REPO_URL = "https://github.com/demo/official-marketplace"
 GITLAB_MARKET_REPO_URL = "https://gitlab.com/demo/marketplace"
 MIRROR_MARKET_REPO_URL = "https://git.example.com/demo/marketplace"
 PLUGIN_REPO_URL = "https://github.com/demo/demo-plugin"
@@ -260,6 +262,7 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertEqual("installed", plugin.install_status)
         self.assertEqual("unconfigured", plugin.config_status)
         self.assertIsNotNone(plugin.marketplace_instance_id)
+        self.assertEqual("subprocess_runner", plugin.execution_backend)
 
         with self.assertRaises(PluginMarketplaceServiceError) as ctx:
             set_marketplace_instance_enabled(
@@ -306,6 +309,108 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         plugin = get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin")
         self.assertTrue(plugin.enabled)
         self.assertEqual("configured", plugin.config_status)
+        self.assertEqual("subprocess_runner", plugin.execution_backend)
+
+    def test_delete_household_plugin_installation_clears_marketplace_install_state(self) -> None:
+        client = self._build_client_for_install()
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        create_marketplace_install_task(
+            self.db,
+            payload=MarketplaceInstallTaskCreateRequest(
+                household_id=self.household_id,
+                source_id=source.source_id,
+                plugin_id="demo-plugin",
+                version="1.0.0",
+            ),
+            client=client,
+        )
+        self.db.flush()
+
+        delete_household_plugin_installation(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+        )
+        self.db.commit()
+
+        self.assertIsNone(
+            get_marketplace_instance_for_household_plugin(
+                self.db,
+                household_id=self.household_id,
+                plugin_id="demo-plugin",
+            )
+        )
+        self.assertEqual([], list_marketplace_install_tasks(self.db, household_id=self.household_id, plugin_id="demo-plugin"))
+        self.assertEqual([], list_plugin_mounts(self.db, household_id=self.household_id))
+
+        catalog = list_marketplace_catalog(self.db, household_id=self.household_id)
+        entry = next(item for item in catalog.items if item.plugin_id == "demo-plugin")
+        self.assertEqual("not_installed", entry.install_state.install_status)
+        self.assertIsNone(entry.install_state.instance_id)
+
+    def test_official_marketplace_install_and_upgrade_keep_subprocess_runner_backend(self) -> None:
+        client = self._build_client_for_official_version_switch()
+        previous_repo = settings.plugin_marketplace_official_repo_url
+        previous_branch = settings.plugin_marketplace_official_branch
+        previous_entry_root = settings.plugin_marketplace_official_entry_root
+        settings.plugin_marketplace_official_repo_url = OFFICIAL_MARKET_REPO_URL
+        settings.plugin_marketplace_official_branch = "main"
+        settings.plugin_marketplace_official_entry_root = "plugins"
+
+        try:
+            source = ensure_builtin_marketplace_source(self.db, client=client)
+            sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+            create_marketplace_install_task(
+                self.db,
+                payload=MarketplaceInstallTaskCreateRequest(
+                    household_id=self.household_id,
+                    source_id=source.source_id,
+                    plugin_id="demo-plugin",
+                    version="1.0.0",
+                ),
+                client=client,
+            )
+            self.db.commit()
+
+            installed_plugin = get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin")
+            self.assertEqual("official", installed_plugin.source_type)
+            self.assertEqual("subprocess_runner", installed_plugin.execution_backend)
+            self.assertEqual("1.0.0", installed_plugin.version)
+
+            instance = get_marketplace_instance_for_household_plugin(
+                self.db,
+                household_id=self.household_id,
+                plugin_id="demo-plugin",
+            )
+            assert instance is not None
+            operate_marketplace_instance_version(
+                self.db,
+                instance_id=instance.id,
+                payload=PluginVersionOperationRequest(
+                    household_id=self.household_id,
+                    source_id=source.source_id,
+                    plugin_id="demo-plugin",
+                    target_version="1.1.0",
+                    operation="upgrade",
+                ),
+                client=client,
+            )
+            self.db.commit()
+
+            upgraded_plugin = get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin")
+            self.assertEqual("official", upgraded_plugin.source_type)
+            self.assertEqual("subprocess_runner", upgraded_plugin.execution_backend)
+            self.assertEqual("1.1.0", upgraded_plugin.version)
+        finally:
+            settings.plugin_marketplace_official_repo_url = previous_repo
+            settings.plugin_marketplace_official_branch = previous_branch
+            settings.plugin_marketplace_official_entry_root = previous_entry_root
 
     def test_add_marketplace_source_supports_gitlab_repo_and_gitea_mirror(self) -> None:
         client = self._build_client_for_gitlab_mirror_source()
@@ -548,6 +653,10 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertTrue(upgrade_result.instance.enabled)
         self.assertEqual("up_to_date", upgrade_result.governance.update_state)
         self.assertFalse(upgrade_result.state_changed)
+        self.assertEqual(
+            "subprocess_runner",
+            get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin").execution_backend,
+        )
 
         rollback_result = operate_marketplace_instance_version(
             self.db,
@@ -566,6 +675,10 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertEqual("1.0.0", rollback_result.instance.installed_version)
         self.assertTrue(rollback_result.instance.enabled)
         self.assertEqual("upgrade_available", rollback_result.governance.update_state)
+        self.assertEqual(
+            "subprocess_runner",
+            get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin").execution_backend,
+        )
 
     def test_upgrade_disables_plugin_when_new_config_schema_breaks_old_config(self) -> None:
         client = self._build_client_for_config_breaking_upgrade()
@@ -896,6 +1009,46 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         }
         return FakeGitHubMarketplaceClient(files=files, directories=directories, metadata=metadata, downloads=downloads)
 
+    def _build_client_for_official_version_switch(self) -> FakeGitHubMarketplaceClient:
+        versions = [
+            {
+                "version": "1.0.0",
+                "git_ref": "refs/tags/v1.0.0",
+                "artifact_type": "source_archive",
+                "artifact_url": "https://example.com/demo-plugin-1.0.0.zip",
+                "min_app_version": "0.1.0",
+            },
+            {
+                "version": "1.1.0",
+                "git_ref": "refs/tags/v1.1.0",
+                "artifact_type": "source_archive",
+                "artifact_url": "https://example.com/demo-plugin-1.1.0.zip",
+                "min_app_version": "0.1.0",
+            },
+        ]
+        files = {
+            (OFFICIAL_MARKET_REPO_URL, "market.json", "main"): self._build_market_manifest(
+                repo_url=OFFICIAL_MARKET_REPO_URL,
+                trusted_level="official",
+            ),
+            (OFFICIAL_MARKET_REPO_URL, "plugins/demo-plugin/entry.json", "main"): self._build_entry_payload(
+                versions=versions,
+                latest_version="1.1.0",
+            ),
+        }
+        directories = {
+            (OFFICIAL_MARKET_REPO_URL, "plugins", "main"): [{"name": "demo-plugin", "type": "dir"}],
+        }
+        metadata = {
+            OFFICIAL_MARKET_REPO_URL: {"default_branch": "main", "stargazers_count": 10, "forks_count": 2},
+            PLUGIN_REPO_URL: {"default_branch": "main", "stargazers_count": 8, "forks_count": 1},
+        }
+        downloads = {
+            "https://example.com/demo-plugin-1.0.0.zip": self._build_plugin_archive(manifest_version="1.0.0"),
+            "https://example.com/demo-plugin-1.1.0.zip": self._build_plugin_archive(manifest_version="1.1.0"),
+        }
+        return FakeGitHubMarketplaceClient(files=files, directories=directories, metadata=metadata, downloads=downloads)
+
     def _build_client_for_version_switch(self) -> FakeGitHubMarketplaceClient:
         versions = [
             {
@@ -1031,7 +1184,10 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         return FakeGitHubMarketplaceClient(files=files, directories=directories, metadata=metadata, downloads=downloads)
 
     @staticmethod
-    def _build_market_manifest(repo_url: str = MARKET_REPO_URL) -> dict:
+    def _build_market_manifest(
+        repo_url: str = MARKET_REPO_URL,
+        trusted_level: str = "third_party",
+    ) -> dict:
         return {
             "market_id": "demo-market",
             "name": "Demo Market",
@@ -1039,7 +1195,7 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             "repo_url": repo_url,
             "default_branch": "main",
             "entry_root": "plugins",
-            "trusted_level": "third_party",
+            "trusted_level": trusted_level,
         }
 
     @staticmethod

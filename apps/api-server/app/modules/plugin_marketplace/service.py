@@ -10,6 +10,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
+import logging
 
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,7 @@ from app.modules.plugin.versioning import (
     resolve_host_compatibility,
     resolve_marketplace_version_governance,
 )
+from app.modules.region.plugin_runtime import sync_household_plugin_region_providers
 from app.modules.plugin.service import (
     PluginManifestValidationError,
     PluginServiceError,
@@ -75,6 +77,8 @@ MARKETPLACE_ENTRY_FILE_NAME = "entry.json"
 MARKETPLACE_MANIFEST_FILE_NAME = "market.json"
 MARKETPLACE_INVALID_SUMMARY = "插件市场条目校验失败"
 PLUGIN_MARKETPLACE_UNCONFIGURED_ERROR_CODE = "plugin_marketplace_not_configured"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -125,6 +129,7 @@ def _resolve_repo_provider(
     client: GitHubMarketplaceClient,
     field_name: str,
 ) -> str:
+    target_root: Path | None = None
     try:
         repo = client.parse_repo_url(repo_url, repo_provider=explicit_provider)
     except GitHubMarketplaceClientError as exc:
@@ -1350,6 +1355,7 @@ def create_marketplace_install_task(
     repository.add_marketplace_install_task(db, task)
     db.flush()
 
+    target_root: Path | None = None
     try:
         _set_install_task_stage(
             task,
@@ -1409,6 +1415,7 @@ def create_marketplace_install_task(
             )
         else:
             mount_row.source_type = source.trusted_level
+            mount_row.execution_backend = "subprocess_runner"
             mount_row.manifest_path = str(target_manifest_path)
             mount_row.plugin_root = str(target_root)
             mount_row.python_path = sys.executable
@@ -1471,9 +1478,12 @@ def create_marketplace_install_task(
             household_id=payload.household_id,
             plugin_id=payload.plugin_id,
         )
+        sync_household_plugin_region_providers(db, payload.household_id)
         db.flush()
         return _to_install_task_read(task)
     except (GitHubMarketplaceClientError, PluginMarketplaceServiceError, PluginManifestValidationError, PluginServiceError) as exc:
+        if target_root is not None and target_root.exists():
+            shutil.rmtree(target_root, ignore_errors=True)
         _mark_install_failed(task=task, stage=task.install_status, exc=exc)
         if existing_instance is not None:
             existing_instance.install_status = "install_failed"
@@ -1615,6 +1625,7 @@ def _switch_marketplace_instance_version(
         instance.updated_at = utc_now_iso()
 
         mount.source_type = source.trusted_level
+        mount.execution_backend = "subprocess_runner"
         mount.manifest_path = str(target_manifest_path)
         mount.plugin_root = str(target_root)
         mount.python_path = sys.executable
@@ -1627,6 +1638,7 @@ def _switch_marketplace_instance_version(
             household_id=instance.household_id,
             plugin_id=instance.plugin_id,
         )
+        sync_household_plugin_region_providers(db, instance.household_id)
 
         state_changed = instance.config_status != previous_config_status
         state_change_reason = None
@@ -1656,6 +1668,8 @@ def _switch_marketplace_instance_version(
             state_change_reason=state_change_reason,
         )
     except (GitHubMarketplaceClientError, PluginMarketplaceServiceError, PluginManifestValidationError, PluginServiceError) as exc:
+        if target_root is not None and target_root.exists():
+            shutil.rmtree(target_root, ignore_errors=True)
         _restore_runtime_state(instance, previous_instance_state)
         _restore_runtime_state(mount, previous_mount_state)
         db.flush()

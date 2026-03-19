@@ -114,6 +114,31 @@ class PluginStartupSyncTests(unittest.TestCase):
         self.assertEqual(str(missing_row_root.resolve()), str(Path(created.plugin_root).resolve()))
         self.assertFalse(created.enabled)
 
+    def test_sync_manual_plugins_recognizes_release_directory_layout(self) -> None:
+        household = self._create_household("手工发布目录家庭")
+        release_root = self._create_plugin_dir(
+            Path(self._tempdir.name)
+            / "third_party"
+            / "manual"
+            / household.id
+            / "manual-release-plugin"
+            / "1.2.0--20260319T120000Z--abcd1234",
+            plugin_id="manual-release-plugin",
+            name="Manual Release Plugin",
+            version="1.2.0",
+        )
+        self.db.commit()
+
+        result = sync_persisted_plugins_on_startup(self.db)
+        self.db.commit()
+
+        self.assertEqual(1, result.manual_created)
+        mounts = plugin_repository.list_plugin_mounts(self.db, household_id=household.id)
+        self.assertEqual(1, len(mounts))
+        self.assertEqual("manual-release-plugin", mounts[0].plugin_id)
+        self.assertEqual(str(release_root.resolve()), str(Path(mounts[0].plugin_root).resolve()))
+        self.assertEqual("subprocess_runner", mounts[0].execution_backend)
+
     def test_sync_official_theme_pack_plugins_mounts_all_households(self) -> None:
         theme_root = self._create_theme_pack_dir(
             Path(self._tempdir.name) / "official" / "theme_chun_he_jing_ming_pack",

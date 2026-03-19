@@ -112,6 +112,10 @@ def list_marketplace_install_tasks(
     return list(db.scalars(stmt).all())
 
 
+def delete_marketplace_install_task(db: Session, row: PluginMarketplaceInstallTask) -> None:
+    db.delete(row)
+
+
 def add_marketplace_instance(db: Session, row: PluginMarketplaceInstance) -> PluginMarketplaceInstance:
     db.add(row)
     return row
@@ -142,3 +146,7 @@ def list_marketplace_instances(db: Session, *, household_id: str) -> list[Plugin
         PluginMarketplaceInstance.id.desc(),
     )
     return list(db.scalars(stmt).all())
+
+
+def delete_marketplace_instance(db: Session, row: PluginMarketplaceInstance) -> None:
+    db.delete(row)

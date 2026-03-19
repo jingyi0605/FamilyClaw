@@ -254,8 +254,8 @@
     3. 成功后自动刷新列表和详情
   - 怎么验证：
     - `plugins` 页面已补 ZIP 上传入口、覆盖确认弹窗、成功提示和自动刷新
-    - `cmd /c npm run test:plugins-page` 已通过
-    - `cmd /c npm run typecheck` 已通过
+    - `cd apps/user-app && npm run test:plugins-page` 已通过
+    - `cd apps/user-app && npm run typecheck` 已通过
   - 对应需求：`requirements.md` 需求 1、需求 3、需求 4、需求 8
   - 对应设计：`design.md` §2.3.1、§2.3.2、§3.3.1、§5.3
 
@@ -285,6 +285,34 @@
 
 ### 最终检查
 
+- [x] 3.5 补齐插件详情页删除入口和统一删除链路说明
+  - 状态：DONE
+  - 这一步到底做什么：把手动安装和市场安装插件的删除入口补到详情页，同时把统一删除接口、阻断条件和即时生效语义写回正式文档与 spec。
+  - 做完你能看到什么：用户不需要再区分“这是 ZIP 装的还是市场装的”，都能在详情页删除；删完后列表和市场状态会立即刷新。
+  - 先依赖什么：3.1、3.2、3.3
+  - 开始前先看：
+    - `apps/api-server/app/modules/plugin/service.py`
+    - `apps/api-server/app/api/v1/endpoints/ai_config.py`
+    - `apps/user-app/src/pages/plugins/index.tsx`
+    - `apps/user-app/src/pages/settings/components/PluginDetailDrawer.tsx`
+  - 主要改哪里：
+    - 后端统一删除 service / API
+    - `user-app` 插件详情页删除按钮与交互
+    - `docs/Documentation/` 相关文档
+  - 这一步先不做什么：不扩成历史运行记录清理工具。
+  - 怎么算完成：
+    1. 手动 ZIP 安装和市场安装插件在详情页都能看到删除入口
+    2. 内置插件不会出现删除入口
+    3. 被集成实例、通道账号、设备绑定、集成发现引用的插件会被阻止删除
+    4. 删除后刷新页面能直接看到结果，不需要重启后端服务
+  - 怎么验证：
+    - 后端已通过 `python -m unittest tests.test_plugin_mounts tests.test_plugin_marketplace_service tests.test_plugin_package_api -q`
+    - 前端详情页已补删除按钮、确认提示、删除成功后自动刷新和关闭抽屉
+    - `cd apps/user-app && npm run test:plugins-page` 已通过
+    - 正式文档与接口参考已同步回写删除语义和错误码
+  - 对应需求：`requirements.md` 需求 3、需求 4、需求 5、需求 8
+  - 对应设计：`design.md` §2.3.2、§2.3.3、§5、§6.2
+
 - [x] 3.4 最终检查点
   - 状态：DONE
   - 这一步到底做什么：确认这份 Spec 真正打通了 ZIP 安装、覆盖升级和无需重启生效，而不是只加了一个上传按钮。
@@ -304,6 +332,7 @@
   - 怎么验证：
     - 已核对实现、正式文档、前端文案与 spec
     - 后端已通过 `python -m unittest tests.test_plugin_mounts tests.test_plugin_startup_sync -q`
-    - 前端已通过 `cmd /c npm run test:plugins-page`
+    - 前端已通过 `cd apps/user-app && npm run test:plugins-page`
+    - 前端已通过 `cd apps/user-app && npm run typecheck`
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文

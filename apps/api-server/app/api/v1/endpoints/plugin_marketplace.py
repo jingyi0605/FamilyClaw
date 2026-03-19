@@ -6,6 +6,7 @@ from app.api.dependencies import ActorContext, ensure_actor_can_access_household
 from app.api.errors import translate_integrity_error
 from app.db.session import get_db
 from app.modules.audit.service import write_audit_log
+from app.modules.plugin import PluginServiceError, set_household_plugin_enabled
 from app.modules.plugin.schemas import PluginStateUpdateRequest, PluginVersionGovernanceRead
 from app.modules.plugin_marketplace import (
     MarketplaceCatalogListRead,
@@ -27,7 +28,6 @@ from app.modules.plugin_marketplace import (
     list_marketplace_catalog,
     list_marketplace_sources,
     operate_marketplace_instance_version,
-    set_marketplace_instance_enabled,
     sync_marketplace_source,
 )
 
@@ -202,12 +202,14 @@ def enable_marketplace_instance_endpoint(
     try:
         instance = get_marketplace_instance(db, instance_id=instance_id)
         ensure_actor_can_access_household(actor, instance.household_id)
-        result = set_marketplace_instance_enabled(
+        set_household_plugin_enabled(
             db,
             household_id=instance.household_id,
             plugin_id=instance.plugin_id,
             payload=payload,
+            updated_by=actor.actor_id,
         )
+        result = get_marketplace_instance(db, instance_id=instance_id)
         write_audit_log(
             db,
             household_id=instance.household_id,
@@ -220,6 +222,9 @@ def enable_marketplace_instance_endpoint(
         )
         db.commit()
         return result
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except PluginMarketplaceServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc

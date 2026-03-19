@@ -5,7 +5,10 @@ import { GuardedPage, useHouseholdContext } from '../../runtime';
 import { useI18n, useTheme } from '../../runtime/h5-shell';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card, EmptyState, Section } from '../family/base';
-import { shouldBlockDisableCurrentThemePlugin } from './pluginStateGuards';
+import {
+  shouldBlockDeleteCurrentThemePlugin,
+  shouldBlockDisableCurrentThemePlugin,
+} from './pluginStateGuards';
 import { SettingsPageShell } from '../settings/SettingsPageShell';
 import { PluginDetailDrawer } from '../settings/components/PluginDetailDrawer';
 import { SettingsDialog } from '../settings/components/SettingsSharedBlocks';
@@ -348,6 +351,7 @@ function PluginsPageContent() {
   const [detailPlugin, setDetailPlugin] = useState<PluginRegistryItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [togglingPluginId, setTogglingPluginId] = useState<string | null>(null);
+  const [deletingPluginId, setDeletingPluginId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
   const [showBuiltinPlugins, setShowBuiltinPlugins] = useState(getInitialShowBuiltinPlugins);
   const [selectedType, setSelectedType] = useState<PluginManifestType | null>(null);
@@ -687,6 +691,44 @@ function PluginsPageContent() {
       setError(toggleError instanceof ApiError ? toggleError.message : page('plugins.operationFailed'));
     } finally {
       setTogglingPluginId(null);
+    }
+  }
+
+  async function handleDeletePlugin(plugin: PluginRegistryItem) {
+    if (!currentHouseholdId) {
+      return;
+    }
+
+    setError('');
+    setStatus('');
+
+    if (shouldBlockDeleteCurrentThemePlugin(plugin, activeThemePluginId)) {
+      const message = page('plugins.themePack.deleteInUse');
+      setError(message);
+      throw new Error(message);
+    }
+
+    setDeletingPluginId(plugin.id);
+
+    try {
+      await settingsApi.deletePlugin(currentHouseholdId, plugin.id);
+      if (selectedPluginId === plugin.id) {
+        setSelectedPluginId(null);
+      }
+      await Promise.all([reloadInstalledPlugins(), reloadMarketplace()]);
+      await refreshPluginLocales();
+      closePluginDetail();
+      setStatus(page('settings.plugin.deleteSuccess', { plugin: plugin.name }));
+    } catch (deleteError) {
+      const message = deleteError instanceof ApiError
+        ? deleteError.message
+        : deleteError instanceof Error
+          ? deleteError.message
+          : page('settings.plugin.deleteFailed');
+      setError(message);
+      throw deleteError instanceof Error ? deleteError : new Error(message);
+    } finally {
+      setDeletingPluginId(null);
     }
   }
 
@@ -1737,6 +1779,9 @@ function PluginsPageContent() {
           }}
           onOperateMarketplaceVersion={handleOperateMarketplaceVersion}
           isToggling={togglingPluginId === detailPlugin?.id}
+          onDelete={handleDeletePlugin}
+          isDeleting={deletingPluginId === detailPlugin?.id}
+          canDelete={detailPlugin?.source_type !== 'builtin'}
         />
       </div>
     </SettingsPageShell>

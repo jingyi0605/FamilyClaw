@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -74,25 +74,29 @@ from app.modules.plugin import (
     AgentActionPluginInvokeRequest,
     AgentActionPluginInvokeResult,
     PluginConfigFormRead,
+    PluginConfigResolveRequest,
     PluginConfigScopeListRead,
     PluginConfigUpdateRequest,
     PluginLocaleListRead,
     PluginMountCreate,
     PluginMountRead,
     PluginMountUpdate,
+    PluginPackageInstallRead,
     PluginRegistryItem,
     PluginRegistrySnapshot,
     PluginStateUpdateRequest,
     confirm_agent_action_plugin,
-    delete_plugin_mount,
+    delete_household_plugin_installation,
     invoke_agent_action_plugin,
     list_registered_plugin_locales_for_household,
     list_plugin_mounts,
     list_plugin_config_scopes,
     list_registered_plugins_for_household,
     register_plugin_mount,
+    resolve_plugin_config_form,
     save_plugin_config_form,
     set_household_plugin_enabled,
+    install_plugin_package,
     PluginServiceError,
     get_plugin_config_form,
     update_plugin_mount,
@@ -635,6 +639,28 @@ def get_household_plugin_config_form_endpoint(
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
 
+@router.post("/{household_id}/plugins/{plugin_id}/config/resolve", response_model=PluginConfigFormRead)
+def resolve_household_plugin_config_form_endpoint(
+    household_id: str,
+    plugin_id: str,
+    payload: PluginConfigResolveRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> PluginConfigFormRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        return resolve_plugin_config_form(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            scope_type=payload.scope_type,
+            scope_key=payload.scope_key,
+            values=payload.values,
+        )
+    except PluginServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+
 @router.put("/{household_id}/plugins/{plugin_id}/config", response_model=PluginConfigFormRead)
 def save_household_plugin_config_form_endpoint(
     household_id: str,
@@ -729,6 +755,57 @@ def list_household_plugin_mounts_endpoint(
     return list_plugin_mounts(db, household_id=household_id)
 
 
+@router.post(
+    "/{household_id}/plugin-packages",
+    response_model=PluginPackageInstallRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def install_household_plugin_package_endpoint(
+    household_id: str,
+    overwrite: bool = Form(default=False),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> PluginPackageInstallRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        content = await file.read()
+        result = install_plugin_package(
+            db,
+            household_id=household_id,
+            file_name=file.filename or "plugin.zip",
+            content=content,
+            overwrite=overwrite,
+        )
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="plugin.package.install",
+            target_type="plugin_mount",
+            target_id=result.plugin_id,
+            result="success",
+            details={
+                "plugin_id": result.plugin_id,
+                "plugin_name": result.plugin_name,
+                "version": result.version,
+                "previous_version": result.previous_version,
+                "install_action": result.install_action,
+                "overwrite": overwrite,
+                "source_type": result.source_type,
+                "execution_backend": result.execution_backend,
+            },
+        )
+        db.commit()
+        return result
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
 @router.post("/{household_id}/plugin-mounts", response_model=PluginMountRead, status_code=status.HTTP_201_CREATED)
 def register_household_plugin_mount_endpoint(
     household_id: str,
@@ -751,6 +828,9 @@ def register_household_plugin_mount_endpoint(
         )
         db.commit()
         return result
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -782,6 +862,9 @@ def update_household_plugin_mount_endpoint(
         )
         db.commit()
         return result
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -799,18 +882,53 @@ def delete_household_plugin_mount_endpoint(
 ) -> None:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        delete_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
+        delete_household_plugin_installation(db, household_id=household_id, plugin_id=plugin_id)
         write_audit_log(
             db,
             household_id=household_id,
             actor=actor,
-            action="plugin.mount.delete",
-            target_type="plugin_mount",
+            action="plugin.delete",
+            target_type="plugin",
             target_id=plugin_id,
             result="success",
             details={"plugin_id": plugin_id},
         )
         db.commit()
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise translate_integrity_error(exc) from exc
+
+
+@router.delete("/{household_id}/plugins/{plugin_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_household_plugin_endpoint(
+    household_id: str,
+    plugin_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> None:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        delete_household_plugin_installation(db, household_id=household_id, plugin_id=plugin_id)
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="plugin.delete",
+            target_type="plugin",
+            target_id=plugin_id,
+            result="success",
+            details={"plugin_id": plugin_id},
+        )
+        db.commit()
+    except PluginServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

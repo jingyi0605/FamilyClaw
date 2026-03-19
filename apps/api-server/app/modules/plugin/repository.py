@@ -279,6 +279,10 @@ def add_plugin_state_override(db: Session, row: PluginStateOverride) -> PluginSt
     return row
 
 
+def delete_plugin_state_override(db: Session, row: PluginStateOverride) -> None:
+    db.delete(row)
+
+
 def add_plugin_job(db: Session, row: PluginJob) -> PluginJob:
     db.add(row)
     return row
@@ -532,6 +536,10 @@ def list_plugin_state_overrides(db: Session, *, household_id: str) -> list[Plugi
         .order_by(PluginStateOverride.updated_at.desc(), PluginStateOverride.id.desc())
     )
     return list(db.scalars(stmt).all())
+
+
+def delete_plugin_dashboard_card_snapshot(db: Session, row: PluginDashboardCardSnapshot) -> None:
+    db.delete(row)
 
 
 def delete_plugin_mount(db: Session, row: PluginMount) -> None:
