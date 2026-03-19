@@ -1217,6 +1217,13 @@
   'home.cardHint.stale': '这张卡片的数据过期了，先展示最后一次可用结果。',
   'home.cardHint.error': '这张卡片当前不可用，但不会影响首页其他内容。',
   'home.cardHint.empty': '这张卡片暂时还没有可展示的数据。',
+  'home.weather.updated': '更新时间',
+  'home.weather.humidity': '湿度',
+  'home.weather.windSpeed': '风速',
+  'home.weather.precipitationNext1h': '未来 1 小时降水',
+  'home.weather.pressure': '气压',
+  'home.weather.forecast6h': '未来 6 小时摘要',
+  'home.weather.noData': '暂无数据',
 
   'assistant.time.justNow': '刚刚',
   'assistant.time.minutesAgo': '{count} 分钟前',

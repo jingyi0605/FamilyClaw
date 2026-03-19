@@ -6,7 +6,6 @@ import unittest
 from pathlib import Path
 
 import httpx
-from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
 import app.db.session as db_session_module
@@ -42,35 +41,37 @@ class PluginLocalesApiTests(unittest.TestCase):
         self.SessionLocal = self._db_helper.SessionLocal
         self._previous_session_local = db_session_module.SessionLocal
         db_session_module.SessionLocal = self.SessionLocal
-        self.db: Session = self.SessionLocal()
+        with self.SessionLocal() as db:
+            ensure_pending_household_bootstrap_accounts(db)
+            household = create_household(
+                db,
+                HouseholdCreate(name="Locale Home", city="Taipei", timezone="Asia/Taipei", locale="zh-CN"),
+            )
+            member = create_member(
+                db,
+                MemberCreate(household_id=household.id, name="管理员", role="admin"),
+            )
+            sync_persisted_plugins_on_startup(db)
+            db.commit()
 
-        ensure_pending_household_bootstrap_accounts(self.db)
-        self.household = create_household(
-            self.db,
-            HouseholdCreate(name="Locale Home", city="Taipei", timezone="Asia/Taipei", locale="zh-CN"),
-        )
-        self.member = create_member(
-            self.db,
-            MemberCreate(household_id=self.household.id, name="管理员", role="admin"),
-        )
-        sync_persisted_plugins_on_startup(self.db)
-        self.db.commit()
+            self.household_id = household.id
+            self.member_id = member.id
 
-        bootstrap = authenticate_account(self.db, "user", "user")
-        account = complete_bootstrap_account(
-            self.db,
-            actor=bootstrap,
-            payload=BootstrapAccountCompleteRequest(
-                household_id=self.household.id,
-                member_id=self.member.id,
-                username="locale_owner",
-                password="owner123",
-            ),
-        )
-        _, self.session_token = create_account_session(self.db, account.id)
+            bootstrap = authenticate_account(db, "user", "user")
+            account = complete_bootstrap_account(
+                db,
+                actor=bootstrap,
+                payload=BootstrapAccountCompleteRequest(
+                    household_id=self.household_id,
+                    member_id=self.member_id,
+                    username="locale_owner",
+                    password="owner123",
+                ),
+            )
+            _, self.session_token = create_account_session(db, account.id)
+            db.commit()
 
     def tearDown(self) -> None:
-        self.db.close()
         self.engine.dispose()
         db_session_module.SessionLocal = self._previous_session_local
         settings.database_url = self._previous_database_url
@@ -83,28 +84,29 @@ class PluginLocalesApiTests(unittest.TestCase):
                 plugin_id="third-party-zh-hk-pack",
                 locale_id="zh-HK",
             )
-            register_plugin_mount(
-                self.db,
-                household_id=self.household.id,
-                payload=PluginMountCreate(
-                    source_type="third_party",
-                    plugin_root=str(plugin_root),
-                    python_path=sys.executable,
-                    working_dir=str(plugin_root),
-                    timeout_seconds=20,
-                ),
-            )
-            self.db.commit()
+            with self.SessionLocal() as db:
+                register_plugin_mount(
+                    db,
+                    household_id=self.household_id,
+                    payload=PluginMountCreate(
+                        source_type="third_party",
+                        plugin_root=str(plugin_root),
+                        python_path=sys.executable,
+                        working_dir=str(plugin_root),
+                        timeout_seconds=20,
+                    ),
+                )
+                db.commit()
 
             transport = httpx.ASGITransport(app=app)
 
             async def run_case() -> None:
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                     client.cookies.set(settings.auth_session_cookie_name, self.session_token)
-                    response = await client.get(f"/api/v1/ai-config/{self.household.id}/locales")
+                    response = await client.get(f"/api/v1/ai-config/{self.household_id}/locales")
                     self.assertEqual(200, response.status_code)
                     payload = response.json()
-                    self.assertEqual(self.household.id, payload["household_id"])
+                    self.assertEqual(self.household_id, payload["household_id"])
 
                     by_locale = {item["locale_id"]: item for item in payload["items"]}
                     self.assertIn("zh-TW", by_locale)
@@ -114,7 +116,7 @@ class PluginLocalesApiTests(unittest.TestCase):
                     self.assertEqual("third_party", by_locale["zh-HK"]["source_type"])
                     self.assertEqual("中文（香港）", by_locale["zh-HK"]["native_label"])
                     self.assertEqual("储存", by_locale["zh-HK"]["messages"]["common.save"])
-                    self.assertEqual("官方天气插件", by_locale["zh-CN"]["plugin_name"] if "plugin_name" in by_locale["zh-CN"] else "官方天气插件")
+                    self.assertEqual("official-weather", by_locale["zh-CN"]["plugin_id"])
                     self.assertEqual("家庭天气", by_locale["zh-CN"]["messages"]["official_weather.dashboard.title"])
 
             asyncio.run(run_case())
@@ -127,51 +129,53 @@ class PluginLocalesApiTests(unittest.TestCase):
                 locale_id="zh-TW",
                 messages={"official_weather.dashboard.title": "第三方天气标题"},
             )
-            register_plugin_mount(
-                self.db,
-                household_id=self.household.id,
-                payload=PluginMountCreate(
-                    source_type="third_party",
-                    plugin_root=str(plugin_root),
-                    python_path=sys.executable,
-                    working_dir=str(plugin_root),
-                    timeout_seconds=20,
-                ),
-            )
-            self.db.commit()
+            with self.SessionLocal() as db:
+                register_plugin_mount(
+                    db,
+                    household_id=self.household_id,
+                    payload=PluginMountCreate(
+                        source_type="third_party",
+                        plugin_root=str(plugin_root),
+                        python_path=sys.executable,
+                        working_dir=str(plugin_root),
+                        timeout_seconds=20,
+                    ),
+                )
+                db.commit()
 
             transport = httpx.ASGITransport(app=app)
 
             async def run_case() -> None:
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                     client.cookies.set(settings.auth_session_cookie_name, self.session_token)
-                    response = await client.get(f"/api/v1/ai-config/{self.household.id}/locales")
+                    response = await client.get(f"/api/v1/ai-config/{self.household_id}/locales")
                     self.assertEqual(200, response.status_code)
                     payload = response.json()
                     zh_tw = {item["locale_id"]: item for item in payload["items"]}["zh-TW"]
                     self.assertEqual("locale-zh-tw", zh_tw["plugin_id"])
                     self.assertIn("third-party-weather-copy", zh_tw["overridden_plugin_ids"])
-                    self.assertEqual("储存", zh_tw["messages"]["common.save"])
+                    self.assertEqual("儲存", zh_tw["messages"]["common.save"])
                     self.assertEqual("第三方天气标题", zh_tw["messages"]["official_weather.dashboard.title"])
 
             asyncio.run(run_case())
 
     def test_disabled_builtin_locale_pack_is_filtered_out(self) -> None:
-        set_household_plugin_enabled(
-            self.db,
-            household_id=self.household.id,
-            plugin_id="locale-zh-tw",
-            payload=PluginStateUpdateRequest(enabled=False),
-            updated_by="tester",
-        )
-        self.db.commit()
+        with self.SessionLocal() as db:
+            set_household_plugin_enabled(
+                db,
+                household_id=self.household_id,
+                plugin_id="locale-zh-tw",
+                payload=PluginStateUpdateRequest(enabled=False),
+                updated_by="tester",
+            )
+            db.commit()
 
         transport = httpx.ASGITransport(app=app)
 
         async def run_case() -> None:
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 client.cookies.set(settings.auth_session_cookie_name, self.session_token)
-                response = await client.get(f"/api/v1/ai-config/{self.household.id}/locales")
+                response = await client.get(f"/api/v1/ai-config/{self.household_id}/locales")
                 self.assertEqual(200, response.status_code)
                 payload = response.json()
                 locale_ids = {item["locale_id"] for item in payload["items"]}
@@ -257,9 +261,9 @@ class PluginLocalesApiTests(unittest.TestCase):
                             "domains": ["demo"],
                             "instance_model": "single_instance",
                             "refresh_mode": "manual",
-                            "supports_discovery": false,
-                            "supports_actions": false,
-                            "supports_cards": false,
+                            "supports_discovery": False,
+                            "supports_actions": False,
+                            "supports_cards": False,
                             "entity_types": [],
                             "default_cache_ttl_seconds": 60,
                             "max_stale_seconds": 60

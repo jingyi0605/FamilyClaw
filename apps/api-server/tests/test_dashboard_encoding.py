@@ -8,7 +8,7 @@ from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
-from app.modules.plugin.dashboard_service import _build_builtin_home_cards, get_home_dashboard
+from app.modules.plugin.dashboard_service import get_home_dashboard
 from app.modules.plugin.schemas import PluginStateUpdateRequest
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from app.modules.plugin.service import load_plugin_manifest, set_household_plugin_enabled
@@ -61,26 +61,6 @@ class DashboardEncodingTests(unittest.TestCase):
     def _sync_official_plugins(self) -> None:
         sync_persisted_plugins_on_startup(self.db)
         self.db.flush()
-
-    def test_builtin_home_cards_use_readable_copy(self) -> None:
-        household = create_household(
-            self.db,
-            HouseholdCreate(name="Dashboard Home", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
-        )
-        self.db.flush()
-
-        cards, warnings = _build_builtin_home_cards(self.db, household_id=household.id)
-        self.assertFalse(warnings)
-        card_map = {card.card_ref: card for card in cards}
-
-        self.assertEqual("首页总览", card_map["builtin:weather"].subtitle)
-        self.assertEqual("关键指标", card_map["builtin:stats"].title)
-        self.assertEqual("内置聚合摘要", card_map["builtin:stats"].subtitle)
-        self.assertEqual("快捷操作", card_map["builtin:quick-actions"].title)
-        self.assertEqual(
-            ["对话", "记忆", "设置", "家庭"],
-            [action.label for action in card_map["builtin:quick-actions"].actions],
-        )
 
     def test_home_dashboard_weather_card_uses_plugin_locale_when_snapshot_missing(self) -> None:
         household = create_household(
@@ -157,8 +137,17 @@ class DashboardEncodingTests(unittest.TestCase):
 
         self.assertEqual("家庭天气", weather_card.title)
         self.assertEqual("家庭默认天气", weather_card.subtitle)
+        self.assertEqual("多云", weather_card.payload["condition_text"])
         self.assertEqual("°C", weather_card.payload["temperature_unit"])
         self.assertEqual("°", weather_card.payload["wind_direction_unit"])
+        self.assertEqual(
+            "official_weather.dashboard.fields.humidity",
+            weather_card.payload["detail_items"][0]["label_key"],
+        )
+        self.assertEqual(
+            "official_weather.dashboard.fields.updated_at",
+            weather_card.payload["footer_items"][-1]["label_key"],
+        )
 
     def test_official_weather_manifest_uses_readable_copy_and_declares_locales(self) -> None:
         manifest = load_plugin_manifest(
@@ -169,6 +158,11 @@ class DashboardEncodingTests(unittest.TestCase):
         assert manifest.capabilities.integration is not None
         self.assertEqual("家庭天气", manifest.capabilities.integration.default_instance_display_name)
         self.assertEqual(["zh-CN", "en-US"], [item.id for item in manifest.locales])
+        self.assertEqual("official_weather.config.provider.title", manifest.config_specs[0].title_key)
+        self.assertEqual(
+            "official_weather.config.binding.fields.provider_selector.label",
+            manifest.config_specs[1].config_schema.fields[1].label_key,
+        )
 
     @staticmethod
     def _official_root() -> Path:

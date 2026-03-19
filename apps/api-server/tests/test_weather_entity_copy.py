@@ -47,6 +47,11 @@ def _build_snapshot() -> WeatherSnapshot:
     )
 
 
+def _assert_no_weather_mojibake(text: str) -> None:
+    suspicious_markers = ("澶", "鏈€", "鏆", "姘", "鍦", "婀", "椋", "掳")
+    assert not any(marker in text for marker in suspicious_markers), text
+
+
 class WeatherEntityCopyTests(unittest.TestCase):
     def setUp(self) -> None:
         from tests.test_db_support import PostgresTestDatabase
@@ -123,6 +128,11 @@ class WeatherEntityCopyTests(unittest.TestCase):
         self.assertEqual("小雨 22~26 °C", entity_map["weather.forecast_6h"].state_display)
         self.assertEqual({"kind": "none"}, entity_map["weather.wind_speed"].control)
 
+        for row in entity_rows:
+            _assert_no_weather_mojibake(row.name)
+            if row.state_display:
+                _assert_no_weather_mojibake(row.state_display)
+
         response = list_device_entities(self.db, device_id=device.id, view="all")
         self.assertEqual(10, len(response.items))
         response_entity_map = {item.entity_id: item for item in response.items}
@@ -137,30 +147,33 @@ class WeatherEntityCopyTests(unittest.TestCase):
                 "entities": [
                     {
                         "entity_id": "weather.condition",
-                        "name": "澶╂皵鐘舵��",
+                        "name": "婢垛晜鐨甸悩鑸碉拷锟",
                         "domain": "weather",
                         "state": "error",
-                        "state_display": "澶╂皵鏁版嵁鏆備笉鍙敤",
+                        "state_display": "婢垛晜鐨甸弫鐗堝祦閺嗗倷绗夐崣顖滄暏",
                         "unit": None,
                         "updated_at": "2026-03-18T03:05:00Z",
                         "metadata": {
                             "state": "error",
                             "provider_type": "met_norway",
-                            "error_message": "澶╂皵鏁版嵁鏆備笉鍙敤",
+                            "error_message": "婢垛晜鐨甸弫鐗堝祦閺嗗倷绗夐崣顖滄暏",
                         },
                         "control": {"kind": "none"},
                     },
                     {
                         "entity_id": "weather.forecast_6h",
-                        "name": "鏈�鏉� 6 灏忔椂鎽樿",
+                        "name": "閺堬拷閺夛拷 6 鐏忓繑妞傞幗妯款洣",
                         "domain": "weather",
                         "state": "rain",
-                        "state_display": "灏忛洦 22~26 掳C",
+                        "state_display": "鐏忓繘娲?22~26 鎺矯",
                         "unit": None,
                         "updated_at": "2026-03-18T03:05:00Z",
                         "metadata": {
                             "state": "ready",
                             "provider_type": "met_norway",
+                            "condition_text": "鐏忓繘娲",
+                            "min_temperature": 22.0,
+                            "max_temperature": 26.0,
                         },
                         "control": {"kind": "none"},
                     },
@@ -172,9 +185,11 @@ class WeatherEntityCopyTests(unittest.TestCase):
             for item in normalized["entities"]
             if isinstance(item, dict) and item.get("entity_id")
         }
+        self.assertEqual("天气状态", entity_map["weather.condition"]["name"])
         self.assertEqual("天气数据暂不可用", entity_map["weather.condition"]["state_display"])
         self.assertEqual("天气数据暂不可用", entity_map["weather.condition"]["metadata"]["error_message"])
-        self.assertEqual("rain", entity_map["weather.forecast_6h"]["state_display"])
+        self.assertEqual("未来 6 小时摘要", entity_map["weather.forecast_6h"]["name"])
+        self.assertEqual("rain 22~26 °C", entity_map["weather.forecast_6h"]["state_display"])
 
 
 if __name__ == "__main__":

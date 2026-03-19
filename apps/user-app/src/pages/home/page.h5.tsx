@@ -264,6 +264,78 @@ function getWeatherConditionIcon(card: HomeDashboardCardRead) {
   return <CloudSun size={48} />;
 }
 
+function getPayloadObjectArray(value: unknown): DashboardPayloadItem[] {
+  return Array.isArray(value)
+    ? value.filter(item => typeof item === 'object' && item !== null) as DashboardPayloadItem[]
+    : [];
+}
+
+function resolvePayloadLabel(
+  item: DashboardPayloadItem,
+  t: (key: ShellMessageKey) => string,
+  fallbackKey?: ShellMessageKey,
+  hardFallback = '',
+) {
+  const labelKey = getPayloadText(item.label_key);
+  if (labelKey) {
+    const translated = t(labelKey);
+    if (translated && translated !== labelKey) {
+      return translated;
+    }
+  }
+
+  const label = getPayloadText(item.label);
+  if (label) {
+    return label;
+  }
+
+  if (fallbackKey) {
+    const fallback = t(fallbackKey);
+    if (fallback && fallback !== fallbackKey) {
+      return fallback;
+    }
+  }
+
+  return hardFallback;
+}
+
+function resolvePayloadValue(item: DashboardPayloadItem) {
+  const valueDisplay = getPayloadText(item.value_display);
+  if (valueDisplay) {
+    return valueDisplay;
+  }
+
+  const rawValue = item.value;
+  const valueType = getPayloadText(item.value_type);
+  const numericValue = getPayloadNumber(rawValue);
+  if (numericValue !== null) {
+    return formatWeatherNumber(numericValue, getPayloadText(item.unit) || undefined) ?? '';
+  }
+
+  const textValue = getPayloadText(rawValue);
+  if (valueType === 'relative_time') {
+    return formatRelativeTime(textValue);
+  }
+  return textValue;
+}
+
+function getWeatherMetricIconByKey(key: string) {
+  switch (key) {
+    case 'humidity':
+      return <Droplets size={16} />;
+    case 'wind_speed':
+    case 'wind':
+      return <Wind size={16} />;
+    case 'precipitation_next_1h':
+    case 'precipitation':
+      return <CloudRain size={16} />;
+    case 'pressure':
+      return <Gauge size={16} />;
+    default:
+      return <Info size={16} />;
+  }
+}
+
 function buildWeatherForecastText(card: HomeDashboardCardRead, t: (key: ShellMessageKey) => string) {
   const forecast = typeof card.payload.forecast_6h === 'object' && card.payload.forecast_6h !== null
     ? card.payload.forecast_6h as Record<string, unknown>
@@ -285,21 +357,137 @@ function buildWeatherForecastText(card: HomeDashboardCardRead, t: (key: ShellMes
   if (range) {
     return range;
   }
-  return t('home.weather.noData');
+  return translateWeatherLabel(
+    t,
+    'official_weather.dashboard.no_data',
+    'home.weather.noData',
+    '暂无数据',
+  );
+}
+
+function translateWeatherLabel(
+  t: (key: ShellMessageKey) => string,
+  pluginKey: string,
+  fallbackKey: ShellMessageKey,
+  hardFallback: string,
+) {
+  const pluginText = t(pluginKey);
+  if (pluginText && pluginText !== pluginKey) {
+    return pluginText;
+  }
+
+  const fallbackText = t(fallbackKey);
+  if (fallbackText && fallbackText !== fallbackKey) {
+    return fallbackText;
+  }
+
+  return hardFallback;
 }
 
 function buildWeatherDetailItems(card: HomeDashboardCardRead, t: (key: ShellMessageKey) => string) {
+  const payloadItems = getPayloadObjectArray(card.payload.detail_items);
+  if (payloadItems.length > 0) {
+    return payloadItems
+      .map(item => {
+        const value = resolvePayloadValue(item);
+        if (!value) {
+          return null;
+        }
+        const key = getPayloadText(item.key, 'detail');
+        return {
+          key,
+          label: resolvePayloadLabel(item, t),
+          value,
+          icon: getWeatherMetricIconByKey(key),
+        };
+      })
+      .filter(Boolean) as Array<{ key: string; label: string; value: string; icon: ReactNode }>;
+  }
+
   const humidity = formatWeatherNumber(getPayloadNumber(card.payload.humidity), '%');
   const windSpeed = formatWeatherNumber(getPayloadNumber(card.payload.wind_speed), 'm/s');
   const precipitation = formatWeatherNumber(getPayloadNumber(card.payload.precipitation_next_1h), 'mm');
   const pressure = formatWeatherNumber(getPayloadNumber(card.payload.pressure), 'hPa');
 
   return [
-    humidity ? { key: 'humidity', label: t('home.weather.humidity'), value: humidity, icon: <Droplets size={16} /> } : null,
-    windSpeed ? { key: 'wind', label: t('home.weather.windSpeed'), value: windSpeed, icon: <Wind size={16} /> } : null,
-    precipitation ? { key: 'precipitation', label: t('home.weather.precipitationNext1h'), value: precipitation, icon: <CloudRain size={16} /> } : null,
-    pressure ? { key: 'pressure', label: t('home.weather.pressure'), value: pressure, icon: <Gauge size={16} /> } : null,
+    humidity ? {
+      key: 'humidity',
+      label: translateWeatherLabel(t, 'official_weather.dashboard.fields.humidity', 'home.weather.humidity', '湿度'),
+      value: humidity,
+      icon: <Droplets size={16} />,
+    } : null,
+    windSpeed ? {
+      key: 'wind',
+      label: translateWeatherLabel(t, 'official_weather.dashboard.fields.wind_speed', 'home.weather.windSpeed', '风速'),
+      value: windSpeed,
+      icon: <Wind size={16} />,
+    } : null,
+    precipitation ? {
+      key: 'precipitation',
+      label: translateWeatherLabel(
+        t,
+        'official_weather.dashboard.fields.precipitation_next_1h',
+        'home.weather.precipitationNext1h',
+        '未来 1 小时降水',
+      ),
+      value: precipitation,
+      icon: <CloudRain size={16} />,
+    } : null,
+    pressure ? {
+      key: 'pressure',
+      label: translateWeatherLabel(t, 'official_weather.dashboard.fields.pressure', 'home.weather.pressure', '气压'),
+      value: pressure,
+      icon: <Gauge size={16} />,
+    } : null,
   ].filter(Boolean) as Array<{ key: string; label: string; value: string; icon: ReactNode }>;
+}
+
+function buildWeatherFooterItems(card: HomeDashboardCardRead, t: (key: ShellMessageKey) => string) {
+  const payloadItems = getPayloadObjectArray(card.payload.footer_items);
+  if (payloadItems.length > 0) {
+    return payloadItems
+      .map(item => {
+        const value = resolvePayloadValue(item);
+        if (!value) {
+          return null;
+        }
+        return {
+          key: getPayloadText(item.key, 'footer'),
+          label: resolvePayloadLabel(item, t),
+          value,
+        };
+      })
+      .filter(Boolean) as Array<{ key: string; label: string; value: string }>;
+  }
+
+  const forecastText = buildWeatherForecastText(card, t);
+  const updatedAt = getPayloadText(card.payload.updated_at);
+  return [
+    forecastText
+      ? {
+        key: 'forecast_6h',
+        label: translateWeatherLabel(
+          t,
+          'official_weather.dashboard.fields.forecast_6h',
+          'home.weather.forecast6h',
+          '未来 6 小时摘要',
+        ),
+        value: forecastText,
+      }
+      : null,
+    updatedAt
+      ? {
+        key: 'updated_at',
+        label: translateWeatherLabel(
+          t,
+          'official_weather.dashboard.fields.updated_at',
+          'home.weather.updated',
+          '更新时间',
+        ),
+        value: formatRelativeTime(updatedAt),
+      }
+      : null,
+  ].filter(Boolean) as Array<{ key: string; label: string; value: string }>;
 }
 
 function splitHighlight(detail: string) {
@@ -511,11 +699,21 @@ function BuiltinWeatherCard({ card, t }: { card: HomeDashboardCardRead; t: (key:
 
 function PluginWeatherCard({ card, t }: { card: HomeDashboardCardRead; t: (key: ShellMessageKey) => string }) {
   const location = getPayloadText(card.payload.location, card.title);
-  const conditionText = getPayloadText(card.payload.condition_text, getPayloadText(card.payload.message, t('home.weather.noData')));
-  const temperature = formatWeatherNumber(getPayloadNumber(card.payload.temperature), '°C') ?? t('home.weather.noData');
-  const updatedAt = getPayloadText(card.payload.updated_at);
-  const forecastText = buildWeatherForecastText(card, t);
+  const noDataText = translateWeatherLabel(
+    t,
+    'official_weather.dashboard.no_data',
+    'home.weather.noData',
+    '暂无数据',
+  );
+  const conditionText = getPayloadText(card.payload.condition_text, getPayloadText(card.payload.message, noDataText));
+  const temperature = formatWeatherNumber(getPayloadNumber(card.payload.temperature), '°C') ?? noDataText;
   const detailItems = buildWeatherDetailItems(card, t);
+  const footerItems = buildWeatherFooterItems(card, t);
+  const displayTemperature = temperature.replace('掳C', '°C');
+  const displayFooterItems = footerItems.map(item => ({
+    ...item,
+    value: item.value.replace('掳C', '°C').replace(' 路 ', ' · '),
+  }));
   const statusMessage = getPayloadText(card.payload.message);
 
   return (
@@ -531,7 +729,7 @@ function PluginWeatherCard({ card, t }: { card: HomeDashboardCardRead; t: (key: 
           </span>
         </div>
         <div className="weather-card__summary">
-          <span className="weather-temp-value">{temperature}</span>
+          <span className="weather-temp-value">{displayTemperature}</span>
           <span className="weather-temp-desc">{conditionText}</span>
         </div>
       </div>
@@ -550,18 +748,16 @@ function PluginWeatherCard({ card, t }: { card: HomeDashboardCardRead; t: (key: 
           ))}
         </div>
       ) : null}
-      <div className="weather-card__forecast">
-        {forecastText ? (
-          <div className="weather-forecast-item weather-forecast-item--wide">
-            <span className="weather-forecast-day">{t('home.weather.forecast6h')}</span>
-            <span className="weather-forecast-temp">{forecastText}</span>
-          </div>
-        ) : null}
-        <div className="weather-forecast-item weather-forecast-item--wide">
-          <span className="weather-forecast-day">{t('home.weather.updated')}</span>
-          <span className="weather-forecast-temp">{formatRelativeTime(updatedAt)}</span>
+      {displayFooterItems.length > 0 ? (
+        <div className="weather-card__forecast">
+          {displayFooterItems.map(item => (
+            <div key={item.key} className="weather-forecast-item weather-forecast-item--wide">
+              <span className="weather-forecast-day">{item.label}</span>
+              <span className="weather-forecast-temp">{item.value}</span>
+            </div>
+          ))}
         </div>
-      </div>
+      ) : null}
     </Card>
   );
 }
