@@ -42,6 +42,15 @@ Key runtime context entries:
 - `_system_context.integration_runtime.database_url`
 - `_system_context.integration_runtime.db_session` for builtin same-process sync only
 
+Hard runtime boundaries:
+
+- `capabilities` = manifest-declared capability metadata
+- `entities` = runtime standardized entity state
+- do not mix them, and do not rely on host read-time repair to make broken domain payloads displayable
+- `official` and `third_party` plugins are runtime-mounted plugins and must not become host image or import-time dependencies
+- plugin-private tables stay outside the host core ORM
+- plugins must emit final standardized entities before handoff
+
 AI provider rule:
 
 - the host keeps the unified AI gateway, routing, permissions, audit, secrets, plugin-state checks, and fallback

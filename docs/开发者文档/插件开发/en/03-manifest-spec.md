@@ -11,6 +11,36 @@ Minimum fields:
 - `entrypoints`
 - `capabilities`
 
+For config forms, readable copy and locale keys can now coexist.
+
+Keep the plain-text fallback fields such as:
+
+- `title`
+- `label`
+- `help_text`
+
+If the plugin also wants to use its own locale resources, add the matching key fields:
+
+- `config_specs[].title_key`
+- `config_specs[].description_key`
+- `config_specs[].config_schema.fields[].label_key`
+- `config_specs[].config_schema.fields[].description_key`
+- `config_specs[].config_schema.fields[].enum_options[].label_key`
+- `config_specs[].ui_schema.sections[].title_key`
+- `config_specs[].ui_schema.sections[].description_key`
+- `config_specs[].ui_schema.widgets[].placeholder_key`
+- `config_specs[].ui_schema.widgets[].help_text_key`
+- `config_specs[].ui_schema.submit_text_key`
+
+The host resolves locale keys through household plugin locales first, then falls back to the readable plain-text copy instead of showing the raw key.
+
+Locale rules to keep straight:
+
+- `locale-pack` is the plugin type for full locale bundles.
+- normal plugins may also declare `locales` for their own labels, config copy, card titles, and action text.
+- same-`locale_id` messages are merged by message key instead of replacing the whole locale bundle.
+- merge priority remains `builtin > official > third_party`.
+
 Supported normal types:
 
 - `integration`

@@ -49,3 +49,10 @@ AI provider plugins are different from `integration` plugins:
 - the host calls `invoke`, `ainvoke`, or `stream`
 
 The host owns persistence, validation, dedupe, status updates, memory writes, routing, secrets, and governance.
+
+Hard rules for V1:
+
+- `entities` must already be final standardized entities before handoff. The host must not keep weather-, power-, or health-specific read-time normalization.
+- plugin-private tables, caches, provider bindings, and cursors stay inside the plugin boundary. The host must not import, register, or directly query plugin-private ORM models, and the host core Alembic migrations must not create, upgrade, or drop those tables.
+- `capabilities` means manifest-declared capability metadata, not runtime entity-state storage. Do not treat it as a domain-specific runtime protocol.
+- `official` and `third_party` plugins are runtime-mounted plugins. They do not belong in the final host image, and the host must not statically import them during module import.

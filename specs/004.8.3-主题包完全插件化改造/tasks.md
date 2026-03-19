@@ -110,8 +110,8 @@
   - 对应需求：`requirements.md` 需求 2、需求 3
   - 对应设计：`design.md` 3.3、4.2
 
-- [ ] 2.2 建立前端统一主题插件运行时
-  - 状态：TODO
+- [x] 2.2 建立前端统一主题插件运行时
+  - 状态：DONE
   - 这一步到底做什么：让 H5 和 RN 都通过同一套主题插件运行时，加上“内置 bundle 解析器 + 远端资源解析器”统一选择、加载、缓存和失效处理主题资源。
   - 做完以后你能看到什么：登录页、未登录壳层、业务页都不再直接依赖宿主静态主题定义，首屏也能从内置插件稳定启动。
   - 先依赖什么：2.1
@@ -134,9 +134,15 @@
     - H5/RN 页面联调回归
   - 对应需求：`requirements.md` 需求 2
   - 对应设计：`design.md` 2.2、2.3、4.2
+  - 进展记录（2026-03-19）：
+    - `packages/user-core/src/state/theme.ts` 已移除宿主静态主题表，仅保留主题 ID 解析与持久化。
+    - `packages/user-ui/src/theme/themes.ts` 已重构为“插件 token 归一化 + 运行时主题注册容器”，不再内置 8 套 canonical theme token 表；仅保留非真实 `theme_id` 的占位主题用于首帧渲染。
+    - `apps/user-app/src/runtime/rn-shell/tokens.ts` 已改为从插件 token 派生 RN semantic/component tokens，并在主题缺失时返回 `missing + theme_not_registered`。
+    - `apps/user-app/src/runtime/rn-shell/theme/RnThemeProvider.tsx` 已新增并收口：不再隐式套用宿主默认主题，优先维持运行时状态并等待插件主题注入。
+    - `apps/user-app/src/runtime/rn-shell/theme/__tests__/rnThemeTokenHelpers.type-test.ts` 已补 helper 级断言，覆盖 missing -> ready 状态流转。
 
-- [ ] 2.3 阶段检查：H5 和 RN 主题链路打通
-  - 状态：TODO
+- [x] 2.3 阶段检查：H5 和 RN 主题链路打通
+  - 状态：DONE
   - 这一步到底做什么：确认两端都已经不再依赖宿主默认主题源。
   - 做完以后你能看到什么：业务页、登录页和设置页都能按插件主题运行。
   - 先依赖什么：2.1、2.2
@@ -201,3 +207,9 @@
     - 测试证据汇总
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文
+
+## 当前进展
+
+- Done: 后端 `list_registered_plugin_themes_for_household`/`get_plugin_theme_resource_for_household` 已上线，内置 theme-pack 插件目录只依赖 manifest + token 资源；相关接口通过 `apps/api-server/tests/test_plugin_themes_api.py` 验证（命令：`cd apps/api-server && python -m pytest tests/test_plugin_themes_api.py -q`），文档 `20260318-插件能力与接口规范-v1.md` 与本 `tasks.md` 都说明了无 fallback、真实插件目录、登录/首屏只用内置插件的要求。
+- Done: `apps/user-app` 已完成统一主题插件运行时收口，H5-only 样式迁出 `src/` 后由 H5 入口显式引入，登录页、未登录壳层、首屏与业务页统一走插件主题链路；`tsc --noEmit`、`taro build --type h5`、`taro build --type rn --reset-cache`、`npm run test:plugin-theme-runtime`、`npm run test:plugins-page` 已通过。
+- Skipped: 当前交付没有新的 server/runner 任务，也不包含 `build:ios`；RN 原生依赖需后续补齐。

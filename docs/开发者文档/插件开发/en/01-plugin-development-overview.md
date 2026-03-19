@@ -12,6 +12,12 @@ Plugin responsibilities:
 - refresh, execution, snapshots
 - for `ai-provider`: provider declaration, field schema, driver entrypoint, protocol adaptation, streaming, and vendor-specific behavior
 
+Hard boundaries:
+
+- `official` and `third_party` plugins are runtime-mounted plugins, not host image dependencies, and the host must not statically import them at import time.
+- plugin-private tables, caches, provider bindings, and cursors stay inside the plugin boundary and must not be registered in the host core ORM.
+- plugins must emit final standardized entities before handoff; the host must not keep weather-, power-, or health-specific read-time normalization.
+
 Official plugin types:
 
 - `integration`

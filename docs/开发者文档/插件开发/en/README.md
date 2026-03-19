@@ -34,3 +34,6 @@ Important:
 - this is the current rule, not a future target model
 - historical specs and dated reports are background only
 - use `004.8.1` as the single primary spec for AI provider work
+- `official` and `third_party` plugins are runtime-mounted plugins, not host image dependencies
+- plugin-private tables must not be registered in the host core ORM
+- plugins must emit final standardized entities; the host must not keep domain-specific read-time repair logic

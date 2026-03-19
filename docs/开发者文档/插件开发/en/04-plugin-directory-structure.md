@@ -27,12 +27,16 @@ your_plugin/
   manifest.json
   requirements.txt
   README.md
-  plugin/
-    __init__.py
-    connector.py
-    ingestor.py
-    executor.py
-    skill.py
+  __init__.py
+  integration.py
+  action.py
+  channel.py
+  agent_skill.py
+  ai_provider.py
+  memory_engine.py
+  memory_provider.py
+  context_engine.py
+  locales/
   tests/
     test_manifest.md
 ```
@@ -42,9 +46,9 @@ This does not mean every file must exist. It means:
 - `manifest.json`: required
 - `requirements.txt`: strongly recommended for third-party plugin dependencies
 - `README.md`: strongly recommended for reviewers and future maintainers
-- `plugin/`: recommended as the real code directory instead of filling the repository root with code files
-- `plugin/__init__.py`: strongly recommended, so the Python package path stays clear
-- `plugin/connector.py` / `plugin/ingestor.py` / `plugin/executor.py` / `plugin/skill.py`: include only what matches declared plugin types
+- `__init__.py`: strongly recommended, so the Python package path stays clear
+- `integration.py` / `action.py` / `channel.py` / `agent_skill.py` / `ai_provider.py` / `memory_*.py`: include only what matches declared V1 plugin types or exclusive slots
+- `locales/`: translation resources for `locale-pack` plugins or plugin-owned dictionaries
 - `tests/`: strongly recommended, even if it starts with a simple self-check note
 
 ## 2. One Plugin Per Directory
@@ -89,36 +93,45 @@ They do not need to be exactly identical because Python modules usually use unde
 - should use explicit version ranges
 - should be consumed by the plugin-owned environment, not by the main API environment as a fallback
 
-### `plugin/connector.py`
+### `integration.py`
 
-- stores the read-data entrypoint
-- recommended function name: `sync`
-- common return shape: a dict containing `records`
+- stores the formal `integration` entrypoint
+- exports refresh, discovery, or sync functions declared in the manifest
+- emits standard devices, standard entities, standard card snapshots, and standard action outputs only
 
-### `plugin/ingestor.py`
+### `action.py`
 
-- stores the raw-record to normalized-memory entrypoint
-- recommended function name: `transform`
-- common return shape: a list of memory candidates
+- stores the formal `action` entrypoint
+- executes the action itself, not permission bypassing
 
-### `plugin/executor.py`
+### `agent_skill.py`
 
-- stores the action execution entrypoint
-- recommended function name: `run`
-- handles the action itself, not permission bypassing
-
-### `plugin/skill.py`
-
-- stores the Agent skill entrypoint
-- recommended function name: `run`
+- stores the formal `agent-skill` entrypoint
 - exposes controlled capabilities only, not Agent flow overrides
+
+### `ai_provider.py`
+
+- stores the `ai-provider` driver entrypoint
+- implements driver methods such as `invoke`, `ainvoke`, or `stream`
+
+### `memory_engine.py` / `memory_provider.py` / `context_engine.py`
+
+- store exclusive-slot plugin entrypoints
+- must follow the host slot contract instead of the old `memory-ingestor` semantics
 
 ### `locales/`
 
-- stores translation resource files for `locale-pack` plugins
+- stores translation resource files for `locale-pack` plugins or plugin-owned dictionaries
 - recommend one file per locale, such as `locales/zh-TW.json`
 - keep data as plain key-value translations, not executable code
 - every `manifest.locales[].resource` must point to a real file here
+
+This is an explicit rule now:
+
+- `locale-pack` is the plugin type for full locale bundles
+- normal plugins may also declare `locales`
+- normal plugin locales are only for that plugin's own labels, config copy, card titles, and action text
+- the host merges same-`locale_id` messages by key instead of replacing the whole locale bundle
 
 ### `README.md`
 
@@ -140,7 +153,7 @@ Version one does not force a large automation suite, but it should at least expl
 
 ## 5. How To Lay Out Multi-Capability Plugins
 
-If a plugin includes both `connector` and `memory-ingestor`, do not split it into two plugin directories.
+If a plugin includes both `integration` and `action`, do not split it into two plugin directories.
 
 The minimum workable layout is:
 
@@ -148,11 +161,11 @@ The minimum workable layout is:
 health_basic/
   manifest.json
   __init__.py
-  connector.py
-  ingestor.py
+  integration.py
+  action.py
 ```
 
-This is also how `apps/api-server/app/plugins/builtin/health_basic/` is organized.
+One plugin directory still maps to one plugin id, but that plugin may expose multiple formal entrypoints.
 
 Why this works well:
 
@@ -214,7 +227,26 @@ Do not add these in version one unless the Spec explicitly expands scope later:
 
 The point is not that these are forbidden forever. The point is that they do not have a real landing place yet and would mislead third-party developers.
 
-## 8. Reference Directories In The Current Repository
+## 9. Official Plugins And Image Packaging Boundary
+
+This rule is now explicit:
+
+- `builtin` plugins live in `apps/api-server/app/plugins/builtin/`
+- `official` plugins live in `apps/api-server/data/plugins/official/`
+- `third_party` plugins live in the host data directory or marketplace install directory
+
+The packaging rule must match that boundary:
+
+- the final Docker runtime image should contain only the host and `builtin` plugins
+- `official` and `third_party` plugins should not be baked into the final image; they should be mounted, installed, or synchronized into the host data directory
+- `.dockerignore` should exclude `apps/api-server/data/plugins/official/`
+- host core code must not statically import `official` or `third_party` plugin modules during import time, or the host will fail to boot when those plugin files are absent
+
+The short version:
+
+official plugins may be trusted plugins, but they must not become host compile-time dependencies.
+
+## 10. Reference Directories In The Current Repository
 
 Useful real examples:
 
