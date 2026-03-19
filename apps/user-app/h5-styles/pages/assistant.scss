@@ -353,10 +353,13 @@
 
 .assistant-coming-soon {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   justify-content: center;
   flex: 1;
-  padding: var(--spacing-xxl);
+  width: 100%;
+  max-width: 22rem;
+  margin: 0 auto;
+  padding: var(--spacing-xxl) 0;
 }
 
 @media (max-width: 900px) {
