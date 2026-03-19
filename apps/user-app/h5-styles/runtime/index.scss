@@ -34,6 +34,13 @@ page {
   color: var(--text-primary);
 }
 
+/* 默认恢复整站文本选择能力，局部交互组件再按需关闭 */
+:where(#root, #app, .taro_router, .taro_page),
+:where(#root, #app, .taro_router, .taro_page) :where(*) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 #root,
 #app,
 .taro_router,
@@ -81,6 +88,7 @@ input, select, textarea {
   -webkit-appearance: none;
   outline: none;
 }
+
 
 /* ---- App 主布局 ---- */
 .app-layout {
@@ -4365,6 +4373,7 @@ input, select, textarea {
 .form-input,
 .form-select {
   width: 100%;
+  height: auto;
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -6858,6 +6867,12 @@ body::before {
 /* 图谱容器 */
 .relationship-graph-card {
   padding: var(--spacing-md) !important;
+}
+
+.relationship-graph-card,
+.relationship-graph-card * {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .relationship-graph {
