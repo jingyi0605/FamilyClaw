@@ -1,3 +1,11 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:venv"
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    "markdown.copyFiles.destination": {
+        "/docs/Documentation/**/*.md": "assets/"
+    },
+    "vsc-webp-paster.imageDir": "assets",
+    "vsc-webp-paster.useWorkspaceRoot": false,
+    "vsc-webp-paster.quality": 85,
+    "vsc-webp-paster.namingConvention": "fc-doc-${timestamp}",
+    "vsc-webp-paster.insertPattern": "![${fileName}](${relativePath})"
 }

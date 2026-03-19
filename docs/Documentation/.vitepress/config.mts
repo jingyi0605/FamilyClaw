@@ -1,7 +1,30 @@
 import { defineConfig } from 'vitepress'
 
+function normalizeBase(rawBase?: string) {
+  if (!rawBase) {
+    return '/'
+  }
+
+  let normalized = rawBase.trim()
+
+  if (!normalized) {
+    return '/'
+  }
+
+  if (!normalized.startsWith('/')) {
+    normalized = `/${normalized}`
+  }
+
+  if (!normalized.endsWith('/')) {
+    normalized = `${normalized}/`
+  }
+
+  return normalized
+}
+
 // 先把路由和栏目稳定下来，后面补正文时不需要反复改导航。
 export default defineConfig({
+  base: normalizeBase(process.env.DOCS_BASE),
   lang: 'zh-CN',
   title: 'FamilyClaw 文档中心',
   description: 'FamilyClaw 项目安装、使用、开发与运维文档',
@@ -60,7 +83,8 @@ export default defineConfig({
             { text: '前端开发', link: '/开发指南/前端开发' },
             { text: '后端开发', link: '/开发指南/后端开发' },
             { text: '插件开发', link: '/开发指南/插件开发' },
-            { text: '测试与提交流程', link: '/开发指南/测试与提交流程' }
+            { text: '测试与提交流程', link: '/开发指南/测试与提交流程' },
+            { text: '文档发布', link: '/开发指南/文档发布' }
           ]
         }
       ],
