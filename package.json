@@ -1,6 +1,7 @@
 {
   "name": "familyclaw-workspace",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev:user-app:h5": "npm --prefix ./apps/user-app run dev:h5",
     "build:user-app:h5": "npm --prefix ./apps/user-app run build:h5",
