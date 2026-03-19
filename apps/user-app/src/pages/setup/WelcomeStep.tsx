@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Sparkles } from 'lucide-react';
 import { useI18n } from '../../runtime';
 import './WelcomeStep.css';
 
@@ -35,7 +36,7 @@ export function WelcomeStep(props: { onComplete: () => void }) {
       </div>
       <div className="welcome-content">
         <div className="welcome-logo-wrapper">
-          <div className="welcome-logo">✨</div>
+          <div className="welcome-logo"><Sparkles size="1em" /></div>
         </div>
         <div className="welcome-text-wrapper">
           <h1 className="welcome-text">{t('setup.welcome.title')}</h1>

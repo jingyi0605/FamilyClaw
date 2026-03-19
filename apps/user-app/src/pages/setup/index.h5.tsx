@@ -104,20 +104,33 @@ function calculatePasswordStrength(
   }
 
   let score = 0;
+  // 长度评分（长度是安全的基础）
   if (password.length >= 6) score += 1;
-  if (password.length >= 10) score += 1;
+  if (password.length >= 8) score += 1;
+  if (password.length >= 12) score += 1;
+
+  // 字符多样性评分
   if (/[A-Z]/.test(password)) score += 1;
   if (/[a-z]/.test(password)) score += 1;
   if (/[0-9]/.test(password)) score += 1;
   if (/[^A-Za-z0-9]/.test(password)) score += 1;
 
-  if (score < 2) {
+  // 短密码强制降低评级
+  if (password.length < 6) {
+    return { score: 1, label: t('setup.password.weak'), classSuffix: 'weak' };
+  }
+  if (password.length < 8) {
+    // 6-7位密码最多只能到 fair
+    return { score: Math.min(score, 2), label: t('setup.password.fair'), classSuffix: 'fair' };
+  }
+
+  if (score < 3) {
     return { score, label: t('setup.password.weak'), classSuffix: 'weak' };
   }
-  if (score < 4) {
+  if (score < 5) {
     return { score, label: t('setup.password.fair'), classSuffix: 'fair' };
   }
-  if (score < 5) {
+  if (score < 7) {
     return { score, label: t('setup.password.good'), classSuffix: 'good' };
   }
   return { score, label: t('setup.password.strong'), classSuffix: 'strong' };
@@ -765,7 +778,7 @@ export default function SetupPageH5() {
                     ? t('setup.member.saveProfileAndNext')
                     : backendIndex > 1
                       ? t('setup.member.saveChangesAndNext')
-                      : t('setup.member.createAccountAndNext')}
+                      : t('setup.member.next')}
               </button>
             </div>
           </form>
