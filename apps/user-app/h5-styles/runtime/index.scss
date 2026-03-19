@@ -7595,71 +7595,125 @@ body::before {
 
 /* 计划任务表单模态框样式 - 稡仿 AI 供应商编辑器样式 */
 .scheduled-task-form-modal {
-  width: min(560px, 100vw);
+  width: min(560px, calc(100vw - 24px));
 }
 
-.scheduled-task-form-modal .settings-form {
-  gap: 8px;
+.member-modal.scheduled-task-form-modal {
+  max-height: calc(100vh - 32px);
+  padding: 20px 20px 16px;
 }
-.scheduled-task-form-modal .form-field {
-  margin-bottom: 6px;
+
+.scheduled-task-form-modal__shell {
+  gap: 14px;
 }
+
+.scheduled-task-form-modal .member-modal__header {
+  margin-bottom: 0;
+}
+
+.scheduled-task-form-modal .member-modal__actions {
+  margin-top: 0;
+}
+
+.scheduled-task-form-modal__body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.scheduled-task-form-modal__body .form-field {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.scheduled-task-form-modal__body .form-field--full {
+  grid-column: 1 / -1;
+}
+
 .scheduled-task-form-modal .form-label {
   font-size: 12px;
   font-weight: 500;
+  line-height: 1.35;
+  margin-bottom: 4px;
 }
 .scheduled-task-form-modal .form-input,
 .scheduled-task-form-modal .form-select {
-  padding: 6px 10px;
-  font-size: 14px;
-  line-height: 1.5;
+  min-height: 38px;
+  height: 38px;
+  padding: 7px 10px;
+  font-size: 13px;
+  line-height: 1.4;
   border-width: 1px;
   border-radius: 6px;
+  box-sizing: border-box;
+}
+.scheduled-task-form-modal textarea.form-input {
+  min-height: 72px;
   height: auto;
-  min-height: auto;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  resize: vertical;
 }
 .scheduled-task-form-modal .form-input::placeholder {
-  font-size: 14px;
+  font-size: 13px;
 }
 .scheduled-task-form-modal .form-hint {
   font-size: 11px;
   color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 4px;
 }
 .scheduled-task-form-modal .form-radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 .scheduled-task-form-modal .form-radio {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-input) 92%, white);
   cursor: pointer;
 }
 .scheduled-task-form-modal .form-radio:hover {
   background: var(--bg-input-hover);
+  border-color: color-mix(in srgb, var(--brand-primary) 16%, var(--border-light));
 }
 .scheduled-task-form-modal .form-radio input {
   margin: 0;
   width: 15px;
   height: 15px;
+  grid-row: 1 / span 2;
+  margin-top: 2px;
+}
+.scheduled-task-form-modal .form-radio__content {
+  min-width: 0;
 }
 .scheduled-task-form-modal .form-radio__label {
+  display: block;
   font-size: 13px;
   font-weight: 500;
+  line-height: 1.35;
 }
 .scheduled-task-form-modal .form-radio__hint {
+  display: block;
   font-size: 11px;
   color: var(--text-secondary);
   margin-top: 2px;
+  line-height: 1.35;
+  word-break: break-word;
 }
 .scheduled-task-form-modal .form-checkbox {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  min-height: 38px;
   cursor: pointer;
 }
 .scheduled-task-form-modal .form-checkbox input {
@@ -7673,11 +7727,22 @@ body::before {
 .scheduled-task-form-modal .form-input-with-unit {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+}
+.scheduled-task-form-modal .form-input-with-unit .form-input {
+  min-width: 0;
 }
 .scheduled-task-form-modal .form-input-unit {
   font-size: 12px;
   color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .scheduled-task-form-modal__body,
+  .scheduled-task-form-modal .form-radio-group {
+    grid-template-columns: 1fr;
+  }
 }
 
 // 供应商选择器 - 使用固定 px 避免 Taro 转换

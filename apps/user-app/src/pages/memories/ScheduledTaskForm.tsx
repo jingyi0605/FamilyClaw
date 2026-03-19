@@ -223,6 +223,7 @@ export function ScheduledTaskForm({ mode, task, isOpen, onClose, onSuccess }: Sc
       open={isOpen}
       title={dialogTitle}
       className="scheduled-task-form-modal"
+      formClassName="scheduled-task-form-modal__shell"
       closeDisabled={submitting}
       onClose={onClose}
       onSubmit={(event) => { event.preventDefault(); void handleSubmit(); }}
@@ -238,27 +239,31 @@ export function ScheduledTaskForm({ mode, task, isOpen, onClose, onSuccess }: Sc
       )}
     >
       {error ? <div className="form-error">{error}</div> : null}
-      <div className="settings-form">
-        <div className="form-field">
+      <div className="scheduled-task-form-modal__body">
+        <div className="form-field form-field--full">
           <label className="form-label">{t('scheduledTasks.detail.name')} *</label>
           <input className="form-input" type="text" placeholder={t('scheduledTasks.form.namePlaceholder')} value={formData.name} onChange={event => updateField('name', event.target.value)} />
         </div>
-        <div className="form-field">
+        <div className="form-field form-field--full">
           <label className="form-label">{t('scheduledTasks.detail.description')}</label>
           <textarea className="form-input" rows={3} placeholder={t('scheduledTasks.form.descriptionPlaceholder')} value={formData.description} onChange={event => updateField('description', event.target.value)} />
         </div>
-        <div className="form-field">
+        <div className="form-field form-field--full">
           <label className="form-label">{t('scheduledTasks.form.ownerScope')} *</label>
           <div className="form-radio-group">
             <label className="form-radio">
               <input type="radio" name="owner_scope" checked={formData.owner_scope === 'member'} onChange={() => updateField('owner_scope', 'member')} />
-              <span className="form-radio__label">{t('scheduledTasks.owner.member')}</span>
-              <span className="form-radio__hint">{t('scheduledTasks.form.ownerMemberHint')}</span>
+              <span className="form-radio__content">
+                <span className="form-radio__label">{t('scheduledTasks.owner.member')}</span>
+                <span className="form-radio__hint">{t('scheduledTasks.form.ownerMemberHint')}</span>
+              </span>
             </label>
             <label className="form-radio">
               <input type="radio" name="owner_scope" checked={formData.owner_scope === 'household'} onChange={() => updateField('owner_scope', 'household')} />
-              <span className="form-radio__label">{t('scheduledTasks.owner.household')}</span>
-              <span className="form-radio__hint">{t('scheduledTasks.form.ownerHouseholdHint')}</span>
+              <span className="form-radio__content">
+                <span className="form-radio__label">{t('scheduledTasks.owner.household')}</span>
+                <span className="form-radio__hint">{t('scheduledTasks.form.ownerHouseholdHint')}</span>
+              </span>
             </label>
           </div>
         </div>
@@ -271,18 +276,22 @@ export function ScheduledTaskForm({ mode, task, isOpen, onClose, onSuccess }: Sc
             </select>
           </div>
         ) : null}
-        <div className="form-field">
+        <div className="form-field form-field--full">
           <label className="form-label">{t('scheduledTasks.detail.triggerType')} *</label>
           <div className="form-radio-group">
             <label className="form-radio">
               <input type="radio" name="trigger_type" checked={formData.trigger_type === 'schedule'} onChange={() => updateField('trigger_type', 'schedule')} />
-              <span className="form-radio__label">{t('scheduledTasks.trigger.schedule')}</span>
-              <span className="form-radio__hint">{t('scheduledTasks.form.scheduleHint')}</span>
+              <span className="form-radio__content">
+                <span className="form-radio__label">{t('scheduledTasks.trigger.schedule')}</span>
+                <span className="form-radio__hint">{t('scheduledTasks.form.scheduleHint')}</span>
+              </span>
             </label>
             <label className="form-radio">
               <input type="radio" name="trigger_type" checked={formData.trigger_type === 'heartbeat'} onChange={() => updateField('trigger_type', 'heartbeat')} />
-              <span className="form-radio__label">{t('scheduledTasks.trigger.heartbeat')}</span>
-              <span className="form-radio__hint">{t('scheduledTasks.form.heartbeatHint')}</span>
+              <span className="form-radio__content">
+                <span className="form-radio__label">{t('scheduledTasks.trigger.heartbeat')}</span>
+                <span className="form-radio__hint">{t('scheduledTasks.form.heartbeatHint')}</span>
+              </span>
             </label>
           </div>
         </div>
@@ -296,7 +305,7 @@ export function ScheduledTaskForm({ mode, task, isOpen, onClose, onSuccess }: Sc
                 <option value="cron">{t('scheduledTasks.form.scheduleCron')}</option>
               </select>
             </div>
-            <div className="form-field">
+            <div className="form-field form-field--full">
               <label className="form-label">{formData.schedule_type === 'daily' ? t('scheduledTasks.form.dailyTime') : formData.schedule_type === 'interval' ? t('scheduledTasks.form.intervalExpr') : t('scheduledTasks.form.cronExpr')} *</label>
               <input className="form-input" type="text" placeholder={t('scheduledTasks.form.schedulePlaceholder')} value={formData.schedule_expr} onChange={event => updateField('schedule_expr', event.target.value)} />
             </div>
@@ -326,11 +335,11 @@ export function ScheduledTaskForm({ mode, task, isOpen, onClose, onSuccess }: Sc
             <option value="system_notice">{t('scheduledTasks.target.system')}</option>
           </select>
         </div>
-        <div className="form-field">
+        <div className="form-field form-field--full">
           <label className="form-label">{t('scheduledTasks.form.targetRef')}</label>
           <input className="form-input" type="text" placeholder={t('scheduledTasks.form.targetRefPlaceholder')} value={formData.target_ref_id} onChange={event => updateField('target_ref_id', event.target.value)} />
         </div>
-        <div className="form-field">
+        <div className="form-field form-field--full">
           <label className="form-checkbox">
             <input type="checkbox" checked={formData.enabled} onChange={event => updateField('enabled', event.target.checked)} />
             <span className="form-checkbox__label">{t('scheduledTasks.form.enableNow')}</span>
