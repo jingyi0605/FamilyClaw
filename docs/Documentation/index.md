@@ -7,23 +7,26 @@ version: v0.1
 status: draft
 hero:
   name: FamilyClaw 文档中心
-  text: 安装、使用、开发与运维文档骨架
-  tagline: 先把目录、模板、图片规范和站点框架搭稳，后面补正文时不再返工。
+  text: 快速开始、部署、使用、开发与交流入口
+  tagline: 现在只保留 5 个一级栏目：快速开始、安装部署、使用指南、开发文档、沟通交流。中文走根路径，英文走 /en/。
   actions:
     - theme: brand
-      text: 查看写作计划
-      link: /开始这里/完整文档目录与写作计划
+      text: 打开文档总览
+      link: /快速开始/文档总览
     - theme: alt
-      text: 查看文档总览
-      link: /开始这里/文档总览
+      text: 查看安装部署
+      link: /安装部署/概览
     - theme: alt
-      text: 查看图片规范
-      link: /文档规范/文档图片与排版约定
+      text: 查看开发文档
+      link: /开发文档/环境准备
+    - theme: alt
+      text: English Docs
+      link: /en/
 features:
-  - title: 目录先稳住
-    details: 先把安装、使用、开发、运维、参考资料的边界划清，后续写内容不再反复搬文件。
-  - title: 图片先收口
-    details: 提供统一图片组件和排版约定，避免 Markdown 页面后期被各种截图撑爆。
-  - title: 存量资料不打碎
-    details: 现有规范、插件开发文档和技术愿景全部保留，通过入口页统一串起来。
+  - title: 一级目录收口
+    details: 站点现在只暴露 5 个一级栏目，避免目录越长越乱，读者第一眼就能找到入口。
+  - title: 中英文同构
+    details: 中文和英文沿用同一套信息架构，后续翻译和维护不需要两边各想一套。
+  - title: 插件开发单独成组
+    details: 插件规范、目录结构、字段规范、对接方式、实例插件和插件提交都收在开发文档下面，不再四处分散。
 ---
