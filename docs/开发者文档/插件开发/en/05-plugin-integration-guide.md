@@ -54,5 +54,14 @@ Hard rules for V1:
 
 - `entities` must already be final standardized entities before handoff. The host must not keep weather-, power-, or health-specific read-time normalization.
 - plugin-private tables, caches, provider bindings, and cursors stay inside the plugin boundary. The host must not import, register, or directly query plugin-private ORM models, and the host core Alembic migrations must not create, upgrade, or drop those tables.
-- `capabilities` means manifest-declared capability metadata, not runtime entity-state storage. Do not treat it as a domain-specific runtime protocol.
+- Once entities enter the host, the canonical source is the host public entity carrier. The formal implementation is the shared `device_entities` table.
+- `DeviceBinding.capabilities` now keeps binding summaries, primary entity ids, entity id lists, capability tags, and lightweight metadata only. It is no longer the formal carrier for full runtime entity snapshots.
+- If you still encounter `capabilities.entities`, treat it as a legacy fallback for old data rather than the contract for new plugins.
 - `official` and `third_party` plugins are runtime-mounted plugins. They do not belong in the final host image, and the host must not statically import them during module import.
+
+Private migrations follow these rules:
+
+- If a `builtin` or `official` plugin needs private tables, the contract is a plugin-local `migrations/` directory with `env.py` and revision scripts.
+- The host currently runs those private Alembic migrations during plugin execution preparation before the real sync or execution continues.
+- Plugin-private ORM models may reuse the host shared `Base`, but they must not be re-registered in host aggregate model entry points such as `app.db.models`.
+- If a plugin uses independent metadata, the plugin owns cross-host foreign-key handling, flush ordering, and metadata organization. The host will not add domain-specific ORM special cases for it.

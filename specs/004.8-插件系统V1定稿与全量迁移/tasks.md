@@ -1,6 +1,6 @@
 # 任务清单 - 插件系统 V1 定稿与全量迁移（人话版）
 
-状态：Draft
+状态：DONE
 
 ## 2026-03-18 子 Spec 说明
 
@@ -138,6 +138,10 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
 
 - [x] 2.2 建立统一 `integration` 标准 DTO 与刷新主链路
   - 状态：DONE
+  - 2026-03-19 追加纠偏回写：
+    - 已把“宿主只认标准实体”的边界补成硬要求，并删除核心设备读取链路里的天气专用归一化。
+    - 天气标准化逻辑已收回天气插件侧，宿主不再按 `binding.platform == "weather"` 做专用修补。
+    - 已补宿主公共标准实体承载层 `device_entities`，`integration.refresh` / 插件写入链路开始把运行态标准实体正式落到公共实体表；`DeviceBinding.capabilities` 只保留绑定摘要和轻量元数据。
   - 这一步到底做什么：把实例、设备、实体、动作、卡片快照的标准输出和宿主落库逻辑统一起来。
   - 做完你能看到什么：状态型插件都能走同一条正式主链路。
   - 先依赖什么：2.1
@@ -167,7 +171,7 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
   - 先依赖什么：2.1
   - 开始前先看：
     - `requirements.md` 需求 2
-    - `design.md` §2.3.3「槽位型插件运行流程」
+    - `design.md` §2.3.4「槽位型插件运行流程」
     - `design.md` §3.2.3「SlotContractDescriptor」
     - `C:\Code\FamilyClaw\docs\开发设计规范\20260318-记忆中心内核与插件边界规范.md`
   - 主要改哪里：
@@ -182,7 +186,7 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
     - 单元测试
     - 插槽 fallback 走查
   - 对应需求：`requirements.md` 需求 2
-  - 对应设计：`design.md` §2.3.3、§3.2.3、§6.1
+  - 对应设计：`design.md` §2.3.4、§3.2.3、§6.1
 
 ### 阶段检查
 
@@ -205,6 +209,61 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
     - 代码走查
   - 对应需求：`requirements.md` 需求 2
   - 对应设计：`design.md` §2、§3、§6
+
+- [x] 2.5 纠偏宿主与官方插件导入 / 读取边界
+  - 状态：DONE
+  - 这一步到底做什么：把 `official` 插件从宿主导入期依赖里拿掉，并把“宿主不做领域专用归一化”这条读取边界锁死。
+  - 做完你能看到什么：即使 `apps/api-server/data/plugins/official/` 目录缺失，宿主导入与迁移链路仍然成立；设备读取链路里也不再出现天气专用修补。
+  - 先依赖什么：2.2
+  - 主要改哪里：
+    - `C:\Code\FamilyClaw\apps\api-server\app\modules\device\service.py`
+    - `C:\Code\FamilyClaw\apps\api-server\data\plugins\official\official_weather\*`
+    - `C:\Code\FamilyClaw\apps\api-server\tests\test_device_service_no_weather_special_case.py`
+    - `C:\Code\FamilyClaw\apps\api-server\tests\test_host_import_without_official_weather.py`
+  - 这一步先不做什么：这一步还不负责建立正式的插件私有 migration 机制。
+  - 怎么算完成：
+    1. 宿主源码和迁移链路不再静态 import `official_weather`
+    2. 核心设备读取链路不再保留天气专用 normalize
+    3. 插件自己在写入前产出标准天气实体
+  - 怎么验证：
+    - 单元测试
+    - 导入 smoke test
+    - 代码静态扫描
+  - 对应需求：`requirements.md` 需求 2、需求 3
+  - 对应设计：`design.md` §2.3.3、§4.1、§7.1、§7.2
+
+- [x] 2.6 建立插件私有持久化与迁移边界
+  - 状态：DONE
+  - 2026-03-19 实际回写：
+    - 已新增宿主通用插件私有 migration runner，在插件执行准备阶段按插件根目录 `migrations/` 自动补齐私有 Alembic。
+    - 已把天气私有绑定表迁到 `apps/api-server/data/plugins/official/official_weather/migrations/`，宿主核心 revision `20260318_0054` 改为占位 no-op。
+    - 已修正天气私有 ORM 建模边界：插件模型复用宿主共享 `Base`，但不再进入宿主核心模型聚合入口；同时移除私有 migration runner 的进程内投机缓存，避免进程状态覆盖数据库真实迁移状态。
+    - 已补插件规范、迁移路线图、开发者手册和 004.8 设计文档，写死私有迁移目录、触发时机、ORM 建模边界与 `official` 运行时托管目录口径。
+    - 已通过 `test_plugin_private_migrations_weather.py`、`test_weather_default_device.py`、`test_weather_entity_copy.py`、`test_host_import_without_official_weather.py`、`test_device_service_no_weather_special_case.py` 回归，确认宿主核心不再依赖天气私有表。
+  - 这一步到底做什么：把插件私有表彻底从宿主核心 Alembic 历史里迁出去，并建立正式的插件私有 migration / 私有存储收口方式。
+  - 做完你能看到什么：宿主核心只保留插件无关的公共表；天气这类领域私有绑定表不再由宿主核心 ORM / Alembic 托管。
+  - 先依赖什么：2.5
+  - 主要改哪里：
+    - `C:\Code\FamilyClaw\apps\api-server\migrations\*`
+    - `C:\Code\FamilyClaw\apps\api-server\app\modules\plugin\*`
+    - `C:\Code\FamilyClaw\apps\api-server\data\plugins\official\official_weather\*`
+    - `C:\Code\FamilyClaw\docs\开发设计规范\20260318-插件能力与接口规范-v1.md`
+    - `C:\Code\FamilyClaw\docs\开发设计规范\20260318-现有插件系统迁移路线图.md`
+    - `C:\Code\FamilyClaw\docs\开发者文档\插件开发\zh-CN\05-插件对接方式说明.md`
+    - `C:\Code\FamilyClaw\docs\开发者文档\插件开发\en\05-plugin-integration-guide.md`
+    - `C:\Code\FamilyClaw\specs\004.8-插件系统V1定稿与全量迁移\*`
+  - 这一步先不做什么：不重造一套中心化 SaaS，不把插件私有状态重新包回宿主领域模块。
+  - 怎么算完成：
+    1. 宿主核心 ORM 和宿主核心 Alembic 不再直接管理天气等插件私有领域表
+    2. 插件系统有明确、可执行、可验证的插件私有迁移边界
+    3. 缺失 `official` 目录时，宿主启动、宿主 Alembic 和最终镜像检查都能通过
+  - 怎么验证：
+    - 代码静态扫描
+    - 宿主迁移 smoke test
+    - 打包边界检查
+    - `python -m unittest tests.test_plugin_private_migrations_weather tests.test_weather_default_device tests.test_weather_entity_copy tests.test_host_import_without_official_weather tests.test_device_service_no_weather_special_case`
+  - 对应需求：`requirements.md` 需求 2、需求 3
+  - 对应设计：`design.md` §2.3.3、§2.3.5、§3.1、§7.1、§7.2、§8.3
 
 ---
 
@@ -267,6 +326,11 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
     - 已移除宿主路由中的天气专线注册，天气查询不再走核心专用 API。
     - 2026-03-18 19:xx 纠偏回写：已删除仓库内错误归类的 `app/plugins/builtin/official_weather`，并跑通天气相关 20 个 `unittest` 回归，覆盖默认实例、附加地区实例、集成 API、插件配置、provider 适配器和仪表盘文案。
     - 已确认源码层不存在 `app.modules.weather` 与 `weather_router` 引用残留。
+  - 2026-03-19 追加纠偏回写：
+    - 已补 `test_device_service_no_weather_special_case.py` 和 `test_host_import_without_official_weather.py`，用测试锁死“核心不再懂天气”“官方插件缺失时宿主仍可导入”这两条边界。
+    - 已补宿主公共标准实体承载层 `device_entities`，设备读取、控制路由、快捷指令与天气插件都开始优先读写公共实体表，宿主不再把 `DeviceBinding.capabilities.entities` 当正式事实源。
+    - 已改写 `test_weather_entity_copy.py`、`test_weather_default_device.py`、`test_weather_multi_device.py` 和 `test_device_control_phase2.py`，补齐“标准实体写入公共实体层”“多地区天气实体隔离”“控制路由按公共实体表匹配”的回归。
+    - 已补 `test_conversation_device_shortcut_service.py`、`test_conversation_fast_action_shortcut.py` 回归，确认快捷指令的实体名解析不再绑死 `capabilities.entities`。
   - 这一步到底做什么：删掉明确过时的旧主语义，补回归测试，形成最终迁移结果。
   - 做完你能看到什么：仓库里只剩一套正式插件系统架构，而不是新旧并存。
   - 先依赖什么：3.1、3.2

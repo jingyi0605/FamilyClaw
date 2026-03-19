@@ -1,6 +1,6 @@
 # 需求文档 - 插件系统 V1 定稿与全量迁移
 
-状态：Draft
+状态：Done
 
 ## 2026-03-18 子 Spec 说明
 
@@ -71,6 +71,12 @@ FamilyClaw 现在已经有插件注册、启停、配置、任务、卡片、内
 2. WHEN `integration` 类插件刷新状态 THEN System SHALL 通过统一实例、设备、实体、卡片快照和动作契约接入。
 3. WHEN 记忆相关插件接入 THEN System SHALL 按 `memory_engine`、`memory_provider`、`context_engine` 槽位执行，并保留宿主的权限、可见性、修订和 fallback 主权。
 4. WHEN 插件执行失败、禁用或配置错误 THEN System SHALL 继续遵守统一启停、错误语义、降级和后台任务规则。
+5. WHEN 宿主加载核心数据库模型或执行宿主核心数据库迁移 THEN System SHALL NOT 将任何插件私有领域表注册到宿主核心 ORM 总模型入口，也 SHALL NOT 由宿主核心 Alembic migration 直接管理这些表。
+6. WHEN 宿主读取设备、实体或仪表盘展示数据 THEN System SHALL 只消费标准设备与标准实体，SHALL NOT 按插件 id、平台或领域类型执行专用归一化。
+7. WHEN `integration` 插件提交刷新结果 THEN System SHALL 要求插件直接产出完整标准实体，宿主只负责校验、去重、落库、关联和状态更新。
+8. WHEN 宿主承接运行态标准实体 THEN System SHALL 将实体写入宿主公共标准实体承载层，SHALL NOT 再把 `DeviceBinding.capabilities.entities` 当成正式实体事实源。
+9. WHEN `official` 或 `third_party` 插件目录缺失 THEN System SHALL 仍可完成宿主启动、数据库迁移和核心接口初始化。
+10. WHEN 插件私有表需要建表、升级或删表 THEN System SHALL 使用插件私有迁移边界处理，而不是倒挂回宿主核心 Alembic 历史。
 
 ### 需求 3：现有内置插件和官方插件必须全量迁移
 
@@ -82,6 +88,9 @@ FamilyClaw 现在已经有插件注册、启停、配置、任务、卡片、内
 2. WHEN 检查带控制能力的插件 THEN System SHALL 把控制能力收口到 `action` 或 `integration + action`，不再混用旧执行入口。
 3. WHEN 检查记忆相关输出 THEN System SHALL 统一改为调用宿主标准记忆写入接口，而不是保留旧 `memory-ingestor` 语义。
 4. WHEN 迁移完成 THEN System SHALL 清理宿主和插件目录中的旧主语义、旧分支和明显过时的字段命名。
+5. WHEN 官方插件交付 THEN System SHALL 支持通过 `apps/api-server/data/plugins/official/` 独立提供插件代码，SHALL NOT 要求把官方插件打进宿主最终镜像。
+6. WHEN 宿主源码被导入、执行迁移或启动应用 THEN System SHALL NOT 静态 import `official` 或 `third_party` 插件模块。
+7. WHEN 插件需要持久化领域私有状态 THEN System SHALL 使用插件私有表或插件私有存储边界，SHALL NOT 倒挂到宿主核心模型，也 SHALL NOT 倒挂到宿主核心 Alembic migration。
 
 ## 非功能需求
 
