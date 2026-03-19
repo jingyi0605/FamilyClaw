@@ -4,6 +4,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from app.modules.presence.service import record_member_home_presence_from_voice
 from app.modules.voice.binding_refresh_service import refresh_voice_terminal_binding_state
 from app.modules.voice.conversation_bridge import voice_conversation_bridge
 from app.modules.voice.fast_action_service import VoiceFastActionExecutionError, VoiceRouteDecision, voice_fast_action_service
@@ -338,6 +339,13 @@ class VoicePipelineService:
             transcript_text=transcript_text,
         )
         self._record_identity(session_id=session.session_id, routing_result=routing_result)
+        self._record_voice_presence_best_effort(
+            db,
+            session=session,
+            terminal=terminal,
+            transcript_text=transcript_text,
+            routing_result=routing_result,
+        )
         session = voice_session_registry.get(session.session_id) or session
         return await self._execute_route(
             db,
@@ -553,6 +561,43 @@ class VoicePipelineService:
             identity_status=identity.status,
             identity_summary=identity.model_dump(mode="json"),
         )
+
+    def _record_voice_presence_best_effort(
+        self,
+        db: Session,
+        *,
+        session: VoiceSessionState,
+        terminal: VoiceTerminalState,
+        transcript_text: str,
+        routing_result: VoiceRoutingResult,
+    ) -> None:
+        identity = routing_result.identity
+        room_id = session.room_id or terminal.room_id
+        try:
+            presence_written = record_member_home_presence_from_voice(
+                db,
+                household_id=session.household_id,
+                member_id=identity.primary_member_id,
+                room_id=room_id,
+                terminal_id=terminal.terminal_id,
+                session_id=session.session_id,
+                transcript_text=transcript_text,
+                speaker_confidence=identity.confidence if identity.primary_member_id else None,
+                identity_status=identity.status,
+                occurred_at=session.committed_at or session.updated_at,
+            )
+            if presence_written:
+                db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning(
+                "voice presence ingest failed household_id=%s terminal_id=%s session_id=%s member_id=%s",
+                session.household_id,
+                terminal.terminal_id,
+                session.session_id,
+                identity.primary_member_id,
+                exc_info=True,
+            )
 
     def _build_route_feedback(self, *, session: VoiceSessionState, text: str) -> list[VoiceCommandEvent]:
         if not text.strip():

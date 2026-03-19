@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.context.service import get_context_overview
 from app.modules.household.service import get_household_or_404
+from app.modules.memory.service import list_event_records
 from app.modules.member.service import get_member_or_404
 from app.modules.reminder.service import build_reminder_overview
 
@@ -46,6 +47,7 @@ PLUGIN_DASHBOARD_CARD_ACTION_PAYLOAD_MAX_BYTES = 2_000
 DEFAULT_HOME_DASHBOARD_CARD_HEIGHT = "regular"
 ALLOWED_HOME_DASHBOARD_CARD_SIZES = {"half", "full"}
 ALLOWED_HOME_DASHBOARD_CARD_HEIGHTS = {"compact", "regular", "tall"}
+RECENT_HOME_EVENT_LIMIT = 5
 DEFAULT_HOME_LAYOUT_CARD_REFS = (
     "builtin:weather",
     "builtin:stats",
@@ -64,10 +66,13 @@ BUILTIN_DASHBOARD_TEXT_DEFAULTS: dict[str, str] = {
     "home.memberStatus": "成员状态",
     "home.currentAtHomeAndActivity": "当前在家与活动",
     "home.recentEvents": "最近事件",
-    "home.systemInsightsAndReminders": "系统洞察与提醒",
+    "home.systemInsightsAndReminders": "家庭动态与提醒",
     "home.quickActions": "快捷操作",
     "home.systemControlledNavigation": "系统内受控跳转",
     "home.contextUnavailable": "家庭上下文暂不可用。",
+    "home.presenceSnapshotMissing": "实时在家快照缺失，成员状态已回退。",
+    "home.presenceSnapshotStale": "实时在家快照已过期，成员状态已回退。",
+    "home.presenceSnapshotPartial": "部分成员缺少实时在家快照，当前 {count} 人实时。",
     "home.privacySummary": "隐私：{value}",
     "home.automationSummary": "自动化：{value}",
     "home.quietHoursSummary": "安静时段：{start}-{end}",
@@ -403,6 +408,25 @@ def _build_builtin_home_cards(
             f"{_format_home_mode(locale_messages, context.home_mode)}，"
             f"{_format_platform_health_status(locale_messages, context.platform_health_status)}。"
         )
+        if context.presence_health.status == "fallback":
+            weather_message = (
+                f"{weather_message} "
+                f"{_resolve_builtin_dashboard_text(locale_messages, 'home.presenceSnapshotMissing')}"
+            )
+        elif context.presence_health.status == "stale":
+            weather_message = (
+                f"{weather_message} "
+                f"{_resolve_builtin_dashboard_text(locale_messages, 'home.presenceSnapshotStale')}"
+            )
+        elif context.presence_health.status == "partial":
+            weather_message = (
+                f"{weather_message} "
+                + _resolve_builtin_dashboard_text(
+                    locale_messages,
+                    'home.presenceSnapshotPartial',
+                    count=context.presence_health.fresh_member_count,
+                )
+            )
         weather_highlights = [
             _resolve_builtin_dashboard_text(
                 locale_messages,
@@ -433,6 +457,13 @@ def _build_builtin_home_cards(
                 count=reminders.pending_runs,
             )
         )
+
+    recent_event_items = _build_builtin_event_items(
+        db,
+        household_id=household_id,
+        locale_messages=locale_messages,
+        reminders=reminders,
+    )
 
     quick_action_items = [
         {
@@ -536,10 +567,10 @@ def _build_builtin_home_cards(
             source_type="builtin",
             template_type="timeline",
             size="half",
-            state="empty" if _is_builtin_events_empty(context, reminders) else "ready",
+            state="empty" if not recent_event_items else "ready",
             title=_resolve_builtin_dashboard_text(locale_messages, "home.recentEvents"),
             subtitle=_resolve_builtin_dashboard_text(locale_messages, "home.systemInsightsAndReminders"),
-            payload={"items": _build_builtin_event_items(locale_messages, context, reminders)},
+            payload={"items": recent_event_items},
             actions=[],
         ),
         HomeDashboardCardRead(
@@ -1393,21 +1424,27 @@ def _build_builtin_stats_items(
 
 
 def _build_builtin_event_items(
+    db: Session,
+    *,
+    household_id: str,
     locale_messages: dict[str, str],
-    context: Any,
     reminders: Any,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    if context is not None:
-        items.extend(
-            {
-                "title": item.title,
-                "timestamp": context.generated_at,
-                "description": item.message,
-                "tone": item.tone,
-            }
-            for item in context.insights[:3]
-        )
+    event_records, _total = list_event_records(
+        db,
+        household_id=household_id,
+        page=1,
+        page_size=RECENT_HOME_EVENT_LIMIT * 2,
+    )
+    for event in event_records:
+        item = _build_builtin_event_item_from_record(event)
+        if item is None:
+            continue
+        items.append(item)
+        if len(items) >= RECENT_HOME_EVENT_LIMIT:
+            return items
+
     if reminders is not None:
         items.extend(
             {
@@ -1419,13 +1456,48 @@ def _build_builtin_event_items(
                 ),
                 "tone": "warning",
             }
-            for item in reminders.items[:3]
+            for item in reminders.items[:RECENT_HOME_EVENT_LIMIT]
         )
-    return items[:5]
+    return items[:RECENT_HOME_EVENT_LIMIT]
 
 
-def _is_builtin_events_empty(context: Any, reminders: Any) -> bool:
-    return ((context is None or not context.insights) and (reminders is None or not reminders.items))
+def _build_builtin_event_item_from_record(event: Any) -> dict[str, Any] | None:
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    title = payload.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return None
+    summary = payload.get("summary")
+    description = summary.strip() if isinstance(summary, str) and summary.strip() else None
+    return {
+        "title": title.strip(),
+        "timestamp": event.occurred_at,
+        "description": description,
+        "tone": _resolve_builtin_event_tone(event, payload),
+    }
+
+
+def _resolve_builtin_event_tone(event: Any, payload: dict[str, Any]) -> str:
+    content = payload.get("content") if isinstance(payload.get("content"), dict) else {}
+    if event.event_type == "presence_changed":
+        status = content.get("status")
+        if status == "home":
+            return "success"
+        if status == "away":
+            return "neutral"
+        return "warning"
+    if event.event_type == "scene_executed":
+        status = content.get("status")
+        if status == "success":
+            return "success"
+        if status in {"partial", "blocked"}:
+            return "warning"
+        return "danger"
+    if event.event_type.startswith("reminder_"):
+        action = content.get("action")
+        if action == "done":
+            return "success"
+        return "warning"
+    return "info"
 
 
 def _format_home_mode(locale_messages: dict[str, str], value: str) -> str:

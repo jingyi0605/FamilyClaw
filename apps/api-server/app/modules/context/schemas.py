@@ -12,6 +12,7 @@ RoomScenePreset = Literal["auto", "welcome", "focus", "rest", "quiet"]
 ClimatePolicy = Literal["follow_member", "follow_room", "manual"]
 InsightTone = Literal["info", "success", "warning", "danger"]
 ContextStateSource = Literal["snapshot", "configured", "default"]
+PresenceSnapshotHealthStatus = Literal["live", "partial", "stale", "fallback"]
 
 
 class ContextConfigMemberState(BaseModel):
@@ -118,6 +119,14 @@ class ContextOverviewDeviceSummary(BaseModel):
     controllable_offline: int = Field(ge=0)
 
 
+class ContextOverviewPresenceHealth(BaseModel):
+    status: PresenceSnapshotHealthStatus
+    fresh_member_count: int = Field(ge=0)
+    stale_member_count: int = Field(ge=0)
+    fallback_member_count: int = Field(ge=0)
+    latest_snapshot_at: str | None = None
+
+
 class ContextOverviewInsight(BaseModel):
     code: str
     title: str
@@ -144,6 +153,7 @@ class ContextOverviewRead(BaseModel):
     member_states: list[ContextOverviewMemberState]
     room_occupancy: list[ContextOverviewRoomOccupancy]
     device_summary: ContextOverviewDeviceSummary
+    presence_health: ContextOverviewPresenceHealth
     insights: list[ContextOverviewInsight]
     degraded: bool
     generated_at: str

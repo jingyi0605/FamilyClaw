@@ -665,6 +665,13 @@ export type ContextOverviewRead = {
     inactive: number;
     controllable: number;
   };
+  presence_health: {
+    status: 'live' | 'partial' | 'stale' | 'fallback';
+    fresh_member_count: number;
+    stale_member_count: number;
+    fallback_member_count: number;
+    latest_snapshot_at: string | null;
+  };
   insights: Array<{
     code: string;
     title: string;

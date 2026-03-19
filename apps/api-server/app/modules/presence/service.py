@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
-from app.db.utils import dump_json, new_uuid
+from app.db.utils import dump_json, new_uuid, utc_now_iso
 from app.modules.context.cache_service import ContextCacheUnavailableError, refresh_household_context_cache
 from app.modules.context.service import get_context_overview
 from app.modules.household.service import get_household_or_404
@@ -41,6 +41,7 @@ AWAY_EVENT_KEYWORDS = {
     "offline",
     "absent",
 }
+VOICE_HOME_DEBOUNCE_MINUTES = 10
 
 
 def _parse_occurred_at(value: str) -> datetime:
@@ -170,12 +171,106 @@ def _build_source_summary(
     ) or "{}"
 
 
+def _format_presence_status_label(status: str) -> str:
+    if status == "home":
+        return "在家"
+    if status == "away":
+        return "外出"
+    return "未知"
+
+
 def _refresh_context_cache_best_effort(db: Session, household_id: str) -> bool:
     try:
         overview = get_context_overview(db, household_id)
         return refresh_household_context_cache(household_id, overview.model_dump(mode="json"))
     except ContextCacheUnavailableError:
         return False
+
+
+def _should_skip_recent_voice_home_event(
+    snapshot: MemberPresenceState | None,
+    *,
+    room_id: str | None,
+    occurred_at: datetime,
+) -> bool:
+    if snapshot is None or snapshot.status != "home":
+        return False
+
+    snapshot_updated_at = _parse_snapshot_updated_at(snapshot)
+    if snapshot_updated_at is None:
+        return False
+
+    age_seconds = (occurred_at - snapshot_updated_at).total_seconds()
+    if age_seconds < 0:
+        return True
+    if age_seconds > VOICE_HOME_DEBOUNCE_MINUTES * 60:
+        return False
+
+    if room_id is None:
+        return True
+    if snapshot.current_room_id is None:
+        return False
+    return snapshot.current_room_id == room_id
+
+
+def record_member_home_presence_from_voice(
+    db: Session,
+    *,
+    household_id: str,
+    member_id: str | None,
+    room_id: str | None,
+    terminal_id: str,
+    session_id: str,
+    transcript_text: str | None,
+    speaker_confidence: float | None,
+    identity_status: str | None,
+    occurred_at: str | None = None,
+) -> bool:
+    """把可信语音终端识别结果折叠成在家快照，避免同房间短时间重复刷事件。"""
+
+    if identity_status != "resolved":
+        return False
+    if not household_id or not member_id or not terminal_id or not session_id:
+        return False
+    if not hasattr(db, "get") or not hasattr(db, "flush"):
+        return False
+
+    occurred_at_value = occurred_at or utc_now_iso()
+    occurred_at_dt = _parse_occurred_at(occurred_at_value)
+    current_snapshot = db.get(MemberPresenceState, member_id)
+    if _should_skip_recent_voice_home_event(
+        current_snapshot,
+        room_id=room_id,
+        occurred_at=occurred_at_dt,
+    ):
+        return False
+
+    transcript_excerpt = (transcript_text or "").strip()
+    if len(transcript_excerpt) > 80:
+        transcript_excerpt = f"{transcript_excerpt[:77]}..."
+
+    ingest_presence_event(
+        db,
+        PresenceEventCreate(
+            household_id=household_id,
+            member_id=member_id,
+            room_id=room_id,
+            source_type="voice",
+            source_ref=f"voice-session:{session_id}",
+            confidence=max(0.55, min(0.99, speaker_confidence if speaker_confidence is not None else 0.72)),
+            payload={
+                "status": "home",
+                "event": "spoken_command",
+                "trigger": "voice_terminal",
+                "terminal_id": terminal_id,
+                "identity_status": identity_status,
+                "speaker_confidence": speaker_confidence,
+                "transcript_excerpt": transcript_excerpt or None,
+            },
+            occurred_at=occurred_at_value,
+        ),
+    )
+    return True
 
 
 def ingest_presence_event(
@@ -273,7 +368,14 @@ def ingest_presence_event(
         if snapshot.current_room_id is not None:
             room = db.get(Room, snapshot.current_room_id)
             room_name = room.name if room is not None else None
-        summary_text = f"{member.name} 当前状态变为 {snapshot.status}"
+        status_label = _format_presence_status_label(snapshot.status)
+        if snapshot.status == "home":
+            title = f"{member.name} 已回家"
+        elif snapshot.status == "away":
+            title = f"{member.name} 已离家"
+        else:
+            title = f"{member.name} 在家状态已更新"
+        summary_text = f"{member.name} 当前状态变为 {status_label}"
         if room_name:
             summary_text += f"，位置是 {room_name}"
         ingest_event_record_best_effort(
@@ -287,7 +389,7 @@ def ingest_presence_event(
                 room_id=snapshot.current_room_id,
                 payload={
                     "memory_type": "event",
-                    "title": f"{member.name} 在家状态变化",
+                    "title": title,
                     "summary": summary_text,
                     "visibility": "family",
                     "importance": 3,

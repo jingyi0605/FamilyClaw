@@ -22,6 +22,7 @@ from app.modules.context.schemas import (
     ContextOverviewDeviceSummary,
     ContextOverviewInsight,
     ContextOverviewMemberState,
+    ContextOverviewPresenceHealth,
     ContextOverviewRead,
     ContextOverviewRoomOccupancy,
     ContextOverviewRoomOccupant,
@@ -33,6 +34,8 @@ from app.modules.household.service import get_household_or_404
 from app.modules.member.models import Member
 from app.modules.presence.models import MemberPresenceState
 from app.modules.room.models import Room
+
+PRESENCE_SNAPSHOT_STALE_MINUTES = 30
 
 
 def _list_household_members(db: Session, household_id: str) -> list[Member]:
@@ -423,6 +426,29 @@ def _presence_confidence_to_percent(value: float) -> int:
     return int(round(max(0, min(100, value))))
 
 
+def _is_presence_snapshot_fresh(snapshot: MemberPresenceState, *, now: datetime) -> bool:
+    updated_at = _parse_iso_datetime(snapshot.updated_at)
+    if updated_at is None:
+        return False
+    age_minutes = int(max(0, (now - updated_at).total_seconds() // 60))
+    return age_minutes < PRESENCE_SNAPSHOT_STALE_MINUTES
+
+
+def _resolve_presence_health_status(
+    *,
+    member_count: int,
+    fresh_snapshot_count: int,
+    stale_snapshot_count: int,
+) -> str:
+    if member_count > 0 and fresh_snapshot_count >= member_count:
+        return "live"
+    if fresh_snapshot_count > 0:
+        return "partial"
+    if stale_snapshot_count > 0:
+        return "stale"
+    return "fallback"
+
+
 def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
     household = get_household_or_404(db, household_id)
     members = _list_household_members(db, household_id)
@@ -438,12 +464,23 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
 
     overview_member_states: list[ContextOverviewMemberState] = []
     live_snapshot_count = 0
+    stale_snapshot_count = 0
+    latest_snapshot_at: str | None = None
+    latest_snapshot_at_dt: datetime | None = None
+    now = datetime.now(timezone.utc)
 
     for member in members:
         config_member_state = config_member_state_map.get(member.id) or _build_default_member_state(member, rooms)
         presence_state = presence_state_map.get(member.id)
 
-        if presence_state is not None:
+        snapshot_updated_at = _parse_iso_datetime(presence_state.updated_at) if presence_state is not None else None
+        if snapshot_updated_at is not None and (
+            latest_snapshot_at_dt is None or snapshot_updated_at > latest_snapshot_at_dt
+        ):
+            latest_snapshot_at_dt = snapshot_updated_at
+            latest_snapshot_at = presence_state.updated_at
+
+        if presence_state is not None and _is_presence_snapshot_fresh(presence_state, now=now):
             live_snapshot_count += 1
             if presence_state.status in {"home", "away", "unknown"}:
                 presence: PresenceStatus = cast(PresenceStatus, presence_state.status)
@@ -473,6 +510,22 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
             )
             continue
 
+        stale_snapshot_summary: dict[str, Any] | None = None
+        fallback_last_seen_minutes = config_member_state.last_seen_minutes
+        if presence_state is not None:
+            stale_snapshot_count += 1
+            fallback_last_seen_minutes = _minutes_since(
+                presence_state.updated_at,
+                config_member_state.last_seen_minutes,
+            )
+            stale_snapshot_summary = {
+                "fallback_reason": "stale_snapshot",
+                "snapshot_status": presence_state.status,
+                "snapshot_updated_at": presence_state.updated_at,
+                "snapshot_confidence": _presence_confidence_to_percent(presence_state.confidence),
+                "snapshot_source": load_json(presence_state.source_summary),
+            }
+
         current_room_id = (
             config_member_state.current_room_id if config_member_state.presence == "home" else None
         )
@@ -488,10 +541,10 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
                 current_room_id=current_room_id,
                 current_room_name=current_room.name if current_room else None,
                 confidence=config_member_state.confidence,
-                last_seen_minutes=config_member_state.last_seen_minutes,
+                last_seen_minutes=fallback_last_seen_minutes,
                 highlight=config_member_state.highlight,
                 source=source,
-                source_summary=None,
+                source_summary=stale_snapshot_summary,
                 updated_at=config_read.updated_at if config_read.version > 0 else None,
             )
         )
@@ -597,13 +650,38 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
     children_home = [item for item in overview_member_states if item.role == "child" and item.presence == "home"]
     elders_home = [item for item in overview_member_states if item.role == "elder" and item.presence == "home"]
     insights: list[ContextOverviewInsight] = []
+    presence_health_status = _resolve_presence_health_status(
+        member_count=len(members),
+        fresh_snapshot_count=live_snapshot_count,
+        stale_snapshot_count=stale_snapshot_count,
+    )
+    presence_health = ContextOverviewPresenceHealth(
+        status=cast(Any, presence_health_status),
+        fresh_member_count=live_snapshot_count,
+        stale_member_count=stale_snapshot_count,
+        fallback_member_count=max(0, len(members) - live_snapshot_count),
+        latest_snapshot_at=latest_snapshot_at,
+    )
 
-    if live_snapshot_count == 0:
+    if presence_health.status == "fallback":
         insights.append(
             ContextOverviewInsight(
                 code="no_live_presence",
                 title="缺少实时在家快照",
                 message="当前还没有实时的 member_presence_state 数据，系统只能回退到配置或默认状态。",
+                tone="warning",
+            )
+        )
+
+    if presence_health.status == "stale":
+        insights.append(
+            ContextOverviewInsight(
+                code="stale_presence_snapshot",
+                title="实时在家快照已过期",
+                message=(
+                    f"最近一次实时在家快照距离现在已超过 {PRESENCE_SNAPSHOT_STALE_MINUTES} 分钟，"
+                    "当前成员状态已回退到配置或默认状态。"
+                ),
                 tone="warning",
             )
         )
@@ -667,7 +745,7 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
             )
         )
 
-    degraded = live_snapshot_count == 0 or config_read.platform_health_status != "healthy"
+    degraded = presence_health.status in {"fallback", "stale"} or config_read.platform_health_status != "healthy"
 
     return ContextOverviewRead(
         household_id=household.id,
@@ -687,6 +765,7 @@ def get_context_overview(db: Session, household_id: str) -> ContextOverviewRead:
         member_states=overview_member_states,
         room_occupancy=room_occupancy,
         device_summary=device_summary,
+        presence_health=presence_health,
         insights=insights,
         degraded=degraded,
         generated_at=utc_now_iso(),
