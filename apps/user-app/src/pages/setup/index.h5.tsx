@@ -26,15 +26,12 @@ import {
   useTheme,
 } from '../../runtime';
 import { appStorage } from '../../runtime/core';
-import {
-  BOOTSTRAP_LOGIN_USERNAME,
-  dismissBootstrapLoginPrefillForUsername,
-} from '../../runtime/shared/login/localState';
 import { markPendingGuideAutoStart } from '../../runtime/shared/user-guide/localState';
 import './styles-entry';
 
 const WELCOME_SEEN_KEY = 'familyclaw_welcome_seen';
 const ENTRY_PAGE_URL = '/pages/entry/index';
+const DEFAULT_BOOTSTRAP_USERNAME = 'user';
 
 const STEP_ORDER: HouseholdSetupStepCode[] = [
   'family_profile',
@@ -415,7 +412,7 @@ export default function SetupPageH5() {
           guardian_member_id: null,
         });
 
-        const nextUsername = memberForm.username.trim() || BOOTSTRAP_LOGIN_USERNAME;
+        const nextUsername = memberForm.username.trim() || DEFAULT_BOOTSTRAP_USERNAME;
 
         await setupApi.completeBootstrapAccount({
           household_id: currentHouseholdId,
@@ -423,7 +420,6 @@ export default function SetupPageH5() {
           username: nextUsername,
           password: memberForm.password,
         });
-        await dismissBootstrapLoginPrefillForUsername(appStorage, nextUsername).catch(() => undefined);
 
         await refreshAuth();
       }

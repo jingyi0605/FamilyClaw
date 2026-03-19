@@ -1,10 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useAuthContext } from '../../auth';
-import {
-  BOOTSTRAP_LOGIN_PASSWORD,
-  BOOTSTRAP_LOGIN_USERNAME,
-  readBootstrapLoginPrefillDismissedFromBrowserStorage,
-} from '../../shared/login/localState';
 import { useI18n } from '../i18n/I18nProvider';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeSwitcher } from './ThemeSwitcher';
@@ -105,13 +100,8 @@ function FloatingShapes() {
 export function H5LoginPage() {
   const { login, loginPending, loginError } = useAuthContext();
   const { t } = useI18n();
-  const shouldPrefillBootstrapAccount = !readBootstrapLoginPrefillDismissedFromBrowserStorage();
-  const [username, setUsername] = useState(() => (
-    shouldPrefillBootstrapAccount ? BOOTSTRAP_LOGIN_USERNAME : ''
-  ));
-  const [password, setPassword] = useState(() => (
-    shouldPrefillBootstrapAccount ? BOOTSTRAP_LOGIN_PASSWORD : ''
-  ));
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const usernameInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
@@ -224,7 +214,7 @@ export function H5LoginPage() {
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
-                  defaultValue={shouldPrefillBootstrapAccount ? BOOTSTRAP_LOGIN_USERNAME : ''}
+                  defaultValue=""
                   onChange={event => setUsername(event.target.value)}
                   onFocus={() => setFocusedField('username')}
                   onBlur={() => setFocusedField(null)}
@@ -251,7 +241,7 @@ export function H5LoginPage() {
                   name="password"
                   type="password"
                   autoComplete="current-password"
-                  defaultValue={shouldPrefillBootstrapAccount ? BOOTSTRAP_LOGIN_PASSWORD : ''}
+                  defaultValue=""
                   onChange={event => setPassword(event.target.value)}
                   onFocus={() => setFocusedField('password')}
                   onBlur={() => setFocusedField(null)}
