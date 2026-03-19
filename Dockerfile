@@ -114,6 +114,6 @@ VOLUME ["/data"]
 
 EXPOSE 8080 4399
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=5 CMD ["/opt/familyclaw/docker/scripts/healthcheck.sh"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 CMD ["/opt/familyclaw/docker/scripts/healthcheck.sh"]
 
 CMD ["/usr/bin/supervisord", "-c", "/opt/familyclaw/docker/supervisord.conf", "-n"]

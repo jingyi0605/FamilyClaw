@@ -80,6 +80,7 @@ setup_service_logging() {
 
 wait_for_postgres() {
   local attempts="${1:-60}"
+  local silent_until="${2:-60}"
   local i=0
   until pg_isready -h "${FAMILYCLAW_DB_HOST}" -p "${FAMILYCLAW_DB_PORT}" -U "${FAMILYCLAW_DB_USER}" -d "${FAMILYCLAW_DB_NAME}" >/dev/null 2>&1; do
     i=$((i + 1))
@@ -87,18 +88,25 @@ wait_for_postgres() {
       log "PostgreSQL did not become ready in time"
       return 1
     fi
+    if [[ "${i}" -ge "${silent_until}" ]] && [[ $((i % 5)) -eq 0 ]]; then
+      log "Waiting for PostgreSQL... (${i}/${attempts})"
+    fi
     sleep 1
   done
 }
 
 wait_for_api() {
-  local attempts="${1:-60}"
+  local attempts="${1:-120}"
+  local silent_until="${2:-60}"
   local i=0
-  until curl --fail --silent --show-error "http://127.0.0.1:${FAMILYCLAW_API_PORT}/api/v1/healthz" >/dev/null; do
+  until curl --fail --silent "http://127.0.0.1:${FAMILYCLAW_API_PORT}/api/v1/healthz" >/dev/null 2>&1; do
     i=$((i + 1))
     if [[ "${i}" -ge "${attempts}" ]]; then
       log "api-server did not become ready in time"
       return 1
+    fi
+    if [[ "${i}" -ge "${silent_until}" ]] && [[ $((i % 5)) -eq 0 ]]; then
+      log "Waiting for api-server... (${i}/${attempts})"
     fi
     sleep 1
   done
