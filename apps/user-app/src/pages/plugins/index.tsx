@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import Taro from '@tarojs/taro';
 import { BadgeCheck, Download, ExternalLink, Eye, GitFork, Package, RefreshCw, Settings2, Star, X, Zap } from 'lucide-react';
 import { GuardedPage, useHouseholdContext } from '../../runtime';
@@ -16,6 +16,7 @@ import type {
   MarketplaceRepoProvider,
   MarketplaceSourceRead,
   PluginManifestType,
+  PluginPackageInstallRead,
   PluginRegistryItem,
   PluginVersionOperationResultRead,
   PluginVersionOperationType,
@@ -310,6 +311,29 @@ function normalizeOptionalText(value: string) {
   return normalized ? normalized : null;
 }
 
+function resolveApiErrorCode(error: unknown): string | null {
+  if (!(error instanceof ApiError)) {
+    return null;
+  }
+  const payload = error.payload;
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const directCode = (payload as { error_code?: unknown }).error_code;
+  if (typeof directCode === 'string' && directCode.trim()) {
+    return directCode;
+  }
+  const detail = (payload as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== 'object') {
+    return null;
+  }
+  const nestedCode = (detail as { error_code?: unknown }).error_code;
+  if (typeof nestedCode === 'string' && nestedCode.trim()) {
+    return nestedCode;
+  }
+  return null;
+}
+
 function PluginsPageContent() {
   const { currentHouseholdId } = useHouseholdContext();
   const { locale, replacePluginLocales } = useI18n();
@@ -341,6 +365,14 @@ function PluginsPageContent() {
   const [sourceManagerOpen, setSourceManagerOpen] = useState(false);
   const [marketRefreshing, setMarketRefreshing] = useState(false);
   const [marketplaceForm, setMarketplaceForm] = useState<MarketplaceSourceFormState>(createEmptyMarketplaceForm);
+  const [zipInstallOpen, setZipInstallOpen] = useState(false);
+  const [zipOverwriteConfirmOpen, setZipOverwriteConfirmOpen] = useState(false);
+  const [zipSelectedFile, setZipSelectedFile] = useState<File | null>(null);
+  const [zipOverwriteFile, setZipOverwriteFile] = useState<File | null>(null);
+  const [zipError, setZipError] = useState('');
+  const [zipStatus, setZipStatus] = useState('');
+  const [zipInstalling, setZipInstalling] = useState(false);
+  const [zipInputResetSeed, setZipInputResetSeed] = useState(0);
 
   const page = useCallback(
     (key: Parameters<typeof getPageMessage>[1], params?: Parameters<typeof getPageMessage>[2]) => getPageMessage(locale, key, params),
@@ -518,6 +550,114 @@ function PluginsPageContent() {
       replacePluginLocales([]);
     }
   }, [currentHouseholdId, replacePluginLocales]);
+
+  function resetZipInstallTransientState() {
+    setZipSelectedFile(null);
+    setZipOverwriteFile(null);
+    setZipError('');
+    setZipStatus('');
+    setZipOverwriteConfirmOpen(false);
+    setZipInputResetSeed(current => current + 1);
+  }
+
+  function handleOpenZipInstallDialog() {
+    setZipInstallOpen(true);
+    setZipError('');
+    setZipStatus('');
+  }
+
+  function handleCloseZipInstallDialog() {
+    if (zipInstalling) {
+      return;
+    }
+    setZipInstallOpen(false);
+    resetZipInstallTransientState();
+  }
+
+  function handleZipFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const nextFile = event.target.files?.[0] ?? null;
+    setZipSelectedFile(nextFile);
+    setZipOverwriteFile(null);
+    setZipError('');
+    setZipStatus('');
+  }
+
+  const resolveZipInstallStatusMessage = useCallback((result: PluginPackageInstallRead) => {
+    if (result.install_action === 'upgraded') {
+      return page('plugins.zip.status.upgraded', {
+        plugin: result.plugin_name,
+        version: result.version,
+      });
+    }
+    if (result.install_action === 'reinstalled') {
+      return page('plugins.zip.status.reinstalled', {
+        plugin: result.plugin_name,
+        version: result.version,
+      });
+    }
+    return page('plugins.zip.status.installed', {
+      plugin: result.plugin_name,
+      version: result.version,
+    });
+  }, [page]);
+
+  const installPluginPackageFromZip = useCallback(async (file: File, overwrite: boolean) => {
+    if (!currentHouseholdId) {
+      return;
+    }
+    setZipInstalling(true);
+    setZipError('');
+    setZipStatus('');
+    try {
+      const result = await settingsApi.installPluginPackage(currentHouseholdId, file, { overwrite });
+      await Promise.all([reloadInstalledPlugins(), reloadMarketplace()]);
+      await refreshPluginLocales();
+      const successMessage = resolveZipInstallStatusMessage(result);
+      setError('');
+      setStatus(successMessage);
+      setZipStatus(successMessage);
+      setZipInstallOpen(false);
+      resetZipInstallTransientState();
+    } catch (installError) {
+      const errorCode = resolveApiErrorCode(installError);
+      if (!overwrite && errorCode === 'plugin_package_conflict') {
+        setZipOverwriteFile(file);
+        setZipOverwriteConfirmOpen(true);
+        return;
+      }
+      setZipError(installError instanceof ApiError ? installError.message : page('plugins.operationFailed'));
+    } finally {
+      setZipInstalling(false);
+    }
+  }, [
+    currentHouseholdId,
+    page,
+    refreshPluginLocales,
+    reloadInstalledPlugins,
+    reloadMarketplace,
+    resolveZipInstallStatusMessage,
+  ]);
+
+  async function handleZipInstallSubmit() {
+    if (!zipSelectedFile) {
+      setZipError(page('plugins.zip.error.fileRequired'));
+      return;
+    }
+    const fileName = zipSelectedFile.name.toLowerCase();
+    if (!fileName.endsWith('.zip')) {
+      setZipError(page('plugins.zip.error.onlyZip'));
+      return;
+    }
+    await installPluginPackageFromZip(zipSelectedFile, false);
+  }
+
+  async function handleZipOverwriteInstall() {
+    if (!zipOverwriteFile) {
+      setZipOverwriteConfirmOpen(false);
+      return;
+    }
+    await installPluginPackageFromZip(zipOverwriteFile, true);
+  }
 
   async function handleTogglePlugin(plugin: PluginRegistryItem) {
     if (!currentHouseholdId) {
@@ -1132,10 +1272,16 @@ function PluginsPageContent() {
               <div className="toggle-switch__thumb" />
             </button>
           </div>
-          <button className="btn btn--primary" onClick={() => setMarketplaceOpen(true)}>
-            <Package size={16} />
-            {page('plugins.marketplace.openButton')}
-          </button>
+          <div className="plugins-page-actions__actions">
+            <button className="btn btn--outline" onClick={handleOpenZipInstallDialog}>
+              <Download size={16} />
+              {page('plugins.zip.openButton')}
+            </button>
+            <button className="btn btn--primary" onClick={() => setMarketplaceOpen(true)}>
+              <Package size={16} />
+              {page('plugins.marketplace.openButton')}
+            </button>
+          </div>
         </div>
 
         <Section title={page('plugins.section.installed')}>
@@ -1391,6 +1537,133 @@ function PluginsPageContent() {
             </div>
           ) : null}
         </Section>
+
+        <SettingsDialog
+          open={zipInstallOpen}
+          title={page('plugins.zip.dialogTitle')}
+          description={page('plugins.zip.dialogDesc')}
+          className="plugin-marketplace-source-modal"
+          headerExtra={(
+            <button
+              type="button"
+              className="member-modal__close"
+              onClick={handleCloseZipInstallDialog}
+              aria-label={page('plugins.zip.dialogClose')}
+              disabled={zipInstalling}
+            >
+              <X size={16} />
+            </button>
+          )}
+          onClose={handleCloseZipInstallDialog}
+        >
+          <div className="plugin-marketplace-source-modal__body">
+            {zipError ? <div className="settings-note settings-note--error">{zipError}</div> : null}
+            {zipStatus ? <div className="settings-note settings-note--success">{zipStatus}</div> : null}
+            <div className="settings-form-grid">
+              <div className="settings-form-field settings-form-field--full">
+                <label className="settings-form-label">
+                  {page('plugins.zip.fileLabel')}
+                </label>
+                <div className="file-upload-wrapper">
+                  <input
+                    key={zipInputResetSeed}
+                    id="plugin-zip-package"
+                    type="file"
+                    accept=".zip,application/zip"
+                    onChange={handleZipFileChange}
+                    disabled={zipInstalling}
+                    className="file-upload-wrapper__input"
+                  />
+                  <label htmlFor="plugin-zip-package" className="file-upload-wrapper__button">
+                    <Package size={18} />
+                    <span>{page('plugins.zip.selectFile')}</span>
+                  </label>
+                  {zipSelectedFile ? (
+                    <span className="file-upload-wrapper__filename">{zipSelectedFile.name}</span>
+                  ) : (
+                    <span className="file-upload-wrapper__placeholder">{page('plugins.zip.fileHint')}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="plugin-marketplace-source-form__actions">
+              <button
+                type="button"
+                className="btn btn--outline"
+                onClick={handleCloseZipInstallDialog}
+                disabled={zipInstalling}
+              >
+                {page('plugins.action.cancel')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => void handleZipInstallSubmit()}
+                disabled={zipInstalling}
+              >
+                {page(zipInstalling ? 'plugins.zip.action.installing' : 'plugins.zip.action.install')}
+              </button>
+            </div>
+          </div>
+        </SettingsDialog>
+
+        <SettingsDialog
+          open={zipOverwriteConfirmOpen}
+          title={page('plugins.zip.overwriteDialogTitle')}
+          description={page('plugins.zip.overwriteDialogDesc')}
+          className="plugin-marketplace-source-modal"
+          headerExtra={(
+            <button
+              type="button"
+              className="member-modal__close"
+              onClick={() => {
+                if (!zipInstalling) {
+                  setZipOverwriteConfirmOpen(false);
+                  setZipOverwriteFile(null);
+                }
+              }}
+              aria-label={page('plugins.zip.overwriteDialogClose')}
+              disabled={zipInstalling}
+            >
+              <X size={16} />
+            </button>
+          )}
+          onClose={() => {
+            if (!zipInstalling) {
+              setZipOverwriteConfirmOpen(false);
+              setZipOverwriteFile(null);
+            }
+          }}
+        >
+          <div className="plugin-marketplace-source-modal__body">
+            <div className="settings-note settings-note--warning">
+              {page('plugins.zip.overwriteConfirmText', { file: zipOverwriteFile?.name ?? '' })}
+            </div>
+            <div className="plugin-marketplace-source-form__actions">
+              <button
+                type="button"
+                className="btn btn--outline"
+                onClick={() => {
+                  if (!zipInstalling) {
+                    setZipOverwriteConfirmOpen(false);
+                    setZipOverwriteFile(null);
+                  }
+                }}
+                disabled={zipInstalling}
+              >
+                {page('plugins.action.cancel')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() => void handleZipOverwriteInstall()}
+                disabled={zipInstalling}
+              >
+                {page(zipInstalling ? 'plugins.zip.action.installing' : 'plugins.zip.action.overwriteInstall')}
+              </button>
+            </div>
+          </div>
+        </SettingsDialog>
 
         <SettingsDialog
           open={marketplaceOpen}
