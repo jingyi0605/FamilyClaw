@@ -312,6 +312,25 @@ function parseScheduledTaskProposalPayload(item: ConversationProposalItem): Sche
   };
 }
 
+function getLatestConfigMutationKey(snapshot: ConversationSessionDetail): string {
+  const latestConfigAction = [...(snapshot.action_records ?? [])]
+    .reverse()
+    .find(action => action.action_name === 'config.apply' && action.status === 'completed');
+  if (latestConfigAction) {
+    return `action:${latestConfigAction.id}:${latestConfigAction.updated_at}`;
+  }
+
+  for (const batch of [...(snapshot.proposal_batches ?? [])].reverse()) {
+    const latestConfigProposal = [...batch.items]
+      .reverse()
+      .find(item => item.proposal_kind === 'config_apply' && item.status === 'completed');
+    if (latestConfigProposal) {
+      return `proposal:${latestConfigProposal.id}:${latestConfigProposal.updated_at}`;
+    }
+  }
+  return '';
+}
+
 async function goToPage(url: string) {
   await Taro.navigateTo({ url }).catch(() => undefined);
 }
@@ -341,6 +360,7 @@ function AssistantPageContent() {
   const [activeChatTab, setActiveChatTab] = useState<'personal' | 'public' | 'moments'>('personal');
   const realtimeClientRef = useRef<ConversationRealtimeClient | null>(null);
   const pendingSyncTimerRef = useRef<number | null>(null);
+  const latestConfigMutationRef = useRef('');
   const sendingRef = useRef(false);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const listBullet = '•';
@@ -413,6 +433,23 @@ function AssistantPageContent() {
   );
   const recentActionRecords = useMemo(() => actionRecords.slice(-5).reverse(), [actionRecords]);
 
+  async function refreshConversationAgents(preferredAgentId?: string) {
+    if (!currentHouseholdId) return;
+    try {
+      const result = await assistantApi.listAgents(currentHouseholdId);
+      const nextAgents = result.items;
+      setAgents(nextAgents);
+      const nextConversationAgents = nextAgents.filter(isConversationAgent);
+      const fallbackAgentId = pickDefaultConversationAgent(nextAgents)?.id ?? '';
+      const preferred = preferredAgentId ?? selectedAgentId;
+      const preferredIsValid = preferred ? nextConversationAgents.some(agent => agent.id === preferred) : false;
+      const nextSelectedAgentId = preferredIsValid ? preferred : fallbackAgentId;
+      setSelectedAgentId(current => (current === nextSelectedAgentId ? current : nextSelectedAgentId));
+    } catch {
+      // 忽略刷新失败，避免打断主对话流程
+    }
+  }
+
   useEffect(() => {
     void Taro.setNavigationBarTitle({ title: t('nav.assistant') }).catch(() => undefined);
   }, [t, locale]);
@@ -476,6 +513,7 @@ function AssistantPageContent() {
         ]);
         if (cancelled) return;
         setAgents(agentResult.items);
+        setSelectedAgentId(pickDefaultConversationAgent(agentResult.items)?.id ?? '');
         setSessions(sessionResult.items);
         setActiveSessionId(sessionResult.items[0]?.id || '');
       } catch (loadError) {
@@ -582,6 +620,11 @@ function AssistantPageContent() {
           if (nextSession.messages.some(message => message.status === 'completed' || message.status === 'failed')) {
             resetPendingSyncTimer();
           }
+          const mutationKey = getLatestConfigMutationKey(nextSession);
+          if (mutationKey && mutationKey !== latestConfigMutationRef.current) {
+            latestConfigMutationRef.current = mutationKey;
+            void refreshConversationAgents(nextSession.active_agent_id ?? undefined);
+          }
           return;
         }
 
@@ -648,11 +691,22 @@ function AssistantPageContent() {
   }, [activeSessionId, currentHouseholdId]);
 
   useEffect(() => {
-    const nextAgentId = activeSessionDetail?.active_agent_id ?? defaultAgent?.id ?? '';
+    const nextSessionAgent = agents.find(agent => agent.id === activeSessionDetail?.active_agent_id);
+    const nextAgentId = nextSessionAgent && isConversationAgent(nextSessionAgent)
+      ? nextSessionAgent.id
+      : (defaultAgent?.id ?? '');
     if (nextAgentId && nextAgentId !== selectedAgentId) {
       setSelectedAgentId(nextAgentId);
     }
-  }, [activeSessionDetail?.active_agent_id, defaultAgent?.id, selectedAgentId]);
+  }, [activeSessionDetail?.active_agent_id, agents, defaultAgent?.id, selectedAgentId]);
+
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    const isSelectedConversationAgent = conversationAgents.some(agent => agent.id === selectedAgentId);
+    if (!isSelectedConversationAgent) {
+      setSelectedAgentId(defaultAgent?.id ?? '');
+    }
+  }, [conversationAgents, defaultAgent?.id, selectedAgentId]);
 
   useEffect(() => {
     if (!currentHouseholdId) return;
@@ -844,6 +898,7 @@ function AssistantPageContent() {
           <span className="message__action-icon">{getActionIcon(action)}</span>
           <strong>{action.title}</strong>
         </div>
+        <div className="message__action-meta">{t('assistant.action.notifyModeLabel')}</div>
         {action.summary ? <p className="message__action-text">{action.summary}</p> : null}
         <div className="message__action-meta">{buildActionResultText(action, locale)}</div>
         {canUndo ? (
@@ -968,6 +1023,7 @@ function AssistantPageContent() {
               <span>{getActionIcon(action)}</span>
             </button>
           ))}
+          <span className="message__action-meta">{t('assistant.action.autoModeLabel')}</span>
           <span className="message__action-meta">{t('assistant.action.autoExecuted', { count: actions.length })}</span>
         </div>
         {expanded ? (

@@ -1608,7 +1608,6 @@ def _build_agent_prompt(payload: Mapping[str, object]) -> str:
         display_address = str(requester_cognition.get("display_address") or "").strip()
         communication_style = str(requester_cognition.get("communication_style") or "").strip()
         prompt_notes = str(requester_cognition.get("prompt_notes") or "").strip()
-        care_notes = requester_cognition.get("care_notes")
 
         if display_address:
             prompt_parts.append(f"当前对用户的称呼建议：{display_address}。")
@@ -1616,8 +1615,6 @@ def _build_agent_prompt(payload: Mapping[str, object]) -> str:
             prompt_parts.append(f"与当前用户沟通时建议采用：{communication_style}。")
         if prompt_notes:
             prompt_parts.append(f"补充注意事项：{prompt_notes}。")
-        if isinstance(care_notes, Mapping) and care_notes:
-            prompt_parts.append(f"成员关怀说明：{json.dumps(care_notes, ensure_ascii=False)}。")
 
     if isinstance(requester_profile, Mapping):
         preferred_display_name = str(requester_profile.get("preferred_display_name") or "").strip()

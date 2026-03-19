@@ -175,6 +175,7 @@ def create_conversation_session(
             db,
             household_id=payload.household_id,
             agent_id=payload.active_agent_id,
+            conversation_only=True,
         )
     except AgentNotFoundError as exc:
         raise HTTPException(
@@ -918,6 +919,7 @@ def _apply_action_policy_for_turn(
 
         try:
             _execute_action_record(db, row=row, actor=actor)
+            _append_action_policy_execution_metadata(row=row, policy_mode=policy_mode)
         except HTTPException as exc:
             row.status = "failed"
             row.result_payload_json = dump_json({"error": exc.detail if isinstance(exc.detail, str) else "action_execution_failed"})
@@ -946,14 +948,19 @@ def _build_turn_action_plans(result: ConversationOrchestratorResult) -> list[dic
                 "confidence": float(item.get("confidence") or 0.75),
             }
         )
-    if isinstance(result.config_suggestion, dict) and any(result.config_suggestion.values()):
+    normalized_config_suggestion = (
+        _normalize_supported_config_updates(result.config_suggestion)
+        if isinstance(result.config_suggestion, dict)
+        else {}
+    )
+    if normalized_config_suggestion:
         plans.append(
             {
                 "action_category": "config",
                 "action_name": "config.apply",
                 "title": "应用 Agent 配置建议",
-                "summary": _build_config_action_summary(result.config_suggestion),
-                "suggestion": result.config_suggestion,
+                "summary": _build_config_action_summary(normalized_config_suggestion),
+                "suggestion": normalized_config_suggestion,
             }
         )
     for item in result.action_payloads:
@@ -1057,54 +1064,20 @@ def _execute_config_action_record(db: Session, *, row: ConversationActionRecord)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
     current_soul = agent_repository.get_active_soul_profile(db, agent_id=agent.id)
-    before_snapshot = {
-        "display_name": agent.display_name,
-        "soul": None if current_soul is None else {
-            "self_identity": current_soul.self_identity,
-            "role_summary": current_soul.role_summary,
-            "intro_message": current_soul.intro_message,
-            "speaking_style": current_soul.speaking_style,
-            "personality_traits": load_json(current_soul.personality_traits_json) or [],
-            "service_focus": load_json(current_soul.service_focus_json) or [],
-            "service_boundaries": load_json(current_soul.service_boundaries_json),
-        },
-    }
-    next_display_name = str(suggestion.get("display_name") or "").strip()
-    if next_display_name and next_display_name != agent.display_name:
-        update_agent(
-            db,
-            household_id=session.household_id,
-            agent_id=agent.id,
-            payload=AgentUpdate(display_name=next_display_name),
-        )
-    has_soul_change = bool(suggestion.get("speaking_style")) or bool(suggestion.get("personality_traits"))
-    if has_soul_change:
-        speaking_style = str(suggestion.get("speaking_style") or "").strip() or (current_soul.speaking_style if current_soul is not None else None)
-        personality_traits_raw = suggestion.get("personality_traits")
-        personality_traits = [str(item).strip() for item in personality_traits_raw] if isinstance(personality_traits_raw, list) else []
-        if not personality_traits and current_soul is not None:
-            personality_traits = [str(item) for item in (load_json(current_soul.personality_traits_json) or [])]
-        service_focus = [str(item) for item in (load_json(current_soul.service_focus_json) or [])] if current_soul is not None else []
-        upsert_agent_soul(
-            db,
-            household_id=session.household_id,
-            agent_id=agent.id,
-            payload=AgentSoulProfileUpsert(
-                self_identity=current_soul.self_identity if current_soul is not None else f"我是{next_display_name or agent.display_name}",
-                role_summary=current_soul.role_summary if current_soul is not None else "负责家庭事务",
-                intro_message=current_soul.intro_message if current_soul is not None else None,
-                speaking_style=speaking_style,
-                personality_traits=personality_traits,
-                service_focus=service_focus,
-                service_boundaries=load_json(current_soul.service_boundaries_json) if current_soul is not None else None,
-                created_by="conversation-ai",
-            ),
-        )
+    before_snapshot = _build_agent_config_snapshot(agent=agent, soul=current_soul)
+    applied_fields = _apply_agent_profile_updates_from_config_payload(
+        db,
+        household_id=session.household_id,
+        agent=agent,
+        soul=current_soul,
+        payload=suggestion,
+        created_by="conversation-ai",
+    )
     row.status = "completed"
     row.target_ref = agent.id
     row.executed_at = utc_now_iso()
     row.updated_at = row.executed_at
-    row.result_payload_json = dump_json({"applied": suggestion})
+    row.result_payload_json = dump_json({"applied": applied_fields})
     row.undo_payload_json = dump_json(before_snapshot)
 
 
@@ -1210,17 +1183,188 @@ def _resolve_policy_mode(policy: AgentAutonomousActionPolicy, *, action_category
     return policy.action
 
 
+_CONFIG_FIELD_MISSING = object()
+
+
+def _normalize_supported_config_updates(payload: dict) -> dict:
+    normalized = dict(payload)
+    updates: dict[str, object] = {}
+
+    alias_display_name = normalized.get("display_name")
+    if not isinstance(alias_display_name, str) or not alias_display_name.strip():
+        for alias_key in ("name", "nickname", "assistant_name", "persona_name"):
+            alias_value = normalized.get(alias_key)
+            if isinstance(alias_value, str) and alias_value.strip():
+                alias_display_name = alias_value
+                break
+    if isinstance(alias_display_name, str) and alias_display_name.strip():
+        updates["display_name"] = alias_display_name.strip()
+
+    role_summary_value = normalized.get("role_summary", normalized.get("role", _CONFIG_FIELD_MISSING))
+    if role_summary_value is not _CONFIG_FIELD_MISSING and role_summary_value is not None:
+        role_summary_text = str(role_summary_value).strip()
+        if role_summary_text:
+            updates["role_summary"] = role_summary_text
+
+    for nullable_key in ("intro_message", "speaking_style"):
+        raw_value = normalized.get(nullable_key, _CONFIG_FIELD_MISSING)
+        if raw_value is _CONFIG_FIELD_MISSING:
+            continue
+        if raw_value is None:
+            updates[nullable_key] = None
+            continue
+        text_value = str(raw_value).strip()
+        updates[nullable_key] = text_value or None
+
+    for list_key in ("personality_traits", "service_focus"):
+        raw_value = normalized.get(list_key, _CONFIG_FIELD_MISSING)
+        if raw_value is _CONFIG_FIELD_MISSING:
+            continue
+        if isinstance(raw_value, str):
+            value_list = [raw_value.strip()] if raw_value.strip() else []
+            updates[list_key] = value_list
+            continue
+        if not isinstance(raw_value, list):
+            continue
+        deduped: list[str] = []
+        for item in raw_value:
+            item_text = str(item).strip()
+            if item_text and item_text not in deduped:
+                deduped.append(item_text)
+        updates[list_key] = deduped
+
+    return updates
+
+
+def _build_agent_config_snapshot(
+    *,
+    agent,
+    soul,
+) -> dict:
+    return {
+        "display_name": agent.display_name,
+        "soul": None
+        if soul is None
+        else {
+            "self_identity": soul.self_identity,
+            "role_summary": soul.role_summary,
+            "intro_message": soul.intro_message,
+            "speaking_style": soul.speaking_style,
+            "personality_traits": load_json(soul.personality_traits_json) or [],
+            "service_focus": load_json(soul.service_focus_json) or [],
+            "service_boundaries": load_json(soul.service_boundaries_json),
+        },
+    }
+
+
+def _apply_agent_profile_updates_from_config_payload(
+    db: Session,
+    *,
+    household_id: str,
+    agent,
+    soul,
+    payload: dict,
+    created_by: str,
+) -> dict[str, object]:
+    updates = _normalize_supported_config_updates(payload)
+    applied_fields: dict[str, object] = {}
+
+    next_display_name = str(updates.get("display_name") or "").strip()
+    if next_display_name and next_display_name != agent.display_name:
+        update_agent(
+            db,
+            household_id=household_id,
+            agent_id=agent.id,
+            payload=AgentUpdate(display_name=next_display_name),
+        )
+        applied_fields["display_name"] = next_display_name
+
+    soul_keys = {"role_summary", "intro_message", "speaking_style", "personality_traits", "service_focus"}
+    if not any(key in updates for key in soul_keys):
+        return applied_fields
+
+    current_personality_traits = (
+        [str(item) for item in (load_json(soul.personality_traits_json) or [])]
+        if soul is not None
+        else []
+    )
+    current_service_focus = (
+        [str(item) for item in (load_json(soul.service_focus_json) or [])]
+        if soul is not None
+        else []
+    )
+    current_boundaries = load_json(soul.service_boundaries_json) if soul is not None else None
+
+    role_summary = str(updates.get("role_summary") or (soul.role_summary if soul is not None else "负责家庭事务")).strip()
+    if not role_summary:
+        role_summary = soul.role_summary if soul is not None else "负责家庭事务"
+
+    intro_message = updates["intro_message"] if "intro_message" in updates else (soul.intro_message if soul is not None else None)
+    speaking_style = updates["speaking_style"] if "speaking_style" in updates else (soul.speaking_style if soul is not None else None)
+    personality_traits = updates["personality_traits"] if "personality_traits" in updates else current_personality_traits
+    service_focus = updates["service_focus"] if "service_focus" in updates else current_service_focus
+
+    upsert_agent_soul(
+        db,
+        household_id=household_id,
+        agent_id=agent.id,
+        payload=AgentSoulProfileUpsert(
+            self_identity=None,
+            role_summary=role_summary,
+            intro_message=intro_message,
+            speaking_style=speaking_style,
+            personality_traits=personality_traits,
+            service_focus=service_focus,
+            service_boundaries=current_boundaries if isinstance(current_boundaries, dict) else None,
+            created_by=created_by,
+        ),
+    )
+    for key in soul_keys:
+        if key in updates:
+            applied_fields[key] = updates[key]
+    return applied_fields
+
+
+def _append_action_policy_execution_metadata(
+    *,
+    row: ConversationActionRecord,
+    policy_mode: str,
+) -> None:
+    if row.status != "completed" or policy_mode not in {"notify", "auto"}:
+        return
+    current_result_payload = load_json(row.result_payload_json)
+    normalized_result_payload = current_result_payload if isinstance(current_result_payload, dict) else {}
+    if policy_mode == "notify":
+        normalized_result_payload["execution_mode"] = "notify"
+        normalized_result_payload["user_visible_notice"] = "executed_with_notice"
+    else:
+        normalized_result_payload["execution_mode"] = "auto"
+        normalized_result_payload["user_visible_notice"] = "executed_silently"
+    row.result_payload_json = dump_json(normalized_result_payload)
+    row.updated_at = utc_now_iso()
+
+
 def _build_config_action_summary(suggestion: dict) -> str:
+    normalized = _normalize_supported_config_updates(suggestion)
     parts: list[str] = []
-    display_name = str(suggestion.get("display_name") or "").strip()
-    speaking_style = str(suggestion.get("speaking_style") or "").strip()
-    personality_traits = suggestion.get("personality_traits")
+    display_name = str(normalized.get("display_name") or "").strip()
+    role_summary = str(normalized.get("role_summary") or "").strip()
+    intro_message = normalized.get("intro_message")
+    speaking_style = normalized.get("speaking_style")
+    personality_traits = normalized.get("personality_traits")
+    service_focus = normalized.get("service_focus")
     if display_name:
         parts.append(f"名称改成“{display_name}”")
-    if speaking_style:
-        parts.append(f"说话风格改成“{speaking_style}”")
+    if role_summary:
+        parts.append(f"角色定位更新为“{role_summary}”")
+    if intro_message is not None and str(intro_message).strip():
+        parts.append(f"开场白更新为“{str(intro_message).strip()}”")
+    if speaking_style is not None and str(speaking_style).strip():
+        parts.append(f"说话风格改成“{str(speaking_style).strip()}”")
     if isinstance(personality_traits, list) and personality_traits:
         parts.append(f"性格标签：{'、'.join(str(item) for item in personality_traits)}")
+    if isinstance(service_focus, list) and service_focus:
+        parts.append(f"服务重点：{'、'.join(str(item) for item in service_focus)}")
     return "；".join(parts) or "应用本轮配置建议"
 
 
@@ -1384,6 +1528,7 @@ def _resolve_turn_agent(
             db,
             household_id=session.household_id,
             agent_id=target_agent_id,
+            conversation_only=True,
         )
     except AgentNotFoundError as exc:
         raise HTTPException(
@@ -2166,18 +2311,23 @@ def _persist_legacy_result_as_proposal_batch(
                 payload=payload,
             )
         )
-    if isinstance(result.config_suggestion, dict) and any(result.config_suggestion.values()):
+    normalized_config_suggestion = (
+        _normalize_supported_config_updates(result.config_suggestion)
+        if isinstance(result.config_suggestion, dict)
+        else {}
+    )
+    if normalized_config_suggestion:
         drafts.append(
             ProposalDraft(
                 proposal_kind="config_apply",
                 policy_category="ask",
                 title="应用 Agent 配置建议",
-                summary=_build_config_action_summary(result.config_suggestion),
+                summary=_build_config_action_summary(normalized_config_suggestion),
                 evidence_message_ids=[user_message.id],
                 evidence_roles=["user"],
                 dedupe_key=f"config:{request_id}",
                 confidence=0.9,
-                payload=dict(result.config_suggestion),
+                payload=dict(normalized_config_suggestion),
             )
         )
     for item in result.action_payloads:
@@ -2271,17 +2421,21 @@ def _apply_policy_to_proposal_batch(
             )
             item.status = "completed"
             item.updated_at = utc_now_iso()
+            execution_mode = "notify" if policy_category == "notify" else "auto"
             _append_debug_log(
                 db,
                 session=session,
                 request_id=request_id,
-                stage="proposal.item.executed",
+                stage="proposal.item.executed_notify" if policy_category == "notify" else "proposal.item.executed_auto",
                 source="proposal",
-                message="提案项已按策略自动执行。",
+                message="提案项已自动执行，并会在会话中通知用户。"
+                if policy_category == "notify"
+                else "提案项已按自动执行策略落库。",
                 payload={
                     "proposal_item_id": item.id,
                     "proposal_kind": item.proposal_kind,
                     "policy_category": policy_category,
+                    "execution_mode": execution_mode,
                     "affected_target_id": affected_target_id,
                 },
             )
@@ -2335,38 +2489,15 @@ def _apply_config_proposal_item(
     agent = agent_repository.get_agent_by_household_and_id(db, household_id=session.household_id, agent_id=session.active_agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
-    next_display_name = str(payload.get("display_name") or "").strip()
-    if next_display_name and next_display_name != agent.display_name:
-        update_agent(
-            db,
-            household_id=session.household_id,
-            agent_id=agent.id,
-            payload=AgentUpdate(display_name=next_display_name),
-        )
     current_soul = agent_repository.get_active_soul_profile(db, agent_id=agent.id)
-    has_soul_change = bool(payload.get("speaking_style")) or bool(payload.get("personality_traits"))
-    if has_soul_change:
-        speaking_style = str(payload.get("speaking_style") or "").strip() or (current_soul.speaking_style if current_soul is not None else None)
-        personality_traits_raw = payload.get("personality_traits")
-        personality_traits = [str(item).strip() for item in personality_traits_raw] if isinstance(personality_traits_raw, list) else []
-        if not personality_traits and current_soul is not None:
-            personality_traits = [str(item) for item in (load_json(current_soul.personality_traits_json) or [])]
-        service_focus = [str(item) for item in (load_json(current_soul.service_focus_json) or [])] if current_soul is not None else []
-        upsert_agent_soul(
-            db,
-            household_id=session.household_id,
-            agent_id=agent.id,
-            payload=AgentSoulProfileUpsert(
-                self_identity=current_soul.self_identity if current_soul is not None else f"我是{next_display_name or agent.display_name}",
-                role_summary=current_soul.role_summary if current_soul is not None else "负责家庭事务",
-                intro_message=current_soul.intro_message if current_soul is not None else None,
-                speaking_style=speaking_style,
-                personality_traits=personality_traits,
-                service_focus=service_focus,
-                service_boundaries=load_json(current_soul.service_boundaries_json) if current_soul is not None else None,
-                created_by="conversation-proposal",
-            ),
-        )
+    _apply_agent_profile_updates_from_config_payload(
+        db,
+        household_id=session.household_id,
+        agent=agent,
+        soul=current_soul,
+        payload=payload,
+        created_by="conversation-proposal",
+    )
     return agent.id
 
 

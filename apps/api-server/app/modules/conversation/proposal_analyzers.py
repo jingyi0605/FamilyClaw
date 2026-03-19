@@ -158,6 +158,14 @@ class ConfigProposalAnalyzer:
         extraction_output: ProposalBatchExtractionOutput,
     ) -> list[ProposalDraft]:
         drafts: list[ProposalDraft] = []
+        editable_fields = (
+            "display_name",
+            "role_summary",
+            "intro_message",
+            "speaking_style",
+            "personality_traits",
+            "service_focus",
+        )
         for item in extraction_output.config_items:
             payload = _normalize_config_payload(dict(item.payload), summary=item.summary)
             evidence_ids, evidence_roles = turn_context.resolve_evidence(
@@ -165,14 +173,14 @@ class ConfigProposalAnalyzer:
                 allowed_kinds={"user_message"},
                 require_non_assistant=True,
             )
-            if not evidence_ids and any(payload.get(key) for key in ("display_name", "speaking_style", "personality_traits")):
+            if not evidence_ids and any(payload.get(key) for key in editable_fields):
                 latest_user_evidence = turn_context.latest_user_evidence()
                 if latest_user_evidence is not None:
                     evidence_ids = [latest_user_evidence.message_id]
                     evidence_roles = [latest_user_evidence.role]
             if not evidence_ids:
                 continue
-            if not any(payload.get(key) for key in ("display_name", "speaking_style", "personality_traits")):
+            if not any(payload.get(key) for key in editable_fields):
                 continue
             title = (item.title or "").strip() or "应用 Agent 配置建议"
             summary = (item.summary or "").strip() or "根据用户明确表达更新 Agent 配置。"
@@ -462,8 +470,10 @@ def _infer_memory_type_from_payload(payload: dict) -> str:
 
 def _normalize_config_payload(payload: dict, *, summary: str | None) -> dict:
     normalized = dict(payload)
+    updates: dict[str, object] = {}
+
     alias_value = normalized.pop("name", None)
-    if not normalized.get("display_name") and isinstance(alias_value, str):
+    if not normalized.get("display_name") and isinstance(alias_value, str) and alias_value.strip():
         normalized["display_name"] = alias_value.strip()
     if not normalized.get("display_name"):
         for alias_key in ("nickname", "persona_name", "assistant_name"):
@@ -475,25 +485,44 @@ def _normalize_config_payload(payload: dict, *, summary: str | None) -> dict:
     if isinstance(display_name, str):
         display_name = display_name.strip()
         if _looks_like_placeholder_name(display_name):
-            normalized["display_name"] = None
+            display_name = ""
+        if display_name:
+            updates["display_name"] = display_name
+    role_summary = normalized.get("role_summary", normalized.get("role"))
+    if isinstance(role_summary, str):
+        role_summary = role_summary.strip()
+        if role_summary:
+            updates["role_summary"] = role_summary
+
+    for nullable_key in ("intro_message", "speaking_style"):
+        if nullable_key not in normalized:
+            continue
+        raw_value = normalized.get(nullable_key)
+        if raw_value is None:
+            updates[nullable_key] = None
         else:
-            normalized["display_name"] = display_name
+            next_value = str(raw_value).strip()
+            updates[nullable_key] = next_value or None
+
     personality_traits = normalized.get("personality_traits")
     if isinstance(personality_traits, str):
-        normalized["personality_traits"] = [personality_traits.strip()] if personality_traits.strip() else []
+        updates["personality_traits"] = [personality_traits.strip()] if personality_traits.strip() else []
     elif isinstance(personality_traits, list):
-        normalized["personality_traits"] = [str(item).strip() for item in personality_traits if str(item).strip()]
-    speaking_style = normalized.get("speaking_style")
-    if isinstance(speaking_style, str):
-        normalized["speaking_style"] = speaking_style.strip() or None
+        updates["personality_traits"] = [str(item).strip() for item in personality_traits if str(item).strip()]
 
-    if not any(normalized.get(key) for key in ("display_name", "speaking_style", "personality_traits")):
+    service_focus = normalized.get("service_focus")
+    if isinstance(service_focus, str):
+        updates["service_focus"] = [service_focus.strip()] if service_focus.strip() else []
+    elif isinstance(service_focus, list):
+        updates["service_focus"] = [str(item).strip() for item in service_focus if str(item).strip()]
+
+    if not any(updates.get(key) for key in ("display_name", "role_summary", "intro_message", "speaking_style", "personality_traits", "service_focus")):
         summary_text = (summary or "").strip()
         if summary_text:
             inferred_name = _extract_display_name_from_summary(summary_text)
             if inferred_name is not None:
-                normalized["display_name"] = inferred_name
-    return normalized
+                updates["display_name"] = inferred_name
+    return updates
 
 
 def _looks_like_placeholder_name(value: str) -> bool:

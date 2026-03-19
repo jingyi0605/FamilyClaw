@@ -170,7 +170,8 @@ class AgentUpdate(BaseModel):
 
 
 class AgentSoulProfileUpsert(BaseModel):
-    self_identity: str = Field(min_length=1, max_length=4000)
+    # self_identity 作为派生/高级字段，普通配置更新链路不再要求传入。
+    self_identity: str | None = Field(default=None, max_length=4000)
     role_summary: str = Field(min_length=1, max_length=2000)
     intro_message: str | None = Field(default=None, max_length=4000)
     speaking_style: str | None = Field(default=None, max_length=2000)

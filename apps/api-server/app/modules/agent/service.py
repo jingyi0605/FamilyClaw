@@ -114,7 +114,7 @@ def create_agent(
     runtime_policy = FamilyAgentRuntimePolicy(
         agent_id=row.id,
         conversation_enabled=payload.conversation_enabled,
-        default_entry=payload.default_entry if existing_primary is None else False,
+        default_entry=payload.default_entry if (existing_primary is None and payload.conversation_enabled) else False,
         routing_tags_json=dump_json(["setup", payload.agent_type]) or "[]",
         memory_scope_json=None,
         autonomous_action_policy_json=dump_json(AgentAutonomousActionPolicy().model_dump(mode="json")) or '{"memory":"ask","config":"ask","action":"ask"}',
@@ -155,7 +155,38 @@ def resolve_effective_agent(
     *,
     household_id: str,
     agent_id: str | None = None,
+    conversation_only: bool = False,
 ) -> FamilyAgent:
+    if conversation_only:
+        runtime_policy_map = {
+            item.agent_id: item
+            for item in repository.list_runtime_policies(db, household_id=household_id)
+        }
+        if agent_id:
+            row = repository.get_agent_by_household_and_id(db, household_id=household_id, agent_id=agent_id)
+            if row is None:
+                raise AgentNotFoundError(f"agent {agent_id} not found in household {household_id}")
+            if not _is_conversation_enabled_agent(row, runtime_policy_map.get(row.id)):
+                raise AgentNotFoundError(f"agent {agent_id} is not available for conversation")
+            return row
+
+        candidates = [
+            item
+            for item in repository.list_agents(db, household_id=household_id)
+            if _is_conversation_enabled_agent(item, runtime_policy_map.get(item.id))
+        ]
+        if not candidates:
+            raise AgentNotFoundError(f"no conversation-enabled agent configured for household {household_id}")
+
+        for item in candidates:
+            runtime_policy = runtime_policy_map.get(item.id)
+            if runtime_policy is not None and runtime_policy.default_entry:
+                return item
+        for item in candidates:
+            if item.is_primary:
+                return item
+        return candidates[0]
+
     if agent_id:
         row = repository.get_agent_by_household_and_id(db, household_id=household_id, agent_id=agent_id)
         if row is not None:
@@ -459,7 +490,11 @@ def upsert_agent_soul(
         id=new_uuid(),
         agent_id=agent.id,
         version=next_version,
-        self_identity=payload.self_identity,
+        self_identity=_resolve_next_self_identity(
+            current_profile=current,
+            payload_self_identity=payload.self_identity,
+            agent_display_name=agent.display_name,
+        ),
         role_summary=payload.role_summary,
         intro_message=payload.intro_message,
         speaking_style=payload.speaking_style,
@@ -515,6 +550,16 @@ def upsert_agent_runtime_policy(
     payload: AgentRuntimePolicyUpsert,
 ) -> AgentRuntimePolicyRead:
     agent = _get_agent_in_household_or_404(db, household_id=household_id, agent_id=agent_id)
+    if payload.default_entry and not payload.conversation_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="default_entry agent must keep conversation_enabled=true",
+        )
+    if payload.default_entry and agent.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="default_entry agent must be active",
+        )
     _validate_runtime_policy_model_bindings(
         db,
         household_id=household_id,
@@ -900,3 +945,29 @@ def _build_agent_code(display_name: str) -> str:
     )
     compact = "-".join(part for part in normalized.split("-") if part)
     return compact[:64] or f"agent-{new_uuid()[:8]}"
+
+
+def _is_conversation_enabled_agent(
+    agent: FamilyAgent,
+    runtime_policy: FamilyAgentRuntimePolicy | None,
+) -> bool:
+    if agent.status != "active":
+        return False
+    if runtime_policy is None:
+        return True
+    return bool(runtime_policy.conversation_enabled)
+
+
+def _resolve_next_self_identity(
+    *,
+    current_profile: FamilyAgentSoulProfile | None,
+    payload_self_identity: str | None,
+    agent_display_name: str,
+) -> str:
+    if current_profile is not None:
+        # self_identity 不再作为普通资料字段对外编辑；已有值保持不变。
+        return current_profile.self_identity
+    next_self_identity = str(payload_self_identity or "").strip()
+    if next_self_identity:
+        return next_self_identity
+    return f"我是{agent_display_name}"

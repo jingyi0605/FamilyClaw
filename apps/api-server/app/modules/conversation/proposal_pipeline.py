@@ -11,7 +11,12 @@ from app.modules.account.service import AuthenticatedActor
 from app.modules.agent import repository as agent_repository
 from app.modules.conversation import repository
 from app.modules.conversation.models import ConversationMessage, ConversationProposalBatch, ConversationProposalItem, ConversationSession
-from app.modules.conversation.proposal_analyzers import ProposalAnalyzerFailure, ProposalAnalyzerRegistry, ProposalDraft
+from app.modules.conversation.proposal_analyzers import (
+    ProposalAnalyzerFailure,
+    ProposalAnalyzerRegistry,
+    ProposalDraft,
+    _normalize_config_payload,
+)
 from app.modules.llm_task import ainvoke_llm, invoke_llm
 from app.modules.llm_task.output_models import ProposalBatchExtractionOutput
 from app.modules.memory import repository as memory_repository
@@ -404,10 +409,19 @@ def _filter_noop_config_drafts(
         if draft.proposal_kind != "config_apply":
             filtered.append(draft)
             continue
-        payload = dict(draft.payload)
+        payload = _normalize_config_payload(dict(draft.payload), summary=draft.summary)
         next_display_name = str(payload.get("display_name") or "").strip()
         if next_display_name and next_display_name == agent.display_name:
             payload.pop("display_name", None)
+        next_role_summary = str(payload.get("role_summary") or "").strip()
+        if next_role_summary and soul is not None and next_role_summary == str(soul.role_summary or "").strip():
+            payload.pop("role_summary", None)
+        if "intro_message" in payload and soul is not None:
+            next_intro_message = payload.get("intro_message")
+            current_intro_message = str(soul.intro_message or "").strip() or None
+            normalized_intro_message = str(next_intro_message).strip() or None if next_intro_message is not None else None
+            if normalized_intro_message == current_intro_message:
+                payload.pop("intro_message", None)
         next_speaking_style = str(payload.get("speaking_style") or "").strip()
         if next_speaking_style and next_speaking_style == current_speaking_style:
             payload.pop("speaking_style", None)
@@ -418,7 +432,22 @@ def _filter_noop_config_drafts(
         ] if isinstance(payload.get("personality_traits"), list) else []
         if next_personality_traits and next_personality_traits == current_personality_traits:
             payload.pop("personality_traits", None)
-        if not any(payload.get(key) for key in ("display_name", "speaking_style", "personality_traits")):
+        current_service_focus = (
+            [str(item).strip() for item in (load_json(getattr(soul, "service_focus_json", None)) or []) if str(item).strip()]
+            if soul is not None
+            else []
+        )
+        next_service_focus = [
+            str(item).strip()
+            for item in (payload.get("service_focus") or [])
+            if str(item).strip()
+        ] if isinstance(payload.get("service_focus"), list) else []
+        if next_service_focus and next_service_focus == current_service_focus:
+            payload.pop("service_focus", None)
+        if not any(
+            key in payload and payload.get(key) not in (None, "", [])
+            for key in ("display_name", "role_summary", "intro_message", "speaking_style", "personality_traits", "service_focus")
+        ):
             continue
         filtered.append(replace(draft, payload=payload))
     return filtered

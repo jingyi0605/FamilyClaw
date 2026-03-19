@@ -65,8 +65,11 @@ class AgentChunkPayload(_StrictModel):
 
 class AgentStatePatchPayload(_StrictModel):
     display_name: str | None = None
+    role_summary: str | None = None
+    intro_message: str | None = None
     speaking_style: str | None = None
     personality_traits: list[str] | None = None
+    service_focus: list[str] | None = None
 
     @field_validator("personality_traits")
     @classmethod
@@ -80,9 +83,28 @@ class AgentStatePatchPayload(_StrictModel):
                 result.append(trimmed)
         return result
 
+    @field_validator("service_focus")
+    @classmethod
+    def normalize_service_focus(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        result: list[str] = []
+        for item in value:
+            trimmed = item.strip()
+            if trimmed and trimmed not in result:
+                result.append(trimmed)
+        return result
+
     @model_validator(mode="after")
     def ensure_non_empty_patch(self) -> "AgentStatePatchPayload":
-        if self.display_name is None and self.speaking_style is None and self.personality_traits is None:
+        if (
+            self.display_name is None
+            and self.role_summary is None
+            and self.intro_message is None
+            and self.speaking_style is None
+            and self.personality_traits is None
+            and self.service_focus is None
+        ):
             raise ValueError("agent.state_patch 至少要包含一个字段")
         return self
 

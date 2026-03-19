@@ -17,7 +17,6 @@ import type {
 type CreateFormState = {
   displayName: string;
   agentType: 'butler' | 'nutritionist' | 'fitness_coach' | 'study_coach' | 'custom';
-  selfIdentity: string;
   roleSummary: string;
   introMessage: string;
   speakingStyle: string;
@@ -29,7 +28,6 @@ function buildCreateForm(t: (key: string, params?: Record<string, string | numbe
   return {
     displayName: t('settings.ai.agent.defaultName'),
     agentType: 'butler',
-    selfIdentity: '',
     roleSummary: t('settings.ai.agent.defaultRoleSummary'),
     introMessage: t('settings.ai.agent.defaultIntro'),
     speakingStyle: t('settings.ai.agent.defaultSpeakingStyle'),
@@ -72,17 +70,11 @@ export function AgentConfigPanel(props: {
   const createDisabled = (
     saving
     || !createForm.displayName.trim()
-    || !createForm.selfIdentity.trim()
     || !createForm.roleSummary.trim()
     || parseTags(createForm.personalityTraits).length === 0
     || parseTags(createForm.serviceFocus).length === 0
   );
 
-  const actionOptions = [
-    { value: 'ask', label: t('settings.ai.agent.action.ask') },
-    { value: 'notify', label: t('settings.ai.agent.action.notify') },
-    { value: 'auto', label: t('settings.ai.agent.action.auto') },
-  ] as const;
   const copy = {
     loadFailed: t('settings.ai.agent.loadFailed'),
     loadDetailFailed: t('settings.ai.agent.loadDetailFailed'),
@@ -104,7 +96,6 @@ export function AgentConfigPanel(props: {
     createModalDescription: t('settings.ai.agent.createModalHint'),
     agentTypeLabel: t('settings.ai.agent.agentType'),
     displayNameLabel: t('settings.ai.agent.displayName'),
-    selfIdentityLabel: t('settings.ai.agent.selfIdentity'),
     roleSummaryLabel: t('settings.ai.agent.roleSummary'),
     introMessageLabel: t('settings.ai.agent.introMessage'),
     speakingStyleLabel: t('settings.ai.agent.speakingStyle'),
@@ -153,6 +144,16 @@ export function AgentConfigPanel(props: {
     setDetail(null);
   }
 
+  async function refreshEditingDetail() {
+    if (!editModalOpen || !detail) return;
+    try {
+      const latest = await settingsApi.getAgentDetail(householdId, detail.id);
+      setDetail(latest);
+    } catch {
+      // 忽略错误，避免抢占用户当前编辑
+    }
+  }
+
   async function handleEditSaved() {
     if (detail) {
       try {
@@ -164,6 +165,19 @@ export function AgentConfigPanel(props: {
     }
     await reload();
   }
+
+  useEffect(() => {
+    if (!editModalOpen || !detail) return;
+    const onFocus = () => {
+      void refreshEditingDetail();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [editModalOpen, detail?.id, householdId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -223,7 +237,7 @@ export function AgentConfigPanel(props: {
       const created = await settingsApi.createAgent(householdId, {
         display_name: createForm.displayName.trim(),
         agent_type: (onlyButler ? 'butler' : createForm.agentType) as CreateFormState['agentType'],
-        self_identity: createForm.selfIdentity.trim(),
+        self_identity: `${createForm.displayName.trim() || 'AI助手'}，${createForm.roleSummary.trim()}`,
         role_summary: createForm.roleSummary.trim(),
         intro_message: createForm.introMessage.trim() || null,
         speaking_style: createForm.speakingStyle.trim() || null,
@@ -340,7 +354,6 @@ export function AgentConfigPanel(props: {
             </div>
           ) : null}
           <div className="form-group"><label>{copy.displayNameLabel}</label><input className="form-input" value={createForm.displayName} onChange={(event) => setCreateForm(current => ({ ...current, displayName: event.target.value }))} /></div>
-          <div className="form-group"><label>{copy.selfIdentityLabel}</label><textarea className="form-input setup-textarea" value={createForm.selfIdentity} onChange={(event) => setCreateForm(current => ({ ...current, selfIdentity: event.target.value }))} /></div>
           <div className="form-group"><label>{copy.roleSummaryLabel}</label><textarea className="form-input setup-textarea" value={createForm.roleSummary} onChange={(event) => setCreateForm(current => ({ ...current, roleSummary: event.target.value }))} /></div>
           <div className="form-group"><label>{copy.introMessageLabel}</label><input className="form-input" value={createForm.introMessage} onChange={(event) => setCreateForm(current => ({ ...current, introMessage: event.target.value }))} /></div>
           <div className="form-group"><label>{copy.speakingStyleLabel}</label><input className="form-input" value={createForm.speakingStyle} onChange={(event) => setCreateForm(current => ({ ...current, speakingStyle: event.target.value }))} /></div>

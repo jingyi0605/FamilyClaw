@@ -110,7 +110,6 @@ export function AgentDetailDialog(props: {
   const [runtimeForm, setRuntimeForm] = useState({
     conversationEnabled: true,
     defaultEntry: false,
-    routingTags: '',
     memoryActionLevel: 'ask' as 'ask' | 'notify' | 'auto',
     configActionLevel: 'ask' as 'ask' | 'notify' | 'auto',
     operationActionLevel: 'ask' as 'ask' | 'notify' | 'auto',
@@ -167,7 +166,6 @@ export function AgentDetailDialog(props: {
     displayNameLabel: t('settings.ai.agent.displayName'),
     statusLabel: t('settings.ai.agent.status'),
     sortOrderLabel: t('settings.ai.agent.sortOrder'),
-    selfIdentityLabel: t('settings.ai.agent.selfIdentity'),
     roleSummaryLabel: t('settings.ai.agent.roleSummary'),
     introMessageLabel: t('settings.ai.agent.introMessage'),
     speakingStyleLabel: t('settings.ai.agent.speakingStyle'),
@@ -178,15 +176,12 @@ export function AgentDetailDialog(props: {
     runtimeTitle: t('settings.ai.agent.runtimeTitle'),
     conversationOption: t('settings.ai.agent.conversationOption'),
     defaultEntryOption: t('settings.ai.agent.defaultEntry'),
-    routingTagsLabel: t('settings.ai.agent.routingTags'),
     memoryActionLabel: t('settings.ai.agent.memoryAction'),
     configActionLabel: t('settings.ai.agent.configAction'),
     operationActionLabel: t('settings.ai.agent.operationAction'),
     saveRuntimeButton: t('settings.ai.agent.saveRuntime'),
     cognitionTitle: t('settings.ai.agent.cognitionTitle'),
     displayAddressLabel: t('settings.ai.agent.displayAddress'),
-    closenessLevelLabel: t('settings.ai.agent.closenessLevel'),
-    servicePriorityLabel: t('settings.ai.agent.servicePriority'),
     communicationStyleLabel: t('settings.ai.agent.communicationStyle'),
     promptNotesLabel: t('settings.ai.agent.promptNotes'),
     saveCognitionButton: t('settings.ai.agent.saveCognition'),
@@ -214,7 +209,6 @@ export function AgentDetailDialog(props: {
       setRuntimeForm({
         conversationEnabled: agent.runtime_policy?.conversation_enabled ?? true,
         defaultEntry: agent.runtime_policy?.default_entry ?? false,
-        routingTags: stringifyTags(agent.runtime_policy?.routing_tags ?? []),
         memoryActionLevel: agent.runtime_policy?.autonomous_action_policy?.memory ?? 'ask',
         configActionLevel: agent.runtime_policy?.autonomous_action_policy?.config ?? 'ask',
         operationActionLevel: agent.runtime_policy?.autonomous_action_policy?.action ?? 'ask',
@@ -279,7 +273,7 @@ export function AgentDetailDialog(props: {
       await settingsApi.upsertAgentRuntimePolicy(householdId, agent.id, {
         conversation_enabled: runtimeForm.conversationEnabled,
         default_entry: runtimeForm.defaultEntry,
-        routing_tags: parseTags(runtimeForm.routingTags),
+        routing_tags: agent.runtime_policy?.routing_tags ?? [],
         memory_scope: null,
         autonomous_action_policy: {
           memory: runtimeForm.memoryActionLevel,
@@ -421,14 +415,6 @@ export function AgentDetailDialog(props: {
               <h4 className="agent-detail-subtitle">{copy.soulTitle}</h4>
               <div className="setup-form-grid">
                 <div className="form-group">
-                  <label>{copy.selfIdentityLabel}</label>
-                  <input
-                    className="form-input"
-                    value={soulForm.selfIdentity}
-                    onChange={(event) => setSoulForm(current => ({ ...current, selfIdentity: event.target.value }))}
-                  />
-                </div>
-                <div className="form-group">
                   <label>{copy.roleSummaryLabel}</label>
                   <input
                     className="form-input"
@@ -497,14 +483,6 @@ export function AgentDetailDialog(props: {
                   />
                   <span>{copy.defaultEntryOption}</span>
                 </label>
-              </div>
-              <div className="form-group">
-                <label>{copy.routingTagsLabel}</label>
-                <input
-                  className="form-input"
-                  value={runtimeForm.routingTags}
-                  onChange={(event) => setRuntimeForm(current => ({ ...current, routingTags: event.target.value }))}
-                />
               </div>
               <div className="setup-form-grid">
                 <div className="form-group">
@@ -646,28 +624,6 @@ export function AgentDetailDialog(props: {
                             className="form-input"
                             value={cognition.displayAddress}
                             onChange={(event) => setCognitionForm(current => ({ ...current, [member.id]: { ...cognition, displayAddress: event.target.value } }))}
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>{copy.closenessLevelLabel}</label>
-                          <input
-                            className="form-input"
-                            type="number"
-                            min="1"
-                            max="5"
-                            value={cognition.closenessLevel}
-                            onChange={(event) => setCognitionForm(current => ({ ...current, [member.id]: { ...cognition, closenessLevel: event.target.value } }))}
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>{copy.servicePriorityLabel}</label>
-                          <input
-                            className="form-input"
-                            type="number"
-                            min="1"
-                            max="5"
-                            value={cognition.servicePriority}
-                            onChange={(event) => setCognitionForm(current => ({ ...current, [member.id]: { ...cognition, servicePriority: event.target.value } }))}
                           />
                         </div>
                         <div className="form-group">
