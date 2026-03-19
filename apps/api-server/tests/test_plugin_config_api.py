@@ -140,6 +140,19 @@ class PluginConfigApiTests(unittest.TestCase):
         get_payload = get_response.json()
         self.assertNotIn("api_key", get_payload["view"]["values"])
         self.assertTrue(get_payload["view"]["secret_fields"]["api_key"]["has_value"])
+        self.assertEqual("demo.plugin.config.title", get_payload["config_spec"]["title_key"])
+        self.assertEqual(
+            "demo.plugin.config.fields.base_url.label",
+            get_payload["config_spec"]["config_schema"]["fields"][0]["label_key"],
+        )
+        self.assertEqual(
+            "demo.plugin.config.sections.basic.title",
+            get_payload["config_spec"]["ui_schema"]["sections"][0]["title_key"],
+        )
+        self.assertEqual(
+            "demo.plugin.config.submit",
+            get_payload["config_spec"]["ui_schema"]["submit_text_key"],
+        )
 
         keep_secret_response = self.client.put(
             f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugins/demo-plugin-config/config",
@@ -266,38 +279,42 @@ class PluginConfigApiTests(unittest.TestCase):
                 {
                     "scope_type": "plugin",
                     "title": "婕旂ず鎻掍欢閰嶇疆",
+                    "title_key": "demo.plugin.config.title",
                     "description": "用来覆盖插件级配置协议的最小可用场景。",
+                    "description_key": "demo.plugin.config.description",
                     "schema_version": 1,
                     "config_schema": {
                         "fields": [
-                            {"key": "base_url", "label": "鍩虹鍦板潃", "type": "string", "required": True},
-                            {"key": "notes", "label": "澶囨敞", "type": "text", "required": False},
-                            {"key": "retry_limit", "label": "閲嶈瘯娆℃暟", "type": "integer", "required": False, "default": 3},
-                            {"key": "temperature", "label": "娓╁害", "type": "number", "required": False},
-                            {"key": "enabled", "label": "鍚敤", "type": "boolean", "required": False, "default": True},
+                            {"key": "base_url", "label": "鍩虹鍦板潃", "label_key": "demo.plugin.config.fields.base_url.label", "type": "string", "required": True},
+                            {"key": "notes", "label": "澶囨敞", "label_key": "demo.plugin.config.fields.notes.label", "type": "text", "required": False},
+                            {"key": "retry_limit", "label": "閲嶈瘯娆℃暟", "label_key": "demo.plugin.config.fields.retry_limit.label", "type": "integer", "required": False, "default": 3},
+                            {"key": "temperature", "label": "娓╁害", "label_key": "demo.plugin.config.fields.temperature.label", "type": "number", "required": False},
+                            {"key": "enabled", "label": "鍚敤", "label_key": "demo.plugin.config.fields.enabled.label", "type": "boolean", "required": False, "default": True},
                             {
                                 "key": "mode",
                                 "label": "妯″紡",
+                                "label_key": "demo.plugin.config.fields.mode.label",
                                 "type": "enum",
                                 "required": True,
                                 "enum_options": [
-                                    {"value": "strict", "label": "涓ユ牸"},
-                                    {"value": "loose", "label": "瀹芥澗"},
+                                    {"value": "strict", "label": "涓ユ牸", "label_key": "demo.plugin.config.fields.mode.options.strict"},
+                                    {"value": "loose", "label": "瀹芥澗", "label_key": "demo.plugin.config.fields.mode.options.loose"},
                                 ],
                                 "default": "strict",
                             },
                             {
                                 "key": "tags",
                                 "label": "鏍囩",
+                                "label_key": "demo.plugin.config.fields.tags.label",
                                 "type": "multi_enum",
                                 "required": False,
                                 "enum_options": [
-                                    {"value": "stable", "label": "绋冲畾"},
-                                    {"value": "beta", "label": "娴嬭瘯"},
+                                    {"value": "stable", "label": "绋冲畾", "label_key": "demo.plugin.config.fields.tags.options.stable"},
+                                    {"value": "beta", "label": "娴嬭瘯", "label_key": "demo.plugin.config.fields.tags.options.beta"},
                                 ],
                             },
-                            {"key": "api_key", "label": "API Key", "type": "secret", "required": True},
-                            {"key": "metadata", "label": "棰濆閰嶇疆", "type": "json", "required": False},
+                            {"key": "api_key", "label": "API Key", "label_key": "demo.plugin.config.fields.api_key.label", "type": "secret", "required": True},
+                            {"key": "metadata", "label": "棰濆閰嶇疆", "label_key": "demo.plugin.config.fields.metadata.label", "type": "json", "required": False},
                         ]
                     },
                     "ui_schema": {
@@ -305,6 +322,7 @@ class PluginConfigApiTests(unittest.TestCase):
                             {
                                 "id": "basic",
                                 "title": "鍩虹鍙傛暟",
+                                "title_key": "demo.plugin.config.sections.basic.title",
                                 "fields": [
                                     "base_url",
                                     "notes",
@@ -318,12 +336,14 @@ class PluginConfigApiTests(unittest.TestCase):
                                 ],
                             }
                         ],
+                        "submit_text": "保存演示配置",
+                        "submit_text_key": "demo.plugin.config.submit",
                         "widgets": {
-                            "notes": {"widget": "textarea"},
+                            "notes": {"widget": "textarea", "help_text": "演示备注", "help_text_key": "demo.plugin.config.fields.notes.help_text"},
                             "enabled": {"widget": "switch"},
-                            "mode": {"widget": "select"},
+                            "mode": {"widget": "select", "help_text": "请选择模式", "help_text_key": "demo.plugin.config.fields.mode.help_text"},
                             "tags": {"widget": "multi_select"},
-                            "api_key": {"widget": "password"},
+                            "api_key": {"widget": "password", "placeholder": "请输入 key", "placeholder_key": "demo.plugin.config.fields.api_key.placeholder"},
                             "metadata": {"widget": "json_editor"},
                         },
                     },
