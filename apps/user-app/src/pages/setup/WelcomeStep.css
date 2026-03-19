@@ -26,6 +26,9 @@
 .welcome-logo-wrapper {
   animation: logoPop 1.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   transform: scale(0);
+  /* 修复 Windows 下 emoji 黑边问题 */
+  backface-visibility: hidden;
+  perspective: 1000px;
 }
 
 .welcome-logo {
@@ -40,6 +43,162 @@
   box-shadow: var(--shadow-sm, 0 10px 30px rgba(15, 23, 42, 0.08));
   font-size: clamp(58px, 7.2vw, 82px);
   line-height: 1;
+  /* 修复 Windows 下 emoji 黑边问题 */
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  will-change: transform;
+  /* 聚合后可爱摇晃动画（速度慢一倍：0.6s -> 1.2s） */
+  animation: logoWiggle 1.2s ease-in-out 2.8s;
+}
+
+.welcome-logo-svg {
+  overflow: visible;
+  /* logo 放大 1.2 倍 */
+  transform: scale(1.2);
+}
+
+/* Logo 部件基础动画 */
+.welcome-logo-part {
+  opacity: 0;
+  transform-origin: center center;
+  animation-fill-mode: forwards;
+}
+
+/* 中心心形 - 从下方聚合 */
+.welcome-logo-heart {
+  animation: heartAssemble 2.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s forwards;
+}
+
+/* 上方左爪 - 从左上分散聚合 */
+.welcome-logo-claw-1 {
+  animation: claw1Assemble 2.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s forwards;
+}
+
+/* 上方中爪 - 从上方分散聚合 */
+.welcome-logo-claw-2 {
+  animation: claw2Assemble 2.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0s forwards;
+}
+
+/* 上方右爪 - 从右上分散聚合 */
+.welcome-logo-claw-3 {
+  animation: claw3Assemble 2.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;
+}
+
+/* 左侧小爪 - 从左下分散聚合 */
+.welcome-logo-claw-4 {
+  animation: claw4Assemble 2.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.4s forwards;
+}
+
+/* 右侧小爪 - 从右下分散聚合 */
+.welcome-logo-claw-5 {
+  animation: claw5Assemble 2.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.5s forwards;
+}
+
+/* 聚合后可爱摇晃动画（摇晃2下，速度慢一倍） */
+@keyframes logoWiggle {
+  0%, 100% { transform: rotate(0deg); }
+  10% { transform: rotate(-10deg); }
+  20% { transform: rotate(8deg); }
+  30% { transform: rotate(-10deg); }
+  40% { transform: rotate(6deg); }
+  50% { transform: rotate(-2deg); }
+  60% { transform: rotate(0deg); }
+}
+
+/* 心形动画 - 从下方旋转聚合（分散范围再扩大一倍） */
+@keyframes heartAssemble {
+  0% {
+    opacity: 0;
+    transform: translateY(160px) rotate(-60deg) scale(0.5);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-8px) rotate(8deg) scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+}
+
+/* 上方左爪动画 - 从左上旋转聚合（分散范围再扩大一倍） */
+@keyframes claw1Assemble {
+  0% {
+    opacity: 0;
+    transform: translate(-120px, -120px) rotate(-180deg) scale(0.3);
+  }
+  60% {
+    opacity: 1;
+    transform: translate(5px, 5px) rotate(20deg) scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+}
+
+/* 上方中爪动画 - 从上方旋转聚合（分散范围再扩大一倍） */
+@keyframes claw2Assemble {
+  0% {
+    opacity: 0;
+    transform: translateY(-160px) rotate(360deg) scale(0.3);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(5px) rotate(-15deg) scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+}
+
+/* 上方右爪动画 - 从右上旋转聚合（分散范围再扩大一倍） */
+@keyframes claw3Assemble {
+  0% {
+    opacity: 0;
+    transform: translate(120px, -120px) rotate(180deg) scale(0.3);
+  }
+  60% {
+    opacity: 1;
+    transform: translate(-5px, 5px) rotate(-20deg) scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+}
+
+/* 左侧小爪动画 - 从左下旋转聚合（分散范围再扩大一倍） */
+@keyframes claw4Assemble {
+  0% {
+    opacity: 0;
+    transform: translate(-100px, 100px) rotate(-240deg) scale(0.3);
+  }
+  60% {
+    opacity: 0.8;
+    transform: translate(5px, -5px) rotate(15deg) scale(1.1);
+  }
+  100% {
+    opacity: 0.8;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+}
+
+/* 右侧小爪动画 - 从右下旋转聚合（分散范围再扩大一倍） */
+@keyframes claw5Assemble {
+  0% {
+    opacity: 0;
+    transform: translate(100px, 100px) rotate(240deg) scale(0.3);
+  }
+  60% {
+    opacity: 0.8;
+    transform: translate(-5px, -5px) rotate(-15deg) scale(1.1);
+  }
+  100% {
+    opacity: 0.8;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
 }
 
 .welcome-text-wrapper {
