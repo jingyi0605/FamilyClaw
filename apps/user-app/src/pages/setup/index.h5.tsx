@@ -658,8 +658,8 @@ export default function SetupPageH5() {
 
             <div
               style={{
-                marginTop: '1rem',
-                padding: '1rem',
+                marginTop: '0.25rem',
+                padding: '0.75rem',
                 background: 'var(--bg-input)',
                 borderRadius: 'var(--radius-md)',
                 border: '1px solid var(--border-light)',
@@ -760,7 +760,7 @@ export default function SetupPageH5() {
 
             <div
               className="setup-form-actions"
-              style={{ justifyContent: 'center', gap: '1rem', marginTop: '1.5rem' }}
+              style={{ justifyContent: 'center', gap: '1rem', marginTop: '0.5rem' }}
             >
               <button
                 type="button"

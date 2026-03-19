@@ -577,6 +577,7 @@
   'setup.member.saveProfileAndNext': 'Save profile and continue',
   'setup.member.saveChangesAndNext': 'Save changes and continue',
   'setup.member.createAccountAndNext': 'Create account and continue',
+  'setup.member.next': 'Continue',
   'setup.provider.title': 'Connect an AI brain for your household',
   'setup.provider.desc': 'Choose an AI provider you trust. Once configured, it will power the household conversation and analysis.',
   'setup.provider.back': 'Back',

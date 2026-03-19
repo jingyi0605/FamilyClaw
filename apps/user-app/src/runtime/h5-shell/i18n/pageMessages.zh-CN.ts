@@ -550,6 +550,7 @@
   'setup.member.saveProfileAndNext': '保存资料并下一步',
   'setup.member.saveChangesAndNext': '保存修改并下一步',
   'setup.member.createAccountAndNext': '创建账号并下一步',
+  'setup.member.next': '下一步',
   'setup.provider.title': '为家庭接入 AI 大脑',
   'setup.provider.desc': '选择一个您信赖的 AI 供应商。配置完毕后，它将驱动整个家庭的对话交互和智能分析。',
   'setup.provider.back': '返回上一步',
