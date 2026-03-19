@@ -11,7 +11,9 @@ import {
 } from 'lucide-react';
 import Taro from '@tarojs/taro';
 import type { ReactNode } from 'react';
+import { useMemo } from 'react';
 import { useI18n } from '../../runtime/h5-shell';
+import { useAuthContext } from '../../runtime/auth';
 
 type SettingsNavKey =
   | 'appearance'
@@ -30,6 +32,7 @@ type SettingsNavItem = {
   descKey: string;
   url: string;
   icon: ReactNode;
+  adminOnly?: boolean;
 };
 
 const settingsItems: SettingsNavItem[] = [
@@ -39,13 +42,6 @@ const settingsItems: SettingsNavItem[] = [
     descKey: 'settings.nav.appearance.desc',
     url: '/pages/settings/index?section=appearance',
     icon: <Palette size={20} />,
-  },
-  {
-    key: 'ai',
-    labelKey: 'settings.nav.ai.label',
-    descKey: 'settings.nav.ai.desc',
-    url: '/pages/settings/ai/index',
-    icon: <Bot size={20} />,
   },
   {
     key: 'language',
@@ -69,11 +65,20 @@ const settingsItems: SettingsNavItem[] = [
     icon: <HeartHandshake size={20} />,
   },
   {
+    key: 'ai',
+    labelKey: 'settings.nav.ai.label',
+    descKey: 'settings.nav.ai.desc',
+    url: '/pages/settings/ai/index',
+    icon: <Bot size={20} />,
+    adminOnly: true,
+  },
+  {
     key: 'integrations',
     labelKey: 'settings.nav.integrations.label',
     descKey: 'settings.nav.integrations.desc',
     url: '/pages/settings/integrations/index',
     icon: <LinkIcon size={20} />,
+    adminOnly: true,
   },
   {
     key: 'channel-access',
@@ -81,6 +86,7 @@ const settingsItems: SettingsNavItem[] = [
     descKey: 'settings.nav.channelAccess.desc',
     url: '/pages/settings/channel-access/index',
     icon: <MessageCircle size={20} />,
+    adminOnly: true,
   },
   {
     key: 'plugins',
@@ -88,6 +94,7 @@ const settingsItems: SettingsNavItem[] = [
     descKey: 'settings.nav.plugins.desc',
     url: '/pages/plugins/index',
     icon: <Puzzle size={20} />,
+    adminOnly: true,
   },
   {
     key: 'version-management',
@@ -95,6 +102,7 @@ const settingsItems: SettingsNavItem[] = [
     descKey: 'settings.nav.versionManagement.desc',
     url: '/pages/settings/index?section=version-management',
     icon: <TagIcon size={20} />,
+    adminOnly: true,
   },
 ];
 
@@ -118,11 +126,18 @@ async function openPage(url: string) {
 
 export function SettingsNav(props: { activeKey: SettingsNavKey }) {
   const { t } = useI18n();
+  const { actor } = useAuthContext();
+
+  const isAdmin = actor?.member_role === 'admin';
+
+  const visibleItems = useMemo(() => {
+    return settingsItems.filter((item) => !item.adminOnly || isAdmin);
+  }, [isAdmin]);
 
   return (
     <nav className="settings-tabs" role="tablist">
       <div className="settings-tabs__scroll">
-        {settingsItems.map((item) => {
+        {visibleItems.map((item) => {
           const isActive = props.activeKey === item.key;
           return (
             <button
