@@ -180,3 +180,54 @@ test('已选主题被禁用时保留待重选状态并返回禁用原因', async
   assert.equal(state.theme_fallback_notice?.disabledReason, 'plugin_disabled_by_household');
   assert.equal(state.disabled_reason_by_theme_id.aurora, 'plugin_disabled_by_household');
 });
+
+test('主题列表顺序固定，不会因为切换选中项而重排', async () => {
+  const runtime = createRuntime({
+    builtinEntries: [
+      createBuiltinEntry({
+        plugin_id: 'builtin.theme.chun-he-jing-ming',
+        theme_id: 'chun-he-jing-ming',
+        display_name: '春和景明',
+      }),
+      createBuiltinEntry({
+        plugin_id: 'builtin.theme.yue-lang-xing-xi',
+        theme_id: 'yue-lang-xing-xi',
+        display_name: '月朗星稀',
+      }),
+      createBuiltinEntry({
+        plugin_id: 'builtin.theme.feng-chi-dian-che',
+        theme_id: 'feng-chi-dian-che',
+        display_name: '风驰电掣',
+      }),
+    ],
+    fetchResource: async (_, pluginId, themeId) => ({
+      plugin_id: pluginId,
+      theme_id: themeId,
+      resource_version: '1.0.0',
+      theme_schema_version: 1,
+      tokens: {
+        bgApp: '#111111',
+        bgCard: '#222222',
+        brandPrimary: '#333333',
+        textPrimary: '#ffffff',
+        glowColor: 'rgba(0, 0, 0, 0.2)',
+      },
+    }),
+  });
+
+  await runtime.bootstrap();
+  assert.deepEqual(
+    runtime.getState().theme_list.map(theme => theme.id),
+    ['chun-he-jing-ming', 'yue-lang-xing-xi', 'feng-chi-dian-che'],
+  );
+
+  await runtime.selectTheme({
+    plugin_id: 'builtin.theme.feng-chi-dian-che',
+    theme_id: 'feng-chi-dian-che',
+  });
+
+  assert.deepEqual(
+    runtime.getState().theme_list.map(theme => theme.id),
+    ['chun-he-jing-ming', 'yue-lang-xing-xi', 'feng-chi-dian-che'],
+  );
+});

@@ -46,6 +46,19 @@ const THEME_SOURCE_WEIGHT: Record<ThemePluginSourceType, number> = {
   official: 1,
   third_party: 2,
 };
+const BUILTIN_THEME_FIXED_ORDER = [
+  'chun-he-jing-ming',
+  'yue-lang-xing-xi',
+  'feng-chi-dian-che',
+  'jin-xiu-qian-cheng',
+  'ming-cha-qiu-hao',
+  'qing-shan-lv-shui',
+  'wan-zi-qian-hong',
+  'xing-he-wan-li',
+] as const;
+const BUILTIN_THEME_ORDER_INDEX = new Map<string, number>(
+  BUILTIN_THEME_FIXED_ORDER.map((themeId, index) => [themeId, index]),
+);
 
 function readString(value: unknown, fallback = '') {
   if (typeof value !== 'string') {
@@ -152,6 +165,14 @@ function readPreviewString(
 
 function sortRegistryItems(items: ThemeRegistryItem[]) {
   return [...items].sort((left, right) => {
+    if (left.source_type === 'builtin' && right.source_type === 'builtin') {
+      const leftOrder = BUILTIN_THEME_ORDER_INDEX.get(left.theme_id) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = BUILTIN_THEME_ORDER_INDEX.get(right.theme_id) ?? Number.MAX_SAFE_INTEGER;
+      const builtinOrderDiff = leftOrder - rightOrder;
+      if (builtinOrderDiff !== 0) {
+        return builtinOrderDiff;
+      }
+    }
     const sourceDiff = THEME_SOURCE_WEIGHT[left.source_type] - THEME_SOURCE_WEIGHT[right.source_type];
     if (sourceDiff !== 0) {
       return sourceDiff;
@@ -160,7 +181,11 @@ function sortRegistryItems(items: ThemeRegistryItem[]) {
     if (nameDiff !== 0) {
       return nameDiff;
     }
-    return left.theme_id.localeCompare(right.theme_id, 'zh-CN');
+    const themeDiff = left.theme_id.localeCompare(right.theme_id, 'zh-CN');
+    if (themeDiff !== 0) {
+      return themeDiff;
+    }
+    return left.plugin_id.localeCompare(right.plugin_id, 'zh-CN');
   });
 }
 
@@ -402,17 +427,7 @@ function buildThemeList(
   selection: ThemeRuntimeSelection | null,
   activeTheme: ThemeRuntimeThemeOption | null,
 ) {
-  const sorted = [...registryItems].sort((left, right) => {
-    const leftSelected = selection && toRegistryKey(selection) === toRegistryKeyByItem(left);
-    const rightSelected = selection && toRegistryKey(selection) === toRegistryKeyByItem(right);
-    if (leftSelected !== rightSelected) {
-      return leftSelected ? -1 : 1;
-    }
-    if (left.source_type !== right.source_type) {
-      return THEME_SOURCE_WEIGHT[left.source_type] - THEME_SOURCE_WEIGHT[right.source_type];
-    }
-    return left.display_name.localeCompare(right.display_name, 'zh-CN');
-  });
+  const sorted = sortRegistryItems(registryItems);
 
   const byRegistryKey = new Map<string, ThemeRuntimeThemeOption>();
 
