@@ -59,7 +59,7 @@ export function ButlerBootstrapConversation(props: { householdId: string; source
   }, [householdId]);
 
   useEffect(() => {
-    const frameId = window.requestAnimationFrame(() => { messagesEndRef.current?.scrollIntoView({ block: 'end' }); });
+    const frameId = window.requestAnimationFrame(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); });
     return () => window.cancelAnimationFrame(frameId);
   }, [messages, session?.status]);
 
