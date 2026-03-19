@@ -1,0 +1,33 @@
+{
+  "id": "builtin.theme.jin-xiu-qian-cheng",
+  "name": "锦绣前程主题包",
+  "version": "1.0.0",
+  "api_version": 1,
+  "types": ["theme-pack"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {},
+  "compatibility": {
+    "theme_selection_storage_key": "familyclaw-theme",
+    "theme_schema_version": 1
+  },
+  "capabilities": {
+    "theme_pack": {
+      "theme_id": "jin-xiu-qian-cheng",
+      "display_name": "锦绣前程",
+      "description": "鎏金尊贵，大气庄重",
+      "tokens_resource": "themes/jin-xiu-qian-cheng.json",
+      "resource_source": "builtin_bundle",
+      "resource_version": "1.0.0",
+      "theme_schema_version": 1,
+      "platform_targets": ["h5", "rn"],
+      "preview": {
+        "accent_color": "#d4af37",
+        "preview_surface": "#0e0c08",
+        "emoji": "👑"
+      },
+      "fallback_theme_id": "chun-he-jing-ming"
+    }
+  }
+}

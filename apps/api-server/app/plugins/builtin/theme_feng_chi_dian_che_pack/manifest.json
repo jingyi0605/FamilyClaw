@@ -1,0 +1,33 @@
+{
+  "id": "builtin.theme.feng-chi-dian-che",
+  "name": "风驰电掣主题包",
+  "version": "1.0.0",
+  "api_version": 1,
+  "types": ["theme-pack"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {},
+  "compatibility": {
+    "theme_selection_storage_key": "familyclaw-theme",
+    "theme_schema_version": 1
+  },
+  "capabilities": {
+    "theme_pack": {
+      "theme_id": "feng-chi-dian-che",
+      "display_name": "风驰电掣",
+      "description": "霓虹电网，赛博激光",
+      "tokens_resource": "themes/feng-chi-dian-che.json",
+      "resource_source": "builtin_bundle",
+      "resource_version": "1.0.0",
+      "theme_schema_version": 1,
+      "platform_targets": ["h5", "rn"],
+      "preview": {
+        "accent_color": "#22d3ee",
+        "preview_surface": "#160a22",
+        "emoji": "⚡"
+      },
+      "fallback_theme_id": "chun-he-jing-ming"
+    }
+  }
+}

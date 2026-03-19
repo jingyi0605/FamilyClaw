@@ -1,0 +1,33 @@
+{
+  "id": "builtin.theme.chun-he-jing-ming",
+  "name": "春和景明主题包",
+  "version": "1.0.0",
+  "api_version": 1,
+  "types": ["theme-pack"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {},
+  "compatibility": {
+    "theme_selection_storage_key": "familyclaw-theme",
+    "theme_schema_version": 1
+  },
+  "capabilities": {
+    "theme_pack": {
+      "theme_id": "chun-he-jing-ming",
+      "display_name": "春和景明",
+      "description": "温暖宁静，适合日常使用",
+      "tokens_resource": "themes/chun-he-jing-ming.json",
+      "resource_source": "builtin_bundle",
+      "resource_version": "1.0.0",
+      "theme_schema_version": 1,
+      "platform_targets": ["h5", "rn"],
+      "preview": {
+        "accent_color": "#d97756",
+        "preview_surface": "#f7f5f2",
+        "emoji": "🌸"
+      },
+      "fallback_theme_id": null
+    }
+  }
+}

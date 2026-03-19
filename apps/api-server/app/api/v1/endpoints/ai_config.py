@@ -97,6 +97,11 @@ from app.modules.plugin import (
     get_plugin_config_form,
     update_plugin_mount,
 )
+from app.modules.plugin.schemas import PluginThemeRegistrySnapshotRead, PluginThemeResourceRead
+from app.modules.plugin.service import (
+    get_plugin_theme_resource_for_household,
+    list_registered_plugin_themes_for_household,
+)
 
 
 router = APIRouter(prefix="/ai-config", tags=["ai-config"])
@@ -562,6 +567,36 @@ def list_household_plugins_endpoint(
 ) -> PluginRegistrySnapshot:
     ensure_actor_can_access_household(actor, household_id)
     return list_registered_plugins_for_household(db, household_id=household_id)
+
+
+@router.get("/{household_id}/themes", response_model=PluginThemeRegistrySnapshotRead)
+def list_household_themes_endpoint(
+    household_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> PluginThemeRegistrySnapshotRead:
+    ensure_actor_can_access_household(actor, household_id)
+    return list_registered_plugin_themes_for_household(db, household_id=household_id)
+
+
+@router.get("/{household_id}/plugin-themes/{plugin_id}/{theme_id}", response_model=PluginThemeResourceRead)
+def get_household_theme_resource_endpoint(
+    household_id: str,
+    plugin_id: str,
+    theme_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> PluginThemeResourceRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        return get_plugin_theme_resource_for_household(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            theme_id=theme_id,
+        )
+    except PluginServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
 
 @router.get("/{household_id}/plugins/{plugin_id}/config-scopes", response_model=PluginConfigScopeListRead)

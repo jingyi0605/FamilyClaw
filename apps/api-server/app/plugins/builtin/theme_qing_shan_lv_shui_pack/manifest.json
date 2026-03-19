@@ -1,0 +1,33 @@
+{
+  "id": "builtin.theme.qing-shan-lv-shui",
+  "name": "青山绿水主题包",
+  "version": "1.0.0",
+  "api_version": 1,
+  "types": ["theme-pack"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {},
+  "compatibility": {
+    "theme_selection_storage_key": "familyclaw-theme",
+    "theme_schema_version": 1
+  },
+  "capabilities": {
+    "theme_pack": {
+      "theme_id": "qing-shan-lv-shui",
+      "display_name": "青山绿水",
+      "description": "自然清新，森林氧吧",
+      "tokens_resource": "themes/qing-shan-lv-shui.json",
+      "resource_source": "builtin_bundle",
+      "resource_version": "1.0.0",
+      "theme_schema_version": 1,
+      "platform_targets": ["h5", "rn"],
+      "preview": {
+        "accent_color": "#34d399",
+        "preview_surface": "#f2f7f3",
+        "emoji": "🌿"
+      },
+      "fallback_theme_id": "chun-he-jing-ming"
+    }
+  }
+}

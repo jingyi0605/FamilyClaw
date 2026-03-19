@@ -13,7 +13,7 @@ from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.plugin.models import PluginMount
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
-from app.modules.plugin.service import list_plugin_mounts
+from app.modules.plugin import repository as plugin_repository
 from app.modules.plugin_marketplace.models import PluginMarketplaceEntrySnapshot, PluginMarketplaceSource
 from app.modules.plugin_marketplace.repository import (
     get_marketplace_instance_for_plugin,
@@ -63,7 +63,7 @@ class PluginStartupSyncTests(unittest.TestCase):
         self.assertEqual(0, second_result.official_updated)
 
         for household_id in (first_household.id, second_household.id):
-            mounts = list_plugin_mounts(self.db, household_id=household_id)
+            mounts = plugin_repository.list_plugin_mounts(self.db, household_id=household_id)
             self.assertEqual(1, len(mounts))
             self.assertEqual("official", mounts[0].source_type)
             self.assertEqual(str(plugin_root.resolve()), str(Path(mounts[0].plugin_root).resolve()))
@@ -106,13 +106,36 @@ class PluginStartupSyncTests(unittest.TestCase):
         self.assertEqual(1, result.manual_created)
         self.assertEqual(1, result.manual_updated)
 
-        mounts = {item.plugin_id: item for item in list_plugin_mounts(self.db, household_id=household.id)}
+        mounts = {item.plugin_id: item for item in plugin_repository.list_plugin_mounts(self.db, household_id=household.id)}
         repaired = mounts["manual-sync-plugin"]
         created = mounts["manual-created-plugin"]
         self.assertEqual(str(manual_root.resolve()), str(Path(repaired.plugin_root).resolve()))
         self.assertFalse(repaired.enabled)
         self.assertEqual(str(missing_row_root.resolve()), str(Path(created.plugin_root).resolve()))
         self.assertFalse(created.enabled)
+
+    def test_sync_official_theme_pack_plugins_mounts_all_households(self) -> None:
+        theme_root = self._create_theme_pack_dir(
+            Path(self._tempdir.name) / "official" / "theme_chun_he_jing_ming_pack",
+            plugin_id="official.theme.chun-he-jing-ming",
+            theme_id="chun-he-jing-ming",
+            name="Official Theme Chun He Jing Ming",
+            version="1.0.0",
+        )
+        first_household = self._create_household("主题家庭A")
+        second_household = self._create_household("主题家庭B")
+        self.db.commit()
+
+        result = sync_persisted_plugins_on_startup(self.db)
+        self.db.commit()
+
+        self.assertEqual(2, result.official_created)
+        for household_id in (first_household.id, second_household.id):
+            mounts = plugin_repository.list_plugin_mounts(self.db, household_id=household_id)
+            by_plugin = {item.plugin_id: item for item in mounts}
+            self.assertIn("official.theme.chun-he-jing-ming", by_plugin)
+            self.assertEqual(str(theme_root.resolve()), str(Path(by_plugin["official.theme.chun-he-jing-ming"].plugin_root).resolve()))
+            self.assertEqual("official", by_plugin["official.theme.chun-he-jing-ming"].source_type)
 
     def test_sync_marketplace_plugins_restores_instance_without_reinstall(self) -> None:
         household = self._create_household("市场插件家庭")
@@ -237,6 +260,34 @@ class PluginStartupSyncTests(unittest.TestCase):
         self.assertEqual(str(plugin_root.resolve()), str(Path(restored_instance.plugin_root).resolve()))
         self.assertTrue(restored_instance.enabled)
 
+    def test_startup_sync_marks_theme_pack_registry_refresh_when_theme_pack_mount_changes(self) -> None:
+        household = self._create_household("主题插件家庭")
+        self._create_plugin_dir(
+            Path(self._tempdir.name) / "third_party" / "manual" / household.id / "third-party-theme-pack",
+            plugin_id="third-party-theme-pack",
+            name="Third Theme Pack",
+            version="0.1.0",
+            plugin_types=["theme-pack"],
+            capabilities={
+                "theme_pack": {
+                    "theme_id": "aurora",
+                    "display_name": "极光主题",
+                    "tokens_resource": "themes/aurora.json",
+                    "resource_source": "managed_plugin_dir",
+                    "resource_version": "0.1.0",
+                    "theme_schema_version": 1,
+                    "platform_targets": ["h5", "rn"]
+                }
+            },
+        )
+        self.db.commit()
+
+        result = sync_persisted_plugins_on_startup(self.db)
+        self.db.commit()
+
+        self.assertEqual(1, result.manual_created)
+        self.assertEqual(1, result.theme_pack_registry_refresh)
+
     def _create_household(self, name: str):
         household = create_household(
             self.db,
@@ -245,7 +296,16 @@ class PluginStartupSyncTests(unittest.TestCase):
         self.db.flush()
         return household
 
-    def _create_plugin_dir(self, root: Path, *, plugin_id: str, name: str, version: str) -> Path:
+    def _create_plugin_dir(
+        self,
+        root: Path,
+        *,
+        plugin_id: str,
+        name: str,
+        version: str,
+        plugin_types: list[str] | None = None,
+        capabilities: dict | None = None,
+    ) -> Path:
         package_dir = root / "plugin"
         package_dir.mkdir(parents=True, exist_ok=True)
         (package_dir / "__init__.py").write_text("", encoding="utf-8")
@@ -257,7 +317,7 @@ class PluginStartupSyncTests(unittest.TestCase):
             "id": plugin_id,
             "name": name,
             "version": version,
-            "types": ["integration"],
+            "types": plugin_types or ["integration"],
             "permissions": ["device.read"],
             "risk_level": "low",
             "triggers": ["manual"],
@@ -265,7 +325,88 @@ class PluginStartupSyncTests(unittest.TestCase):
                 "integration": "plugin.integration.sync",
             },
         }
+        if capabilities is not None:
+            manifest["capabilities"] = capabilities
+            if "theme-pack" in (plugin_types or []):
+                manifest["permissions"] = []
+                manifest["triggers"] = []
+                manifest["entrypoints"] = {}
+                themes_dir = root / "themes"
+                themes_dir.mkdir(parents=True, exist_ok=True)
+                (themes_dir / "aurora.json").write_text(
+                    json.dumps(
+                        {
+                            "theme_id": "aurora",
+                            "theme_schema_version": 1,
+                            "resource_version": "0.1.0",
+                            "tokens": {
+                                "brandPrimary": "#66ccff",
+                                "bgApp": "#060b15"
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
         (root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        return root
+
+    def _create_theme_pack_dir(
+        self,
+        root: Path,
+        *,
+        plugin_id: str,
+        theme_id: str,
+        name: str,
+        version: str,
+    ) -> Path:
+        theme_dir = root / "themes"
+        theme_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "id": plugin_id,
+            "name": name,
+            "version": version,
+            "types": ["theme-pack"],
+            "permissions": [],
+            "risk_level": "low",
+            "triggers": [],
+            "entrypoints": {},
+            "capabilities": {
+                "theme_pack": {
+                    "theme_id": theme_id,
+                    "display_name": "春和景明",
+                    "description": "主题测试",
+                    "tokens_resource": f"themes/{theme_id}.json",
+                    "resource_source": "managed_plugin_dir",
+                    "resource_version": version,
+                    "theme_schema_version": 1,
+                    "platform_targets": ["h5", "rn"],
+                    "preview": {
+                        "accent_color": "#d97756",
+                        "preview_surface": "#f7f5f2",
+                        "emoji": "🌸",
+                    },
+                    "fallback_theme_id": None,
+                }
+            },
+        }
+        (root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        (theme_dir / f"{theme_id}.json").write_text(
+            json.dumps(
+                {
+                    "theme_id": theme_id,
+                    "resource_version": version,
+                    "theme_schema_version": 1,
+                    "platform_targets": ["h5", "rn"],
+                    "tokens": {
+                        "brandPrimary": "#d97756",
+                        "bgApp": "#f7f5f2",
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
         return root
 
 

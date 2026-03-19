@@ -1,0 +1,33 @@
+{
+  "id": "builtin.theme.ming-cha-qiu-hao",
+  "name": "明察秋毫主题包",
+  "version": "1.0.0",
+  "api_version": 1,
+  "types": ["theme-pack"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {},
+  "compatibility": {
+    "theme_selection_storage_key": "familyclaw-theme",
+    "theme_schema_version": 1
+  },
+  "capabilities": {
+    "theme_pack": {
+      "theme_id": "ming-cha-qiu-hao",
+      "display_name": "明察秋毫",
+      "description": "更大字号、更高对比度",
+      "tokens_resource": "themes/ming-cha-qiu-hao.json",
+      "resource_source": "builtin_bundle",
+      "resource_version": "1.0.0",
+      "theme_schema_version": 1,
+      "platform_targets": ["h5", "rn"],
+      "preview": {
+        "accent_color": "#b7791f",
+        "preview_surface": "#f5f5f0",
+        "emoji": "🔍"
+      },
+      "fallback_theme_id": "chun-he-jing-ming"
+    }
+  }
+}

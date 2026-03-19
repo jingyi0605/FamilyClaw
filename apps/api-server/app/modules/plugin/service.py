@@ -27,6 +27,7 @@ from app.modules.memory.service import (
 from app.modules.region.plugin_runtime import get_runtime_region_provider_spec, sync_household_plugin_region_providers
 from app.modules.region.service import resolve_household_region_context
 from app.modules.plugin.executors import get_executor, load_entrypoint_callable, resolve_execution_backend
+from app.modules.plugin.private_migration_service import ensure_plugin_private_migrations
 from . import repository
 from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun, PluginStateOverride
 from app.modules.plugin.runner_errors import PLUGIN_EXECUTION_FAILED, PluginRunnerError
@@ -1510,6 +1511,7 @@ def prepare_household_plugin_execution(
         execution_backend=execution_backend,
         runner_config=runner_config,
     )
+    ensure_plugin_private_migrations(db, plugin=plugin)
     return PreparedHouseholdPluginExecution(
         plugin=plugin,
         request=request,

@@ -1,0 +1,33 @@
+{
+  "id": "builtin.theme.yue-lang-xing-xi",
+  "name": "月朗星稀主题包",
+  "version": "1.0.0",
+  "api_version": 1,
+  "types": ["theme-pack"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {},
+  "compatibility": {
+    "theme_selection_storage_key": "familyclaw-theme",
+    "theme_schema_version": 1
+  },
+  "capabilities": {
+    "theme_pack": {
+      "theme_id": "yue-lang-xing-xi",
+      "display_name": "月朗星稀",
+      "description": "柔和深色，减少视觉疲劳",
+      "tokens_resource": "themes/yue-lang-xing-xi.json",
+      "resource_source": "builtin_bundle",
+      "resource_version": "1.0.0",
+      "theme_schema_version": 1,
+      "platform_targets": ["h5", "rn"],
+      "preview": {
+        "accent_color": "#7c8cff",
+        "preview_surface": "#0f1117",
+        "emoji": "🌙"
+      },
+      "fallback_theme_id": "chun-he-jing-ming"
+    }
+  }
+}

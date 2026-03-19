@@ -1,0 +1,33 @@
+{
+  "id": "builtin.theme.xing-he-wan-li",
+  "name": "星河万里主题包",
+  "version": "1.0.0",
+  "api_version": 1,
+  "types": ["theme-pack"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {},
+  "compatibility": {
+    "theme_selection_storage_key": "familyclaw-theme",
+    "theme_schema_version": 1
+  },
+  "capabilities": {
+    "theme_pack": {
+      "theme_id": "xing-he-wan-li",
+      "display_name": "星河万里",
+      "description": "星云流动，宇宙漫游",
+      "tokens_resource": "themes/xing-he-wan-li.json",
+      "resource_source": "builtin_bundle",
+      "resource_version": "1.0.0",
+      "theme_schema_version": 1,
+      "platform_targets": ["h5", "rn"],
+      "preview": {
+        "accent_color": "#60a5fa",
+        "preview_surface": "#0f1228",
+        "emoji": "🚀"
+      },
+      "fallback_theme_id": "chun-he-jing-ming"
+    }
+  }
+}

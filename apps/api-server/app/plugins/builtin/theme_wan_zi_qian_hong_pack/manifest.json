@@ -1,0 +1,33 @@
+{
+  "id": "builtin.theme.wan-zi-qian-hong",
+  "name": "万紫千红主题包",
+  "version": "1.0.0",
+  "api_version": 1,
+  "types": ["theme-pack"],
+  "permissions": [],
+  "risk_level": "low",
+  "triggers": [],
+  "entrypoints": {},
+  "compatibility": {
+    "theme_selection_storage_key": "familyclaw-theme",
+    "theme_schema_version": 1
+  },
+  "capabilities": {
+    "theme_pack": {
+      "theme_id": "wan-zi-qian-hong",
+      "display_name": "万紫千红",
+      "description": "鲜艳活泼，色彩绚烂",
+      "tokens_resource": "themes/wan-zi-qian-hong.json",
+      "resource_source": "builtin_bundle",
+      "resource_version": "1.0.0",
+      "theme_schema_version": 1,
+      "platform_targets": ["h5", "rn"],
+      "preview": {
+        "accent_color": "#e879f9",
+        "preview_surface": "#fef8ff",
+        "emoji": "🌈"
+      },
+      "fallback_theme_id": "chun-he-jing-ming"
+    }
+  }
+}

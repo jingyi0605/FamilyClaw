@@ -46,6 +46,7 @@ class PluginStartupSyncResult:
     marketplace_mount_updated: int = 0
     marketplace_instance_created: int = 0
     marketplace_instance_updated: int = 0
+    theme_pack_registry_refresh: int = 0
     skipped: int = 0
 
 
@@ -62,12 +63,14 @@ def sync_persisted_plugins_on_startup(db: Session) -> PluginStartupSyncResult:
     household_ids = set(db.scalars(select(Household.id)).all())
     builtin_plugin_ids = {item.id for item in list_registered_plugins().items}
     changed_household_ids: set[str] = set()
+    theme_pack_registry_household_ids: set[str] = set()
 
     result.official_created, result.official_updated, official_skipped = _sync_official_plugin_mounts(
         db,
         household_ids=household_ids,
         builtin_plugin_ids=builtin_plugin_ids,
         changed_household_ids=changed_household_ids,
+        theme_pack_registry_household_ids=theme_pack_registry_household_ids,
     )
     result.skipped += official_skipped
 
@@ -76,6 +79,7 @@ def sync_persisted_plugins_on_startup(db: Session) -> PluginStartupSyncResult:
         household_ids=household_ids,
         builtin_plugin_ids=builtin_plugin_ids,
         changed_household_ids=changed_household_ids,
+        theme_pack_registry_household_ids=theme_pack_registry_household_ids,
     )
     result.skipped += manual_skipped
 
@@ -90,15 +94,18 @@ def sync_persisted_plugins_on_startup(db: Session) -> PluginStartupSyncResult:
         household_ids=household_ids,
         builtin_plugin_ids=builtin_plugin_ids,
         changed_household_ids=changed_household_ids,
+        theme_pack_registry_household_ids=theme_pack_registry_household_ids,
     )
     result.skipped += marketplace_skipped
 
     for household_id in sorted(changed_household_ids):
         sync_household_plugin_region_providers(db, household_id)
+    result.theme_pack_registry_refresh = len(theme_pack_registry_household_ids)
 
     logger.info(
         "Startup plugin sync finished official(created=%s updated=%s) "
-        "manual(created=%s updated=%s) marketplace(mount_created=%s mount_updated=%s instance_created=%s instance_updated=%s) skipped=%s",
+        "manual(created=%s updated=%s) marketplace(mount_created=%s mount_updated=%s instance_created=%s instance_updated=%s) "
+        "theme_pack_registry_refresh=%s skipped=%s",
         result.official_created,
         result.official_updated,
         result.manual_created,
@@ -107,6 +114,7 @@ def sync_persisted_plugins_on_startup(db: Session) -> PluginStartupSyncResult:
         result.marketplace_mount_updated,
         result.marketplace_instance_created,
         result.marketplace_instance_updated,
+        result.theme_pack_registry_refresh,
         result.skipped,
     )
     return result
@@ -118,6 +126,7 @@ def _sync_official_plugin_mounts(
     household_ids: set[str],
     builtin_plugin_ids: set[str],
     changed_household_ids: set[str],
+    theme_pack_registry_household_ids: set[str],
 ) -> tuple[int, int, int]:
     official_root = Path(settings.plugin_storage_root).resolve() / "official"
     if not official_root.exists():
@@ -138,6 +147,7 @@ def _sync_official_plugin_mounts(
                 builtin_plugin_ids=builtin_plugin_ids,
                 enabled_on_create=True,
                 changed_household_ids=changed_household_ids,
+                theme_pack_registry_household_ids=theme_pack_registry_household_ids,
             )
             if status == "created":
                 created += 1
@@ -154,6 +164,7 @@ def _sync_manual_plugin_mounts(
     household_ids: set[str],
     builtin_plugin_ids: set[str],
     changed_household_ids: set[str],
+    theme_pack_registry_household_ids: set[str],
 ) -> tuple[int, int, int]:
     manual_root = Path(settings.plugin_storage_root).resolve() / "third_party" / "manual"
     if not manual_root.exists():
@@ -203,6 +214,7 @@ def _sync_manual_plugin_mounts(
                 builtin_plugin_ids=builtin_plugin_ids,
                 enabled_on_create=False,
                 changed_household_ids=changed_household_ids,
+                theme_pack_registry_household_ids=theme_pack_registry_household_ids,
                 manifest=manifest,
             )
             if status == "created":
@@ -220,6 +232,7 @@ def _sync_marketplace_plugins(
     household_ids: set[str],
     builtin_plugin_ids: set[str],
     changed_household_ids: set[str],
+    theme_pack_registry_household_ids: set[str],
 ) -> tuple[int, int, int, int, int]:
     install_root = Path(settings.plugin_marketplace_install_root).resolve()
     if not install_root.exists():
@@ -305,6 +318,7 @@ def _sync_marketplace_plugins(
                         builtin_plugin_ids=builtin_plugin_ids,
                         enabled_on_create=False,
                         changed_household_ids=changed_household_ids,
+                        theme_pack_registry_household_ids=theme_pack_registry_household_ids,
                         manifest=manifest,
                     )
                     if mount_status == "created":
@@ -397,6 +411,7 @@ def _upsert_plugin_mount_from_disk(
     builtin_plugin_ids: set[str],
     enabled_on_create: bool,
     changed_household_ids: set[str],
+    theme_pack_registry_household_ids: set[str],
     manifest=None,
 ) -> str:
     current_manifest = manifest
@@ -462,6 +477,8 @@ def _upsert_plugin_mount_from_disk(
         plugin_repository.add_plugin_mount(db, row)
         db.flush()
         changed_household_ids.add(household_id)
+        if "theme-pack" in current_manifest.types:
+            theme_pack_registry_household_ids.add(household_id)
         return "created"
 
     changed = False
@@ -487,6 +504,8 @@ def _upsert_plugin_mount_from_disk(
         existing.updated_at = now
         db.flush()
         changed_household_ids.add(household_id)
+        if "theme-pack" in current_manifest.types:
+            theme_pack_registry_household_ids.add(household_id)
         return "updated"
     return "unchanged"
 
