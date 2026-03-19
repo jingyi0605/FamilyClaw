@@ -63,8 +63,7 @@ class AiProviderAdapterRead(BaseModel):
     field_schema: list[AiProviderFieldRead] = Field(default_factory=list)
 
 
-class AiProviderProfileBase(BaseModel):
-    provider_code: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_.-]+$")
+class AiProviderProfileConfigBase(BaseModel):
     display_name: str = Field(min_length=1, max_length=100)
     transport_type: AiTransportType
     api_family: AiApiFamily
@@ -79,8 +78,13 @@ class AiProviderProfileBase(BaseModel):
     extra_config: dict[str, Any] = Field(default_factory=dict)
 
 
-class AiProviderProfileCreate(AiProviderProfileBase):
-    pass
+class AiProviderProfileCreate(AiProviderProfileConfigBase):
+    provider_code: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-z0-9_.-]+$",
+    )
 
 
 class AiProviderProfileUpdate(BaseModel):
@@ -97,8 +101,9 @@ class AiProviderProfileUpdate(BaseModel):
     extra_config: dict[str, Any] | None = None
 
 
-class AiProviderProfileRead(AiProviderProfileBase):
+class AiProviderProfileRead(AiProviderProfileConfigBase):
     id: str
+    provider_code: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_.-]+$")
     plugin_id: str | None = None
     plugin_enabled: bool | None = None
     plugin_disabled_reason: str | None = None

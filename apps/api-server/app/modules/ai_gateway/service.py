@@ -1,3 +1,4 @@
+import re
 from typing import cast
 
 from app.core.config import settings
@@ -77,7 +78,8 @@ def create_provider_profile(
     *,
     household_id: str | None = None,
 ) -> AiProviderProfileRead:
-    existing = repository.get_provider_profile_by_code(db, payload.provider_code)
+    provider_code = payload.provider_code or _generate_provider_code(db, payload.extra_config)
+    existing = repository.get_provider_profile_by_code(db, provider_code)
     if existing is not None:
         raise AiGatewayConfigurationError("provider_code 已存在")
 
@@ -96,7 +98,7 @@ def create_provider_profile(
     )
     row = AiProviderProfile(
         id=new_uuid(),
-        provider_code=payload.provider_code,
+        provider_code=provider_code,
         display_name=payload.display_name,
         transport_type=payload.transport_type,
         api_family=payload.api_family,
@@ -413,6 +415,22 @@ def _normalize_adapter_code(value: object) -> str | None:
         return None
     normalized = value.strip().lower()
     return normalized or None
+
+
+def _generate_provider_code(
+    db: Session,
+    extra_config: dict[str, object] | None,
+) -> str:
+    adapter_code = _extract_adapter_code(extra_config) or "provider"
+    normalized_prefix = re.sub(r"[^a-z0-9]+", "-", adapter_code).strip("-.") or "provider"
+
+    # 供应商编码只用于内部标识，自动生成时优先保证唯一和稳定前缀。
+    for _ in range(8):
+        candidate = f"{normalized_prefix}-{new_uuid().replace('-', '')[:12]}"
+        if repository.get_provider_profile_by_code(db, candidate) is None:
+            return candidate
+
+    raise AiGatewayConfigurationError("系统生成 provider_code 失败，请重试")
 
 
 def _extract_adapter_code(extra_config: dict[str, object] | None) -> str | None:

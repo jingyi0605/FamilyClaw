@@ -229,7 +229,7 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
                         {localizedField.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     ) : (
-                      <input id={`${props.householdId}-${field.key}`} className="form-input" type={field.key === 'secret_ref' ? 'password' : field.field_type === 'number' ? 'number' : 'text'} value={readProviderFormValue(form, field.key)} onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))} placeholder={localizedField.placeholder ?? undefined} />
+                      <input id={`${props.householdId}-${field.key}`} className="form-input" type={field.field_type === 'secret' ? 'password' : field.field_type === 'number' ? 'number' : 'text'} value={readProviderFormValue(form, field.key)} onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))} placeholder={localizedField.placeholder ?? undefined} />
                     )}
                     {localizedField.help_text ? <p className="ai-config-muted">{localizedField.help_text}</p> : null}
                   </div>

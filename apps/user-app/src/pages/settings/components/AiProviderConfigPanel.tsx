@@ -29,6 +29,7 @@ import { getLocalizedAdapterMeta, sortCapabilities } from './aiProviderCatalog';
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
 const AI_PROVIDER_MODEL_TYPES: AiProviderModelType[] = ['llm', 'embedding', 'vision', 'speech', 'image'];
 const AI_CAPABILITIES: AiCapability[] = ['text', 'intent_recognition', 'vision', 'audio_generation', 'audio_recognition', 'image_generation'];
+const HIDDEN_PROVIDER_FIELD_KEYS = new Set(['provider_code']);
 
 function normalizeProviderFieldDefaultValue(value: unknown): string | number | boolean | null {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -69,29 +70,31 @@ function buildRegistryAdapter(plugin: PluginRegistryItem): AiProviderAdapter | n
       (item): item is AiProviderModelType => AI_PROVIDER_MODEL_TYPES.includes(item as AiProviderModelType),
     ),
     llm_workflow: capability.llm_workflow,
-    field_schema: capability.field_schema.map((field) => ({
-      key: String(field.key ?? ''),
-      label: String(field.label ?? field.key ?? ''),
-      field_type: (
-        field.field_type === 'text'
-        || field.field_type === 'secret'
-        || field.field_type === 'number'
-        || field.field_type === 'select'
-        || field.field_type === 'boolean'
-          ? field.field_type
-          : 'text'
-      ),
-      required: Boolean(field.required),
-      placeholder: typeof field.placeholder === 'string' ? field.placeholder : null,
-      help_text: typeof field.help_text === 'string' ? field.help_text : null,
-      default_value: normalizeProviderFieldDefaultValue(field.default_value),
-      options: Array.isArray(field.options)
-        ? field.options.map((option) => ({
-          label: String(option.label ?? option.value ?? ''),
-          value: String(option.value ?? ''),
-        }))
-        : [],
-    })),
+    field_schema: capability.field_schema
+      .filter(field => !HIDDEN_PROVIDER_FIELD_KEYS.has(String(field.key ?? '')))
+      .map((field) => ({
+        key: String(field.key ?? ''),
+        label: String(field.label ?? field.key ?? ''),
+        field_type: (
+          field.field_type === 'text'
+          || field.field_type === 'secret'
+          || field.field_type === 'number'
+          || field.field_type === 'select'
+          || field.field_type === 'boolean'
+            ? field.field_type
+            : 'text'
+        ),
+        required: Boolean(field.required),
+        placeholder: typeof field.placeholder === 'string' ? field.placeholder : null,
+        help_text: typeof field.help_text === 'string' ? field.help_text : null,
+        default_value: normalizeProviderFieldDefaultValue(field.default_value),
+        options: Array.isArray(field.options)
+          ? field.options.map((option) => ({
+            label: String(option.label ?? option.value ?? ''),
+            value: String(option.value ?? ''),
+          }))
+          : [],
+      })),
   };
 }
 

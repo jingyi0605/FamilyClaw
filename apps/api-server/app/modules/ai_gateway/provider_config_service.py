@@ -69,6 +69,7 @@ def _build_adapter_reads(rows: list[dict[str, object]]) -> list[AiProviderAdapte
                     ],
                 )
                 for field in list(row["field_schema"])
+                if str(field.get("key") or "") != "provider_code"
             ],
         )
         for row in rows

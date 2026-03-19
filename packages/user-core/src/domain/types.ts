@@ -936,7 +936,7 @@ export type AiProviderProfile = {
 };
 
 export type AiProviderProfileCreatePayload = {
-  provider_code: string;
+  provider_code?: string | null;
   display_name: string;
   transport_type: AiProviderTransportType;
   api_family: AiProviderApiFamily;

@@ -127,7 +127,6 @@ export function AiProviderEditorDialog(props: {
               saving
               || !currentAdapter
               || !form.displayName.trim()
-              || !form.providerCode.trim()
               || !form.modelName.trim()
               || assignedCapabilities.length === 0
             }
@@ -195,7 +194,7 @@ export function AiProviderEditorDialog(props: {
             {/* 动态表单配置 */}
             <div className="ai-editor-section">
               <div className="ai-editor-grid">
-                {currentAdapter.field_schema.map(field => {
+                {currentAdapter.field_schema.filter(field => field.key !== 'provider_code').map(field => {
                   const localizedField = getLocalizedField(field, locale);
                   const fieldValue = readFieldValue(form, field.key);
                   const inputId = `${householdId}-${field.key}`;
@@ -238,11 +237,16 @@ export function AiProviderEditorDialog(props: {
                         <input
                           id={inputId}
                           className="form-input form-input--compact"
-                          type={localizedField.field_type === 'number' ? 'number' : 'text'}
+                          type={
+                            localizedField.field_type === 'secret'
+                              ? 'password'
+                              : localizedField.field_type === 'number'
+                                ? 'number'
+                                : 'text'
+                          }
                           value={fieldValue}
                           onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
                           placeholder={localizedField.placeholder ?? undefined}
-                          disabled={Boolean(editingProviderId && field.key === 'provider_code')}
                         />
                       )}
                       {localizedField.help_text ? <p className="ai-editor-hint">{localizedField.help_text}</p> : null}

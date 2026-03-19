@@ -68,7 +68,6 @@ export function buildProviderFormState(adapter?: AiProviderAdapter | null) {
   return {
     adapterCode: adapter?.adapter_code ?? '',
     displayName: '',
-    providerCode: '',
     baseUrl: readAdapterDefault(adapter, 'base_url'),
     secretRef: '',
     modelName: '',
@@ -90,7 +89,6 @@ export function toProviderFormState(provider: AiProviderProfile, adapter?: AiPro
   return {
     adapterCode: getProviderAdapterCode(provider) || adapter?.adapter_code || '',
     displayName: provider.display_name,
-    providerCode: provider.provider_code,
     baseUrl: provider.base_url ?? '',
     secretRef: provider.secret_ref ?? '',
     modelName: getProviderModelName(provider) ?? '',
@@ -104,7 +102,6 @@ export function toProviderFormState(provider: AiProviderProfile, adapter?: AiPro
 
 export function buildCreateProviderPayload(form: ReturnType<typeof buildProviderFormState>, adapter: AiProviderAdapter): AiProviderProfileCreatePayload {
   return {
-    provider_code: form.providerCode.trim() || buildSetupProviderCode(adapter.adapter_code),
     display_name: form.displayName.trim(),
     transport_type: adapter.transport_type,
     api_family: adapter.api_family,
@@ -147,7 +144,6 @@ export function buildUpdateProviderPayload(form: ReturnType<typeof buildProvider
 
 export function readProviderFormValue(form: ReturnType<typeof buildProviderFormState>, fieldKey: string) {
   if (fieldKey === 'display_name') return form.displayName;
-  if (fieldKey === 'provider_code') return form.providerCode;
   if (fieldKey === 'base_url') return form.baseUrl;
   if (fieldKey === 'secret_ref') return form.secretRef;
   if (fieldKey === 'model_name') return form.modelName;
@@ -158,7 +154,6 @@ export function readProviderFormValue(form: ReturnType<typeof buildProviderFormS
 
 export function assignProviderFormValue(form: ReturnType<typeof buildProviderFormState>, fieldKey: string, value: string) {
   if (fieldKey === 'display_name') return { ...form, displayName: value };
-  if (fieldKey === 'provider_code') return { ...form, providerCode: value };
   if (fieldKey === 'base_url') return { ...form, baseUrl: value };
   if (fieldKey === 'secret_ref') return { ...form, secretRef: value };
   if (fieldKey === 'model_name') return { ...form, modelName: value };
@@ -229,6 +224,3 @@ function buildDynamicExtraConfig(dynamicFields: Record<string, string>, adapter:
   return result;
 }
 
-function buildSetupProviderCode(adapterCode: string) {
-  return `setup-${adapterCode}-${Date.now()}`;
-}

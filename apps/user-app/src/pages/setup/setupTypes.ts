@@ -90,7 +90,7 @@ export type AiProviderProfile = {
   updated_at: string;
 };
 export type AiProviderProfileCreatePayload = {
-  provider_code: string;
+  provider_code?: string | null;
   display_name: string;
   transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
   api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';

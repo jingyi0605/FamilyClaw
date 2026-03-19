@@ -443,7 +443,7 @@
   'settings.ai.provider.field.displayName': '显示名称',
   'settings.ai.provider.field.providerCode': '供应商编码',
   'settings.ai.provider.field.baseUrl': 'Base URL',
-  'settings.ai.provider.field.secretRef': '密钥引用',
+  'settings.ai.provider.field.secretRef': 'APIKEY',
   'settings.ai.provider.field.modelName': '模型名',
   'settings.ai.provider.field.privacyLevel': '隐私等级',
   'settings.ai.provider.field.anthropicVersion': 'Anthropic 版本',

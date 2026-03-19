@@ -94,7 +94,7 @@ class AiConfigCenterTests(unittest.TestCase):
 
         chatgpt = next(item for item in adapters if item.adapter_code == "chatgpt")
         field_keys = {field.key for field in chatgpt.field_schema}
-        self.assertIn("provider_code", field_keys)
+        self.assertNotIn("provider_code", field_keys)
         self.assertIn("model_name", field_keys)
         self.assertIn("secret_ref", field_keys)
 
@@ -141,6 +141,46 @@ class AiConfigCenterTests(unittest.TestCase):
             ),
         )
         self.assertNotIn("default_request_body", provider.extra_config)
+
+    def test_create_provider_profile_auto_generates_provider_code(self) -> None:
+        first = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                display_name="Auto ChatGPT One",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://api.openai.com/v1",
+                secret_ref="env://OPENAI_API_KEY",
+                enabled=True,
+                supported_capabilities=["text"],
+                privacy_level="public_cloud",
+                extra_config={
+                    "adapter_code": "chatgpt",
+                    "model_name": "gpt-4o-mini",
+                },
+            ),
+        )
+        second = create_provider_profile(
+            self.db,
+            AiProviderProfileCreate(
+                display_name="Auto ChatGPT Two",
+                transport_type="openai_compatible",
+                api_family="openai_chat_completions",
+                base_url="https://api.openai.com/v1",
+                secret_ref="env://OPENAI_API_KEY",
+                enabled=True,
+                supported_capabilities=["text"],
+                privacy_level="public_cloud",
+                extra_config={
+                    "adapter_code": "chatgpt",
+                    "model_name": "gpt-4o-mini",
+                },
+            ),
+        )
+
+        self.assertRegex(first.provider_code, r"^chatgpt-[a-f0-9]{12}$")
+        self.assertRegex(second.provider_code, r"^chatgpt-[a-f0-9]{12}$")
+        self.assertNotEqual(first.provider_code, second.provider_code)
 
     def test_runtime_policy_default_entry_stays_unique(self) -> None:
         household = create_household(

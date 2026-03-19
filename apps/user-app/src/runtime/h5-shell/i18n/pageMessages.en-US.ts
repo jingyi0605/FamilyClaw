@@ -436,7 +436,7 @@
   'settings.ai.provider.field.displayName': 'Display name',
   'settings.ai.provider.field.providerCode': 'Provider code',
   'settings.ai.provider.field.baseUrl': 'Base URL',
-  'settings.ai.provider.field.secretRef': 'Secret reference',
+  'settings.ai.provider.field.secretRef': 'APIKEY',
   'settings.ai.provider.field.modelName': 'Model name',
   'settings.ai.provider.field.privacyLevel': 'Privacy level',
   'settings.ai.provider.field.anthropicVersion': 'Anthropic version',
