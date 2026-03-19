@@ -393,6 +393,7 @@ input, select, textarea {
 
 /* 底部区域 */
 .shell-nav__footer {
+  margin-top: auto; /* 固定在底部 */
   padding: var(--spacing-sm);
   border-top: 1px solid color-mix(in srgb, var(--border-light) 60%, transparent);
   display: flex;
