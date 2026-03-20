@@ -29,8 +29,6 @@ docker run -d \
   --name familyclaw \
   -p 8080:8080 \
   -p 4399:4399 \
-  -e FAMILYCLAW_DB_PASSWORD='change-me' \
-  -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' \
   -v /srv/familyclaw-data:/data \
   jingyi0605/familyclaw:0.1.0
 ```
@@ -39,9 +37,13 @@ Parameter notes, based on the repository Dockerfile and scripts:
 
 - `8080`: Nginx reverse-proxies both the H5 frontend and backend API.
 - `4399`: voice gateway, `open-xiaoai-gateway`. Remove this mapping if you do not need voice.
-- `FAMILYCLAW_DB_PASSWORD`: password for the PostgreSQL account inside the container. This must be set.
-- `FAMILYCLAW_VOICE_GATEWAY_TOKEN`: auth token for the voice gateway. Replace it even if you keep voice optional.
 - `-v /srv/familyclaw-data:/data`: persists database files, plugins, logs, and related data.
+
+On first start, the container auto-generates a random database password and a random voice gateway token, then stores them in:
+- `/data/runtime/secrets/db-password`
+- `/data/runtime/secrets/voice-gateway-token`
+
+If you want to take over either value yourself, you can still pass `FAMILYCLAW_DB_PASSWORD` or `FAMILYCLAW_VOICE_GATEWAY_TOKEN`. The container will use your value and sync it back into the same secrets files.
 
 ## Verify after startup
 
@@ -55,7 +57,7 @@ Parameter notes, based on the repository Dockerfile and scripts:
 
 - Cannot reach port 8080: check your firewall or whether another service already uses the port.
 - The container does not start: make sure the image pulled successfully, or remove the old container first with `docker rm -f familyclaw`.
-- Login shows database errors: confirm `FAMILYCLAW_DB_PASSWORD` is not empty and the mounted data volume is writable.
+- Login shows database errors: confirm `/data/runtime/secrets/db-password` was created and the mounted data volume is writable.
 - Voice-related errors while you do not use voice: you can skip the `4399` port mapping and ignore voice gateway logs.
 
 ## Uninstall

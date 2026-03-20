@@ -30,13 +30,11 @@ docker run -d \
   --name familyclaw \
   -p 8080:8080 \
   -p 4399:4399 \
-  -e FAMILYCLAW_DB_PASSWORD='change-me' \
-  -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' \
   -v /srv/familyclaw-data:/data \
   jingyi0605/familyclaw:0.1.0
 ```
 
-3. About one minute later, open `http://<server-ip>:8080` in a browser. If the login page appears, the system is up.
+3. On first start, the container generates a random database password and voice gateway token, then stores them under `/srv/familyclaw-data/runtime/secrets/`. About one minute later, open `http://<server-ip>:8080` in a browser. If the login page appears, the system is up.
 4. The initial account is `user` / `user`. After login, follow the setup flow to change the account and password.
 
 Placeholder for screenshot: login page after Docker startup

@@ -32,11 +32,10 @@ outline: deep
      --name familyclaw \
      -p 8080:8080 \
      -p 4399:4399 \
-     -e FAMILYCLAW_DB_PASSWORD='change-me' \
-     -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' \
      -v /srv/familyclaw-data:/data \
      jingyi0605/familyclaw:0.1.0
    ```
+   首次启动会自动把随机数据库密码和语音网关 token 写入 `/srv/familyclaw-data/runtime/secrets/`。
 4. 验证：
    - `docker ps` 显示容器 Up。
    - 浏览器访问 `http://服务器IP:8080` 看到登录页。

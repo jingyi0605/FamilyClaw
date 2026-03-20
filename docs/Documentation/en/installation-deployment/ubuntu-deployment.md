@@ -32,11 +32,10 @@ outline: deep
      --name familyclaw \
      -p 8080:8080 \
      -p 4399:4399 \
-     -e FAMILYCLAW_DB_PASSWORD='change-me' \
-     -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' \
      -v /srv/familyclaw-data:/data \
      jingyi0605/familyclaw:0.1.0
    ```
+   On first start, the container writes the generated database password and voice gateway token into `/srv/familyclaw-data/runtime/secrets/`.
 4. Verify:
    - `docker ps` should show the container as `Up`.
    - Opening `http://<server-ip>:8080` should show the login page.

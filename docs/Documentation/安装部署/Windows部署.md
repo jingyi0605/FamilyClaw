@@ -24,12 +24,10 @@ outline: deep
      --name familyclaw `
      -p 8080:8080 `
      -p 4399:4399 `
-     -e FAMILYCLAW_DB_PASSWORD='change-me' `
-     -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' `
      -v D:/familyclaw-data:/data `
      jingyi0605/familyclaw:0.1.0
    ```
-   （Windows 下卷路径请用 `/` 分隔）
+   （Windows 下卷路径请用 `/` 分隔。首次启动会把随机数据库密码和语音网关 token 写入 `D:/familyclaw-data/runtime/secrets/`）
 4. 浏览器访问 `http://localhost:8080` 看到登录页即成功。
 
 【配图占位：Docker Desktop 容器列表】

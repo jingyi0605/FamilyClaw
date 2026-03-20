@@ -29,8 +29,6 @@ docker run -d \
   --name familyclaw \
   -p 8080:8080 \
   -p 4399:4399 \
-  -e FAMILYCLAW_DB_PASSWORD='change-me' \
-  -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' \
   -v /srv/familyclaw-data:/data \
   jingyi0605/familyclaw:0.1.0
 ```
@@ -39,9 +37,13 @@ docker run -d \
 
 - `8080`：Nginx 反代到前端 H5 与后端 API。
 - `4399`：语音网关（open-xiaoai-gateway），不用语音可去掉端口映射。
-- `FAMILYCLAW_DB_PASSWORD`：容器内 PostgreSQL 账户密码，必须设置。
-- `FAMILYCLAW_VOICE_GATEWAY_TOKEN`：语音网关鉴权 token，语音不用可留默认，但建议替换。
 - `-v /srv/familyclaw-data:/data`：持久化数据库、插件、日志等。
+
+首次启动时，容器会自动生成随机数据库密码和语音网关 token，并写入：
+- `/data/runtime/secrets/db-password`
+- `/data/runtime/secrets/voice-gateway-token`
+
+如果你明确要接管这两个值，仍然可以手工传 `FAMILYCLAW_DB_PASSWORD` 和 `FAMILYCLAW_VOICE_GATEWAY_TOKEN`；容器会优先使用你传入的值并同步回上面的 secrets 文件。
 
 ## 启动后验证
 
@@ -55,7 +57,7 @@ docker run -d \
 
 - 访问不到 8080：检查防火墙或端口是否被占用。
 - 无法启动容器：确认 Docker 拉镜像成功，或清理旧同名容器 `docker rm -f familyclaw`。
-- 登录后提示数据库错误：确认 `FAMILYCLAW_DB_PASSWORD` 不为空且数据卷可写。
+- 登录后提示数据库错误：先确认 `/data/runtime/secrets/db-password` 已生成，再确认数据卷可写。
 - 语音相关报错但不用语音：可不映射 4399 端口，忽略语音网关日志。
 
 ## 需要卸载

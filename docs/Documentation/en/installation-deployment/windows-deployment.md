@@ -24,12 +24,10 @@ outline: deep
      --name familyclaw `
      -p 8080:8080 `
      -p 4399:4399 `
-     -e FAMILYCLAW_DB_PASSWORD='change-me' `
-     -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' `
      -v D:/familyclaw-data:/data `
      jingyi0605/familyclaw:0.1.0
    ```
-   Use `/` in the mounted path on Windows.
+   Use `/` in the mounted path on Windows. On first start, the generated database password and voice gateway token are written into `D:/familyclaw-data/runtime/secrets/`.
 4. Open `http://localhost:8080` in a browser. If the login page appears, startup succeeded.
 
 Placeholder for screenshot: Docker Desktop container list
