@@ -199,6 +199,19 @@ def _resolve_child_path(base: Path, relative_path: str, *, field_name: str) -> P
     return candidate
 
 
+def _require_path_within_root(path: Path, root: Path, *, field_name: str) -> Path:
+    candidate = path.resolve()
+    root_resolved = root.resolve()
+    if candidate != root_resolved and root_resolved not in candidate.parents:
+        raise PluginMarketplaceServiceError(
+            f"{field_name} 必须位于 install.package_root 目录内。",
+            error_code="install_target_invalid",
+            field=field_name,
+            status_code=409,
+        )
+    return candidate
+
+
 def _load_json_or_default(payload: str | None, *, fallback: Any) -> Any:
     loaded = load_json(payload)
     return fallback if loaded is None else loaded
@@ -453,6 +466,36 @@ def _build_repository_metrics_or_none(
         )
 
 
+def _resolve_directory_item_digest(item: dict[str, Any]) -> str | None:
+    for field_name in ("sha", "id", "digest"):
+        raw_value = item.get(field_name)
+        if raw_value is None:
+            continue
+        normalized = str(raw_value).strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _build_snapshot_digest(
+    *,
+    raw_entry: dict[str, Any],
+    sync_status: MarketplaceEntrySyncStatus,
+    sync_error: dict[str, Any] | None,
+    directory_digest: str | None,
+) -> str:
+    if directory_digest:
+        return directory_digest
+    payload = {
+        "raw_entry": raw_entry,
+        "sync_status": sync_status,
+        "sync_error": sync_error,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 def _build_snapshot_row(
     *,
     source: PluginMarketplaceSource,
@@ -462,7 +505,14 @@ def _build_snapshot_row(
     sync_status: MarketplaceEntrySyncStatus,
     sync_error: dict[str, Any] | None,
     synced_at: str,
+    directory_digest: str | None,
 ) -> PluginMarketplaceEntrySnapshot:
+    snapshot_digest = _build_snapshot_digest(
+        raw_entry=raw_entry,
+        sync_status=sync_status,
+        sync_error=sync_error,
+        directory_digest=directory_digest,
+    )
     if entry is None:
         return PluginMarketplaceEntrySnapshot(
             id=new_uuid(),
@@ -483,7 +533,7 @@ def _build_snapshot_row(
             raw_entry_json=dump_json(raw_entry) or "{}",
             risk_level="high",
             latest_version="invalid",
-            manifest_digest=None,
+            manifest_digest=snapshot_digest,
             sync_status=sync_status,
             sync_error_json=dump_json(sync_error) if sync_error is not None else None,
             synced_at=synced_at,
@@ -512,11 +562,39 @@ def _build_snapshot_row(
         raw_entry_json=dump_json(raw_entry) or "{}",
         risk_level=entry.risk_level,
         latest_version=entry.latest_version,
-        manifest_digest=None,
+        manifest_digest=snapshot_digest,
         sync_status=sync_status,
         sync_error_json=dump_json(sync_error) if sync_error is not None else None,
         synced_at=synced_at,
     )
+
+
+def _replace_snapshot_row(
+    *,
+    current: PluginMarketplaceEntrySnapshot,
+    incoming: PluginMarketplaceEntrySnapshot,
+) -> PluginMarketplaceEntrySnapshot:
+    current.name = incoming.name
+    current.summary = incoming.summary
+    current.source_repo = incoming.source_repo
+    current.manifest_path = incoming.manifest_path
+    current.readme_url = incoming.readme_url
+    current.publisher_json = incoming.publisher_json
+    current.categories_json = incoming.categories_json
+    current.permissions_json = incoming.permissions_json
+    current.maintainers_json = incoming.maintainers_json
+    current.versions_json = incoming.versions_json
+    current.install_json = incoming.install_json
+    current.repository_metrics_json = incoming.repository_metrics_json
+    current.raw_entry_json = incoming.raw_entry_json
+    current.risk_level = incoming.risk_level
+    current.latest_version = incoming.latest_version
+    current.manifest_digest = incoming.manifest_digest
+    current.sync_status = incoming.sync_status
+    current.sync_error_json = incoming.sync_error_json
+    current.synced_at = incoming.synced_at
+    current.updated_at = utc_now_iso()
+    return current
 
 
 def _to_catalog_item(
@@ -858,7 +936,11 @@ def sync_marketplace_source(
         raise
 
     synced_at = utc_now_iso()
-    next_rows: list[PluginMarketplaceEntrySnapshot] = []
+    existing_rows = {
+        row.plugin_id: row
+        for row in repository.list_marketplace_entry_snapshots(db, source_id=source.source_id)
+    }
+    resolved_rows: list[PluginMarketplaceEntrySnapshot] = []
     errors: list[MarketplaceEntryErrorRead] = []
     seen_plugin_ids: set[str] = set()
 
@@ -878,6 +960,34 @@ def sync_marketplace_source(
             )
             continue
         seen_plugin_ids.add(plugin_id)
+        existing_row = existing_rows.pop(plugin_id, None)
+        directory_digest = _resolve_directory_item_digest(item)
+        if (
+            existing_row is not None
+            and directory_digest
+            and existing_row.manifest_digest == directory_digest
+        ):
+            if existing_row.sync_status == "invalid":
+                cached_error = _load_json_or_default(
+                    existing_row.sync_error_json,
+                    fallback={},
+                )
+                if isinstance(cached_error, dict):
+                    errors.append(
+                        MarketplaceEntryErrorRead(
+                            plugin_id=plugin_id,
+                            error_code=str(
+                                cached_error.get("error_code")
+                                or "market_repo_structure_invalid"
+                            ),
+                            detail=str(
+                                cached_error.get("detail")
+                                or "市场条目仍然无效。"
+                            ),
+                        )
+                    )
+            resolved_rows.append(existing_row)
+            continue
         entry_path = f"{source.entry_root}/{plugin_id}/{MARKETPLACE_ENTRY_FILE_NAME}"
         raw_entry: dict[str, Any] = {}
         entry_model: MarketplaceEntry | None = None
@@ -917,21 +1027,25 @@ def sync_marketplace_source(
             sync_error = {"error_code": error_code, "detail": detail}
             errors.append(MarketplaceEntryErrorRead(plugin_id=plugin_id, error_code=error_code, detail=detail))
 
-        next_rows.append(
-            _build_snapshot_row(
-                source=source,
-                plugin_id=plugin_id,
-                entry=entry_model,
-                raw_entry=raw_entry,
-                sync_status=sync_status,
-                sync_error=sync_error,
-                synced_at=synced_at,
-            )
+        incoming_row = _build_snapshot_row(
+            source=source,
+            plugin_id=plugin_id,
+            entry=entry_model,
+            raw_entry=raw_entry,
+            sync_status=sync_status,
+            sync_error=sync_error,
+            synced_at=synced_at,
+            directory_digest=directory_digest,
         )
+        if existing_row is None:
+            repository.add_marketplace_entry_snapshot(db, incoming_row)
+            resolved_rows.append(incoming_row)
+            continue
+        _replace_snapshot_row(current=existing_row, incoming=incoming_row)
+        resolved_rows.append(existing_row)
 
-    repository.delete_marketplace_entry_snapshots_for_source(db, source_id=source.source_id)
-    for row in next_rows:
-        repository.add_marketplace_entry_snapshot(db, row)
+    for stale_row in existing_rows.values():
+        db.delete(stale_row)
 
     source.market_id = manifest.market_id
     source.name = manifest.name
@@ -942,11 +1056,11 @@ def sync_marketplace_source(
     source.updated_at = synced_at
     db.flush()
 
-    ready_entries = sum(1 for row in next_rows if row.sync_status == "ready")
-    invalid_entries = len(next_rows) - ready_entries
+    ready_entries = sum(1 for row in resolved_rows if row.sync_status == "ready")
+    invalid_entries = len(resolved_rows) - ready_entries
     return MarketplaceSourceSyncResultRead(
         source=_to_source_read(source),
-        total_entries=len(next_rows),
+        total_entries=len(resolved_rows),
         ready_entries=ready_entries,
         invalid_entries=invalid_entries,
         errors=errors,
@@ -1144,8 +1258,17 @@ def _resolve_extracted_package_root(
     )
 
 
+def _resolve_archive_source_root(extracted_root: Path) -> Path:
+    children = [item for item in extracted_root.iterdir()]
+    if len(children) == 1 and children[0].is_dir():
+        return children[0].resolve()
+    return extracted_root.resolve()
+
+
 def _validate_manifest_consistency(
     *,
+    source_root: Path,
+    package_root: Path,
     manifest_path: Path,
     entry: MarketplaceEntry,
     installed_version: str,
@@ -1175,10 +1298,10 @@ def _validate_manifest_consistency(
             error_code="manifest_mismatch",
             status_code=409,
         )
-    plugin_root = manifest_path.parent.resolve()
-    readme_path = _resolve_child_path(plugin_root, entry.install.readme_path, field_name="install.readme_path")
+    _require_path_within_root(manifest_path, package_root, field_name="manifest_path")
+    readme_path = _resolve_child_path(source_root, entry.install.readme_path, field_name="install.readme_path")
     requirements_path = _resolve_child_path(
-        plugin_root,
+        source_root,
         entry.install.requirements_path,
         field_name="install.requirements_path",
     )
@@ -1382,9 +1505,12 @@ def create_marketplace_install_task(
         with tempfile.TemporaryDirectory(prefix="plugin-marketplace-") as temp_dir:
             extracted_root = Path(temp_dir).resolve()
             _extract_archive_bytes(content=content, destination=extracted_root)
-            package_root = _resolve_extracted_package_root(extracted_root=extracted_root, install_spec=entry.install)
-            manifest_path = _resolve_child_path(package_root, entry.manifest_path, field_name="manifest_path")
+            source_root = _resolve_archive_source_root(extracted_root)
+            package_root = _resolve_extracted_package_root(extracted_root=source_root, install_spec=entry.install)
+            manifest_path = _resolve_child_path(source_root, entry.manifest_path, field_name="manifest_path")
             _validate_manifest_consistency(
+                source_root=source_root,
+                package_root=package_root,
                 manifest_path=manifest_path,
                 entry=entry,
                 installed_version=version_entry.version,
@@ -1403,7 +1529,8 @@ def create_marketplace_install_task(
             target_root.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(package_root, target_root)
 
-        target_manifest_path = _resolve_child_path(target_root, entry.manifest_path, field_name="manifest_path")
+        relative_manifest_path = manifest_path.resolve().relative_to(package_root.resolve())
+        target_manifest_path = (target_root / relative_manifest_path).resolve()
         mount_row = _get_plugin_mount_row(db, household_id=payload.household_id, plugin_id=payload.plugin_id)
         if mount_row is None:
             register_plugin_mount(
@@ -1596,9 +1723,12 @@ def _switch_marketplace_instance_version(
         with tempfile.TemporaryDirectory(prefix="plugin-marketplace-version-switch-") as temp_dir:
             extracted_root = Path(temp_dir).resolve()
             _extract_archive_bytes(content=content, destination=extracted_root)
-            package_root = _resolve_extracted_package_root(extracted_root=extracted_root, install_spec=entry.install)
-            manifest_path = _resolve_child_path(package_root, entry.manifest_path, field_name="manifest_path")
+            source_root = _resolve_archive_source_root(extracted_root)
+            package_root = _resolve_extracted_package_root(extracted_root=source_root, install_spec=entry.install)
+            manifest_path = _resolve_child_path(source_root, entry.manifest_path, field_name="manifest_path")
             _validate_manifest_consistency(
+                source_root=source_root,
+                package_root=package_root,
                 manifest_path=manifest_path,
                 entry=entry,
                 installed_version=target_version_entry.version,
@@ -1615,7 +1745,8 @@ def _switch_marketplace_instance_version(
             target_root.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(package_root, target_root)
 
-        target_manifest_path = _resolve_child_path(target_root, entry.manifest_path, field_name="manifest_path")
+        relative_manifest_path = manifest_path.resolve().relative_to(package_root.resolve())
+        target_manifest_path = (target_root / relative_manifest_path).resolve()
         instance.source_id = source.source_id
         instance.installed_version = target_version_entry.version
         instance.install_status = "installed"
