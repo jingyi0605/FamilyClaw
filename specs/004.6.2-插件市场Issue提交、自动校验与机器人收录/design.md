@@ -19,6 +19,7 @@
 - `requirements.md` 需求 5
 - `requirements.md` 需求 6
 - `requirements.md` 需求 7
+- `requirements.md` 需求 8
 
 ### 1.3 技术约束
 
@@ -44,6 +45,14 @@
 
 这里故意不把“市场同步到 FamilyClaw 实例”塞进来，因为那已经是 `004.6` 现有链路负责的事情。
 
+已收录插件的后续版本同步，是另一条并行支线：
+
+1. 定时扫描现有 `plugins/*/entry.json`
+2. 读取每个条目的 `source_repo`
+3. 只检查 release / tag 列表有没有新版本
+4. 只有发现新增 tag 时，才读取该 tag 下的 `manifest.json`
+5. 更新现有条目并生成版本同步 PR
+
 ### 2.2 模块职责
 
 | 模块 | 职责 | 输入 | 输出 |
@@ -53,6 +62,7 @@
 | Repository Validator | 校验插件仓库和关键文件 | 仓库地址、分支、路径 | 校验结果 |
 | Entry Generator | 生成市场条目草案 | Issue 字段、manifest、README、版本信息 | `entry.json` 草案 |
 | PR Orchestrator | 创建或更新机器人 PR | 条目草案、Issue 编号 | 可审核 PR |
+| Version Sync Scanner | 定时发现已收录插件的新版本 | 已收录 `entry.json`、插件仓库 release/tag | 更新后的条目和版本同步 PR |
 
 ### 2.3 关键流程
 
@@ -94,17 +104,30 @@
 3. 合并后，`plugins/<plugin_id>/entry.json` 成为正式市场条目。
 4. FamilyClaw 实例仍通过现有市场同步逻辑消费这份结果。
 
+#### 2.3.6 已收录插件版本定时同步流程
+
+1. 定时工作流遍历 `plugins/*/entry.json`。
+2. 对每个条目，只读取对应 `source_repo` 的 release/tag 列表。
+3. 如果没有新 tag，这个插件本轮直接跳过。
+4. 如果发现新 tag，才去读取这个 tag 对应的 `manifest.json`。
+5. 把新版本追加进原有 `versions[]`，并重算 `latest_version`。
+6. 如果同版本原来只是 branch 兜底记录，而现在有正式 tag，就把这个版本收口为 tag 记录。
+7. 生成或更新一个固定的版本同步 PR，等待人工审核。
+
+这条支线故意不做“自动删版本”。上游删 tag，不代表市场应该跟着删历史版本，否则会直接破坏用户已知可回滚版本。
+
 ## 3. 组件和接口
 
 ### 3.1 核心组件
 
-覆盖需求：1、2、3、4、5、6、7
+覆盖需求：1、2、3、4、5、6、7、8
 
 - `plugin-submission.yml`：Issue Form 定义文件，约束作者提交哪些字段。
 - `issue_parser`：把 GitHub Issue 文本转成结构化申请对象。
 - `repository_validator`：检查仓库、`manifest`、README 和版本信息。
 - `entry_generator`：根据 Issue 和插件仓库事实生成 `entry.json`。
 - `pr_orchestrator`：负责创建、更新 PR，并回写 Issue 状态。
+- `version_sync_scanner`：负责定时扫描已收录条目对应仓库的 release/tag，并只在发现新版本时补写条目。
 
 ### 3.2 数据结构
 
@@ -192,6 +215,15 @@
 - 校验：与市场 schema 一致、与 `manifest` 一致、版本列表自洽
 - 错误：字段冲突、条目不完整、自动生成失败
 
+#### 3.3.4 定时版本同步工作流
+
+- 类型：GitHub Actions Workflow
+- 路径或标识：`.github/workflows/marketplace-version-sync.yml`
+- 输入：定时器、手工 `workflow_dispatch`
+- 输出：更新后的 `plugins/<plugin_id>/entry.json`、版本同步 PR、工作流摘要
+- 校验：只增量发现新增 tag；只读取新增 tag 的 `manifest.json`；不自动删旧版本
+- 错误：GitHub 限流、插件仓库 tag 与 manifest 不一致、PR 创建失败
+
 ## 4. 数据与状态模型
 
 ### 4.1 数据关系
@@ -202,6 +234,7 @@
 - 一个申请最多对应一个活跃机器人 PR
 - 一个合并后的 PR 对应一个正式市场条目
 - 正式市场条目仍然是市场仓库里的文件，不是 Issue，也不是 PR
+- 已收录条目后续可以被版本同步任务更新，但仍然必须通过新的 PR 才能进入默认分支
 
 也就是说，Issue 和 PR 都只是过程数据，`entry.json` 才是最终事实。
 
@@ -217,6 +250,11 @@
 | `approved` | 审核通过 | PR 合并 | 市场同步消费 |
 | `rejected` | 审核拒绝 | Issue/PR 被关闭并写明原因 | 重新提交新申请或重开 |
 
+补充一条版本同步边界：
+
+- 定时扫描发现新版本时，不复用收录 Issue 状态机，而是单独生成版本同步 PR
+- 这条 PR 仍然服从分支保护和人工审核，不会绕过审核直接写默认分支
+
 ## 5. 错误处理
 
 ### 5.1 错误类型
@@ -227,6 +265,7 @@
 - `entry_generation_failed`：自动生成市场条目失败
 - `pr_sync_failed`：机器人创建或更新 PR 失败
 - `automation_system_error`：GitHub 平台异常、限流或临时失败
+- `version_sync_failed`：定时扫描发现版本信息冲突，当前不能安全更新市场条目
 
 ### 5.2 错误响应格式
 
@@ -269,6 +308,12 @@
 
 **验证需求：** 需求 7
 
+### 6.4 属性 4：定时版本同步只做增量追加，不自动删历史版本
+
+*对于任何* 已收录插件，系统都应该满足：定时扫描只能追加新版本或把同版本 branch 记录收口为 tag 记录，不能因为上游删 tag 就自动删除市场中的历史版本。
+
+**验证需求：** 需求 8
+
 ## 7. 测试策略
 
 ### 7.1 单元测试
@@ -282,6 +327,7 @@
 - 从 Issue 示例到生成 PR 草案的完整脚本流程
 - 校验失败时的错误回写和状态更新
 - 同一 Issue 重跑时复用已有 PR
+- 已收录插件发布新 tag 后，定时任务只补抓新 tag 并更新现有条目
 
 ### 7.3 端到端测试
 
@@ -300,6 +346,7 @@
 | `requirements.md` 需求 5 | `design.md` §2.3.5、§6.2 | 分支保护检查、流程演练 |
 | `requirements.md` 需求 6 | `design.md` §2.3.4、§5.1、§5.3 | 重跑和错误反馈测试 |
 | `requirements.md` 需求 7 | `design.md` §2.1、§4.1、§6.3 | 人工走查、边界检查 |
+| `requirements.md` 需求 8 | `design.md` §2.3.6、§3.3.4、§6.4 | 定时扫描集成测试、版本追加测试 |
 
 ## 8. 风险与待确认项
 
@@ -308,6 +355,7 @@
 - GitHub Actions 权限不够时，机器人创建 PR 可能失败
 - 第三方仓库版本发布方式不统一，自动生成 `versions` 需要明确优先级和兜底边界
 - 如果 Issue Form 设计过于复杂，作者照样填不明白
+- 已收录插件数量增加后，定时扫描要坚持“先看 tag 列表，只有新增 tag 才抓 manifest”，不能偷懒退化成全量重扫
 
 ### 8.2 待确认项
 

@@ -127,6 +127,17 @@
 2. WHEN 插件进入官方市场 THEN System SHALL 通过现有市场同步链路被实例看见，而不是靠额外配置注入。
 3. WHEN 用户要接入第三方市场 THEN System SHALL 继续要求用户显式添加第三方市场源。
 
+### 需求 8：系统必须定时发现已收录插件的新版本并生成审核 PR
+
+**用户故事：** 作为市场维护者，我希望插件已经收录以后，后续 release / tag 能被定时发现并自动生成更新 PR，以便不用每次等作者重提一遍收录 Issue。
+
+#### 验收标准
+
+1. WHEN 已收录插件源码仓库发布新的 tag / release THEN System SHALL 在定时扫描时发现它。
+2. WHEN System 发现新的正式版本 tag THEN System SHALL 只读取新增 tag 对应的 `manifest.json`，而不是每轮重扫所有历史版本细节。
+3. WHEN System 发现新版本 THEN System SHALL 更新现有 `plugins/<plugin_id>/entry.json` 的 `versions[]` 和 `latest_version`，并创建或更新机器人 PR。
+4. WHEN 上游仓库删除旧 tag THEN System SHALL 不自动删除市场里已经存在的历史版本记录。
+
 ## 非功能需求
 
 ### 非功能需求 1：可理解性
