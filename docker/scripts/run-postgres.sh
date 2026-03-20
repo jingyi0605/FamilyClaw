@@ -6,18 +6,15 @@ export FAMILYCLAW_LOG_PREFIX="postgres"
 source /opt/familyclaw/docker/scripts/common.sh
 
 initialize_database() {
-  if [[ -s "${FAMILYCLAW_PGDATA}/PG_VERSION" ]]; then
-    return 0
+  if [[ ! -s "${FAMILYCLAW_PGDATA}/PG_VERSION" ]]; then
+    log "Initializing PostgreSQL cluster in ${FAMILYCLAW_PGDATA}"
+    ensure_runtime_layout
+    runuser -u postgres -- initdb -D "${FAMILYCLAW_PGDATA}" --username=postgres --auth-local=trust --auth-host=scram-sha-256
   fi
-
-  log "Initializing PostgreSQL cluster in ${FAMILYCLAW_PGDATA}"
-  ensure_runtime_layout
-
-  runuser -u postgres -- initdb -D "${FAMILYCLAW_PGDATA}" --username=postgres --auth-local=trust --auth-host=scram-sha-256
 
   runuser -u postgres -- pg_ctl -D "${FAMILYCLAW_PGDATA}" -w start -o "-c listen_addresses='' -k /var/run/postgresql -p ${FAMILYCLAW_DB_PORT}"
 
-  # 创建用户和数据库
+  # Sync the application role password with the persisted secret on every start.
   runuser -u postgres -- psql \
     --username postgres \
     --host /var/run/postgresql \

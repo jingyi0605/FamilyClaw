@@ -31,3 +31,4 @@ apps/user-app/config/**/*.js
 docs/Documentation/.vitepress/dist/
 docs/Documentation/.vitepress/cache/
 apps/familyclaw-www/
+apps/familyclaw-marketplace/

@@ -178,8 +178,6 @@ docker run -d \
   -p 8080:8080 \
   -p 4399:4399 \
   -v /srv/familyclaw-data:/data \
-  -e FAMILYCLAW_DB_PASSWORD='change-me' \
-  -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' \
   jingyi0605/familyclaw:0.1.0
 
 # 2. 等待服务启动（约 60 秒），然后打开浏览器访问
@@ -236,7 +234,7 @@ bash start-open-xiaoai-gateway.sh
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `FAMILYCLAW_DATABASE_URL` | PostgreSQL 数据库地址 | `postgresql+psycopg://familyclaw:change-me@127.0.0.1:5432/familyclaw` |
+| `FAMILYCLAW_DATABASE_URL` | PostgreSQL 数据库地址 | Docker 首次启动自动生成随机密码，并持久化到 `/data/runtime/secrets/db-password` |
 | `FAMILYCLAW_HOME_ASSISTANT_BASE_URL` | Home Assistant 地址 | `http://127.0.0.1:8123` |
 | `FAMILYCLAW_HOME_ASSISTANT_TOKEN` | Home Assistant 长期访问令牌 | 需要手动填写 |
 | `FAMILYCLAW_AI_DEFAULT_PROVIDER_CODE` | 默认 AI 供应商 | `local-ollama` |
@@ -537,8 +535,6 @@ docker run -d \
   -p 8080:8080 \
   -p 4399:4399 \
   -v /srv/familyclaw-data:/data \
-  -e FAMILYCLAW_DB_PASSWORD='change-me' \
-  -e FAMILYCLAW_VOICE_GATEWAY_TOKEN='replace-me' \
   jingyi0605/familyclaw:0.1.0
 
 # 2. Wait for startup (~60 seconds), then open your browser
@@ -595,7 +591,7 @@ bash start-open-xiaoai-gateway.sh
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `FAMILYCLAW_DATABASE_URL` | PostgreSQL connection string | `postgresql+psycopg://familyclaw:change-me@127.0.0.1:5432/familyclaw` |
+| `FAMILYCLAW_DATABASE_URL` | PostgreSQL connection string | Docker auto-generates a random password on first start and stores it in `/data/runtime/secrets/db-password` |
 | `FAMILYCLAW_HOME_ASSISTANT_BASE_URL` | Home Assistant URL | `http://127.0.0.1:8123` |
 | `FAMILYCLAW_HOME_ASSISTANT_TOKEN` | Home Assistant long-lived access token | Must be set manually |
 | `FAMILYCLAW_AI_DEFAULT_PROVIDER_CODE` | Default AI provider | `local-ollama` |

@@ -10,17 +10,83 @@ set -euo pipefail
 : "${FAMILYCLAW_RUNTIME_DIR:=${FAMILYCLAW_DATA_DIR}/runtime}"
 : "${FAMILYCLAW_PLUGIN_DATA_DIR:=${FAMILYCLAW_DATA_DIR}/plugins}"
 : "${FAMILYCLAW_VOICE_ARTIFACTS_DIR:=${FAMILYCLAW_DATA_DIR}/voice-runtime-artifacts}"
+: "${FAMILYCLAW_SECRET_DIR:=${FAMILYCLAW_RUNTIME_DIR}/secrets}"
+: "${FAMILYCLAW_DB_PASSWORD_FILE:=${FAMILYCLAW_SECRET_DIR}/db-password}"
+: "${FAMILYCLAW_VOICE_GATEWAY_TOKEN_FILE:=${FAMILYCLAW_SECRET_DIR}/voice-gateway-token}"
 : "${FAMILYCLAW_DB_HOST:=127.0.0.1}"
 : "${FAMILYCLAW_DB_PORT:=5432}"
 : "${FAMILYCLAW_DB_NAME:=familyclaw}"
 : "${FAMILYCLAW_DB_USER:=familyclaw}"
-: "${FAMILYCLAW_DB_PASSWORD:=change-me}"
 : "${FAMILYCLAW_API_PORT:=8000}"
 : "${FAMILYCLAW_GATEWAY_PORT:=4399}"
 : "${FAMILYCLAW_NGINX_PORT:=8080}"
 : "${FAMILYCLAW_ENABLE_GATEWAY:=1}"
 : "${FAMILYCLAW_RELEASE_MANIFEST_PATH:=${FAMILYCLAW_APP_ROOT}/release-manifest.json}"
 : "${FAMILYCLAW_LOG_PREFIX:=familyclaw-container}"
+
+log() {
+  printf '[%s] %s\n' "${FAMILYCLAW_LOG_PREFIX}" "$1"
+}
+
+generate_secret() {
+  local token_bytes="${1:-32}"
+  python - "${token_bytes}" <<'PY'
+from __future__ import annotations
+
+import secrets
+import sys
+
+token_bytes = int(sys.argv[1])
+print(secrets.token_urlsafe(token_bytes))
+PY
+}
+
+write_secret_file() {
+  local secret_file="$1"
+  local secret_value="$2"
+  local secret_dir
+  secret_dir="$(dirname "${secret_file}")"
+
+  mkdir -p "${secret_dir}"
+  chmod 700 "${secret_dir}"
+  (
+    umask 077
+    printf '%s\n' "${secret_value}" > "${secret_file}"
+  )
+  chmod 600 "${secret_file}"
+}
+
+load_or_create_secret() {
+  local var_name="$1"
+  local secret_file="$2"
+  local secret_label="$3"
+  local token_bytes="${4:-32}"
+  local current_value="${!var_name:-}"
+
+  if [[ -n "${current_value}" ]]; then
+    write_secret_file "${secret_file}" "${current_value}"
+    log "Using ${secret_label} from environment and syncing it to ${secret_file}"
+  elif [[ -s "${secret_file}" ]]; then
+    current_value="$(tr -d '\r\n' < "${secret_file}")"
+  else
+    current_value="$(generate_secret "${token_bytes}")"
+    write_secret_file "${secret_file}" "${current_value}"
+    log "Generated and persisted ${secret_label} at ${secret_file}"
+  fi
+
+  printf -v "${var_name}" '%s' "${current_value}"
+  export "${var_name}"
+}
+
+is_truthy() {
+  case "${1,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+load_or_create_secret FAMILYCLAW_DB_PASSWORD "${FAMILYCLAW_DB_PASSWORD_FILE}" "database password" 24
+load_or_create_secret FAMILYCLAW_VOICE_GATEWAY_TOKEN "${FAMILYCLAW_VOICE_GATEWAY_TOKEN_FILE}" "voice gateway token" 32
 
 export FAMILYCLAW_DATABASE_URL="${FAMILYCLAW_DATABASE_URL:-postgresql+psycopg://${FAMILYCLAW_DB_USER}:${FAMILYCLAW_DB_PASSWORD}@${FAMILYCLAW_DB_HOST}:${FAMILYCLAW_DB_PORT}/${FAMILYCLAW_DB_NAME}}"
 export FAMILYCLAW_PLUGIN_STORAGE_ROOT="${FAMILYCLAW_PLUGIN_STORAGE_ROOT:-${FAMILYCLAW_PLUGIN_DATA_DIR}}"
@@ -31,24 +97,12 @@ export FAMILYCLAW_RUNTIME_DIR
 export FAMILYCLAW_LOG_DIR
 export FAMILYCLAW_ENVIRONMENT="${FAMILYCLAW_ENVIRONMENT:-production}"
 export FAMILYCLAW_BUILD_CHANNEL="${FAMILYCLAW_BUILD_CHANNEL:-development}"
-export FAMILYCLAW_VOICE_GATEWAY_TOKEN="${FAMILYCLAW_VOICE_GATEWAY_TOKEN:-dev-voice-gateway-token}"
 export FAMILYCLAW_OPEN_XIAOAI_GATEWAY_API_SERVER_HTTP_URL="${FAMILYCLAW_OPEN_XIAOAI_GATEWAY_API_SERVER_HTTP_URL:-http://127.0.0.1:${FAMILYCLAW_API_PORT}/api/v1}"
 export FAMILYCLAW_OPEN_XIAOAI_GATEWAY_API_SERVER_WS_URL="${FAMILYCLAW_OPEN_XIAOAI_GATEWAY_API_SERVER_WS_URL:-ws://127.0.0.1:${FAMILYCLAW_API_PORT}/api/v1/realtime/voice}"
 export FAMILYCLAW_OPEN_XIAOAI_GATEWAY_LISTEN_HOST="${FAMILYCLAW_OPEN_XIAOAI_GATEWAY_LISTEN_HOST:-0.0.0.0}"
 export FAMILYCLAW_OPEN_XIAOAI_GATEWAY_LISTEN_PORT="${FAMILYCLAW_OPEN_XIAOAI_GATEWAY_LISTEN_PORT:-${FAMILYCLAW_GATEWAY_PORT}}"
 export FAMILYCLAW_OPEN_XIAOAI_GATEWAY_VOICE_GATEWAY_TOKEN="${FAMILYCLAW_OPEN_XIAOAI_GATEWAY_VOICE_GATEWAY_TOKEN:-${FAMILYCLAW_VOICE_GATEWAY_TOKEN}}"
 export PGPASSWORD="${PGPASSWORD:-${FAMILYCLAW_DB_PASSWORD}}"
-
-log() {
-  printf '[%s] %s\n' "${FAMILYCLAW_LOG_PREFIX}" "$1"
-}
-
-is_truthy() {
-  case "${1,,}" in
-    1|true|yes|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 ensure_runtime_layout() {
   mkdir -p \
@@ -60,9 +114,11 @@ ensure_runtime_layout() {
     "${FAMILYCLAW_LOG_DIR}/postgres" \
     "${FAMILYCLAW_LOG_DIR}/nginx" \
     "${FAMILYCLAW_RUNTIME_DIR}" \
+    "${FAMILYCLAW_SECRET_DIR}" \
     "${FAMILYCLAW_PLUGIN_DATA_DIR}" \
     "${FAMILYCLAW_VOICE_ARTIFACTS_DIR}" \
     /var/run/postgresql
+  chmod 700 "${FAMILYCLAW_SECRET_DIR}"
   chown -R postgres:postgres "${FAMILYCLAW_PGDATA}" /var/run/postgresql
   chmod 700 "${FAMILYCLAW_PGDATA}"
 }
