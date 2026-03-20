@@ -119,7 +119,9 @@ const zhThemeConfig = createThemeConfig({
         items: [
           { text: '环境准备', link: '/开发文档/环境准备' },
           { text: '后端开发', link: '/开发文档/后端开发' },
-          { text: '插件开发', link: '/开发文档/插件开发' }
+          { text: '插件开发', link: '/开发文档/插件开发' },
+          { text: '本地调试', link: '/开发文档/本地调试' },
+          { text: '类型总表', link: '/开发文档/类型总表' }
         ]
       },
       {
@@ -128,8 +130,12 @@ const zhThemeConfig = createThemeConfig({
           { text: '插件规范', link: '/开发文档/插件规范' },
           { text: '目录结构', link: '/开发文档/目录结构' },
           { text: '字段规范', link: '/开发文档/字段规范' },
+          { text: '配置接入', link: '/开发文档/配置接入' },
           { text: '对接方式', link: '/开发文档/对接方式' },
+          { text: '计划任务与 OpenAPI', link: '/开发文档/计划任务与OpenAPI' },
           { text: '实例插件', link: '/开发文档/实例插件' },
+          { text: '从零开发插件', link: '/开发文档/从零开发插件' },
+          { text: '测试验证', link: '/开发文档/测试验证' },
           { text: '插件提交', link: '/开发文档/插件提交' }
         ]
       }
