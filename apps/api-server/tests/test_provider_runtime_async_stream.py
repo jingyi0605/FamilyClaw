@@ -5,7 +5,11 @@ import unittest
 
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.ai_gateway.models import AiProviderProfile
-from app.modules.ai_gateway.provider_runtime import ProviderAdapter, stream_provider_invoke
+from app.plugins._sdk.ai_provider_drivers import (
+    build_anthropic_messages_driver,
+    build_gemini_generate_content_driver,
+    build_openai_compatible_driver,
+)
 
 
 class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
@@ -28,7 +32,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
             api_version="test-model",
             secret_ref=secret_ref,
             enabled=True,
-            supported_capabilities_json="[]",
+            supported_capabilities_json='["text"]',
             privacy_level="local_only",
             latency_budget_ms=5000,
             cost_policy_json=None,
@@ -36,7 +40,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
             updated_at=utc_now_iso(),
         )
 
-    def test_stream_provider_invoke_does_not_block_event_loop(self) -> None:
+    def test_openai_driver_stream_does_not_block_event_loop(self) -> None:
         async def _run_case() -> tuple[list[str], float, float]:
             async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
                 try:
@@ -61,6 +65,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
             server = await asyncio.start_server(_handle_client, "127.0.0.1", 0)
             port = server.sockets[0].getsockname()[1]
             provider_profile = self._build_provider_profile(port)
+            driver = build_openai_compatible_driver()
 
             heartbeat_at = 0.0
             stream_done_at = 0.0
@@ -68,7 +73,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
 
             async def _consume_stream() -> None:
                 nonlocal stream_done_at
-                async for chunk in stream_provider_invoke(
+                async for chunk in driver.stream(
                     provider_profile=provider_profile,
                     payload={"messages": [{"role": "user", "content": "hello"}]},
                     timeout_ms=3000,
@@ -95,7 +100,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
         self.assertGreater(stream_done_at, 0)
         self.assertLess(heartbeat_at, stream_done_at)
 
-    def test_stream_provider_invoke_supports_anthropic_messages(self) -> None:
+    def test_anthropic_driver_stream_supports_sse(self) -> None:
         async def _run_case() -> tuple[list[str], float, float]:
             async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
                 try:
@@ -132,6 +137,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
                 base_path="/anthropic",
                 secret_ref="test-key",
             )
+            driver = build_anthropic_messages_driver()
 
             heartbeat_at = 0.0
             stream_done_at = 0.0
@@ -139,7 +145,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
 
             async def _consume_stream() -> None:
                 nonlocal stream_done_at
-                async for chunk in stream_provider_invoke(
+                async for chunk in driver.stream(
                     provider_profile=provider_profile,
                     payload={"messages": [{"role": "user", "content": "hello"}]},
                     timeout_ms=3000,
@@ -166,7 +172,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
         self.assertGreater(stream_done_at, 0)
         self.assertLess(heartbeat_at, stream_done_at)
 
-    def test_stream_provider_invoke_supports_gemini_sse(self) -> None:
+    def test_gemini_driver_stream_supports_sse(self) -> None:
         async def _run_case() -> tuple[list[str], float, float]:
             async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
                 try:
@@ -229,6 +235,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
                 base_path="/gemini",
                 secret_ref="test-key",
             )
+            driver = build_gemini_generate_content_driver()
 
             heartbeat_at = 0.0
             stream_done_at = 0.0
@@ -236,7 +243,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
 
             async def _consume_stream() -> None:
                 nonlocal stream_done_at
-                async for chunk in stream_provider_invoke(
+                async for chunk in driver.stream(
                     provider_profile=provider_profile,
                     payload={"messages": [{"role": "user", "content": "hello"}]},
                     timeout_ms=3000,
@@ -263,7 +270,7 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
         self.assertGreater(stream_done_at, 0)
         self.assertLess(heartbeat_at, stream_done_at)
 
-    def test_async_invoke_does_not_block_event_loop(self) -> None:
+    def test_openai_driver_async_invoke_does_not_block_event_loop(self) -> None:
         async def _run_case() -> tuple[str, float, float]:
             async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
                 try:
@@ -290,14 +297,14 @@ class ProviderRuntimeAsyncStreamTests(unittest.TestCase):
             server = await asyncio.start_server(_handle_client, "127.0.0.1", 0)
             port = server.sockets[0].getsockname()[1]
             provider_profile = self._build_provider_profile(port)
-            adapter = ProviderAdapter(transport_type="openai_compatible")
+            driver = build_openai_compatible_driver()
             heartbeat_at = 0.0
             invoke_done_at = 0.0
             text = ""
 
             async def _invoke() -> None:
                 nonlocal text, invoke_done_at
-                result = await adapter.ainvoke(
+                result = await driver.ainvoke(
                     capability="text",
                     provider_profile=provider_profile,
                     payload={"question": "hello"},

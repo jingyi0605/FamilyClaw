@@ -1,11 +1,11 @@
 import unittest
 
-from app.modules.ai_gateway.provider_runtime import _build_messages
+from app.plugins._sdk.ai_provider_messages import build_messages
 
 
 class ProviderRuntimeMessagesTests(unittest.TestCase):
     def test_qa_generation_prompt_forbids_claiming_execution_from_history(self) -> None:
-        messages = _build_messages(
+        messages = build_messages(
             capability="text",
             payload={
                 "question": "帮我关掉",
@@ -24,7 +24,7 @@ class ProviderRuntimeMessagesTests(unittest.TestCase):
         self.assertIn("书房灯", messages[0]["content"])
 
     def test_qa_generation_prompt_includes_realtime_context(self) -> None:
-        messages = _build_messages(
+        messages = build_messages(
             capability="text",
             payload={
                 "question": "今天要不要早点休息",

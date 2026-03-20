@@ -13,7 +13,6 @@ from app.modules.ai_gateway.provider_driver import resolve_ai_provider_driver_fo
 from app.modules.ai_gateway.provider_runtime import (
     ProviderRuntimeError,
     build_template_fallback_output,
-    get_provider_adapter,
 )
 from app.modules.ai_gateway.schemas import (
     AiApiFamily,

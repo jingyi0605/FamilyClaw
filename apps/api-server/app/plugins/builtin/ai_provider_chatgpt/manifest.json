@@ -7,7 +7,7 @@
   "risk_level": "low",
   "triggers": [],
   "entrypoints": {
-    "ai_provider": "app.modules.ai_gateway.provider_driver.build_openai_compatible_driver"
+    "ai_provider": "app.plugins.builtin.ai_provider_chatgpt.driver.build_driver"
   },
   "capabilities": {
     "ai_provider": {

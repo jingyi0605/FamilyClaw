@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import ActorContext
 from app.modules.ai_gateway import repository as ai_gateway_repository
 from app.modules.ai_gateway.gateway_service import ainvoke_capability, build_invocation_plan, invoke_capability, prepare_payload_for_invocation
-from app.modules.ai_gateway.provider_runtime import stream_provider_invoke
+from app.modules.ai_gateway.provider_driver import resolve_ai_provider_driver_for_profile
 from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
 from app.modules.agent.service import build_agent_runtime_context, resolve_effective_agent
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
@@ -224,7 +224,15 @@ async def stream_family_qa(
     provider_code = provider_profile.provider_code
     trace_id = plan.trace_id
     try:
-        async for chunk in stream_provider_invoke(
+        driver = resolve_ai_provider_driver_for_profile(
+            db,
+            provider_profile=provider_profile,
+            household_id=payload.household_id,
+        )
+        if driver is None:
+            raise ProviderRuntimeError("driver_unavailable", f"{provider_profile.provider_code} driver unavailable")
+
+        async for chunk in driver.stream(
             provider_profile=provider_profile,
             payload=prepared_payload.payload,
             timeout_ms=plan.timeout_ms,

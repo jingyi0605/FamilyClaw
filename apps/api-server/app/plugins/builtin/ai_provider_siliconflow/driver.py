@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from app.modules.ai_gateway.provider_driver import build_openai_compatible_driver
 from app.modules.ai_gateway.schemas import AiCapability
 from app.modules.plugin.schemas import PluginRegistryItem
 from app.plugins._ai_provider_runtime_helpers import (
@@ -11,6 +10,7 @@ from app.plugins._ai_provider_runtime_helpers import (
     read_int_value,
     read_provider_extra_config,
 )
+from app.plugins._sdk.ai_provider_drivers import build_openai_compatible_driver
 
 
 def build_driver(plugin: PluginRegistryItem | None = None):

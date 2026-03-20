@@ -7,8 +7,8 @@ import os
 import httpx
 
 from app.core.config import settings
-from app.modules.ai_gateway.provider_driver import build_openai_compatible_driver
 from app.plugins._ai_provider_runtime_helpers import WrappedAiProviderDriver
+from app.plugins._sdk.ai_provider_drivers import build_openai_compatible_driver
 
 
 def build_local_openai_driver(*, model_discovery_strategy: str):

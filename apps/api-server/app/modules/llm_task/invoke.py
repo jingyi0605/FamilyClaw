@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.ai_gateway import repository as ai_gateway_repo
 from app.modules.ai_gateway.gateway_service import ainvoke_capability, build_invocation_plan, invoke_capability
-from app.modules.ai_gateway.provider_runtime import stream_provider_invoke
+from app.modules.ai_gateway.provider_driver import resolve_ai_provider_driver_for_profile
 from app.modules.ai_gateway.schemas import AiCapability, AiGatewayInvokeRequest
 from app.modules.llm_task.definitions import get_task
 from app.modules.llm_task.parser import parse_to_model, strip_structured_output
@@ -216,7 +216,15 @@ async def stream_llm(
     sent_display_length = 0
     last_parsed_dump: dict[str, Any] | list[Any] | None = None
 
-    async for chunk in stream_provider_invoke(
+    driver = resolve_ai_provider_driver_for_profile(
+        db,
+        provider_profile=provider_profile,
+        household_id=household_id,
+    )
+    if driver is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="当前主提供商缺少可用 driver")
+
+    async for chunk in driver.stream(
         provider_profile=provider_profile,
         payload={
             "messages": messages,

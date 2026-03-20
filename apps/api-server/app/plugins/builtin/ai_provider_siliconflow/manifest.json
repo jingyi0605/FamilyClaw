@@ -7,7 +7,7 @@
   "risk_level": "low",
   "triggers": [],
   "entrypoints": {
-    "ai_provider": "driver.build_driver"
+    "ai_provider": "app.plugins.builtin.ai_provider_siliconflow.driver.build_driver"
   },
   "capabilities": {
     "ai_provider": {

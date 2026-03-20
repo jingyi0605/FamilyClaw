@@ -1744,7 +1744,7 @@ class PluginManifestTests(unittest.TestCase):
         )
         self.assertEqual("chatgpt", ai_provider_plugin.capabilities.ai_provider.adapter_code)
         self.assertEqual(
-            "app.modules.ai_gateway.provider_driver.build_openai_compatible_driver",
+            "app.plugins.builtin.ai_provider_chatgpt.driver.build_driver",
             ai_provider_plugin.entrypoints.ai_provider,
         )
         self.assertEqual(

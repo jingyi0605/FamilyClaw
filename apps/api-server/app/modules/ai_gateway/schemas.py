@@ -12,7 +12,7 @@ AiCapability = Literal[
 ]
 AiProviderModelType = Literal["llm", "embedding", "vision", "speech", "image"]
 AiTransportType = Literal["openai_compatible", "native_sdk", "local_gateway"]
-AiApiFamily = Literal["openai_chat_completions", "anthropic_messages", "gemini_generate_content"]
+AiApiFamily = str
 AiPrivacyLevel = Literal["local_only", "private_cloud", "public_cloud"]
 AiRoutingMode = Literal[
     "template_only",

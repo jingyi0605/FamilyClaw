@@ -12532,24 +12532,17 @@ body::before {
 
 /* 市场源卡片 */
 .marketplace-source-card {
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-xl);
   padding: var(--spacing-lg);
-  background:
-    linear-gradient(135deg,
-      color-mix(in srgb, var(--surface-secondary) 60%, var(--surface-primary)) 0%,
-      var(--surface-primary) 100%);
-  box-shadow:
-    0 1px 3px color-mix(in srgb, var(--color-black) 5%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--color-white) 5%, transparent);
-  transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .marketplace-source-card:hover {
-  border-color: color-mix(in srgb, var(--brand-primary) 40%, transparent);
-  box-shadow:
-    0 4px 12px color-mix(in srgb, var(--brand-primary) 10%, color-mix(in srgb, var(--color-black) 5%, transparent));
-  transform: translateY(-2px);
+  border-color: var(--brand-primary);
+  box-shadow: var(--shadow-md);
 }
 
 .marketplace-source-card__details {
@@ -12595,42 +12588,17 @@ body::before {
 
 /* 插件卡片 */
 .marketplace-card {
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-xl);
-  padding: var(--spacing-lg);
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--surface-secondary) 30%, var(--surface-primary)) 0%,
-      var(--surface-primary) 100%);
-  box-shadow:
-    0 2px 8px color-mix(in srgb, var(--color-black) 4%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--color-white) 8%, transparent);
-  transition: box-shadow 0.25s, border-color 0.25s, transform 0.25s;
-  position: relative;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s, border-color 0.2s;
   overflow: hidden;
 }
 
-.marketplace-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--brand-primary), color-mix(in srgb, var(--brand-secondary) 80%, var(--brand-primary)));
-  opacity: 0;
-  transition: opacity 0.25s;
-}
-
 .marketplace-card:hover {
-  border-color: color-mix(in srgb, var(--brand-primary) 35%, transparent);
-  box-shadow:
-    0 8px 24px color-mix(in srgb, var(--brand-primary) 8%, color-mix(in srgb, var(--color-black) 6%, transparent));
-  transform: translateY(-3px);
-}
-
-.marketplace-card:hover::before {
-  opacity: 1;
+  border-color: var(--brand-primary);
+  box-shadow: var(--shadow-md);
 }
 
 /* 卡片顶部和标题区域 */
@@ -12686,13 +12654,62 @@ body::before {
 /* 插件网格 */
 .marketplace-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: var(--spacing-lg);
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.marketplace-card--compact {
+  padding: var(--spacing-md);
+}
+
+.marketplace-card__button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.marketplace-card__open-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.marketplace-card__open-hint svg {
+  width: 14px;
+  height: 14px;
+}
+
+.marketplace-card--compact .marketplace-card__header {
+  margin-bottom: 0;
+  gap: var(--spacing-sm);
+}
+
+.marketplace-card--compact .marketplace-card__title {
+  font-size: var(--font-size-md);
+  line-height: 1.3;
+}
+
+.marketplace-card--compact .marketplace-card__title span:first-child {
+  margin-right: 0;
+  min-width: 0;
+}
+
+.marketplace-card--compact .marketplace-card__meta {
+  font-size: var(--font-size-xs);
 }
 
 /* 插件摘要 */
 .marketplace-card__summary {
-  margin: var(--spacing-md) 0;
+  margin: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   line-height: 1.6;
@@ -12702,13 +12719,20 @@ body::before {
   overflow: hidden;
 }
 
+.marketplace-card--compact .marketplace-card__summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  min-height: 3.2em;
+  color: var(--text-secondary);
+}
+
 /* 指标区域 */
 .marketplace-card__metrics {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-  margin-bottom: var(--spacing-md);
+  margin: 0;
   padding: var(--spacing-sm);
-  background: color-mix(in srgb, var(--surface-secondary) 50%, transparent);
+  background: var(--bg-input);
   border-radius: var(--radius-md);
 }
 
@@ -12725,14 +12749,17 @@ body::before {
 
 /* 标签区域 */
 .marketplace-card__tags {
-  margin-bottom: var(--spacing-sm);
+  margin: 0;
+}
+
+.marketplace-card--compact .marketplace-card__tags {
+  gap: 6px;
 }
 
 /* 操作按钮区域 */
 .marketplace-card__actions {
-  margin-top: var(--spacing-md);
   padding-top: var(--spacing-md);
-  border-top: 1px solid var(--border-secondary);
+  border-top: 1px solid var(--border-light);
   gap: var(--spacing-sm);
 }
 
@@ -12740,11 +12767,40 @@ body::before {
   flex-shrink: 0;
 }
 
+.marketplace-card__actions--detail {
+  margin-top: var(--spacing-lg);
+}
+
+.marketplace-card__facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--spacing-sm);
+}
+
+.marketplace-card--compact .marketplace-card__facts {
+  display: none;
+}
+
+.marketplace-card__fact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+}
+
+.marketplace-card__fact-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
 /* 提示文本 */
 .marketplace-card__hint {
   margin-top: var(--spacing-sm);
   padding: var(--spacing-sm);
-  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  background: var(--bg-input);
   border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
@@ -12758,9 +12814,7 @@ body::before {
   width: min(1180px, calc(100vw - 48px));
   max-height: calc(100vh - 80px);
   border-radius: var(--radius-xl);
-  box-shadow:
-    0 24px 80px color-mix(in srgb, var(--color-black) 25%, transparent),
-    0 8px 32px color-mix(in srgb, var(--color-black) 15%, transparent);
+  box-shadow: var(--shadow-lg);
 }
 
 .plugin-marketplace-modal__body {
@@ -12814,8 +12868,16 @@ body::before {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.plugin-marketplace-modal__toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: nowrap;
 }
 
 .plugin-marketplace-modal__header-actions .btn {
@@ -12835,12 +12897,227 @@ body::before {
 }
 
 .plugin-marketplace-modal__action-btn.btn--outline {
-  background: color-mix(in srgb, var(--bg-card) 82%, var(--brand-primary-light));
-  border-color: color-mix(in srgb, var(--brand-primary) 18%, var(--border));
+  background: var(--bg-card);
+  border-color: var(--border);
 }
 
 .plugin-marketplace-modal__action-btn.btn--outline:hover:not(:disabled) {
   box-shadow: var(--shadow-sm);
+}
+
+.plugin-marketplace-detail-modal {
+  width: min(1080px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+}
+
+.marketplace-detail-card,
+.marketplace-detail-section {
+  padding: var(--spacing-lg);
+}
+
+.marketplace-detail-card__hero {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.marketplace-detail-card__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.marketplace-detail-card__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-md);
+  align-items: start;
+}
+
+.marketplace-detail-card__desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+}
+
+.marketplace-detail-panel {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xl);
+  padding: 12px 14px;
+}
+
+.marketplace-detail-panel--intro {
+  background: var(--bg-card);
+}
+
+.marketplace-detail-panel--version {
+  background: var(--bg-input);
+}
+
+.marketplace-detail-panel__header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.marketplace-detail-panel__header h4 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.marketplace-detail-panel__hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: 1.3;
+}
+
+.marketplace-detail-panel__note {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.marketplace-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-lg);
+}
+
+.marketplace-detail-section {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xl);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.marketplace-detail-section h4 {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+}
+
+.marketplace-detail-section--full {
+  grid-column: 1 / -1;
+}
+
+.marketplace-detail-section__items {
+  display: grid;
+  gap: var(--spacing-sm);
+}
+
+.marketplace-detail-section__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.marketplace-detail-section__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.marketplace-detail-section__empty {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.marketplace-card__metrics--detail {
+  margin: 0;
+}
+
+.marketplace-card__tags--detail {
+  margin: 0;
+}
+
+.marketplace-version-list {
+  display: grid;
+  gap: var(--spacing-sm);
+}
+
+.marketplace-version-list__item {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  padding: var(--spacing-sm);
+}
+
+.marketplace-version-list__title {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  color: var(--text-primary);
+}
+
+.marketplace-version-list__meta {
+  margin-top: 4px;
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-detail-entrypoints.plugin-detail-entrypoints--marketplace {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px;
+}
+
+.plugin-detail-entrypoint-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+}
+
+.plugin-detail-entrypoint-key {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  line-height: 1.2;
+}
+
+.plugin-detail-entrypoint-value {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+  line-height: 1.15;
+  text-align: right;
+}
+
+.plugin-detail-entrypoint-value--success {
+  color: var(--color-success);
+}
+
+.plugin-detail-entrypoint-value--warning {
+  color: var(--color-warning);
+}
+
+.plugin-detail-entrypoint-value--danger {
+  color: var(--color-danger);
+}
+
+.plugin-detail-entrypoint-value--secondary {
+  color: var(--text-secondary);
 }
 
 /* 市场分区标题 */
@@ -13001,6 +13278,11 @@ body::before {
     justify-content: center;
   }
 
+  .marketplace-card__facts,
+  .marketplace-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
   .marketplace-grid {
     grid-template-columns: 1fr;
   }
@@ -13028,7 +13310,28 @@ body::before {
 
   .plugin-marketplace-modal__header-actions {
     width: 100%;
-    justify-content: flex-start;
+    justify-content: space-between;
+  }
+
+  .plugin-marketplace-modal__toolbar {
+    overflow-x: auto;
+  }
+
+  .plugin-marketplace-detail-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 32px);
+    margin: var(--spacing-xs);
+  }
+
+  .marketplace-detail-card__content,
+  .plugin-detail-entrypoints.plugin-detail-entrypoints--marketplace {
+    grid-template-columns: 1fr;
+  }
+
+  .marketplace-detail-card__hero,
+  .marketplace-version-list__title {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   /* 列表视图在移动端隐藏部分列 */

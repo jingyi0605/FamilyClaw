@@ -91,3 +91,13 @@
 2. `design.md`
 3. `tasks.md`
 4. `docs/开发者文档/插件开发/zh-CN/05-插件对接方式说明.md`
+
+## 本轮落地结果（2026-03-20）
+
+这一轮已经把协议边界真正落成代码：
+
+- 核心 `provider_runtime.py` 不再保留 OpenAI / Anthropic / Gemini 协议分支。
+- 新增 `app/plugins/_sdk/ai_provider_messages.py` 与 `app/plugins/_sdk/ai_provider_drivers.py`，协议编码、流解析、响应提取统一下沉到插件层 SDK。
+- builtin provider 的 manifest 全部改为指向各自插件目录内的 `driver.build_driver`。
+- `family_qa` 与 `llm_task` 的流式调用改为先解 provider driver，再调用 `driver.stream(...)`。
+- 新增后端回归测试，明确禁止核心重新出现协议 builder、协议分支和 manifest 回指核心。

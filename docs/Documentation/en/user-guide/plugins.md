@@ -25,18 +25,20 @@ outline: deep
   - Add new sources from GitHub, GitLab, Gitee, or Gitea.
   - Run source synchronization.
 - Work with plugins:
-  - Install, enable, or disable them.
-  - Review version governance states such as current version, upgrade available, or blocked.
-  - Check configuration requirements and risk warnings.
+  - Scan compact marketplace cards first, then open a detail dialog for the plugin summary, version status, provider, and categories.
+  - Install, enable, or disable them from the detail dialog.
+  - Review version states such as current version, upgrade available, or blocked.
+  - Check risk warnings before you install or enable a plugin.
 
 ## Typical workflow
 
 1. Open the plugins page and confirm the selected family in the top-right corner is correct.
-2. If you need a new plugin source, add the repository URL and branch in the marketplace source area, then click sync.
-3. In the list, select the target plugin:
-   - Review the detail panel and risk notes.
-   - Click **Install** or **Enable**. If you disable a plugin, all later execution paths that depend on it are blocked.
-4. If the plugin needs configuration, continue in the Settings page or the AI Settings page. For example, AI provider plugins still need secrets and provider fields to be filled in after installation.
+2. When you open the marketplace, the page refreshes enabled sources once automatically.
+3. If you need a new plugin source, add the repository URL and branch in the source settings dialog, then run sync.
+4. In the marketplace list, open the target plugin detail dialog and review the plugin summary, risk notes, version status, and provider information there.
+   The dialog separates the plugin introduction from version information and now keeps only end-user facing details. The version update status describes the relationship between the installed version and the marketplace version; if the plugin is not installed yet, the UI shows `Not installed`.
+5. Click **Install** or **Enable** when the plugin is ready. If you disable a plugin, all later execution paths that depend on it are blocked.
+6. If the plugin needs configuration, continue in the Settings page or the AI Settings page. For example, AI provider plugins still need secrets and provider fields to be filled in after installation.
 
 ## States and warnings
 
@@ -48,6 +50,7 @@ outline: deep
 
 - **Enable failed**: check whether the plugin's required configuration is complete or whether the page shows a disable reason.
 - **Marketplace source sync failed**: confirm the repository URL, branch, and network connectivity.
+- **Marketplace list did not change**: source refresh is incremental now. If nothing changed upstream, the backend keeps the existing snapshot instead of re-fetching everything.
 - **Theme or language pack stopped working**: if the related plugin is disabled or uninstalled, those resources stop applying. Switch to another available plugin resource.
 
 ## Completion standard
