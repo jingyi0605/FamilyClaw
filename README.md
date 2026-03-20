@@ -363,6 +363,7 @@ FamilyClaw 的诞生离不开以下优秀的开源项目：
 ### 参考项目
 
 - **[OpenClaw](https://github.com/openclaw/openclaw)** (MIT License) — 个人 AI 助手项目，FamilyClaw 在通讯渠道插件设计上参考了其优秀的架构理念
+- **[OpenClaw China](https://github.com/BytePioneer-AI/openclaw-china)** — 面向中国 IM 平台的 OpenClaw 扩展插件集合，FamilyClaw 在开发钉钉消息渠道时借鉴了此项目
 
 ### 基础设施
 
@@ -720,6 +721,7 @@ FamilyClaw wouldn't exist without these amazing open-source projects:
 ### Inspiration
 
 - **[OpenClaw](https://github.com/openclaw/openclaw)** (MIT License) — Personal AI assistant project. FamilyClaw drew architectural inspiration from its excellent channel plugin design
+- **[OpenClaw China](https://github.com/BytePioneer-AI/openclaw-china)** — OpenClaw extension plugin collection for Chinese IM platforms. FamilyClaw referenced this project when developing the DingTalk messaging channel
 
 ### Infrastructure
 
