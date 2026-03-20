@@ -4,92 +4,90 @@
 
 ## 这份 Spec 现在负责什么
 
-这份 Spec 已经从“迁移设计稿”收口为“现行主规则”。
+这份 Spec 负责定义 AI 供应商插件化的最终边界。
 
 从现在开始，凡是涉及下面这些问题，都以 `004.8.1` 为准：
 
-- 宿主和 `ai-provider` 插件的最终边界
-- `provider driver contract` 的稳定接口
-- 哪些代码必须留在宿主
-- 哪些供应商逻辑必须迁到插件
-- 旧 spec 和开发者文档该怎么降级成历史背景
+- 宿主和 `ai-provider` 插件的职责边界
+- `ai-provider manifest` 的正式契约
+- AI 设置页可以依赖哪些接口，不能依赖哪些核心结构
+- LLM 请求执行逻辑到底应该留在宿主还是下沉到插件
+- 后续新增供应商时，什么情况下算“只改插件”，什么情况下算“架构违规”
 
-## 迁移已经完成到什么程度
+## 当前判断
 
-第一阶段迁移已经把“AI 供应商事实来源”和“一部分厂商特例执行逻辑”从核心里挪出去了，当前以真实插件为准，不再以核心内置注册表为准。
+第一阶段迁移已经完成了这些事情：
 
-但这还不等于“彻底插件化”。
-当前仍然存在前端品牌资源、配置表单行为、模型发现交互和协议级执行桥仍落在核心的问题。
-`004.8.1` 现在继续负责把这部分剩余耦合彻底拆掉。
+- builtin AI 供应商已经落成真实插件目录
+- 核心不再维护 AI 供应商注册表真相源
+- 前端品牌资源、配置表单、模型发现已经开始按插件契约渲染
+- 现有一部分厂商特例已经迁入插件 driver
 
-已经完成的结果：
+但这还不算彻底完成。
 
-- `apps/api-server/app/modules/ai_gateway/provider_adapter_registry.py` 已删除
-- 宿主通过 `apps/api-server/app/modules/ai_gateway/provider_driver.py` 按插件 entrypoint 加载 provider driver
-- `apps/api-server/app/modules/plugin/service.py` 不再虚拟生成 `ai-provider` manifest
-- builtin AI 供应商现在是 `apps/api-server/app/plugins/builtin/ai_provider_*/manifest.json`
-- SiliconFlow、OpenRouter 这类厂商特例已经迁到各自插件 driver
-- `app/modules/ai_gateway` 和 `app/modules/plugin` 不再保留供应商专用分发表
+现在最关键的剩余问题是：  
+核心 `ai_gateway` 里仍然保留了按 `api_family` 驱动的请求拼装、流式解析和响应提取逻辑。  
+这会导致新增一个“协议不标准”的供应商时，还是得回头改核心。
+
+## 从这一版开始写死的三条红线
+
+1. 核心不得再出现任何供应商协议枚举驱动的请求拼装分支。
+2. 任一 provider 的请求编码、流解析、响应提取必须可在插件内独立实现。
+3. 新增 provider 如需改核心，只允许改“宿主通用能力”，不允许改“供应商协议逻辑”。
+
+这三条不是建议，是本 spec 的正式边界。
 
 ## 当前正式边界
 
 宿主保留：
 
-- 统一 AI Gateway
-- 路由和 fallback
-- 权限、审计、密钥、插件启停校验
-- 统一错误语义和统一调用结果
+- 统一 AI Gateway 入口
+- provider profile 管理
+- 路由、fallback、timeout、retry、状态收口
+- 权限、审计、密钥解析、插件启停校验
+- 通用 HTTP/SSE/JSON 调用能力
+- 统一错误语义、统一调用结果
 
 `ai-provider` 插件负责：
 
 - 供应商声明
-- 字段 schema
-- branding 资源与说明文案
-- config_ui 表单结构与动作声明
-- model_discovery 行为声明
+- 品牌资源和说明文案
+- 配置字段 schema
+- `config_ui`
+- `model_discovery`
 - provider driver entrypoint
-- 协议适配
-- 流式输出
-- 厂商特例和最小诊断信息
+- 请求编码
+- 流式解析
+- 响应提取
+- 供应商特例
+- 模型级参数修正
 
 一句话说明：
 
-宿主只负责平台规则和统一入口；供应商怎么接、怎么发请求、有什么厂商特例，都由 `ai-provider` 插件自己负责。
+宿主负责平台规则。  
+供应商怎么发请求、怎么编码、怎么解析、有哪些奇怪参数，全部由插件负责。
 
-再补一句硬规则：
-凡是“只有某个 AI 供应商才需要知道”的静态资源、表单形态、模型发现细节和厂商协议细节，都不允许继续写在核心前后端目录里。
+## 当前明确不允许什么
 
-## 现在明确不允许什么
+- 不允许核心继续维护 `api_family -> request builder`
+- 不允许核心继续维护 `api_family -> stream parser`
+- 不允许核心继续维护 `api_family -> response extractor`
+- 不允许在核心前端继续拼装 `PluginRegistryItem.capabilities.ai_provider` 来重建 adapter
+- 不允许新增供应商时去改核心里的 messages 结构、请求体字段名、供应商专属 header 或 SSE 事件格式
+- 不允许把供应商 Logo、说明文案、模型发现行为、表单动作塞回核心目录
 
-- 不允许再把新供应商写回核心注册表
-- 不允许再在 `app/modules/ai_gateway` 里新增厂商特判
-- 不允许再生成“虚拟 ai-provider manifest”冒充真实插件
-- 不允许开发者文档继续写“AI 供应商还只是元数据插件”
-- 不允许再在 `apps/user-app/src/pages/settings`、`apps/user-app/src/pages/setup` 里维护 `adapter_code -> logo/description/form behavior` 这类硬编码映射
-- 不允许再把 AI 供应商 Logo、说明文案、模型发现字段依赖、刷新按钮规则写进核心前端
-- 不允许再把 AI 供应商品牌资源文件放进核心前端静态目录
+## 下一阶段的真正目标
 
-## 和旧 spec 的关系
+下一阶段不是“再补几个特例”，而是把协议层边界彻底掰正：
 
-`004.8.1` 是 AI 供应商插件化的唯一主 spec。
-
-旧 spec 继续保留，但只保留历史角色：
-
-- `001.5`
-  - 记录 AI 配置中心第一轮页面插件化背景
-- `001.5.1`
-  - 记录官方对齐和 Coding Plan 扩展的历史阶段
-- `004.5`
-  - 记录通用插件系统、启停和版本治理的大边界
-- `004.8`
-  - 继续作为插件系统 V1 的父级 spec
-
-这些旧 spec 不再定义 AI 供应商的当前实现边界。
+- 把 `provider_runtime.py` 从“供应商协议执行层”拆成“宿主通用能力层”
+- 设计新的插件 driver 契约，让插件自己接管请求编码、流解析、响应提取
+- 把当前 OpenAI / Anthropic / Gemini 这三类协议实现迁成插件 SDK 或插件内实现
+- 让新增一个非标准供应商时，只改插件，不改核心
 
 ## 阅读顺序
 
 1. `requirements.md`
 2. `design.md`
 3. `tasks.md`
-4. `docs/README.md`
-5. `docs/开发设计规范/20260318-插件能力与接口规范-v1.md`
+4. `docs/开发者文档/插件开发/zh-CN/05-插件对接方式说明.md`

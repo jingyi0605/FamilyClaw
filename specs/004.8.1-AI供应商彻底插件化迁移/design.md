@@ -2,139 +2,186 @@
 
 状态：In Progress
 
-## 1. 最终结构
+## 1. 这次设计到底解决什么
 
-迁移完成后的结构固定为两层：
+这次不是再补几个供应商特例，而是把协议执行层的边界掰正。
 
-1. 宿主层
-   - `app/modules/ai_gateway/*`
-   - `app/modules/plugin/*`
-   - 负责统一网关、路由、权限、审计、密钥、插件状态、错误语义和结果收口
-2. `ai-provider` 插件层
-   - `app/plugins/builtin/ai_provider_*/`
-   - 负责供应商声明、品牌资源、字段 schema、配置 UI、模型发现声明、协议适配、流式输出和厂商特例
+如果一个新供应商需要：
 
-## 2. 当前代码落点
+- 特殊请求体
+- 特殊 messages 结构
+- 特殊 header
+- 特殊 stream/event
+- 特殊响应提取
 
-### 2.1 宿主侧
+那这些都必须能在插件里独立完成。  
+核心只保留宿主通用能力。
 
-- `apps/api-server/app/modules/ai_gateway/provider_driver.py`
-  - 定义并加载 provider driver contract
-- `apps/api-server/app/modules/ai_gateway/provider_config_service.py`
-  - 通过统一插件注册结果列出 provider adapter，并只做通用宿主整形
-- `apps/api-server/app/modules/ai_gateway/provider_runtime.py`
-  - 当前仍保留协议族运行时桥接；后续要继续评估哪些属于稳定宿主能力，哪些必须继续下沉
-- `apps/api-server/app/modules/ai_gateway/service.py`
-  - 只做宿主层配置处理，不再写供应商默认值特例
-- `apps/api-server/app/modules/plugin/service.py`
-  - 只维护统一插件注册表，不再虚拟生成 `ai-provider`
+## 2. 当前问题
 
-### 2.2 插件侧
+当前链路大致是这样：
 
-- `apps/api-server/app/plugins/builtin/ai_provider_*/manifest.json`
-  - 每个 builtin 供应商都有真实 manifest
-- `apps/api-server/app/plugins/_ai_provider_runtime_helpers.py`
-  - 提供插件侧 runtime helper
-- `apps/api-server/app/plugins/builtin/ai_provider_siliconflow/driver.py`
-  - 处理 SiliconFlow thinking 默认值和 token ceiling
-- `apps/api-server/app/plugins/builtin/ai_provider_openrouter/driver.py`
-  - 处理 OpenRouter 专用 header 映射
+1. 宿主根据 provider profile 找到 `ai-provider` 插件
+2. 宿主通过 `provider_driver.py` 加载插件 driver
+3. 插件 driver 目前只能在请求前“改一层参数”
+4. 真正的请求拼装、流解析、响应提取仍主要落在 `provider_runtime.py`
 
-### 2.3 已删除的旧核心实现
+这会带来三个问题：
 
-- `apps/api-server/app/modules/ai_gateway/provider_adapter_registry.py`
+1. 新增协议不标准的供应商时，还是容易回头改核心
+2. 核心会继续积累 `api_family` 分支
+3. 所谓“插件化”实际上只完成了配置和参数补丁，没有完成协议执行下沉
 
-它不再作为兼容桥保留，而是已经从核心移除。
+## 3. 目标结构
 
-## 3. provider driver contract
+迁移完成后的结构固定为两层。
 
-宿主只依赖一个稳定接口：
+### 3.1 宿主层
 
-- `invoke(...)`
-- `ainvoke(...)`
-- `stream(...)`
+位置：
 
-接口定义位于：
+- `apps/api-server/app/modules/ai_gateway/*`
+- `apps/api-server/app/modules/plugin/*`
 
-- `apps/api-server/app/modules/ai_gateway/provider_driver.py`
+只负责：
 
-宿主的使用方式：
+- 统一调用入口
+- provider profile 管理
+- 路由、fallback、timeout、retry
+- 权限、审计、密钥解析、插件状态校验
+- 通用 HTTP/SSE/JSON 工具能力
+- 统一错误语义与统一结果格式
 
-1. 从插件注册表找到目标 `ai-provider` 插件
-2. 读取 `entrypoints.ai_provider`
-3. 加载 driver builder
-4. 调用 `invoke / ainvoke / stream`
+不再负责：
 
-宿主不再关心：
+- OpenAI 协议请求体
+- Anthropic 协议请求体
+- Gemini 协议请求体
+- 供应商专属 stream 解析
+- 供应商专属响应提取
 
-- 某家供应商的专有 header
-- 某家供应商的 thinking 默认值
-- 某家供应商的 chunk 格式细节
-- 某家供应商的模型名特判
+### 3.2 插件层
 
-## 4. manifest 规则
+位置：
 
-每个 `ai-provider` 插件现在都必须提供：
+- `apps/api-server/app/plugins/builtin/ai_provider_*/`
+- 以及后续 `official` / `third_party` 的 `ai-provider` 插件
 
-- `types: ["ai-provider"]`
-- `entrypoints.ai_provider`
-- `capabilities.ai_provider.adapter_code`
-- `capabilities.ai_provider.display_name`
-- `capabilities.ai_provider.branding`
-- `capabilities.ai_provider.field_schema`
-- `capabilities.ai_provider.config_ui`
-- `capabilities.ai_provider.model_discovery`
-- `capabilities.ai_provider.supported_model_types`
-- `capabilities.ai_provider.llm_workflow`
-- `capabilities.ai_provider.runtime_capability`
-
-这意味着：
-
-- `ai-provider` 不再是“只有静态元数据”的特殊类型
-- builtin AI 供应商必须有真实 manifest
-- 不再允许虚拟 ai-provider manifest
-- 不再允许核心前端通过 `adapter_code` 自己猜 Logo、说明文案、字段动作和模型发现行为
-
-## 5. 宿主和插件边界
-
-### 必须保留在宿主的部分
-
-- AI Gateway 统一入口
-- provider profile 选择与 fallback
-- household 可见性和插件启停校验
-- 密钥读取和保护
-- 审计、权限、统一错误语义
-- 通用协议能力抽象与调用收口
-
-### 必须迁到插件的部分
+负责：
 
 - 供应商声明
-- Logo、说明文案和其他品牌资源
-- 字段 schema
-- config_ui
-- model_discovery
-- 请求 body/header 的厂商差异
-- 流式输出格式适配
-- 供应商默认值和特殊上限
-- 厂商诊断信息
+- branding / config_ui / model_discovery
+- 请求编码
+- 流式解析
+- 响应提取
+- 模型发现
+- 供应商特例
+- 模型级参数修正
 
-## 6. 旧方案怎么处理
+## 4. 新的 driver 契约
 
-旧 spec 现在只保留历史背景，不再定义当前边界。
+### 4.1 设计原则
 
-处理规则：
+宿主和插件之间只保留统一契约，不保留供应商协议知识。
 
-- 主规则只写在 `004.8.1`
-- 旧 spec 顶部明确说明“这是历史背景”
-- dated report 可以保留旧文件名和旧现状，但不能再被当成当前实现说明
+宿主传给插件的是“统一调用意图”，不是某个具体供应商请求体。  
+插件返回给宿主的是“统一归一化结果”，不是原始供应商响应。
 
-## 7. 验收设计
+### 4.2 建议的输入输出
 
-代码层面必须能证明下面几件事：
+插件输入至少应包含：
 
-1. `provider_adapter_registry.py` 已删除
-2. builtin AI 供应商通过真实 manifest 暴露
-3. 宿主通过 provider driver 调用插件
-4. 核心前端目录里没有新的 `adapter_code -> logo/description/form behavior` 映射
-5. `ai-provider` manifest 已声明 branding、config_ui、model_discovery
-6. 开发者文档和主 spec 口径一致
+- `capability`
+- `provider_profile`
+- `payload`
+- `timeout_ms`
+- `honor_timeout_override`
+- 宿主统一注入的 trace / request context
+
+插件输出至少应包含：
+
+- `normalized_output`
+- `finish_reason`
+- `usage`
+- `raw_response_ref`
+- `error_code`
+- `latency_ms`
+
+流式调用时，插件自己负责把供应商原始事件流解析成宿主认可的 chunk 序列。
+
+### 4.3 宿主通用 helper 的定位
+
+可以保留共享 helper，但它们必须是“插件 SDK”，不是“核心协议实现”。
+
+允许存在：
+
+- `plugins/_sdk/http.py`
+- `plugins/_sdk/sse.py`
+- `plugins/_sdk/json_stream.py`
+- `plugins/_sdk/openai_compat.py`
+- `plugins/_sdk/anthropic_compat.py`
+- `plugins/_sdk/gemini_compat.py`
+
+这些 helper 只做复用，不做强绑定：
+
+- 它们是插件可选工具箱
+- 不是核心必须依赖的协议分支
+- 不允许宿主根据 `api_family` 自动切到这些 helper
+
+## 5. `provider_runtime.py` 的拆法
+
+### 5.1 先拆出宿主通用能力
+
+应该保留为通用能力的部分：
+
+- 超时处理
+- 通用 HTTP 请求封装
+- 通用 SSE 读取器
+- 通用 JSON 解析工具
+- 通用错误包装
+- 通用日志记录
+
+### 5.2 迁出协议层实现
+
+必须迁出的部分：
+
+- `api_family == openai_chat_completions` 的请求拼装
+- `api_family == anthropic_messages` 的请求拼装
+- `api_family == gemini_generate_content` 的请求拼装
+- 对应 stream parser
+- 对应 response extractor
+
+### 5.3 拆分后的形态
+
+推荐形态：
+
+1. 宿主层保留一个纯通用 runtime helper 包
+2. 插件层通过 driver 或插件 SDK 调用这些 helper
+3. 内置 OpenAI / Anthropic / Gemini 供应商插件各自实现协议适配
+
+## 6. 前端边界补充
+
+AI 设置页必须继续收口成一条数据源：
+
+- 供应商品牌
+- 供应商表单
+- 模型发现
+
+统一只消费 `/provider-adapters`。  
+前端不允许再从 `PluginRegistryItem.capabilities.ai_provider` 重建 adapter。
+
+`plugin registry` 在 AI 设置页里最多只允许承担通用插件信息展示，比如：
+
+- 插件版本
+- 更新状态
+- 启停状态
+
+它不能再承载供应商契约本身。
+
+## 7. 完成标准
+
+满足下面三个条件时，才算真的完成：
+
+1. 新增一个非标准供应商时，只需要新增或修改插件，不需要改核心协议代码。
+2. 核心目录中不再出现 `api_family -> request builder / stream parser / response extractor`。
+3. 插件开发文档能明确告诉开发者：哪些能力属于宿主，哪些协议逻辑必须留在插件。
