@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">GLM</title>
+  <desc id="desc">GLM provider logo</desc>
+  <rect width="128" height="128" rx="28" fill="#082f49"/>
+  <path d="M28 44h72v40H28z" fill="#22d3ee"/>
+  <text x="64" y="72" text-anchor="middle" font-size="30" font-family="Arial, sans-serif" font-weight="700" fill="#083344">GLM</text>
+</svg>

@@ -270,6 +270,65 @@ def _load_locale_messages_or_log(
     return messages
 
 
+def _resolve_manifest_resource_path(manifest_path: Path, resource_path: str, *, field_name: str) -> Path:
+    manifest_dir = manifest_path.resolve().parent
+    resolved_path = (manifest_dir / resource_path).resolve()
+    if manifest_dir not in resolved_path.parents and resolved_path != manifest_dir:
+        raise PluginManifestValidationError(
+            f"manifest 资源路径越界: {manifest_path}: {field_name}: {resource_path}"
+        )
+    return resolved_path
+
+
+def _validate_ai_provider_manifest_resources(manifest_path: Path, manifest: PluginManifest) -> None:
+    capability = manifest.capabilities.ai_provider
+    if capability is None:
+        return
+
+    branding = capability.branding
+    resource_specs = [
+        ("capabilities.ai_provider.branding.logo_resource", branding.logo_resource),
+        ("capabilities.ai_provider.branding.description_resource", branding.description_resource),
+    ]
+    if branding.logo_resource_dark is not None:
+        resource_specs.append(
+            ("capabilities.ai_provider.branding.logo_resource_dark", branding.logo_resource_dark)
+        )
+
+    for field_name, resource_path in resource_specs:
+        resolved_path = _resolve_manifest_resource_path(manifest_path, resource_path, field_name=field_name)
+        if not resolved_path.exists() or not resolved_path.is_file():
+            raise PluginManifestValidationError(
+                f"manifest 资源文件不存在: {manifest_path}: {field_name}: {resource_path}"
+            )
+
+    description_path = _resolve_manifest_resource_path(
+        manifest_path,
+        branding.description_resource,
+        field_name="capabilities.ai_provider.branding.description_resource",
+    )
+    try:
+        description_payload = json.loads(description_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise PluginManifestValidationError(
+            f"manifest AI provider 描述资源 JSON 解析失败: {description_path}: {exc.msg}"
+        ) from exc
+    if not isinstance(description_payload, (dict, str)):
+        raise PluginManifestValidationError(
+            f"manifest AI provider 描述资源必须是字符串或对象: {description_path}"
+        )
+    if isinstance(description_payload, dict):
+        for locale_key, locale_value in description_payload.items():
+            if not isinstance(locale_key, str) or not isinstance(locale_value, str):
+                raise PluginManifestValidationError(
+                    f"manifest AI provider 描述资源必须是字符串 key-value: {description_path}"
+                )
+            if not locale_key.strip() or not locale_value.strip():
+                raise PluginManifestValidationError(
+                    f"manifest AI provider 描述资源不能包含空字符串 key/value: {description_path}"
+                )
+
+
 def load_plugin_manifest(manifest_path: str | Path) -> PluginManifest:
     path = Path(manifest_path)
     if not path.exists():
@@ -286,7 +345,7 @@ def load_plugin_manifest(manifest_path: str | Path) -> PluginManifest:
         raise PluginManifestValidationError(f"manifest 顶层必须是对象: {path}")
 
     try:
-        return PluginManifest.model_validate(payload)
+        manifest = PluginManifest.model_validate(payload)
     except ValidationError as exc:
         first_error = exc.errors()[0]
         error_path = ".".join(str(part) for part in first_error.get("loc", ()))
@@ -294,6 +353,8 @@ def load_plugin_manifest(manifest_path: str | Path) -> PluginManifest:
         if error_path:
             raise PluginManifestValidationError(f"manifest 校验失败: {path}: {error_path}: {error_message}") from exc
         raise PluginManifestValidationError(f"manifest 校验失败: {path}: {error_message}") from exc
+    _validate_ai_provider_manifest_resources(path, manifest)
+    return manifest
 
 
 def discover_plugin_manifests(root_dir: str | Path) -> list[PluginManifest]:

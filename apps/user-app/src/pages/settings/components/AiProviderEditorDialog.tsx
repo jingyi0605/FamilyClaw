@@ -4,7 +4,7 @@ import {
   buildProviderFormState,
   readProviderFormValue,
 } from '../../setup/setupAiConfig';
-import type { AiProviderAdapter } from '../settingsTypes';
+import type { AiProviderAdapter, AiProviderField } from '../settingsTypes';
 import { settingsApi } from '../settingsApi';
 import { SettingsDialog } from './SettingsSharedBlocks';
 import {
@@ -13,8 +13,11 @@ import {
   getLocalizedCapabilityOptions,
   getLocalizedField,
   getLocalizedWorkflowLabel,
+  getProviderFieldAction,
+  getProviderFieldSections,
+  isProviderFieldHidden,
 } from './aiProviderCatalog';
-import { getAiProviderLogo } from './AiProviderLogos';
+import { AiProviderBrandMark } from './AiProviderBrandMark';
 import { useAiProviderModelDiscovery } from './useAiProviderModelDiscovery';
 
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
@@ -25,6 +28,135 @@ function readFieldValue(form: ProviderFormState, fieldKey: string) {
 
 function assignFieldValue(form: ProviderFormState, fieldKey: string, value: string): ProviderFormState {
   return assignProviderFormValue(form, fieldKey, value);
+}
+
+function renderDiscoveryMessage(
+  adapter: AiProviderAdapter,
+  modelDiscovery: ReturnType<typeof useAiProviderModelDiscovery>,
+) {
+  if (modelDiscovery.error) {
+    return modelDiscovery.error;
+  }
+  if (modelDiscovery.status.startsWith('found:')) {
+    const count = modelDiscovery.status.slice('found:'.length);
+    return adapter.model_discovery.discovered_text_template?.replace('{count}', count) || `已发现 ${count} 个模型。`;
+  }
+  if (modelDiscovery.status === 'empty') {
+    return adapter.model_discovery.empty_state_text || '没有发现可用模型。';
+  }
+  return adapter.model_discovery.discovery_hint_text || '';
+}
+
+function renderProviderField(props: {
+  householdId: string;
+  locale: string | undefined;
+  copy: { selectPlaceholder: string };
+  adapter: AiProviderAdapter;
+  field: AiProviderField;
+  form: ProviderFormState;
+  onFormChange: (form: ProviderFormState) => void;
+  modelDiscovery: ReturnType<typeof useAiProviderModelDiscovery>;
+}) {
+  const { householdId, locale, copy, adapter, field, form, onFormChange, modelDiscovery } = props;
+  const fieldUi = adapter.config_ui.field_ui[field.key];
+  const localizedField = getLocalizedField(field, locale, fieldUi);
+  const fieldValue = readFieldValue(form, field.key);
+  const inputId = `${householdId}-${field.key}`;
+  const action = getProviderFieldAction(adapter, field.key);
+  const isDiscoveryField = Boolean(
+    action
+    && action.kind === 'model_discovery'
+    && adapter.model_discovery.enabled
+    && adapter.model_discovery.target_field === field.key,
+  );
+  const discoveryMessage = isDiscoveryField ? renderDiscoveryMessage(adapter, modelDiscovery) : '';
+  const datalistId = `${inputId}-options`;
+
+  if (localizedField.field_type === 'boolean') {
+    return (
+      <div key={field.key} className="form-group form-group--compact form-group--checkbox">
+        <label className="ai-editor-checkbox" htmlFor={inputId}>
+          <input
+            id={inputId}
+            type="checkbox"
+            checked={fieldValue === 'true'}
+            onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.checked ? 'true' : 'false'))}
+          />
+          <span className="ai-editor-checkbox__label">{localizedField.label}</span>
+        </label>
+        {localizedField.help_text ? <p className="ai-editor-hint">{localizedField.help_text}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div key={field.key} className="form-group form-group--compact">
+      <div className={isDiscoveryField ? 'ai-provider-model-field__label-row' : undefined}>
+        <label htmlFor={inputId}>{localizedField.label}</label>
+        {isDiscoveryField && action ? (
+          <button
+            className="btn btn--outline btn--sm"
+            type="button"
+            onClick={modelDiscovery.refreshModels}
+            disabled={modelDiscovery.discovering}
+            title={action.description ?? undefined}
+          >
+            {modelDiscovery.discovering
+              ? (adapter.model_discovery.discovering_text || action.label)
+              : action.label}
+          </button>
+        ) : null}
+      </div>
+      {localizedField.field_type === 'select' ? (
+        <select
+          id={inputId}
+          className="form-select form-select--compact"
+          value={fieldValue}
+          onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
+        >
+          <option value="">{copy.selectPlaceholder}</option>
+          {localizedField.options.map(option => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <>
+          <input
+            id={inputId}
+            className="form-input form-input--compact"
+            type={
+              localizedField.field_type === 'secret'
+                ? 'password'
+                : localizedField.field_type === 'number'
+                  ? 'number'
+                  : 'text'
+            }
+            list={isDiscoveryField && modelDiscovery.models.length > 0 ? datalistId : undefined}
+            value={fieldValue}
+            onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
+            placeholder={localizedField.placeholder ?? undefined}
+          />
+          {isDiscoveryField && modelDiscovery.models.length > 0 ? (
+            <datalist id={datalistId}>
+              {modelDiscovery.models.map(model => (
+                <option key={model.id} value={model.id}>
+                  {model.label}
+                </option>
+              ))}
+            </datalist>
+          ) : null}
+        </>
+      )}
+      {localizedField.help_text ? <p className="ai-editor-hint">{localizedField.help_text}</p> : null}
+      {isDiscoveryField && modelDiscovery.supportsModelDiscovery && discoveryMessage ? (
+        <p className={modelDiscovery.error ? 'ai-editor-hint form-error' : 'ai-editor-hint'}>
+          {discoveryMessage}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 export function AiProviderEditorDialog(props: {
@@ -96,7 +228,6 @@ export function AiProviderEditorDialog(props: {
     : adapters;
   const localizedCapabilityOptions = getLocalizedCapabilityOptions(locale);
   const adapterMeta = currentAdapter ? getLocalizedAdapterMeta(currentAdapter, locale) : null;
-  const Logo = currentAdapter ? getAiProviderLogo(currentAdapter.adapter_code) : null;
   const modelDiscovery = useAiProviderModelDiscovery({
     householdId,
     adapter: currentAdapter,
@@ -104,11 +235,10 @@ export function AiProviderEditorDialog(props: {
     onFormChange,
     discoverModels: settingsApi.discoverAiProviderModels,
   });
-
-  // 编辑态直接显示编辑标题，新建态把供应商名字带进标题里。
   const dialogTitle = editingProviderId
     ? copy.editTitle
     : (currentAdapter && adapterMeta ? `${copy.addTitle} - ${adapterMeta.label}` : copy.addTitle);
+  const sections = currentAdapter ? getProviderFieldSections(currentAdapter) : [];
 
   return (
     <SettingsDialog
@@ -119,7 +249,7 @@ export function AiProviderEditorDialog(props: {
       closeDisabled={saving}
       onClose={onClose}
       onSubmit={onSubmit}
-    actions={(
+      actions={(
         <>
           {!editingProviderId && onBack ? (
             <button
@@ -152,13 +282,10 @@ export function AiProviderEditorDialog(props: {
     >
       {currentAdapter && adapterMeta ? (
         <>
-          {/* 供应商头部摘要 */}
           <div className="ai-provider-editor-header">
-            {Logo ? (
-              <div className="ai-provider-editor-header__logo">
-                <Logo width={20} height={20} />
-              </div>
-            ) : null}
+            <div className="ai-provider-editor-header__logo">
+              <AiProviderBrandMark adapter={currentAdapter} size={20} />
+            </div>
             <div className="ai-provider-editor-header__info">
               <h4>{adapterMeta.label}</h4>
               <p>{adapterMeta.description}</p>
@@ -173,7 +300,6 @@ export function AiProviderEditorDialog(props: {
           </div>
 
           <div className="ai-provider-editor-body">
-            {/* 基础配置 */}
             <div className="ai-editor-section">
               <div className="ai-editor-row">
                 <div className="form-group form-group--compact">
@@ -205,125 +331,28 @@ export function AiProviderEditorDialog(props: {
               </div>
             </div>
 
-            {/* 动态表单配置 */}
-            <div className="ai-editor-section">
-              <div className="ai-editor-grid">
-                {currentAdapter.field_schema.filter(field => field.key !== 'provider_code').map(field => {
-                  const localizedField = getLocalizedField(field, locale);
-                  const fieldValue = readFieldValue(form, field.key);
-                  const inputId = `${householdId}-${field.key}`;
-
-                  if (localizedField.field_type === 'boolean') {
-                    return (
-                      <div key={field.key} className="form-group form-group--compact form-group--checkbox">
-                        <label className="ai-editor-checkbox" htmlFor={inputId}>
-                          <input
-                            id={inputId}
-                            type="checkbox"
-                            checked={fieldValue === 'true'}
-                            onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.checked ? 'true' : 'false'))}
-                          />
-                          <span className="ai-editor-checkbox__label">{localizedField.label}</span>
-                        </label>
-                        {localizedField.help_text ? <p className="ai-editor-hint">{localizedField.help_text}</p> : null}
-                      </div>
-                    );
-                  }
-
-                  if (field.key === 'model_name') {
-                    const datalistId = `${inputId}-options`;
-                    const discoveryMessage = modelDiscovery.error
-                      ? modelDiscovery.error
-                      : modelDiscovery.status.startsWith('found:')
-                        ? copy.discoveredModels.replace('{count}', modelDiscovery.status.slice('found:'.length))
-                        : modelDiscovery.status === 'empty'
-                          ? copy.noModelsDiscovered
-                          : copy.discoveryHint;
-
-                    return (
-                      <div key={field.key} className="form-group form-group--compact">
-                        <div className="ai-provider-model-field__label-row">
-                          <label htmlFor={inputId}>{localizedField.label}</label>
-                          {modelDiscovery.supportsModelDiscovery ? (
-                            <button
-                              className="btn btn--outline btn--sm"
-                              type="button"
-                              onClick={modelDiscovery.refreshModels}
-                              disabled={modelDiscovery.discovering}
-                            >
-                              {modelDiscovery.discovering ? copy.discoveringModels : copy.refreshModels}
-                            </button>
-                          ) : null}
-                        </div>
-                        <input
-                          id={inputId}
-                          className="form-input form-input--compact"
-                          type="text"
-                          list={modelDiscovery.models.length > 0 ? datalistId : undefined}
-                          value={fieldValue}
-                          onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
-                          placeholder={localizedField.placeholder ?? undefined}
-                        />
-                        {modelDiscovery.models.length > 0 ? (
-                          <datalist id={datalistId}>
-                            {modelDiscovery.models.map(model => (
-                              <option key={model.id} value={model.id}>
-                                {model.label}
-                              </option>
-                            ))}
-                          </datalist>
-                        ) : null}
-                        {localizedField.help_text ? <p className="ai-editor-hint">{localizedField.help_text}</p> : null}
-                        {modelDiscovery.supportsModelDiscovery ? (
-                          <p className={modelDiscovery.error ? 'ai-editor-hint form-error' : 'ai-editor-hint'}>
-                            {discoveryMessage}
-                          </p>
-                        ) : null}
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div key={field.key} className="form-group form-group--compact">
-                      <label htmlFor={inputId}>{localizedField.label}</label>
-                      {localizedField.field_type === 'select' ? (
-                        <select
-                          id={inputId}
-                          className="form-select form-select--compact"
-                          value={fieldValue}
-                          onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
-                        >
-                          <option value="">{copy.selectPlaceholder}</option>
-                          {localizedField.options.map(option => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          id={inputId}
-                          className="form-input form-input--compact"
-                          type={
-                            localizedField.field_type === 'secret'
-                              ? 'password'
-                              : localizedField.field_type === 'number'
-                                ? 'number'
-                                : 'text'
-                          }
-                          value={fieldValue}
-                          onChange={event => onFormChange(assignFieldValue(form, field.key, event.target.value))}
-                          placeholder={localizedField.placeholder ?? undefined}
-                        />
-                      )}
-                      {localizedField.help_text ? <p className="ai-editor-hint">{localizedField.help_text}</p> : null}
-                    </div>
-                  );
-                })}
+            {sections.map(section => (
+              <div key={section.key} className="ai-editor-section">
+                {section.title ? <h4 className="ai-editor-section__title">{section.title}</h4> : null}
+                {section.description ? <p className="ai-editor-section__desc">{section.description}</p> : null}
+                <div className="ai-editor-grid">
+                  {section.fields_meta
+                    .filter(field => field.key !== 'provider_code')
+                    .filter(field => !isProviderFieldHidden(currentAdapter, field.key, fieldKey => readFieldValue(form, fieldKey)))
+                    .map(field => renderProviderField({
+                      householdId,
+                      locale,
+                      copy,
+                      adapter: currentAdapter,
+                      field,
+                      form,
+                      onFormChange,
+                      modelDiscovery,
+                    }))}
+                </div>
               </div>
-            </div>
+            ))}
 
-            {/* 能力配置 */}
             <div className="ai-editor-section ai-editor-section--capabilities">
               <div className="ai-editor-capability-panel">
                 <label className="ai-editor-capabilities__label">{copy.assignedCapabilityLabel}</label>
@@ -339,7 +368,6 @@ export function AiProviderEditorDialog(props: {
                           const nextAssignedCapabilities = currentlyAssigned
                             ? assignedCapabilities.filter(capability => capability !== item.value)
                             : [...assignedCapabilities, item.value];
-
                           onAssignedCapabilitiesChange(nextAssignedCapabilities);
                         }}
                       />

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">BytePlus ModelArk</title>
+  <desc id="desc">BytePlus ModelArk provider logo</desc>
+  <rect width="128" height="128" rx="28" fill="#111827"/>
+  <path d="M32 36h28c18 0 32 12 32 28S78 92 60 92H32z" fill="#f97316"/>
+  <text x="54" y="74" text-anchor="middle" font-size="24" font-family="Arial, sans-serif" font-weight="700" fill="#fff7ed">BP</text>
+</svg>

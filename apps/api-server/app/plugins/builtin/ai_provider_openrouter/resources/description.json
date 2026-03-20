@@ -1,0 +1,4 @@
+{
+  "zh-CN": "聚合多个上游模型的统一入口，并支持额外的站点引用和应用名称请求头。",
+  "en-US": "Unified gateway for multiple upstream models with optional site attribution and app-name headers."
+}

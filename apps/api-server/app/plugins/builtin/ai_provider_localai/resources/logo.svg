@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="localaiGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#0F766E"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#localaiGradient)"/>
+  <path fill="#ffffff" d="M10 8h4v12h8v4H10V8zm8 0h4v8h-4V8z"/>
+  <circle cx="20" cy="21" r="2" fill="#A7F3D0"/>
+</svg>

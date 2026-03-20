@@ -13,6 +13,11 @@
     "ai_provider": {
       "adapter_code": "minimax",
       "display_name": "MiniMax",
+      "branding": {
+        "logo_resource": "resources/logo.svg",
+        "logo_resource_dark": "resources/logo.svg",
+        "description_resource": "resources/description.json"
+      },
       "field_schema": [
         { "key": "display_name", "label": "Display Name", "field_type": "text", "required": true, "placeholder": "MiniMax Main", "options": [] },
         { "key": "provider_code", "label": "Provider Code", "field_type": "text", "required": true, "placeholder": "family-minimax-main", "options": [] },
@@ -32,6 +37,35 @@
         },
         { "key": "latency_budget_ms", "label": "Latency Budget (ms)", "field_type": "number", "required": false, "placeholder": "15000", "options": [] }
       ],
+      "config_ui": {
+        "field_order": ["display_name", "base_url", "secret_ref", "model_name", "privacy_level", "latency_budget_ms"],
+        "sections": [
+          {
+            "key": "connection",
+            "title": "Connection",
+            "description": "Enter the MiniMax endpoint and API key.",
+            "fields": ["display_name", "base_url", "secret_ref"]
+          },
+          {
+            "key": "model",
+            "title": "Model",
+            "description": "Choose the default model, privacy level, and latency budget.",
+            "fields": ["model_name", "privacy_level", "latency_budget_ms"]
+          }
+        ],
+        "actions": []
+      },
+      "model_discovery": {
+        "enabled": false,
+        "action_key": null,
+        "depends_on_fields": [],
+        "target_field": null,
+        "debounce_ms": 500,
+        "empty_state_text": null,
+        "discovery_hint_text": null,
+        "discovering_text": null,
+        "discovered_text_template": null
+      },
       "supported_model_types": ["llm"],
       "llm_workflow": "anthropic_messages",
       "runtime_capability": {

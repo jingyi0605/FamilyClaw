@@ -13,11 +13,16 @@
     "ai_provider": {
       "adapter_code": "lmstudio",
       "display_name": "LM Studio",
+      "branding": {
+        "logo_resource": "resources/logo.svg",
+        "logo_resource_dark": "resources/logo.svg",
+        "description_resource": "resources/description.json"
+      },
       "field_schema": [
         { "key": "display_name", "label": "Display Name", "field_type": "text", "required": true, "placeholder": "LM Studio Main", "options": [] },
         { "key": "provider_code", "label": "Provider Code", "field_type": "text", "required": true, "placeholder": "family-lmstudio-main", "options": [] },
-        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "http://127.0.0.1:1234/v1", "help_text": "默认本地服务地址是 http://localhost:1234/v1。", "default_value": "http://127.0.0.1:1234/v1", "options": [] },
-        { "key": "secret_ref", "label": "Secret Reference", "field_type": "secret", "required": false, "placeholder": "LM_STUDIO_API_KEY", "help_text": "LM Studio 默认不校验 API Key；只有你显式开启 token 保护时才需要填写。", "options": [] },
+        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "http://127.0.0.1:1234/v1", "help_text": "Default local LM Studio endpoint.", "default_value": "http://127.0.0.1:1234/v1", "options": [] },
+        { "key": "secret_ref", "label": "Secret Reference", "field_type": "secret", "required": false, "placeholder": "LM_STUDIO_API_KEY", "help_text": "Only fill this in when token protection is enabled in LM Studio.", "options": [] },
         { "key": "model_name", "label": "Model Name", "field_type": "text", "required": true, "placeholder": "qwen2.5-7b-instruct", "options": [] },
         {
           "key": "privacy_level",
@@ -31,6 +36,44 @@
         },
         { "key": "latency_budget_ms", "label": "Latency Budget (ms)", "field_type": "number", "required": false, "placeholder": "60000", "default_value": 60000, "options": [] }
       ],
+      "config_ui": {
+        "field_order": ["display_name", "base_url", "secret_ref", "model_name", "privacy_level", "latency_budget_ms"],
+        "sections": [
+          {
+            "key": "connection",
+            "title": "Connection",
+            "description": "Enter the LM Studio endpoint and optional API key.",
+            "fields": ["display_name", "base_url", "secret_ref"]
+          },
+          {
+            "key": "model",
+            "title": "Model",
+            "description": "You can discover the currently loaded LM Studio models before saving.",
+            "fields": ["model_name", "privacy_level", "latency_budget_ms"]
+          }
+        ],
+        "actions": [
+          {
+            "key": "discover_models",
+            "label": "Refresh Models",
+            "description": "Read available models from the current LM Studio service.",
+            "kind": "model_discovery",
+            "placement": "field",
+            "field_key": "model_name"
+          }
+        ]
+      },
+      "model_discovery": {
+        "enabled": true,
+        "action_key": "discover_models",
+        "depends_on_fields": ["base_url"],
+        "target_field": "model_name",
+        "debounce_ms": 500,
+        "empty_state_text": "No models were found. Load a model in LM Studio first.",
+        "discovery_hint_text": "The model list refreshes automatically after the endpoint is filled in.",
+        "discovering_text": "Loading LM Studio models...",
+        "discovered_text_template": "Discovered {count} LM Studio models."
+      },
       "supported_model_types": ["llm"],
       "llm_workflow": "openai_chat_completions",
       "runtime_capability": {
@@ -46,6 +89,6 @@
     "provider_profile_schema_version": 1,
     "transport_type": "local_gateway",
     "api_family": "openai_chat_completions",
-    "description": "本地 LM Studio 服务，直接走 OpenAI 兼容接口，并自动读取当前已加载模型。"
+    "description": "Local LM Studio service using the OpenAI-compatible endpoint and automatic model discovery."
   }
 }

@@ -13,11 +13,16 @@
     "ai_provider": {
       "adapter_code": "localai",
       "display_name": "LocalAI",
+      "branding": {
+        "logo_resource": "resources/logo.svg",
+        "logo_resource_dark": "resources/logo.svg",
+        "description_resource": "resources/description.json"
+      },
       "field_schema": [
         { "key": "display_name", "label": "Display Name", "field_type": "text", "required": true, "placeholder": "LocalAI Main", "options": [] },
         { "key": "provider_code", "label": "Provider Code", "field_type": "text", "required": true, "placeholder": "family-localai-main", "options": [] },
-        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "http://127.0.0.1:8080/v1", "help_text": "默认本地服务地址是 http://localhost:8080/v1。", "default_value": "http://127.0.0.1:8080/v1", "options": [] },
-        { "key": "secret_ref", "label": "Secret Reference", "field_type": "secret", "required": false, "placeholder": "LOCALAI_API_KEY", "help_text": "只有你在 LocalAI 里主动开启 API Key 校验时才需要填写。", "options": [] },
+        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "http://127.0.0.1:8080/v1", "help_text": "Default local LocalAI endpoint.", "default_value": "http://127.0.0.1:8080/v1", "options": [] },
+        { "key": "secret_ref", "label": "Secret Reference", "field_type": "secret", "required": false, "placeholder": "LOCALAI_API_KEY", "help_text": "Only fill this in when API key validation is enabled in LocalAI.", "options": [] },
         { "key": "model_name", "label": "Model Name", "field_type": "text", "required": true, "placeholder": "local-model", "options": [] },
         {
           "key": "privacy_level",
@@ -31,6 +36,44 @@
         },
         { "key": "latency_budget_ms", "label": "Latency Budget (ms)", "field_type": "number", "required": false, "placeholder": "60000", "default_value": 60000, "options": [] }
       ],
+      "config_ui": {
+        "field_order": ["display_name", "base_url", "secret_ref", "model_name", "privacy_level", "latency_budget_ms"],
+        "sections": [
+          {
+            "key": "connection",
+            "title": "Connection",
+            "description": "Enter the LocalAI endpoint and optional API key.",
+            "fields": ["display_name", "base_url", "secret_ref"]
+          },
+          {
+            "key": "model",
+            "title": "Model",
+            "description": "You can discover the currently available LocalAI models before saving.",
+            "fields": ["model_name", "privacy_level", "latency_budget_ms"]
+          }
+        ],
+        "actions": [
+          {
+            "key": "discover_models",
+            "label": "Refresh Models",
+            "description": "Read available models from the current LocalAI service.",
+            "kind": "model_discovery",
+            "placement": "field",
+            "field_key": "model_name"
+          }
+        ]
+      },
+      "model_discovery": {
+        "enabled": true,
+        "action_key": "discover_models",
+        "depends_on_fields": ["base_url"],
+        "target_field": "model_name",
+        "debounce_ms": 500,
+        "empty_state_text": "No models were found. Load a model in LocalAI first.",
+        "discovery_hint_text": "The model list refreshes automatically after the endpoint is filled in.",
+        "discovering_text": "Loading LocalAI models...",
+        "discovered_text_template": "Discovered {count} LocalAI models."
+      },
       "supported_model_types": ["llm"],
       "llm_workflow": "openai_chat_completions",
       "runtime_capability": {
@@ -46,6 +89,6 @@
     "provider_profile_schema_version": 1,
     "transport_type": "local_gateway",
     "api_family": "openai_chat_completions",
-    "description": "本地 LocalAI 服务，使用 OpenAI 兼容接口，并自动发现当前可用模型。"
+    "description": "Local LocalAI service using the OpenAI-compatible endpoint and automatic model discovery."
   }
 }

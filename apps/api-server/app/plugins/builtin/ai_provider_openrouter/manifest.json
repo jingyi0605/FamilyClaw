@@ -13,6 +13,11 @@
     "ai_provider": {
       "adapter_code": "openrouter",
       "display_name": "OpenRouter",
+      "branding": {
+        "logo_resource": "resources/logo.svg",
+        "logo_resource_dark": "resources/logo.svg",
+        "description_resource": "resources/description.json"
+      },
       "field_schema": [
         { "key": "display_name", "label": "Display Name", "field_type": "text", "required": true, "placeholder": "OpenRouter Main", "options": [] },
         { "key": "provider_code", "label": "Provider Code", "field_type": "text", "required": true, "placeholder": "family-openrouter-main", "options": [] },
@@ -34,6 +39,41 @@
         { "key": "site_url", "label": "Site URL", "field_type": "text", "required": false, "placeholder": "https://familyclaw.local", "help_text": "Optional. Sent as HTTP-Referer for OpenRouter requests.", "options": [] },
         { "key": "app_name", "label": "App Name", "field_type": "text", "required": false, "placeholder": "FamilyClaw", "help_text": "Optional. Sent as X-Title for OpenRouter requests.", "options": [] }
       ],
+      "config_ui": {
+        "field_order": ["display_name", "base_url", "secret_ref", "site_url", "app_name", "model_name", "privacy_level", "latency_budget_ms"],
+        "sections": [
+          {
+            "key": "connection",
+            "title": "Connection",
+            "description": "Enter the OpenRouter endpoint and API key.",
+            "fields": ["display_name", "base_url", "secret_ref"]
+          },
+          {
+            "key": "attribution",
+            "title": "Attribution",
+            "description": "These fields are forwarded as OpenRouter request headers.",
+            "fields": ["site_url", "app_name"]
+          },
+          {
+            "key": "model",
+            "title": "Model",
+            "description": "Choose the default model, privacy level, and latency budget.",
+            "fields": ["model_name", "privacy_level", "latency_budget_ms"]
+          }
+        ],
+        "actions": []
+      },
+      "model_discovery": {
+        "enabled": false,
+        "action_key": null,
+        "depends_on_fields": [],
+        "target_field": null,
+        "debounce_ms": 500,
+        "empty_state_text": null,
+        "discovery_hint_text": null,
+        "discovering_text": null,
+        "discovered_text_template": null
+      },
       "supported_model_types": ["llm", "vision", "image"],
       "llm_workflow": "openai_chat_completions",
       "runtime_capability": {

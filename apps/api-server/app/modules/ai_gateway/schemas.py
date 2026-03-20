@@ -48,12 +48,66 @@ class AiProviderFieldRead(BaseModel):
     options: list[AiProviderFieldOptionRead] = Field(default_factory=list)
 
 
+class AiProviderBrandingRead(BaseModel):
+    logo_url: str | None = None
+    logo_dark_url: str | None = None
+    description_locales: dict[str, str] = Field(default_factory=dict)
+
+
+class AiProviderConfigVisibilityRuleRead(BaseModel):
+    field: str
+    operator: Literal["equals", "not_equals", "in", "truthy"] = "equals"
+    value: Any | None = None
+
+
+class AiProviderConfigFieldUiRead(BaseModel):
+    help_text: str | None = None
+    hidden_when: list[AiProviderConfigVisibilityRuleRead] = Field(default_factory=list)
+
+
+class AiProviderConfigActionRead(BaseModel):
+    key: str
+    label: str
+    description: str | None = None
+    kind: Literal["model_discovery"] = "model_discovery"
+    placement: Literal["field"] = "field"
+    field_key: str
+
+
+class AiProviderConfigSectionRead(BaseModel):
+    key: str
+    title: str
+    description: str | None = None
+    fields: list[str] = Field(default_factory=list)
+
+
+class AiProviderConfigUiRead(BaseModel):
+    field_order: list[str] = Field(default_factory=list)
+    hidden_fields: list[str] = Field(default_factory=list)
+    sections: list[AiProviderConfigSectionRead] = Field(default_factory=list)
+    field_ui: dict[str, AiProviderConfigFieldUiRead] = Field(default_factory=dict)
+    actions: list[AiProviderConfigActionRead] = Field(default_factory=list)
+
+
+class AiProviderModelDiscoveryConfigRead(BaseModel):
+    enabled: bool = False
+    action_key: str | None = None
+    depends_on_fields: list[str] = Field(default_factory=list)
+    target_field: str | None = None
+    debounce_ms: int = 500
+    empty_state_text: str | None = None
+    discovery_hint_text: str | None = None
+    discovering_text: str | None = None
+    discovered_text_template: str | None = None
+
+
 class AiProviderAdapterRead(BaseModel):
     plugin_id: str
     plugin_name: str
     adapter_code: str
     display_name: str
     description: str
+    branding: AiProviderBrandingRead
     transport_type: AiTransportType
     api_family: AiApiFamily
     default_privacy_level: AiPrivacyLevel
@@ -62,6 +116,8 @@ class AiProviderAdapterRead(BaseModel):
     llm_workflow: str = "openai_chat_completions"
     supports_model_discovery: bool = False
     field_schema: list[AiProviderFieldRead] = Field(default_factory=list)
+    config_ui: AiProviderConfigUiRead
+    model_discovery: AiProviderModelDiscoveryConfigRead
 
 
 class AiProviderDiscoveredModelRead(BaseModel):

@@ -3,7 +3,7 @@
  */
 import type { AiProviderAdapter } from '../settingsTypes';
 import { getLocalizedAdapterMeta, getLocalizedCapabilityLabel } from './aiProviderCatalog';
-import { getAiProviderLogo } from './AiProviderLogos';
+import { AiProviderBrandMark } from './AiProviderBrandMark';
 
 export function AiProviderSelectDialog(props: {
   open: boolean;
@@ -44,7 +44,6 @@ export function AiProviderSelectDialog(props: {
         <div className="ai-provider-select-grid">
           {adapters.map(adapter => {
             const adapterMeta = getLocalizedAdapterMeta(adapter, locale);
-            const Logo = getAiProviderLogo(adapter.adapter_code);
 
             return (
               <button
@@ -54,7 +53,7 @@ export function AiProviderSelectDialog(props: {
                 onClick={() => onSelect(adapter.adapter_code)}
               >
                 <div className="ai-provider-select-card__logo">
-                  <Logo width={40} height={40} />
+                  <AiProviderBrandMark adapter={adapter} size={40} />
                 </div>
                 <div className="ai-provider-select-card__body">
                   <h4 className="ai-provider-select-card__name">{adapterMeta.label}</h4>

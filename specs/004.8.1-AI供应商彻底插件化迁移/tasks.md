@@ -1,10 +1,13 @@
 # 任务清单 - AI 供应商彻底插件化迁移
 
-状态：Completed
+状态：In Progress
 
 ## 这份任务清单怎么用
 
-这份文档不再描述“计划做什么”，而是回写这次迁移到底做了什么、哪些结果已经落地、怎么验证。
+这份文档现在分两段：
+
+- 已完成：第一阶段已经落地的迁移
+- 进行中：为了把 AI 供应商从核心前后端彻底剥离，还必须继续做的事
 
 ## 阶段 1：建立 provider driver contract
 
@@ -124,3 +127,113 @@
   - 做完后能看到什么：核心目录里不再残留供应商注册表和厂商特判
   - 验证：
     - `.\.venv\Scripts\python.exe -m compileall app\modules\ai_gateway app\modules\plugin app\plugins`
+
+## 阶段 6：补齐 ai-provider 前端契约
+
+- [ ] 6.1 给 manifest 增加 branding 契约
+  - 状态：DONE
+  - 做什么：为 `ai-provider` manifest 增加 `branding`，至少覆盖 logo 资源路径、说明文案资源路径、可选明暗变体
+  - 做完后能看到什么：前端不再需要核心里的 Logo 映射表
+  - 依赖：`requirements.md`、`design.md`
+  - 主要文件：
+    - `apps/api-server/app/modules/plugin/schemas.py`
+    - `apps/api-server/app/modules/ai_gateway/schemas.py`
+    - `apps/api-server/app/modules/ai_gateway/provider_config_service.py`
+    - `apps/api-server/app/plugins/builtin/ai_provider_*/manifest.json`
+  - 当前结果：宿主 adapter API 已经能返回 `branding.logo_url / logo_dark_url / description_locales`；Ollama、LM Studio、LocalAI 已迁成完整 branding 样板
+  - 明确不做什么：不在核心前端继续新增任何供应商 SVG
+  - 验证：
+    - `.\.venv\Scripts\python.exe -m unittest tests.test_plugin_manifest tests.test_ai_config_center.AiConfigCenterTests.test_provider_adapter_catalog_exposes_builtin_ai_provider_plugins`
+
+- [x] 6.2 给 manifest 增加 config_ui 契约
+  - 状态：DONE
+  - 做什么：声明字段分组、字段顺序、隐藏规则、说明文本和动作按钮
+  - 做完后能看到什么：前端不再通过 `field.key === 'model_name'` 之类的分支决定 UI
+  - 主要文件：
+    - `apps/api-server/app/modules/plugin/schemas.py`
+    - `apps/api-server/app/modules/ai_gateway/schemas.py`
+    - `apps/user-app/src/pages/settings/components/*`
+    - `apps/user-app/src/pages/setup/*`
+  - 当前结果：前端已经按 `config_ui.sections / actions / field_ui` 做通用渲染，不再用 `adapter_code` 选页面分支；当前 Ollama、LM Studio、LocalAI 已声明 section 和 action
+  - 明确不做什么：不为单个供应商继续加 React 分支
+  - 验证：
+    - `npm.cmd run typecheck`
+
+- [x] 6.3 给 manifest 增加 model_discovery 契约
+  - 状态：DONE
+  - 做什么：声明触发依赖字段、回填字段、节流时间、空结果提示和动作绑定关系
+  - 做完后能看到什么：模型刷新逻辑改成插件声明驱动
+  - 主要文件：
+    - `apps/api-server/app/modules/plugin/schemas.py`
+    - `apps/api-server/app/modules/ai_gateway/provider_model_discovery_service.py`
+    - `apps/user-app/src/pages/settings/components/useAiProviderModelDiscovery.ts`
+  - 当前结果：模型发现 hook 已经改成按 `depends_on_fields / target_field / debounce_ms` 运行；不再对 `model_name` 和 `base_url` 写核心特判
+  - 明确不做什么：不在核心页面继续写字段名特判
+  - 验证：
+    - `.\.venv\Scripts\python.exe -m unittest tests.test_ai_config_center`
+
+## 阶段 7：把前端供应商特定资源和行为移出核心
+
+- [ ] 7.1 删除核心 Logo 与说明文案映射
+  - 状态：DONE
+  - 做什么：删除 `AiProviderLogos.tsx` 和 `adapter_code -> description key` 这类硬编码映射
+  - 做完后能看到什么：前端只认 adapter API 返回的 branding/description
+  - 主要文件：
+    - `apps/user-app/src/pages/settings/components/AiProviderLogos.tsx`
+    - `apps/user-app/src/pages/settings/components/aiProviderCatalog.ts`
+    - `apps/user-app/src/pages/setup/SimpleAiProviderSetup.tsx`
+  - 当前结果：`AiProviderLogos.tsx` 已删除，`adapter_code -> description key` 映射已删除
+  - 明确不做什么：不以“先兼容一下”为理由保留旧映射表
+  - 验证：
+    - `npm.cmd run typecheck`
+    - 核心前端回扫不再命中 `adapter_code` 品牌映射
+
+- [x] 7.2 改成通用品牌渲染器
+  - 状态：DONE
+  - 做什么：统一从插件 manifest 派生的 adapter 数据里渲染 logo、说明和动作按钮
+  - 做完后能看到什么：设置页和初始化页使用同一套品牌渲染逻辑
+  - 主要文件：
+    - `apps/user-app/src/pages/settings/components/AiProviderEditorDialog.tsx`
+    - `apps/user-app/src/pages/settings/components/AiProviderSelectDialog.tsx`
+    - `apps/user-app/src/pages/settings/components/AiProviderConfigPanel.tsx`
+    - `apps/user-app/src/pages/setup/SimpleAiProviderSetup.tsx`
+  - 当前结果：已新增 `AiProviderBrandMark.tsx`，设置页和初始化页都改成走 adapter.branding
+  - 验证：
+    - `npm.cmd run typecheck`
+
+## 阶段 8：重新确认协议级执行边界
+
+- [ ] 8.1 评估 `provider_runtime.py` 是否还能继续留在宿主
+  - 状态：TODO
+  - 做什么：把现有执行逻辑拆成“稳定通用能力”和“仍是协议特例的部分”，决定是否继续下沉到插件端
+  - 做完后能看到什么：`004.8.1` 对协议级执行边界有明确结论，不再模糊
+  - 主要文件：
+    - `apps/api-server/app/modules/ai_gateway/provider_runtime.py`
+    - `apps/api-server/app/modules/ai_gateway/provider_driver.py`
+    - `docs/开发者文档/插件开发/zh-CN/05-插件对接方式说明.md`
+  - 明确不做什么：不在没有评估的前提下继续往 `provider_runtime.py` 塞新协议分支
+
+- [ ] 8.2 如果需要继续下沉，就迁出宿主特定协议执行
+  - 状态：TODO
+  - 做什么：把不能稳定抽象成宿主能力的协议执行搬到插件侧，同时保留宿主统一调用契约、路由、fallback、状态、审计和错误收口
+  - 依赖：8.1
+  - 明确不做什么：不破坏现有 provider profile 和 gateway 路由能力
+
+## 阶段 9：补文档和防回归
+
+- [ ] 9.1 更新插件开发文档
+  - 状态：DONE
+  - 做什么：把 `branding / config_ui / model_discovery` 契约补到插件开发文档
+  - 主要文件：
+    - `docs/开发者文档/插件开发/zh-CN/05-插件对接方式说明.md`
+
+- [x] 9.2 增加防回归测试
+  - 状态：DONE
+  - 做什么：增加 manifest 校验和核心目录回扫，防止以后又把 AI 供应商 Logo、说明文案、模型发现分支写回核心
+  - 主要文件：
+    - `apps/api-server/tests/test_plugin_manifest.py`
+    - `apps/api-server/tests/test_ai_config_center.py`
+    - `apps/user-app/scripts/check-style-guard.mjs`
+  - 当前结果：已补 manifest 契约校验测试、adapter 输出测试，以及前端 style-guard 规则，禁止 `AI_PROVIDER_LOGO_MAP`、`settings.ai.provider.adapter.*`、`field.key === 'model_name'` 回流到核心页面
+  - 验证：
+    - `.\.venv\Scripts\python.exe -m unittest tests.test_plugin_manifest tests.test_ai_config_center`

@@ -11,6 +11,12 @@ type ProviderFormState = ReturnType<typeof buildProviderFormState>;
 type AdapterLike = {
   adapter_code: string;
   supports_model_discovery?: boolean;
+  model_discovery?: {
+    enabled: boolean;
+    depends_on_fields: string[];
+    target_field: string | null;
+    debounce_ms: number;
+  };
 };
 
 type DiscoveryResult = {
@@ -34,6 +40,10 @@ export function useAiProviderModelDiscovery(props: {
   const [error, setError] = useState('');
   const formRef = useRef(form);
   const requestSeqRef = useRef(0);
+  const discoveryConfig = adapter?.model_discovery;
+  const supportsModelDiscovery = Boolean(adapter?.supports_model_discovery && discoveryConfig?.enabled);
+  const dependencyKeys = discoveryConfig?.depends_on_fields ?? [];
+  const targetField = discoveryConfig?.target_field ?? null;
 
   formRef.current = form;
 
@@ -44,12 +54,12 @@ export function useAiProviderModelDiscovery(props: {
   }, [adapter?.adapter_code]);
 
   async function runDiscovery() {
-    if (!adapter?.supports_model_discovery) {
+    if (!adapter || !supportsModelDiscovery) {
       return;
     }
     const payload = buildProviderModelDiscoveryPayload(formRef.current, adapter as never);
-    const baseUrl = String(payload.values.base_url ?? '').trim();
-    if (!baseUrl) {
+    const dependenciesReady = dependencyKeys.every(fieldKey => readProviderFormValue(formRef.current, fieldKey).trim());
+    if (!dependenciesReady) {
       setModels([]);
       setStatus('');
       setError('');
@@ -66,9 +76,9 @@ export function useAiProviderModelDiscovery(props: {
       }
       setModels(result.models);
       setStatus(result.models.length > 0 ? `found:${result.models.length}` : 'empty');
-      const currentModelName = readProviderFormValue(formRef.current, 'model_name').trim();
-      if (!currentModelName && result.models[0]?.id) {
-        onFormChange(assignProviderFormValue(formRef.current, 'model_name', result.models[0].id));
+      const currentTargetValue = targetField ? readProviderFormValue(formRef.current, targetField).trim() : '';
+      if (targetField && !currentTargetValue && result.models[0]?.id) {
+        onFormChange(assignProviderFormValue(formRef.current, targetField, result.models[0].id));
       }
     } catch (discoveryError) {
       if (requestSeq !== requestSeqRef.current) {
@@ -85,12 +95,11 @@ export function useAiProviderModelDiscovery(props: {
   }
 
   useEffect(() => {
-    if (!adapter?.supports_model_discovery) {
+    if (!adapter || !supportsModelDiscovery) {
       return;
     }
-    const payload = buildProviderModelDiscoveryPayload(form, adapter as never);
-    const baseUrl = String(payload.values.base_url ?? '').trim();
-    if (!baseUrl) {
+    const dependenciesReady = dependencyKeys.every(fieldKey => readProviderFormValue(form, fieldKey).trim());
+    if (!dependenciesReady) {
       setModels([]);
       setStatus('');
       setError('');
@@ -98,16 +107,22 @@ export function useAiProviderModelDiscovery(props: {
     }
     const timer = globalThis.setTimeout(() => {
       void runDiscovery();
-    }, 500);
+    }, discoveryConfig?.debounce_ms ?? 500);
     return () => globalThis.clearTimeout(timer);
-  }, [adapter, form.baseUrl, form.secretRef, form.dynamicFields, householdId]);
+  }, [
+    adapter,
+    householdId,
+    supportsModelDiscovery,
+    discoveryConfig?.debounce_ms,
+    dependencyKeys.map(fieldKey => readProviderFormValue(form, fieldKey)).join('\n'),
+  ]);
 
   return {
     models,
     discovering,
     status,
     error,
-    supportsModelDiscovery: Boolean(adapter?.supports_model_discovery),
+    supportsModelDiscovery,
     refreshModels: () => void runDiscovery(),
   };
 }

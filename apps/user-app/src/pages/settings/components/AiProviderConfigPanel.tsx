@@ -16,7 +16,6 @@ import type {
   AiCapability,
   AiCapabilityRoute,
   AiProviderAdapter,
-  AiProviderModelType,
   AiProviderProfile,
   PluginRegistryItem,
 } from '../settingsTypes';
@@ -27,77 +26,6 @@ import { SettingsEmptyState, SettingsPanelCard } from './SettingsSharedBlocks';
 import { getLocalizedAdapterMeta, sortCapabilities } from './aiProviderCatalog';
 
 type ProviderFormState = ReturnType<typeof buildProviderFormState>;
-const AI_PROVIDER_MODEL_TYPES: AiProviderModelType[] = ['llm', 'embedding', 'vision', 'speech', 'image'];
-const AI_CAPABILITIES: AiCapability[] = ['text', 'intent_recognition', 'vision', 'audio_generation', 'audio_recognition', 'image_generation'];
-const HIDDEN_PROVIDER_FIELD_KEYS = new Set(['provider_code']);
-
-function normalizeProviderFieldDefaultValue(value: unknown): string | number | boolean | null {
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return value;
-  }
-  return null;
-}
-
-function normalizeCapabilityList(value: unknown): AiCapability[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .map(item => String(item))
-    .filter((item): item is AiCapability => AI_CAPABILITIES.includes(item as AiCapability));
-}
-
-function buildRegistryAdapter(plugin: PluginRegistryItem): AiProviderAdapter | null {
-  const capability = plugin.capabilities.ai_provider;
-  if (!plugin.types.includes('ai-provider') || !capability) {
-    return null;
-  }
-  return {
-    plugin_id: plugin.id,
-    plugin_name: plugin.name,
-    adapter_code: capability.adapter_code,
-    display_name: capability.display_name,
-    description: typeof plugin.compatibility?.description === 'string'
-      ? plugin.compatibility.description
-      : capability.display_name,
-    transport_type: (String(capability.runtime_capability?.transport_type ?? 'openai_compatible') as AiProviderAdapter['transport_type']),
-    api_family: (String(capability.runtime_capability?.api_family ?? 'openai_chat_completions') as AiProviderAdapter['api_family']),
-    default_privacy_level: (
-      String(capability.runtime_capability?.default_privacy_level ?? 'public_cloud') as AiProviderAdapter['default_privacy_level']
-    ),
-    default_supported_capabilities: normalizeCapabilityList(capability.runtime_capability?.default_supported_capabilities),
-    supported_model_types: capability.supported_model_types.filter(
-      (item): item is AiProviderModelType => AI_PROVIDER_MODEL_TYPES.includes(item as AiProviderModelType),
-    ),
-    llm_workflow: capability.llm_workflow,
-    supports_model_discovery: Boolean(capability.runtime_capability?.supports_model_discovery),
-    field_schema: capability.field_schema
-      .filter(field => !HIDDEN_PROVIDER_FIELD_KEYS.has(String(field.key ?? '')))
-      .map((field) => ({
-        key: String(field.key ?? ''),
-        label: String(field.label ?? field.key ?? ''),
-        field_type: (
-          field.field_type === 'text'
-          || field.field_type === 'secret'
-          || field.field_type === 'number'
-          || field.field_type === 'select'
-          || field.field_type === 'boolean'
-            ? field.field_type
-            : 'text'
-        ),
-        required: Boolean(field.required),
-        placeholder: typeof field.placeholder === 'string' ? field.placeholder : null,
-        help_text: typeof field.help_text === 'string' ? field.help_text : null,
-        default_value: normalizeProviderFieldDefaultValue(field.default_value),
-        options: Array.isArray(field.options)
-          ? field.options.map((option) => ({
-            label: String(option.label ?? option.value ?? ''),
-            value: String(option.value ?? ''),
-          }))
-          : [],
-      })),
-  };
-}
 
 export function AiProviderConfigPanel(props: {
   householdId: string;
@@ -123,24 +51,14 @@ export function AiProviderConfigPanel(props: {
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
 
-  const availableAdapterMap = useMemo(
+  const adapterMap = useMemo(
     () => new Map(adapters.map(item => [item.adapter_code, item])),
     [adapters],
   );
 
-  const registryAdapterMap = useMemo(
-    () => new Map(
-      registryPlugins
-        .map(buildRegistryAdapter)
-        .filter((item): item is AiProviderAdapter => item !== null)
-        .map(item => [item.adapter_code, item]),
-    ),
-    [registryPlugins],
-  );
-
-  const adapterMap = useMemo(
-    () => new Map([...registryAdapterMap, ...availableAdapterMap]),
-    [availableAdapterMap, registryAdapterMap],
+  const selectableAdapters = useMemo(
+    () => adapters,
+    [adapters],
   );
 
   const visibleProviders = useMemo(
@@ -604,9 +522,7 @@ export function AiProviderConfigPanel(props: {
       <AiProviderSelectDialog
         locale={locale}
         open={selectOpen}
-        adapters={[...registryAdapterMap.values(), ...adapters].filter(
-          (item, index, self) => self.findIndex(i => i.adapter_code === item.adapter_code) === index
-        )}
+        adapters={selectableAdapters}
         copy={{
           title: copy.chooseProviderPlugin,
           description: copy.chooseProviderPluginDesc,

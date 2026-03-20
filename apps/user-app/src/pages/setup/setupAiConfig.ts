@@ -122,12 +122,13 @@ export function buildCreateProviderPayload(form: ReturnType<typeof buildProvider
 }
 
 export function buildProviderModelDiscoveryPayload(form: ReturnType<typeof buildProviderFormState>, adapter: AiProviderAdapter) {
+  const values = Object.fromEntries(
+    adapter.field_schema
+      .filter(field => field.key !== 'provider_code')
+      .map(field => [field.key, readProviderFormValue(form, field.key)]),
+  );
   return {
-    values: {
-      base_url: form.baseUrl.trim(),
-      secret_ref: form.secretRef.trim(),
-      ...buildDynamicExtraConfig(form.dynamicFields, adapter),
-    },
+    values,
   };
 }
 

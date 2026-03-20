@@ -1,0 +1,4 @@
+{
+  "zh-CN": "聚合式托管模型入口，适合在同一接口下切换不同模型家族。",
+  "en-US": "Hosted multi-model gateway suited for switching across different model families behind one endpoint."
+}

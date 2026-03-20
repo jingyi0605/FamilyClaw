@@ -70,6 +70,59 @@ export type AiProviderField = {
   options: AiProviderFieldOption[];
 };
 
+export type AiProviderBranding = {
+  logo_url: string | null;
+  logo_dark_url: string | null;
+  description_locales: Record<string, string>;
+};
+
+export type AiProviderConfigVisibilityRule = {
+  field: string;
+  operator: 'equals' | 'not_equals' | 'in' | 'truthy';
+  value: unknown;
+};
+
+export type AiProviderConfigFieldUi = {
+  help_text: string | null;
+  hidden_when: AiProviderConfigVisibilityRule[];
+};
+
+export type AiProviderConfigAction = {
+  key: string;
+  label: string;
+  description: string | null;
+  kind: 'model_discovery';
+  placement: 'field';
+  field_key: string;
+};
+
+export type AiProviderConfigSection = {
+  key: string;
+  title: string;
+  description: string | null;
+  fields: string[];
+};
+
+export type AiProviderConfigUi = {
+  field_order: string[];
+  hidden_fields: string[];
+  sections: AiProviderConfigSection[];
+  field_ui: Record<string, AiProviderConfigFieldUi>;
+  actions: AiProviderConfigAction[];
+};
+
+export type AiProviderModelDiscoveryConfig = {
+  enabled: boolean;
+  action_key: string | null;
+  depends_on_fields: string[];
+  target_field: string | null;
+  debounce_ms: number;
+  empty_state_text: string | null;
+  discovery_hint_text: string | null;
+  discovering_text: string | null;
+  discovered_text_template: string | null;
+};
+
 export type AiCapability = 'text' | 'intent_recognition' | 'vision' | 'audio_generation' | 'audio_recognition' | 'image_generation';
 export type AiProviderModelType = 'llm' | 'embedding' | 'vision' | 'speech' | 'image';
 
@@ -79,6 +132,7 @@ export type AiProviderAdapter = {
   adapter_code: string;
   display_name: string;
   description: string;
+  branding: AiProviderBranding;
   transport_type: 'openai_compatible' | 'native_sdk' | 'local_gateway';
   api_family: 'openai_chat_completions' | 'anthropic_messages' | 'gemini_generate_content';
   default_privacy_level: 'local_only' | 'private_cloud' | 'public_cloud';
@@ -87,6 +141,8 @@ export type AiProviderAdapter = {
   llm_workflow: string;
   supports_model_discovery: boolean;
   field_schema: AiProviderField[];
+  config_ui: AiProviderConfigUi;
+  model_discovery: AiProviderModelDiscoveryConfig;
 };
 
 export type AiProviderDiscoveredModel = {
@@ -685,7 +741,10 @@ export type PluginRegistryItem = {
     ai_provider?: {
       adapter_code: string;
       display_name: string;
+      branding: AiProviderBranding;
       field_schema: Array<Record<string, unknown>>;
+      config_ui: AiProviderConfigUi;
+      model_discovery: AiProviderModelDiscoveryConfig;
       supported_model_types: string[];
       llm_workflow: string;
       runtime_capability?: Record<string, unknown>;

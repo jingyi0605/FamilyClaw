@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Kimi</title>
+  <desc id="desc">Kimi provider logo</desc>
+  <rect width="128" height="128" rx="28" fill="#1e1b4b"/>
+  <path d="M36 32v64M92 32 52 64l40 32" fill="none" stroke="#c4b5fd" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

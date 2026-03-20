@@ -1,10 +1,10 @@
 import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils';
-import {
-  AI_CAPABILITY_OPTIONS,
-  getCapabilityLabel,
-} from '../../setup/setupAiConfig';
+import { AI_CAPABILITY_OPTIONS, getCapabilityLabel } from '../../setup/setupAiConfig';
 import type {
   AiProviderAdapter,
+  AiProviderConfigAction,
+  AiProviderConfigSection,
+  AiProviderConfigVisibilityRule,
   AiProviderField,
   AiProviderFieldOption,
 } from '../settingsTypes';
@@ -14,6 +14,7 @@ const WORKFLOW_LABEL_MAP: Record<string, Parameters<typeof getPageMessage>[1]> =
   anthropic_messages: 'settings.ai.provider.workflow.anthropic',
   gemini_generate_content: 'settings.ai.provider.workflow.gemini',
 };
+
 const CAPABILITY_ORDER = new Map<string, number>(AI_CAPABILITY_OPTIONS.map((item, index) => [item.value, index]));
 
 export function getLocalizedCapabilityLabel(capability: string, locale: string | undefined) {
@@ -25,30 +26,28 @@ export function getLocalizedWorkflowLabel(workflow: string, locale: string | und
   return key ? getPageMessage(locale, key) : workflow;
 }
 
-export function getLocalizedAdapterMeta(adapter: AiProviderAdapter, locale: string | undefined) {
-  const descriptionKey = ({
-    chatgpt: 'settings.ai.provider.adapter.chatgpt',
-    deepseek: 'settings.ai.provider.adapter.deepseek',
-    qwen: 'settings.ai.provider.adapter.qwen',
-    glm: 'settings.ai.provider.adapter.glm',
-    siliconflow: 'settings.ai.provider.adapter.siliconflow',
-    kimi: 'settings.ai.provider.adapter.kimi',
-    minimax: 'settings.ai.provider.adapter.minimax',
-    claude: 'settings.ai.provider.adapter.claude',
-    gemini: 'settings.ai.provider.adapter.gemini',
-    openrouter: 'settings.ai.provider.adapter.openrouter',
-    doubao: 'settings.ai.provider.adapter.doubao',
-    'doubao-coding': 'settings.ai.provider.adapter.doubaoCoding',
-    byteplus: 'settings.ai.provider.adapter.byteplus',
-    'byteplus-coding': 'settings.ai.provider.adapter.byteplusCoding',
-    ollama: 'settings.ai.provider.adapter.ollama',
-    lmstudio: 'settings.ai.provider.adapter.lmstudio',
-    localai: 'settings.ai.provider.adapter.localai',
-  } as Record<string, string | undefined>)[adapter.adapter_code];
+function pickLocalizedText(messages: Record<string, string> | null | undefined, locale: string | undefined): string | null {
+  if (!messages) {
+    return null;
+  }
+  const normalizedLocale = (locale || '').trim();
+  if (normalizedLocale && messages[normalizedLocale]) {
+    return messages[normalizedLocale];
+  }
+  const language = normalizedLocale.split('-')[0];
+  if (language) {
+    const matchedKey = Object.keys(messages).find(key => key.split('-')[0] === language);
+    if (matchedKey) {
+      return messages[matchedKey];
+    }
+  }
+  return messages.default ?? Object.values(messages)[0] ?? null;
+}
 
+export function getLocalizedAdapterMeta(adapter: AiProviderAdapter, locale: string | undefined) {
   return {
     label: adapter.plugin_name || adapter.display_name,
-    description: descriptionKey ? getPageMessage(locale, descriptionKey as any) : adapter.description,
+    description: pickLocalizedText(adapter.branding.description_locales, locale) || adapter.description,
   };
 }
 
@@ -85,7 +84,11 @@ function localizeExamplePrefix(text: string | null | undefined, locale: string |
   return `${getPageMessage(locale, 'settings.ai.provider.examplePrefix')}${normalized.slice(matchedPrefix.length).trimStart()}`;
 }
 
-export function getLocalizedField(field: AiProviderField, locale: string | undefined) {
+export function getLocalizedField(
+  field: AiProviderField,
+  locale: string | undefined,
+  fieldUi?: { help_text: string | null } | null,
+) {
   const label = (() => {
     switch (field.key) {
       case 'display_name':
@@ -114,6 +117,9 @@ export function getLocalizedField(field: AiProviderField, locale: string | undef
   })();
 
   const helpText = (() => {
+    if (fieldUi?.help_text) {
+      return fieldUi.help_text;
+    }
     switch (field.key) {
       case 'base_url':
         return getPageMessage(locale, 'settings.ai.provider.help.baseUrl');
@@ -144,4 +150,41 @@ export function getLocalizedField(field: AiProviderField, locale: string | undef
     help_text: localizeExamplePrefix(helpText, locale),
     options,
   };
+}
+
+export function getProviderFieldSections(adapter: AiProviderAdapter): Array<AiProviderConfigSection & { fields_meta: AiProviderField[] }> {
+  const fieldMap = new Map(adapter.field_schema.map(field => [field.key, field]));
+  return adapter.config_ui.sections.map(section => ({
+    ...section,
+    fields_meta: section.fields.map(fieldKey => fieldMap.get(fieldKey)).filter((field): field is AiProviderField => Boolean(field)),
+  }));
+}
+
+export function getProviderFieldAction(adapter: AiProviderAdapter, fieldKey: string): AiProviderConfigAction | null {
+  return adapter.config_ui.actions.find(action => action.field_key === fieldKey) ?? null;
+}
+
+function matchesVisibilityRule(rule: AiProviderConfigVisibilityRule, readValue: (fieldKey: string) => string) {
+  const value = readValue(rule.field);
+  if (rule.operator === 'truthy') {
+    return Boolean(value.trim());
+  }
+  if (rule.operator === 'in') {
+    return Array.isArray(rule.value) ? rule.value.map(String).includes(value) : false;
+  }
+  if (rule.operator === 'not_equals') {
+    return value !== String(rule.value ?? '');
+  }
+  return value === String(rule.value ?? '');
+}
+
+export function isProviderFieldHidden(adapter: AiProviderAdapter, fieldKey: string, readValue: (fieldKey: string) => string) {
+  if (adapter.config_ui.hidden_fields.includes(fieldKey)) {
+    return true;
+  }
+  const fieldUi = adapter.config_ui.field_ui[fieldKey];
+  if (!fieldUi) {
+    return false;
+  }
+  return fieldUi.hidden_when.some(rule => matchesVisibilityRule(rule, readValue));
 }

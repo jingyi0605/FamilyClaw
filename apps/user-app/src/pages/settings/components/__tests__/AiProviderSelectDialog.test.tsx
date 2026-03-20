@@ -11,6 +11,11 @@ function createAdapter(overrides: Partial<AiProviderAdapter> = {}): AiProviderAd
     adapter_code: 'openai',
     display_name: 'ChatGPT',
     description: '适合直接接入 OpenAI 官方接口。',
+    branding: {
+      logo_url: null,
+      logo_dark_url: null,
+      description_locales: {},
+    },
     transport_type: 'openai_compatible',
     api_family: 'openai_chat_completions',
     default_privacy_level: 'public_cloud',
@@ -19,6 +24,24 @@ function createAdapter(overrides: Partial<AiProviderAdapter> = {}): AiProviderAd
     llm_workflow: 'chat',
     supports_model_discovery: false,
     field_schema: [],
+    config_ui: {
+      field_order: [],
+      hidden_fields: [],
+      sections: [],
+      field_ui: {},
+      actions: [],
+    },
+    model_discovery: {
+      enabled: false,
+      action_key: null,
+      depends_on_fields: [],
+      target_field: null,
+      debounce_ms: 500,
+      empty_state_text: null,
+      discovery_hint_text: null,
+      discovering_text: null,
+      discovered_text_template: null,
+    },
     ...overrides,
   };
 }

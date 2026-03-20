@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">OpenRouter</title>
+  <desc id="desc">OpenRouter provider logo</desc>
+  <rect width="128" height="128" rx="28" fill="#111827"/>
+  <path d="M26 40h76v12H26zM26 58h52v12H26zM26 76h76v12H26z" fill="#38bdf8"/>
+  <circle cx="92" cy="64" r="12" fill="#f8fafc"/>
+</svg>

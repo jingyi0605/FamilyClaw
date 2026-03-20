@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Claude</title>
+  <desc id="desc">Claude provider logo</desc>
+  <rect width="128" height="128" rx="28" fill="#1f2937"/>
+  <rect x="18" y="18" width="92" height="92" rx="24" fill="#f59e0b"/>
+  <text x="64" y="74" text-anchor="middle" font-size="28" font-family="Arial, sans-serif" font-weight="700" fill="#111827">AI</text>
+</svg>

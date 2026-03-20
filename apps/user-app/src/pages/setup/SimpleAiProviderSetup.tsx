@@ -1,103 +1,128 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useI18n } from '../../runtime';
-import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import { Card } from './base';
-import { buildCreateProviderPayload, buildProviderFormState, buildRoutePayload, buildUpdateProviderPayload, getProviderAdapterCode, readProviderFormValue, SETUP_ROUTE_CAPABILITIES, toProviderFormState, assignProviderFormValue } from './setupAiConfig';
+import {
+  assignProviderFormValue,
+  buildCreateProviderPayload,
+  buildProviderFormState,
+  buildRoutePayload,
+  buildUpdateProviderPayload,
+  getProviderAdapterCode,
+  readProviderFormValue,
+  SETUP_ROUTE_CAPABILITIES,
+  toProviderFormState,
+} from './setupAiConfig';
 import { setupApi } from './setupApi';
-import type { AiCapabilityRoute, AiProviderAdapter, AiProviderField, AiProviderFieldOption, AiProviderProfile } from './setupTypes';
+import type { AiCapabilityRoute, AiProviderAdapter, AiProviderField, AiProviderProfile } from './setupTypes';
 import { AiProviderSelectDialog } from '../settings/components/AiProviderSelectDialog';
-import { getAiProviderLogo } from '../settings/components/AiProviderLogos';
-import { getLocalizedAdapterMeta } from '../settings/components/aiProviderCatalog';
+import { AiProviderBrandMark } from '../settings/components/AiProviderBrandMark';
+import {
+  getLocalizedAdapterMeta,
+  getLocalizedField,
+  getProviderFieldAction,
+  getProviderFieldSections,
+  isProviderFieldHidden,
+} from '../settings/components/aiProviderCatalog';
 import { useAiProviderModelDiscovery } from '../settings/components/useAiProviderModelDiscovery';
 
-const HIDDEN_SETUP_FIELDS = new Set(['provider_code', 'latency_budget_ms']);
-
-const ADAPTER_DESCRIPTION_KEYS: Record<string, string> = {
-  chatgpt: 'settings.ai.provider.adapter.chatgpt',
-  deepseek: 'settings.ai.provider.adapter.deepseek',
-  qwen: 'settings.ai.provider.adapter.qwen',
-  glm: 'settings.ai.provider.adapter.glm',
-  siliconflow: 'settings.ai.provider.adapter.siliconflow',
-  kimi: 'settings.ai.provider.adapter.kimi',
-  minimax: 'settings.ai.provider.adapter.minimax',
-  claude: 'settings.ai.provider.adapter.claude',
-  gemini: 'settings.ai.provider.adapter.gemini',
-  openrouter: 'settings.ai.provider.adapter.openrouter',
-  doubao: 'settings.ai.provider.adapter.doubao',
-  'doubao-coding': 'settings.ai.provider.adapter.doubaoCoding',
-  byteplus: 'settings.ai.provider.adapter.byteplus',
-  'byteplus-coding': 'settings.ai.provider.adapter.byteplusCoding',
-  ollama: 'settings.ai.provider.adapter.ollama',
-  lmstudio: 'settings.ai.provider.adapter.lmstudio',
-  localai: 'settings.ai.provider.adapter.localai',
-};
-
-const FIELD_LABEL_KEYS: Record<string, string> = {
-  display_name: 'settings.ai.provider.field.displayName',
-  provider_code: 'settings.ai.provider.field.providerCode',
-  base_url: 'settings.ai.provider.field.baseUrl',
-  secret_ref: 'settings.ai.provider.field.secretRef',
-  model_name: 'settings.ai.provider.field.modelName',
-  privacy_level: 'settings.ai.provider.field.privacyLevel',
-  anthropic_version: 'settings.ai.provider.field.anthropicVersion',
-  site_url: 'settings.ai.provider.field.siteUrl',
-  app_name: 'settings.ai.provider.field.appName',
-  latency_budget_ms: 'settings.ai.provider.field.latencyBudgetMs',
-};
-
-const FIELD_HELP_KEYS: Record<string, string> = {
-  base_url: 'settings.ai.provider.help.baseUrl',
-  site_url: 'settings.ai.provider.help.siteUrl',
-  app_name: 'settings.ai.provider.help.appName',
-};
-
-const PRIVACY_LEVEL_LABELS: Record<string, string> = {
-  public_cloud: 'settings.ai.provider.privacy.publicCloud',
-  private_cloud: 'settings.ai.provider.privacy.privateCloud',
-  local_only: 'settings.ai.provider.privacy.localOnly',
-};
-
-function getLocalizedAdapterDescription(adapter: AiProviderAdapter, locale: string | undefined): string {
-  const key = ADAPTER_DESCRIPTION_KEYS[adapter.adapter_code];
-  return key ? getPageMessage(locale, key as Parameters<typeof getPageMessage>[1]) : adapter.description;
+function renderDiscoveryMessage(
+  adapter: AiProviderAdapter,
+  modelDiscovery: ReturnType<typeof useAiProviderModelDiscovery>,
+) {
+  if (modelDiscovery.error) {
+    return modelDiscovery.error;
+  }
+  if (modelDiscovery.status.startsWith('found:')) {
+    const count = modelDiscovery.status.slice('found:'.length);
+    return adapter.model_discovery.discovered_text_template?.replace('{count}', count) || `已发现 ${count} 个模型。`;
+  }
+  if (modelDiscovery.status === 'empty') {
+    return adapter.model_discovery.empty_state_text || '没有发现可用模型。';
+  }
+  return adapter.model_discovery.discovery_hint_text || '';
 }
 
-function getLocalizedFieldLabel(field: AiProviderField, locale: string | undefined): string {
-  const key = FIELD_LABEL_KEYS[field.key];
-  return key ? getPageMessage(locale, key as Parameters<typeof getPageMessage>[1]) : field.label;
-}
+function renderSetupField(props: {
+  householdId: string;
+  locale: string | undefined;
+  selectPlaceholder: string;
+  adapter: AiProviderAdapter;
+  field: AiProviderField;
+  form: ReturnType<typeof buildProviderFormState>;
+  onFormChange: (form: ReturnType<typeof buildProviderFormState>) => void;
+  modelDiscovery: ReturnType<typeof useAiProviderModelDiscovery>;
+}) {
+  const { householdId, locale, selectPlaceholder, adapter, field, form, onFormChange, modelDiscovery } = props;
+  const fieldUi = adapter.config_ui.field_ui[field.key];
+  const localizedField = getLocalizedField(field, locale, fieldUi);
+  const inputId = `${householdId}-${field.key}`;
+  const fieldValue = readProviderFormValue(form, field.key);
+  const action = getProviderFieldAction(adapter, field.key);
+  const isDiscoveryField = Boolean(
+    action
+    && action.kind === 'model_discovery'
+    && adapter.model_discovery.enabled
+    && adapter.model_discovery.target_field === field.key,
+  );
+  const discoveryMessage = isDiscoveryField ? renderDiscoveryMessage(adapter, modelDiscovery) : '';
+  const datalistId = `${inputId}-options`;
 
-function getLocalizedFieldHelp(field: AiProviderField, locale: string | undefined): string | null {
-  const key = FIELD_HELP_KEYS[field.key];
-  return key ? getPageMessage(locale, key as Parameters<typeof getPageMessage>[1]) : field.help_text;
-}
-
-function getLocalizedPrivacyLabel(value: string, locale: string | undefined): string {
-  const key = PRIVACY_LEVEL_LABELS[value];
-  return key ? getPageMessage(locale, key as Parameters<typeof getPageMessage>[1]) : value;
-}
-
-function localizeExamplePrefix(text: string | null | undefined, locale: string | undefined): string | null {
-  if (!text) return null;
-  const normalized = text.trim();
-  const prefixes = ['例如：', '例如:', 'For example:', 'Example:'];
-  const matchedPrefix = prefixes.find(prefix => normalized.startsWith(prefix));
-  if (!matchedPrefix) return text;
-  return `${getPageMessage(locale, 'settings.ai.provider.examplePrefix')}${normalized.slice(matchedPrefix.length).trimStart()}`;
-}
-
-function getLocalizedField(field: AiProviderField, locale: string | undefined) {
-  const localizedOptions: AiProviderFieldOption[] = field.options.map((option: AiProviderFieldOption) => ({
-    ...option,
-    label: field.key === 'privacy_level' ? getLocalizedPrivacyLabel(option.value, locale) : localizeExamplePrefix(option.label, locale) ?? option.label,
-  }));
-  return {
-    ...field,
-    label: getLocalizedFieldLabel(field, locale),
-    placeholder: localizeExamplePrefix(field.placeholder, locale),
-    help_text: getLocalizedFieldHelp(field, locale),
-    options: localizedOptions,
-  };
+  return (
+    <div key={field.key} className="form-group">
+      <div className={isDiscoveryField ? 'ai-provider-model-field__label-row' : undefined}>
+        <label htmlFor={inputId}>{localizedField.label}</label>
+        {isDiscoveryField && action ? (
+          <button
+            className="btn btn--outline btn--sm"
+            type="button"
+            onClick={modelDiscovery.refreshModels}
+            disabled={modelDiscovery.discovering}
+            title={action.description ?? undefined}
+          >
+            {modelDiscovery.discovering
+              ? (adapter.model_discovery.discovering_text || action.label)
+              : action.label}
+          </button>
+        ) : null}
+      </div>
+      {field.field_type === 'select' ? (
+        <select
+          id={inputId}
+          className="form-select"
+          value={fieldValue}
+          onChange={event => onFormChange(assignProviderFormValue(form, field.key, event.target.value))}
+        >
+          <option value="">{selectPlaceholder}</option>
+          {localizedField.options.map(option => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <>
+          <input
+            id={inputId}
+            className="form-input"
+            type={field.field_type === 'secret' ? 'password' : field.field_type === 'number' ? 'number' : 'text'}
+            list={isDiscoveryField && modelDiscovery.models.length > 0 ? datalistId : undefined}
+            value={fieldValue}
+            onChange={event => onFormChange(assignProviderFormValue(form, field.key, event.target.value))}
+            placeholder={localizedField.placeholder ?? undefined}
+          />
+          {isDiscoveryField && modelDiscovery.models.length > 0 ? (
+            <datalist id={datalistId}>
+              {modelDiscovery.models.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+            </datalist>
+          ) : null}
+        </>
+      )}
+      {localizedField.help_text ? <p className="ai-config-muted">{localizedField.help_text}</p> : null}
+      {isDiscoveryField && modelDiscovery.supportsModelDiscovery && discoveryMessage ? (
+        <p className={modelDiscovery.error ? 'ai-config-muted form-error' : 'ai-config-muted'}>{discoveryMessage}</p>
+      ) : null}
+    </div>
+  );
 }
 
 export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?: () => void }) {
@@ -116,10 +141,6 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
     () => (currentAdapter ? getLocalizedAdapterMeta(currentAdapter, locale) : null),
     [currentAdapter, locale],
   );
-  const CurrentAdapterLogo = useMemo(
-    () => (currentAdapter ? getAiProviderLogo(currentAdapter.adapter_code) : null),
-    [currentAdapter],
-  );
   const modelDiscovery = useAiProviderModelDiscovery({
     householdId: props.householdId,
     adapter: currentAdapter,
@@ -127,6 +148,7 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
     onFormChange: setForm,
     discoverModels: setupApi.discoverAiProviderModels,
   });
+  const sections = currentAdapter ? getProviderFieldSections(currentAdapter) : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -206,10 +228,10 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
             aria-haspopup="dialog"
             aria-expanded={selectOpen}
           >
-            {currentAdapter && currentAdapterMeta && CurrentAdapterLogo ? (
+            {currentAdapter && currentAdapterMeta ? (
               <>
                 <span className="setup-provider-trigger__logo">
-                  <CurrentAdapterLogo width={18} height={18} />
+                  <AiProviderBrandMark adapter={currentAdapter} size={18} />
                 </span>
                 <span className="setup-provider-trigger__content">
                   <span className="setup-provider-trigger__title">{currentAdapterMeta.label}</span>
@@ -228,75 +250,27 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
         </div>
         {currentAdapter ? (
           <>
-            <div className="setup-form-grid">
-              {currentAdapter.field_schema.filter(field => !HIDDEN_SETUP_FIELDS.has(field.key)).map(field => {
-                const localizedField = getLocalizedField(field, locale);
-                const inputId = `${props.householdId}-${field.key}`;
-                const discoveryMessage = modelDiscovery.error
-                  ? modelDiscovery.error
-                  : modelDiscovery.status.startsWith('found:')
-                    ? getPageMessage(locale, 'settings.ai.provider.discoveredModels').replace('{count}', modelDiscovery.status.slice('found:'.length))
-                    : modelDiscovery.status === 'empty'
-                      ? getPageMessage(locale, 'settings.ai.provider.noModelsDiscovered')
-                      : getPageMessage(locale, 'settings.ai.provider.discoveryHint');
-
-                if (field.key === 'model_name') {
-                  const datalistId = `${inputId}-options`;
-                  return (
-                    <div key={field.key} className="form-group">
-                      <div className="ai-provider-model-field__label-row">
-                        <label htmlFor={inputId}>{localizedField.label}</label>
-                        {modelDiscovery.supportsModelDiscovery ? (
-                          <button
-                            className="btn btn--outline btn--sm"
-                            type="button"
-                            onClick={modelDiscovery.refreshModels}
-                            disabled={modelDiscovery.discovering}
-                          >
-                            {modelDiscovery.discovering
-                              ? getPageMessage(locale, 'settings.ai.provider.discoveringModels')
-                              : getPageMessage(locale, 'settings.ai.provider.refreshModels')}
-                          </button>
-                        ) : null}
-                      </div>
-                      <input
-                        id={inputId}
-                        className="form-input"
-                        type="text"
-                        list={modelDiscovery.models.length > 0 ? datalistId : undefined}
-                        value={readProviderFormValue(form, field.key)}
-                        onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))}
-                        placeholder={localizedField.placeholder ?? undefined}
-                      />
-                      {modelDiscovery.models.length > 0 ? (
-                        <datalist id={datalistId}>
-                          {modelDiscovery.models.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
-                        </datalist>
-                      ) : null}
-                      {localizedField.help_text ? <p className="ai-config-muted">{localizedField.help_text}</p> : null}
-                      {modelDiscovery.supportsModelDiscovery ? (
-                        <p className={modelDiscovery.error ? 'ai-config-muted form-error' : 'ai-config-muted'}>{discoveryMessage}</p>
-                      ) : null}
-                    </div>
-                  );
-                }
-
-                return (
-                  <div key={field.key} className="form-group">
-                    <label htmlFor={inputId}>{localizedField.label}</label>
-                    {field.field_type === 'select' ? (
-                      <select id={inputId} className="form-select" value={readProviderFormValue(form, field.key)} onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))}>
-                        <option value="">{t('setup.providerSetup.selectPlaceholder')}</option>
-                        {localizedField.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
-                    ) : (
-                      <input id={inputId} className="form-input" type={field.field_type === 'secret' ? 'password' : field.field_type === 'number' ? 'number' : 'text'} value={readProviderFormValue(form, field.key)} onChange={event => setForm(assignProviderFormValue(form, field.key, event.target.value))} placeholder={localizedField.placeholder ?? undefined} />
-                    )}
-                    {localizedField.help_text ? <p className="ai-config-muted">{localizedField.help_text}</p> : null}
-                  </div>
-                );
-              })}
-            </div>
+            {sections.map(section => (
+              <div key={section.key} className="setup-form-section">
+                {section.title ? <h4 className="setup-form-section__title">{section.title}</h4> : null}
+                {section.description ? <p className="setup-form-section__desc">{section.description}</p> : null}
+                <div className="setup-form-grid">
+                  {section.fields_meta
+                    .filter(field => field.key !== 'provider_code')
+                    .filter(field => !isProviderFieldHidden(currentAdapter, field.key, fieldKey => readProviderFormValue(form, fieldKey)))
+                    .map(field => renderSetupField({
+                      householdId: props.householdId,
+                      locale,
+                      selectPlaceholder: t('setup.providerSetup.selectPlaceholder'),
+                      adapter: currentAdapter,
+                      field,
+                      form,
+                      onFormChange: setForm,
+                      modelDiscovery,
+                    }))}
+                </div>
+              </div>
+            ))}
             <div className="setup-inline-tip"><strong>{t('setup.providerSetup.tipTitle')}</strong><span>{t('setup.providerSetup.tipBody')}</span></div>
           </>
         ) : null}

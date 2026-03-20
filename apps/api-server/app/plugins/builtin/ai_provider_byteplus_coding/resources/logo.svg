@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">BytePlus Coding</title>
+  <desc id="desc">BytePlus Coding provider logo</desc>
+  <rect width="128" height="128" rx="28" fill="#1f2937"/>
+  <path d="M34 44h60M34 64h36M34 84h60" stroke="#fb923c" stroke-width="12" stroke-linecap="round"/>
+</svg>

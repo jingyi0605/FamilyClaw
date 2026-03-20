@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">DeepSeek</title>
+  <desc id="desc">DeepSeek provider logo</desc>
+  <rect width="128" height="128" rx="28" fill="#0f172a"/>
+  <path d="M30 90V38h28c18 0 30 10 30 26S76 90 58 90H30Z" fill="#60a5fa"/>
+  <text x="52" y="74" text-anchor="middle" font-size="24" font-family="Arial, sans-serif" font-weight="700" fill="#e0f2fe">DS</text>
+</svg>

@@ -1,0 +1,4 @@
+{
+  "zh-CN": "智谱 GLM 兼容接口，继续走共享的 OpenAI Chat Completions 工作流。",
+  "en-US": "Zhipu GLM-compatible endpoint using the shared OpenAI Chat Completions workflow."
+}

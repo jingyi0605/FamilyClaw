@@ -35,6 +35,24 @@ class PluginManifestTests(unittest.TestCase):
     def setUp(self) -> None:
         self.builtin_root = Path(__file__).resolve().parents[1] / "app" / "plugins" / "builtin"
 
+    def _write_ai_provider_resources(
+        self,
+        root: Path,
+        *,
+        description_payload: object | None = None,
+    ) -> None:
+        resources_dir = root / "resources"
+        resources_dir.mkdir(parents=True, exist_ok=True)
+        (resources_dir / "logo.svg").write_text(
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'></svg>",
+            encoding="utf-8",
+        )
+        payload = description_payload if description_payload is not None else {"zh-CN": "provider description"}
+        (resources_dir / "description.json").write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
     def test_load_valid_manifest(self) -> None:
         manifest = load_plugin_manifest(
             self.builtin_root / "health_basic" / "manifest.json"
@@ -57,6 +75,7 @@ class PluginManifestTests(unittest.TestCase):
 
     def test_manifest_accepts_ai_provider_driver_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
+            self._write_ai_provider_resources(Path(tempdir))
             manifest_path = Path(tempdir) / "manifest.json"
             manifest_path.write_text(
                 json.dumps(
@@ -73,6 +92,10 @@ class PluginManifestTests(unittest.TestCase):
                             "ai_provider": {
                                 "adapter_code": "driver-ai-provider",
                                 "display_name": "Driver AI Provider",
+                                "branding": {
+                                    "logo_resource": "resources/logo.svg",
+                                    "description_resource": "resources/description.json",
+                                },
                                 "field_schema": [
                                     {
                                         "key": "secret_ref",
@@ -82,6 +105,21 @@ class PluginManifestTests(unittest.TestCase):
                                         "options": [],
                                     }
                                 ],
+                                "config_ui": {
+                                    "field_order": ["secret_ref"],
+                                    "sections": [
+                                        {
+                                            "key": "connection",
+                                            "title": "Connection",
+                                            "fields": ["secret_ref"],
+                                        }
+                                    ],
+                                    "actions": [],
+                                },
+                                "model_discovery": {
+                                    "enabled": False,
+                                    "depends_on_fields": [],
+                                },
                                 "supported_model_types": ["llm"],
                                 "llm_workflow": "openai_chat_completions",
                                 "runtime_capability": {
@@ -102,6 +140,361 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertEqual(["ai-provider"], manifest.types)
         self.assertEqual("plugin.driver.build_driver", manifest.entrypoints.ai_provider)
+        assert manifest.capabilities.ai_provider is not None
+        self.assertEqual("resources/logo.svg", manifest.capabilities.ai_provider.branding.logo_resource)
+
+    def test_manifest_rejects_ai_provider_without_branding_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-ai-provider-branding",
+                        "name": "Broken AI Provider Branding",
+                        "version": "0.1.0",
+                        "types": ["ai-provider"],
+                        "permissions": [],
+                        "risk_level": "low",
+                        "triggers": [],
+                        "entrypoints": {"ai_provider": "plugin.driver.build_driver"},
+                        "capabilities": {
+                            "ai_provider": {
+                                "adapter_code": "broken-ai-provider-branding",
+                                "display_name": "Broken AI Provider Branding",
+                                "field_schema": [
+                                    {
+                                        "key": "secret_ref",
+                                        "label": "API Key",
+                                        "field_type": "secret",
+                                        "required": True,
+                                        "options": [],
+                                    }
+                                ],
+                                "config_ui": {
+                                    "field_order": ["secret_ref"],
+                                    "sections": [
+                                        {
+                                            "key": "connection",
+                                            "title": "Connection",
+                                            "fields": ["secret_ref"],
+                                        }
+                                    ],
+                                    "actions": [],
+                                },
+                                "model_discovery": {
+                                    "enabled": False,
+                                    "depends_on_fields": [],
+                                },
+                                "supported_model_types": ["llm"],
+                                "llm_workflow": "openai_chat_completions",
+                                "runtime_capability": {
+                                    "transport_type": "openai_compatible",
+                                    "api_family": "openai_chat_completions",
+                                    "default_privacy_level": "public_cloud",
+                                    "default_supported_capabilities": ["text"],
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("branding", str(context.exception))
+
+    def test_manifest_rejects_ai_provider_without_config_ui_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            self._write_ai_provider_resources(Path(tempdir))
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-ai-provider-config-ui",
+                        "name": "Broken AI Provider Config UI",
+                        "version": "0.1.0",
+                        "types": ["ai-provider"],
+                        "permissions": [],
+                        "risk_level": "low",
+                        "triggers": [],
+                        "entrypoints": {"ai_provider": "plugin.driver.build_driver"},
+                        "capabilities": {
+                            "ai_provider": {
+                                "adapter_code": "broken-ai-provider-config-ui",
+                                "display_name": "Broken AI Provider Config UI",
+                                "branding": {
+                                    "logo_resource": "resources/logo.svg",
+                                    "description_resource": "resources/description.json",
+                                },
+                                "field_schema": [
+                                    {
+                                        "key": "secret_ref",
+                                        "label": "API Key",
+                                        "field_type": "secret",
+                                        "required": True,
+                                        "options": [],
+                                    }
+                                ],
+                                "model_discovery": {
+                                    "enabled": False,
+                                    "depends_on_fields": [],
+                                },
+                                "supported_model_types": ["llm"],
+                                "llm_workflow": "openai_chat_completions",
+                                "runtime_capability": {
+                                    "transport_type": "openai_compatible",
+                                    "api_family": "openai_chat_completions",
+                                    "default_privacy_level": "public_cloud",
+                                    "default_supported_capabilities": ["text"],
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("config_ui", str(context.exception))
+
+    def test_manifest_rejects_ai_provider_without_model_discovery_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            self._write_ai_provider_resources(Path(tempdir))
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-ai-provider-model-discovery",
+                        "name": "Broken AI Provider Model Discovery",
+                        "version": "0.1.0",
+                        "types": ["ai-provider"],
+                        "permissions": [],
+                        "risk_level": "low",
+                        "triggers": [],
+                        "entrypoints": {"ai_provider": "plugin.driver.build_driver"},
+                        "capabilities": {
+                            "ai_provider": {
+                                "adapter_code": "broken-ai-provider-model-discovery",
+                                "display_name": "Broken AI Provider Model Discovery",
+                                "branding": {
+                                    "logo_resource": "resources/logo.svg",
+                                    "description_resource": "resources/description.json",
+                                },
+                                "field_schema": [
+                                    {
+                                        "key": "secret_ref",
+                                        "label": "API Key",
+                                        "field_type": "secret",
+                                        "required": True,
+                                        "options": [],
+                                    }
+                                ],
+                                "config_ui": {
+                                    "field_order": ["secret_ref"],
+                                    "sections": [
+                                        {
+                                            "key": "connection",
+                                            "title": "Connection",
+                                            "fields": ["secret_ref"],
+                                        }
+                                    ],
+                                    "actions": [],
+                                },
+                                "supported_model_types": ["llm"],
+                                "llm_workflow": "openai_chat_completions",
+                                "runtime_capability": {
+                                    "transport_type": "openai_compatible",
+                                    "api_family": "openai_chat_completions",
+                                    "default_privacy_level": "public_cloud",
+                                    "default_supported_capabilities": ["text"],
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("model_discovery", str(context.exception))
+
+    def test_manifest_rejects_ai_provider_when_branding_resource_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            resources_dir = Path(tempdir) / "resources"
+            resources_dir.mkdir(parents=True, exist_ok=True)
+            (resources_dir / "description.json").write_text(
+                json.dumps({"zh-CN": "provider description"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-ai-provider-missing-logo",
+                        "name": "Broken AI Provider Missing Logo",
+                        "version": "0.1.0",
+                        "types": ["ai-provider"],
+                        "permissions": [],
+                        "risk_level": "low",
+                        "triggers": [],
+                        "entrypoints": {"ai_provider": "plugin.driver.build_driver"},
+                        "capabilities": {
+                            "ai_provider": {
+                                "adapter_code": "broken-ai-provider-missing-logo",
+                                "display_name": "Broken AI Provider Missing Logo",
+                                "branding": {
+                                    "logo_resource": "resources/logo.svg",
+                                    "description_resource": "resources/description.json",
+                                },
+                                "field_schema": [
+                                    {
+                                        "key": "secret_ref",
+                                        "label": "API Key",
+                                        "field_type": "secret",
+                                        "required": True,
+                                        "options": [],
+                                    }
+                                ],
+                                "config_ui": {
+                                    "field_order": ["secret_ref"],
+                                    "sections": [
+                                        {
+                                            "key": "connection",
+                                            "title": "Connection",
+                                            "fields": ["secret_ref"],
+                                        }
+                                    ],
+                                    "actions": [],
+                                },
+                                "model_discovery": {
+                                    "enabled": False,
+                                    "depends_on_fields": [],
+                                },
+                                "supported_model_types": ["llm"],
+                                "llm_workflow": "openai_chat_completions",
+                                "runtime_capability": {
+                                    "transport_type": "openai_compatible",
+                                    "api_family": "openai_chat_completions",
+                                    "default_privacy_level": "public_cloud",
+                                    "default_supported_capabilities": ["text"],
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("资源文件不存在", str(context.exception))
+
+    def test_builtin_ai_provider_manifests_expose_required_plugin_contract_and_resources(self) -> None:
+        ai_provider_manifests = sorted(self.builtin_root.glob("ai_provider_*/manifest.json"))
+        self.assertGreaterEqual(len(ai_provider_manifests), 3)
+
+        for manifest_path in ai_provider_manifests:
+            manifest = load_plugin_manifest(manifest_path)
+            capability = manifest.capabilities.ai_provider
+            self.assertIsNotNone(capability, msg=str(manifest_path))
+            assert capability is not None
+            self.assertIsNotNone(capability.branding, msg=str(manifest_path))
+            self.assertIsNotNone(capability.config_ui, msg=str(manifest_path))
+            self.assertIsNotNone(capability.model_discovery, msg=str(manifest_path))
+            self.assertGreater(len(capability.config_ui.field_order), 0, msg=str(manifest_path))
+            self.assertGreater(len(capability.config_ui.sections), 0, msg=str(manifest_path))
+
+            manifest_dir = manifest_path.parent
+            self.assertTrue((manifest_dir / capability.branding.logo_resource).is_file(), msg=str(manifest_path))
+            self.assertTrue((manifest_dir / capability.branding.description_resource).is_file(), msg=str(manifest_path))
+
+    def test_manifest_rejects_ai_provider_model_discovery_binding_with_missing_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "broken-ai-provider-discovery",
+                        "name": "Broken AI Provider Discovery",
+                        "version": "0.1.0",
+                        "types": ["ai-provider"],
+                        "permissions": [],
+                        "risk_level": "low",
+                        "triggers": [],
+                        "entrypoints": {"ai_provider": "plugin.driver.build_driver"},
+                        "capabilities": {
+                            "ai_provider": {
+                                "adapter_code": "broken-ai-provider-discovery",
+                                "display_name": "Broken AI Provider Discovery",
+                                "branding": {
+                                    "logo_resource": "resources/logo.svg",
+                                    "description_resource": "resources/description.json",
+                                },
+                                "field_schema": [
+                                    {
+                                        "key": "base_url",
+                                        "label": "Base URL",
+                                        "field_type": "text",
+                                        "required": True,
+                                        "options": [],
+                                    },
+                                    {
+                                        "key": "model_name",
+                                        "label": "Model Name",
+                                        "field_type": "text",
+                                        "required": True,
+                                        "options": [],
+                                    },
+                                ],
+                                "config_ui": {
+                                    "field_order": ["base_url", "model_name"],
+                                    "sections": [
+                                        {
+                                            "key": "default",
+                                            "title": "Default",
+                                            "fields": ["base_url", "model_name"],
+                                        }
+                                    ],
+                                    "actions": [],
+                                },
+                                "model_discovery": {
+                                    "enabled": True,
+                                    "action_key": "discover_models",
+                                    "depends_on_fields": ["base_url"],
+                                    "target_field": "model_name",
+                                },
+                                "supported_model_types": ["llm"],
+                                "llm_workflow": "openai_chat_completions",
+                                "runtime_capability": {
+                                    "transport_type": "openai_compatible",
+                                    "api_family": "openai_chat_completions",
+                                    "default_privacy_level": "public_cloud",
+                                    "default_supported_capabilities": ["text"],
+                                    "supports_model_discovery": True,
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("model_discovery.action_key", str(context.exception))
 
     def test_manifest_rejects_ai_provider_without_driver_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

@@ -249,9 +249,143 @@ class PluginManifestThemePackSpec(BaseModel):
 
 
 class PluginManifestAiProviderSpec(BaseModel):
+    class BrandingSpec(BaseModel):
+        logo_resource: str = Field(min_length=1, max_length=255)
+        logo_resource_dark: str | None = Field(default=None, max_length=255)
+        description_resource: str = Field(min_length=1, max_length=255)
+
+        @field_validator("logo_resource", "logo_resource_dark", "description_resource")
+        @classmethod
+        def validate_resource_path(cls, value: str | None) -> str | None:
+            if value is None:
+                return None
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("资源路径不能为空")
+            resource_path = Path(normalized)
+            if resource_path.is_absolute():
+                raise ValueError("资源路径必须是插件目录内的相对路径")
+            if ".." in resource_path.parts:
+                raise ValueError("资源路径不能跳出插件目录")
+            return normalized.replace("\\", "/")
+
+    class VisibilityRule(BaseModel):
+        field: str = Field(min_length=1, max_length=64)
+        operator: Literal["equals", "not_equals", "in", "truthy"] = "equals"
+        value: Any | None = None
+
+        @field_validator("field")
+        @classmethod
+        def validate_rule_field(cls, value: str) -> str:
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("visible rule.field 不能为空")
+            return normalized
+
+    class ConfigFieldUiSpec(BaseModel):
+        help_text: str | None = Field(default=None, max_length=255)
+        hidden_when: list["PluginManifestAiProviderSpec.VisibilityRule"] = Field(default_factory=list)
+
+        @field_validator("help_text")
+        @classmethod
+        def validate_help_text(cls, value: str | None) -> str | None:
+            if value is None:
+                return None
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("help_text 不能为空")
+            return normalized
+
+    class ConfigActionSpec(BaseModel):
+        key: str = Field(min_length=1, max_length=64)
+        label: str = Field(min_length=1, max_length=100)
+        description: str | None = Field(default=None, max_length=255)
+        kind: Literal["model_discovery"] = "model_discovery"
+        placement: Literal["field"] = "field"
+        field_key: str = Field(min_length=1, max_length=64)
+
+        @field_validator("key", "label", "description", "field_key")
+        @classmethod
+        def validate_action_text(cls, value: str | None) -> str | None:
+            if value is None:
+                return None
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("action 字段不能为空")
+            return normalized
+
+    class ConfigSectionSpec(BaseModel):
+        key: str = Field(min_length=1, max_length=64)
+        title: str = Field(min_length=1, max_length=100)
+        description: str | None = Field(default=None, max_length=255)
+        fields: list[str] = Field(default_factory=list)
+
+        @field_validator("key", "title", "description")
+        @classmethod
+        def validate_section_text(cls, value: str | None) -> str | None:
+            if value is None:
+                return None
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("section 字段不能为空")
+            return normalized
+
+        @field_validator("fields")
+        @classmethod
+        def validate_section_fields(cls, value: list[str]) -> list[str]:
+            return _normalize_text_list(value, field_name="ai_provider.config_ui.sections.fields")
+
+    class ConfigUiSpec(BaseModel):
+        field_order: list[str] = Field(default_factory=list)
+        hidden_fields: list[str] = Field(default_factory=list)
+        sections: list["PluginManifestAiProviderSpec.ConfigSectionSpec"] = Field(default_factory=list)
+        field_ui: dict[str, "PluginManifestAiProviderSpec.ConfigFieldUiSpec"] = Field(default_factory=dict)
+        actions: list["PluginManifestAiProviderSpec.ConfigActionSpec"] = Field(default_factory=list)
+
+        @field_validator("field_order", "hidden_fields")
+        @classmethod
+        def validate_field_lists(cls, value: list[str], info: Any) -> list[str]:
+            return _normalize_text_list(value, field_name=str(info.field_name))
+
+    class ModelDiscoverySpec(BaseModel):
+        enabled: bool = False
+        action_key: str | None = Field(default=None, max_length=64)
+        depends_on_fields: list[str] = Field(default_factory=list)
+        target_field: str | None = Field(default=None, max_length=64)
+        debounce_ms: int = Field(default=500, ge=0, le=10000)
+        empty_state_text: str | None = Field(default=None, max_length=255)
+        discovery_hint_text: str | None = Field(default=None, max_length=255)
+        discovering_text: str | None = Field(default=None, max_length=255)
+        discovered_text_template: str | None = Field(default=None, max_length=255)
+
+        @field_validator(
+            "action_key",
+            "target_field",
+            "empty_state_text",
+            "discovery_hint_text",
+            "discovering_text",
+            "discovered_text_template",
+        )
+        @classmethod
+        def validate_optional_text(cls, value: str | None) -> str | None:
+            if value is None:
+                return None
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("model_discovery 字段不能为空")
+            return normalized
+
+        @field_validator("depends_on_fields")
+        @classmethod
+        def validate_depends_on_fields(cls, value: list[str]) -> list[str]:
+            return _normalize_text_list(value, field_name="depends_on_fields")
+
     adapter_code: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=100)
+    branding: BrandingSpec
     field_schema: list[dict[str, Any]] = Field(default_factory=list)
+    config_ui: ConfigUiSpec
+    model_discovery: ModelDiscoverySpec
     supported_model_types: list[str] = Field(default_factory=list)
     llm_workflow: str = Field(min_length=1, max_length=100)
     runtime_capability: dict[str, Any] = Field(default_factory=dict)
@@ -268,6 +402,69 @@ class PluginManifestAiProviderSpec(BaseModel):
     @classmethod
     def validate_supported_model_types(cls, value: list[str]) -> list[str]:
         return _normalize_text_list(value, field_name="supported_model_types")
+
+    @model_validator(mode="after")
+    def validate_ui_contract(self) -> "PluginManifestAiProviderSpec":
+        field_keys = {
+            str(field.get("key") or "").strip()
+            for field in self.field_schema
+            if isinstance(field, dict) and str(field.get("key") or "").strip()
+        }
+        if not field_keys:
+            return self
+
+        for field_key in self.config_ui.field_order:
+            if field_key not in field_keys:
+                raise ValueError(f"config_ui.field_order 引用了不存在的字段 {field_key}")
+        if not self.config_ui.field_order:
+            raise ValueError("config_ui.field_order 不能为空")
+
+        for field_key in self.config_ui.hidden_fields:
+            if field_key not in field_keys:
+                raise ValueError(f"config_ui.hidden_fields 引用了不存在的字段 {field_key}")
+
+        if not self.config_ui.sections:
+            raise ValueError("config_ui.sections 不能为空")
+
+        for section in self.config_ui.sections:
+            for field_key in section.fields:
+                if field_key not in field_keys:
+                    raise ValueError(f"config_ui.sections.fields 引用了不存在的字段 {field_key}")
+
+        for field_key, field_ui in self.config_ui.field_ui.items():
+            if field_key not in field_keys:
+                raise ValueError(f"config_ui.field_ui 引用了不存在的字段 {field_key}")
+            for rule in field_ui.hidden_when:
+                if rule.field not in field_keys:
+                    raise ValueError(f"config_ui.field_ui.hidden_when 引用了不存在的字段 {rule.field}")
+
+        action_map: dict[str, PluginManifestAiProviderSpec.ConfigActionSpec] = {}
+        for action in self.config_ui.actions:
+            if action.field_key not in field_keys:
+                raise ValueError(f"config_ui.actions.field_key 引用了不存在的字段 {action.field_key}")
+            if action.key in action_map:
+                raise ValueError(f"config_ui.actions.key 不能重复: {action.key}")
+            action_map[action.key] = action
+
+        if self.model_discovery.enabled:
+            if self.model_discovery.action_key is None:
+                raise ValueError("model_discovery.enabled=true 时必须声明 action_key")
+            if self.model_discovery.target_field is None:
+                raise ValueError("model_discovery.enabled=true 时必须声明 target_field")
+            if self.model_discovery.target_field not in field_keys:
+                raise ValueError(f"model_discovery.target_field 引用了不存在的字段 {self.model_discovery.target_field}")
+            for field_key in self.model_discovery.depends_on_fields:
+                if field_key not in field_keys:
+                    raise ValueError(f"model_discovery.depends_on_fields 引用了不存在的字段 {field_key}")
+            action = action_map.get(self.model_discovery.action_key)
+            if action is None:
+                raise ValueError(f"model_discovery.action_key 引用了不存在的动作 {self.model_discovery.action_key}")
+            if action.kind != "model_discovery":
+                raise ValueError("model_discovery.action_key 必须绑定 kind=model_discovery 的动作")
+        return self
+
+
+PluginManifestAiProviderSpec.model_rebuild()
 
 
 class PluginManifestIntegrationSpec(BaseModel):

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">MiniMax</title>
+  <desc id="desc">MiniMax provider logo</desc>
+  <rect width="128" height="128" rx="28" fill="#172554"/>
+  <path d="M26 92V36l22 24 16-24 16 24 22-24v56" fill="none" stroke="#fbbf24" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

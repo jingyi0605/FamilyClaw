@@ -97,11 +97,39 @@ class AiConfigCenterTests(unittest.TestCase):
         self.assertNotIn("provider_code", field_keys)
         self.assertIn("model_name", field_keys)
         self.assertIn("secret_ref", field_keys)
+        self.assertTrue(chatgpt.branding.logo_url.startswith("data:image/svg+xml"))
+        self.assertIn("zh-CN", chatgpt.branding.description_locales)
+        self.assertTrue(any(section.key == "connection" for section in chatgpt.config_ui.sections))
+        self.assertFalse(chatgpt.model_discovery.enabled)
 
         ollama = next(item for item in adapters if item.adapter_code == "ollama")
         self.assertTrue(ollama.supports_model_discovery)
         self.assertEqual("local_gateway", ollama.transport_type)
         self.assertEqual("local_only", ollama.default_privacy_level)
+        self.assertTrue(ollama.branding.logo_url.startswith("data:image/svg+xml"))
+        self.assertIn("zh-CN", ollama.branding.description_locales)
+        self.assertTrue(ollama.model_discovery.enabled)
+        self.assertEqual("model_name", ollama.model_discovery.target_field)
+        self.assertEqual("discover_models", ollama.model_discovery.action_key)
+        self.assertTrue(any(action.key == "discover_models" for action in ollama.config_ui.actions))
+        self.assertTrue(any(section.key == "connection" for section in ollama.config_ui.sections))
+
+    def test_provider_adapter_catalog_requires_plugin_driven_branding_and_contract_for_all_builtin_adapters(self) -> None:
+        adapters = list_provider_adapters()
+        self.assertGreaterEqual(len(adapters), 3)
+
+        for adapter in adapters:
+            self.assertTrue(adapter.branding.logo_url and adapter.branding.logo_url.startswith("data:image/"))
+            self.assertGreater(len(adapter.config_ui.field_order), 0)
+            self.assertGreater(len(adapter.config_ui.sections), 0)
+            self.assertIsNotNone(adapter.model_discovery)
+
+            if adapter.model_discovery.enabled:
+                self.assertIsNotNone(adapter.model_discovery.action_key)
+                self.assertIsNotNone(adapter.model_discovery.target_field)
+                self.assertTrue(any(action.key == adapter.model_discovery.action_key for action in adapter.config_ui.actions))
+            else:
+                self.assertEqual([], adapter.config_ui.actions)
 
     def test_provider_adapter_catalog_aligns_builtin_defaults(self) -> None:
         adapters = {item.adapter_code: item for item in list_provider_adapters()}
