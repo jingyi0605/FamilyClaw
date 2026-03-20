@@ -1097,7 +1097,7 @@ def _should_inject_db_session(plugin: PluginRegistryItem) -> bool:
         return True
     if plugin.execution_backend is not None:
         return False
-    return plugin.source_type in {"builtin", "official"}
+    return plugin.source_type == "builtin"
 
 
 def _load_binding_capabilities(raw_value: str | None) -> dict[str, Any]:

@@ -15,7 +15,7 @@ export interface LocaleDefinition {
   fallback?: LocaleId | null;
   messages?: Record<string, string>;
   source: 'builtin' | 'plugin';
-  sourceType?: 'builtin' | 'official' | 'third_party';
+  sourceType?: 'builtin' | 'third_party';
   pluginId?: string;
   overriddenPluginIds?: string[];
 }
@@ -91,9 +91,6 @@ export function formatLocaleOptionLabel(definition: Pick<LocaleDefinition, 'id' 
 export function getLocaleSourceLabel(definition: Pick<LocaleDefinition, 'source' | 'sourceType'>): string {
   if (definition.source === 'builtin' || definition.sourceType === 'builtin') {
     return 'builtin';
-  }
-  if (definition.sourceType === 'official') {
-    return 'official';
   }
   return 'third_party';
 }

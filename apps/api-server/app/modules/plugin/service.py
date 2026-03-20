@@ -46,6 +46,7 @@ from app.modules.plugin.schemas import (
     PluginExecutionBackend,
     PluginExecutionRequest,
     PluginExecutionResult,
+    PluginInstallMethod,
     PluginJobCreate,
     PluginJobRead,
     PluginManifestLocaleSpec,
@@ -75,8 +76,7 @@ REGISTRY_STATE_PATH = BASE_DIR / "data" / "plugin_registry_state.json"
 PLUGIN_EXECUTOR_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="plugin-worker")
 PLUGIN_SYSTEM_CONTEXT_KEY = "_system_context"
 LOCALE_SOURCE_PRIORITY: dict[PluginSourceType, int] = {
-    "builtin": 3,
-    "official": 2,
+    "builtin": 2,
     "third_party": 1,
 }
 PLUGIN_DISABLED_ERROR_CODE = "plugin_disabled"
@@ -88,6 +88,48 @@ PLUGIN_STATE_OVERRIDE_INVALID_ERROR_CODE = "plugin_state_override_invalid"
 PLUGIN_EFFECTIVE_STATE_UNRESOLVED_ERROR_CODE = "plugin_effective_state_unresolved"
 logger = logging.getLogger(__name__)
 _REPORTED_PLUGIN_REGISTRY_ISSUES: set[str] = set()
+
+
+def _normalize_plugin_source_type(source_type: str) -> PluginSourceType:
+    normalized = source_type.strip()
+    if normalized == "official":
+        return "third_party"
+    if normalized not in {"builtin", "third_party"}:
+        raise PluginServiceError(
+            f"不支持的插件类型: {source_type}",
+            error_code="plugin_source_type_invalid",
+            field="source_type",
+            status_code=400,
+        )
+    return cast(PluginSourceType, normalized)
+
+
+def _normalize_plugin_install_method(install_method: str | None) -> PluginInstallMethod | None:
+    if install_method is None:
+        return None
+    normalized = install_method.strip()
+    if normalized == "manual":
+        normalized = "local"
+    if normalized not in {"local", "marketplace"}:
+        raise PluginServiceError(
+            f"不支持的插件安装方式: {install_method}",
+            error_code="plugin_install_method_invalid",
+            field="install_method",
+            status_code=400,
+        )
+    return cast(PluginInstallMethod, normalized)
+
+
+def _resolve_mount_install_method(mount: PluginMount) -> PluginInstallMethod:
+    normalized = _normalize_plugin_install_method(mount.install_method)
+    if normalized is not None:
+        return normalized
+
+    marketplace_root = Path(settings.plugin_marketplace_install_root).resolve()
+    plugin_root = Path(mount.plugin_root).resolve()
+    if _path_is_within(plugin_root, marketplace_root):
+        return "marketplace"
+    return "local"
 
 
 @dataclass(slots=True)
@@ -367,10 +409,11 @@ def _build_registry_item_from_manifest(
     *,
     base_enabled: bool,
     source_type: PluginSourceType = "builtin",
+    install_method: PluginInstallMethod | None = None,
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
 ) -> PluginRegistryItem:
-    version_governance_source = "builtin" if source_type == "builtin" else "manual"
+    version_governance_source = "builtin" if source_type == "builtin" else "local"
     version_governance = resolve_non_market_version_governance(
         source_type=version_governance_source,
         declared_version=manifest.version,
@@ -400,6 +443,7 @@ def _build_registry_item_from_manifest(
             "locales": [item.model_dump(mode="json") for item in manifest.locales],
             "schedule_templates": [item.model_dump(mode="json") for item in manifest.schedule_templates],
             "source_type": source_type,
+            "install_method": install_method,
             "execution_backend": execution_backend,
             "runner_config": runner_config.model_dump(mode="json") if runner_config is not None else None,
             "version_governance": version_governance.model_dump(mode="json"),
@@ -447,7 +491,8 @@ def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest
         mount.manifest_path,
         manifest,
         base_enabled=mount.enabled,
-        source_type=cast(PluginSourceType, mount.source_type),
+        source_type=_normalize_plugin_source_type(mount.source_type),
+        install_method=_resolve_mount_install_method(mount),
         execution_backend=cast(PluginExecutionBackend, mount.execution_backend),
         runner_config=_build_runner_config_from_mount(mount),
     )
@@ -471,6 +516,7 @@ def _apply_marketplace_registry_state(
 ) -> PluginRegistryItem:
     return item.model_copy(
         update={
+            "install_method": "marketplace",
             "installed_version": governance.installed_version,
             "update_state": governance.update_state,
             "install_status": install_status,
@@ -530,6 +576,7 @@ def _apply_execution_overrides(
 
 def _to_plugin_mount_read(row: PluginMount, *, manifest: PluginManifest | None = None) -> PluginMountRead:
     current_manifest = manifest or load_plugin_manifest(row.manifest_path)
+    install_method = _resolve_mount_install_method(row)
     return PluginMountRead.model_validate(
         {
             "id": row.id,
@@ -547,7 +594,8 @@ def _to_plugin_mount_read(row: PluginMount, *, manifest: PluginManifest | None =
             "config_specs": [item.model_dump(mode="json") for item in current_manifest.config_specs],
             "locales": [item.model_dump(mode="json") for item in current_manifest.locales],
             "schedule_templates": [item.model_dump(mode="json") for item in current_manifest.schedule_templates],
-            "source_type": row.source_type,
+            "source_type": _normalize_plugin_source_type(row.source_type),
+            "install_method": install_method,
             "execution_backend": row.execution_backend,
             "manifest_path": row.manifest_path,
             "plugin_root": row.plugin_root,
@@ -583,6 +631,78 @@ def _get_plugin_storage_root() -> Path:
     return Path(settings.plugin_storage_root).resolve()
 
 
+def _get_plugin_dev_root() -> Path:
+    return Path(settings.plugin_dev_root).resolve()
+
+
+def _build_runner_config_from_plugin_root(plugin_root: Path) -> PluginRunnerConfig:
+    resolved_root = plugin_root.resolve()
+    return PluginRunnerConfig(
+        plugin_root=str(resolved_root),
+        python_path=sys.executable,
+        working_dir=str(resolved_root),
+        timeout_seconds=30,
+        stdout_limit_bytes=65536,
+        stderr_limit_bytes=65536,
+    )
+
+
+def _build_dev_registry_item(manifest_path: Path, manifest: PluginManifest) -> PluginRegistryItem:
+    plugin_root = manifest_path.resolve().parent
+    return _build_registry_item_from_manifest(
+        manifest_path,
+        manifest,
+        base_enabled=True,
+        source_type="third_party",
+        install_method="local",
+        execution_backend="subprocess_runner",
+        runner_config=_build_runner_config_from_plugin_root(plugin_root),
+    )
+
+
+def _discover_plugin_dev_registry_items() -> list[PluginRegistryItem]:
+    dev_root = _get_plugin_dev_root()
+    if not dev_root.exists():
+        return []
+    if not dev_root.is_dir():
+        _log_plugin_registry_issue_once(
+            issue_key=f"plugin-dev-root-invalid:{dev_root}",
+            message=f"plugins-dev 路径不是目录，已跳过开发覆盖源扫描: {dev_root}",
+        )
+        return []
+
+    return [
+        _build_dev_registry_item(manifest_path, manifest)
+        for manifest_path, manifest in _discover_manifest_entries(dev_root)
+    ]
+
+
+def _overlay_dev_registry_item(
+    *,
+    dev_item: PluginRegistryItem,
+    installed_item: PluginRegistryItem,
+) -> PluginRegistryItem:
+    updates: dict[str, Any] = {
+        "base_enabled": installed_item.base_enabled,
+        "household_enabled": installed_item.household_enabled,
+        "enabled": installed_item.enabled,
+        "disabled_reason": installed_item.disabled_reason,
+    }
+    if installed_item.marketplace_instance_id is not None:
+        updates.update(
+            {
+                "install_method": installed_item.install_method,
+                "installed_version": installed_item.installed_version,
+                "update_state": installed_item.update_state,
+                "install_status": installed_item.install_status,
+                "config_status": installed_item.config_status,
+                "marketplace_instance_id": installed_item.marketplace_instance_id,
+                "version_governance": installed_item.version_governance,
+            }
+        )
+    return dev_item.model_copy(update=updates)
+
+
 def _copy_plugin_tree(*, source_root: Path, target_root: Path) -> None:
     if target_root.exists():
         shutil.rmtree(target_root)
@@ -596,16 +716,16 @@ def _normalize_release_version_fragment(version: str) -> str:
     return normalized or "version"
 
 
-def _build_manual_release_dirname(version: str) -> str:
+def _build_local_release_dirname(version: str) -> str:
     release_version = _normalize_release_version_fragment(version)
     release_stamp = utc_now_iso().replace("-", "").replace(":", "").replace(".", "").replace("+00:00", "Z")
     return f"{release_version}--{release_stamp}--{new_uuid()[:8]}"
 
 
-def _build_manual_release_root(*, household_id: str, manifest: PluginManifest) -> Path:
+def _build_local_release_root(*, household_id: str, manifest: PluginManifest) -> Path:
     storage_root = _get_plugin_storage_root()
-    release_dirname = _build_manual_release_dirname(manifest.version)
-    return (storage_root / "third_party" / "manual" / household_id / manifest.id / release_dirname).resolve()
+    release_dirname = _build_local_release_dirname(manifest.version)
+    return (storage_root / "third_party" / "local" / household_id / manifest.id / release_dirname).resolve()
 
 
 def _extract_plugin_package_archive(*, content: bytes, destination: Path) -> None:
@@ -679,16 +799,16 @@ def _resolve_plugin_package_root(extracted_root: Path) -> Path:
 def _resolve_managed_plugin_root(
     *,
     household_id: str,
-    source_type: PluginSourceType,
+    install_method: PluginInstallMethod,
     source_root: Path,
     manifest: PluginManifest,
 ) -> Path:
     storage_root = _get_plugin_storage_root()
     if _path_is_within(source_root, storage_root):
         return source_root
-    if source_type == "official":
-        return (storage_root / "official" / source_root.name).resolve()
-    return (storage_root / "third_party" / "manual" / household_id / manifest.id).resolve()
+    if install_method == "marketplace":
+        return (Path(settings.plugin_marketplace_install_root).resolve() / household_id / manifest.id / manifest.version).resolve()
+    return _build_local_release_root(household_id=household_id, manifest=manifest)
 
 
 def _map_managed_working_dir(
@@ -718,7 +838,7 @@ def _prepare_managed_mount_paths(
     source_manifest_path = manifest_path.resolve()
     target_root = _resolve_managed_plugin_root(
         household_id=household_id,
-        source_type=payload.source_type,
+        install_method=payload.install_method,
         source_root=source_root,
         manifest=manifest,
     )
@@ -808,7 +928,7 @@ def list_registered_plugins_for_household(
     builtin_by_id = {item.id: item for item in builtin_snapshot.items}
     override_map = _list_plugin_state_override_map(db, household_id=household_id)
 
-    mounted_items: list[PluginRegistryItem] = []
+    mounted_items_by_id: dict[str, PluginRegistryItem] = {}
     for mount in repository.list_plugin_mounts(db, household_id=household_id):
         manifest = _load_mount_manifest_or_log(
             household_id=household_id,
@@ -842,7 +962,7 @@ def list_registered_plugins_for_household(
                 plugin_id=manifest.id,
                 declared_version=manifest.version,
             )
-            mounted_items.append(
+            mounted_items_by_id[manifest.id] = (
                 _apply_marketplace_registry_state(
                     mounted_item.model_copy(
                         update={
@@ -862,10 +982,31 @@ def list_registered_plugins_for_household(
                 )
             )
             continue
-        mounted_items.append(
+        mounted_items_by_id[manifest.id] = _merge_effective_plugin_state(
+            mounted_item,
+            override_map.get(manifest.id),
+        )
+
+    dev_items: list[PluginRegistryItem] = []
+    for dev_item in _discover_plugin_dev_registry_items():
+        if dev_item.id in builtin_by_id:
+            _log_plugin_registry_issue_once(
+                issue_key=f"plugin-dev-builtin-conflict:{dev_item.id}:{dev_item.manifest_path}",
+                message=(
+                    "plugins-dev 插件与内置插件 id 冲突，已跳过开发覆盖源。"
+                    f" plugin_id={dev_item.id}"
+                    f" manifest_path={dev_item.manifest_path}"
+                ),
+            )
+            continue
+        installed_item = mounted_items_by_id.pop(dev_item.id, None)
+        if installed_item is not None:
+            dev_items.append(_overlay_dev_registry_item(dev_item=dev_item, installed_item=installed_item))
+            continue
+        dev_items.append(
             _merge_effective_plugin_state(
-                mounted_item,
-                override_map.get(manifest.id),
+                dev_item,
+                override_map.get(dev_item.id),
             )
         )
 
@@ -873,7 +1014,7 @@ def list_registered_plugins_for_household(
         _merge_effective_plugin_state(item, override_map.get(item.id))
         for item in builtin_snapshot.items
     ]
-    return PluginRegistrySnapshot(items=[*builtin_items, *mounted_items])
+    return PluginRegistrySnapshot(items=[*builtin_items, *dev_items, *mounted_items_by_id.values()])
 
 
 def get_household_plugin(
@@ -1417,7 +1558,8 @@ def register_plugin_mount(
         id=new_uuid(),
         household_id=household_id,
         plugin_id=manifest.id,
-        source_type=payload.source_type,
+        source_type=_normalize_plugin_source_type(payload.source_type),
+        install_method=payload.install_method,
         execution_backend=payload.execution_backend,
         manifest_path=str(managed_manifest_path),
         plugin_root=str(managed_plugin_root),
@@ -1451,7 +1593,9 @@ def update_plugin_mount(
 
     data = payload.model_dump(exclude_unset=True)
     if "source_type" in data and data["source_type"] is not None:
-        row.source_type = cast(PluginSourceType, data["source_type"])
+        row.source_type = _normalize_plugin_source_type(data["source_type"])
+    if "install_method" in data and data["install_method"] is not None:
+        row.install_method = _normalize_plugin_install_method(data["install_method"])
     if "python_path" in data and data["python_path"] is not None:
         row.python_path = data["python_path"].strip()
     if "working_dir" in data:
@@ -1528,9 +1672,16 @@ def install_plugin_package(
                     field="plugin_id",
                     status_code=409,
                 )
-            if existing_mount is not None and existing_mount.source_type != "third_party":
+            if existing_mount is not None and _normalize_plugin_source_type(existing_mount.source_type) != "third_party":
                 raise PluginServiceError(
-                    f"插件 {manifest.id} 当前不是第三方手动安装来源，不能直接用 ZIP 覆盖。",
+                    f"插件 {manifest.id} 当前不是第三方本地安装来源，不能直接用 ZIP 覆盖。",
+                    error_code="plugin_source_mismatch",
+                    field="plugin_id",
+                    status_code=409,
+                )
+            if existing_mount is not None and _normalize_plugin_install_method(existing_mount.install_method) not in {None, "local"}:
+                raise PluginServiceError(
+                    f"插件 {manifest.id} 当前不是第三方本地安装来源，不能直接用 ZIP 覆盖。",
                     error_code="plugin_source_mismatch",
                     field="plugin_id",
                     status_code=409,
@@ -1558,7 +1709,7 @@ def install_plugin_package(
                 skip_plugin_id=manifest.id if existing_mount is not None else None,
             )
 
-            target_root = _build_manual_release_root(household_id=household_id, manifest=manifest)
+            target_root = _build_local_release_root(household_id=household_id, manifest=manifest)
             relative_manifest_path = manifest_path.resolve().relative_to(package_root.resolve())
             _copy_plugin_tree(source_root=package_root, target_root=target_root)
             target_manifest_path = (target_root / relative_manifest_path).resolve()
@@ -1570,6 +1721,7 @@ def install_plugin_package(
                         household_id=household_id,
                         plugin_id=manifest.id,
                         source_type="third_party",
+                        install_method="local",
                         execution_backend="subprocess_runner",
                         manifest_path=str(target_manifest_path),
                         plugin_root=str(target_root),
@@ -1587,6 +1739,7 @@ def install_plugin_package(
                     previous_plugin_root = existing_mount.plugin_root
                     previous_working_dir = existing_mount.working_dir
                     existing_mount.source_type = "third_party"
+                    existing_mount.install_method = "local"
                     existing_mount.execution_backend = "subprocess_runner"
                     existing_mount.manifest_path = str(target_manifest_path)
                     existing_mount.plugin_root = str(target_root)
@@ -1625,6 +1778,7 @@ def install_plugin_package(
                     overwritten=is_overwrite_install,
                     enabled=existing_mount.enabled,
                     source_type="third_party",
+                    install_method="local",
                     execution_backend="subprocess_runner",
                     plugin_root=existing_mount.plugin_root,
                     manifest_path=existing_mount.manifest_path,
@@ -1728,10 +1882,12 @@ def _resolve_plugin_install_cleanup_paths(
     cleanup_paths: list[Path] = []
 
     if mount is not None:
-        manual_root = (_get_plugin_storage_root() / "third_party" / "manual" / household_id / plugin_id).resolve()
+        install_method = _resolve_mount_install_method(mount)
         mounted_root = Path(mount.plugin_root).resolve()
-        if mounted_root.exists() and _path_is_within(mounted_root, manual_root):
-            cleanup_paths.append(manual_root)
+        if install_method == "local":
+            local_root = (_get_plugin_storage_root() / "third_party" / "local" / household_id / plugin_id).resolve()
+            if mounted_root.exists() and _path_is_within(mounted_root, local_root):
+                cleanup_paths.append(local_root)
 
     if marketplace_instance is not None:
         marketplace_root = Path(settings.plugin_marketplace_install_root).resolve()
@@ -1890,7 +2046,7 @@ def resolve_plugin_execution_context(
 
     return PluginExecutionContext(
         root_dir=mount.plugin_root,
-        source_type=cast(PluginSourceType, mount.source_type),
+        source_type=_normalize_plugin_source_type(mount.source_type),
         execution_backend=cast(PluginExecutionBackend, mount.execution_backend),
         runner_config=_build_runner_config_from_mount(mount),
     )

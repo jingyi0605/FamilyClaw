@@ -85,7 +85,7 @@ export type PluginLocale = {
   label: string;
   native_label: string;
   fallback: string | null;
-  source_type: 'builtin' | 'official' | 'third_party';
+  source_type: 'builtin' | 'third_party';
   messages: Record<string, string>;
   overridden_plugin_ids: string[];
 };
@@ -95,7 +95,8 @@ export type PluginLocaleListResponse = {
   items: PluginLocale[];
 };
 
-export type PluginSourceType = 'builtin' | 'official' | 'third_party';
+export type PluginSourceType = 'builtin' | 'third_party';
+export type PluginInstallMethod = 'local' | 'marketplace';
 export type PluginRiskLevel = 'low' | 'medium' | 'high';
 export type PluginManifestType =
   | 'connector'
@@ -198,6 +199,7 @@ export type PluginRegistryItem = {
     enabled_by_default: boolean;
   }>;
   source_type: PluginSourceType;
+  install_method?: PluginInstallMethod | null;
   execution_backend?: string | null;
   runner_config?: {
     plugin_root?: string | null;
@@ -319,7 +321,8 @@ export type PluginMountRead = {
     resource: string;
     fallback?: string | null;
   }>;
-  source_type: 'official' | 'third_party';
+  source_type: 'third_party';
+  install_method: PluginInstallMethod;
   execution_backend: 'subprocess_runner';
   manifest_path: string;
   plugin_root: string;
@@ -334,7 +337,8 @@ export type PluginMountRead = {
 };
 
 export type PluginMountCreate = {
-  source_type: 'official' | 'third_party';
+  source_type: 'third_party';
+  install_method?: PluginInstallMethod;
   execution_backend?: 'subprocess_runner';
   plugin_root: string;
   manifest_path?: string | null;
@@ -347,7 +351,8 @@ export type PluginMountCreate = {
 };
 
 export type PluginMountUpdate = {
-  source_type?: 'official' | 'third_party' | null;
+  source_type?: 'third_party' | null;
+  install_method?: PluginInstallMethod | null;
   python_path?: string | null;
   working_dir?: string | null;
   timeout_seconds?: number | null;

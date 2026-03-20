@@ -294,7 +294,7 @@ AI 供应商插件化相关的专项设计，尤其是宿主边界、driver cont
 - 插件启停、配置、实例刷新与错误状态
 - 多 binding 设备在公共实体承载层下的读取、控制和快捷指令
 - 记忆槽位 fallback 与宿主主权边界
-- 缺失 `apps/api-server/data/plugins/official/` 时，宿主导入、迁移和应用初始化仍可执行
+- 缺失历史目录 `apps/api-server/data/plugins/official/` 时，宿主导入、迁移和应用初始化仍可执行；当前正式目录已经收口到 `plugins-dev` 与 `data/plugins/third_party/*`
 - 插件实体字段不完整时，在插件接入校验阶段失败，而不是由宿主读时补齐
 - 最终镜像或构建上下文不包含 `official` / `third_party` 插件代码
 

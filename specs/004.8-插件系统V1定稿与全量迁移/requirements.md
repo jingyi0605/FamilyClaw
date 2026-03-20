@@ -90,7 +90,7 @@ FamilyClaw 现在已经有插件注册、启停、配置、任务、卡片、内
 2. WHEN 检查带控制能力的插件 THEN System SHALL 把控制能力收口到 `action` 或 `integration + action`，不再混用旧执行入口。
 3. WHEN 检查记忆相关输出 THEN System SHALL 统一改为调用宿主标准记忆写入接口，而不是保留旧 `memory-ingestor` 语义。
 4. WHEN 迁移完成 THEN System SHALL 清理宿主和插件目录中的旧主语义、旧分支和明显过时的字段命名。
-5. WHEN 官方插件交付 THEN System SHALL 支持通过 `apps/api-server/data/plugins/official/` 独立提供插件代码，SHALL NOT 要求把官方插件打进宿主最终镜像。
+5. WHEN 历史官方插件语义迁移完成 THEN System SHALL 使用 `apps/api-server/plugins-dev/` 作为仓库内开发源码目录，并使用 `data/plugins/third_party/marketplace/` 作为市场安装运行时目录，SHALL NOT 再依赖 `apps/api-server/data/plugins/official/`。
 6. WHEN 宿主源码被导入、执行迁移或启动应用 THEN System SHALL NOT 静态 import `official` 或 `third_party` 插件模块。
 7. WHEN 插件需要持久化领域私有状态 THEN System SHALL 使用插件私有表或插件私有存储边界，SHALL NOT 倒挂到宿主核心模型，也 SHALL NOT 倒挂到宿主核心 Alembic migration。
 

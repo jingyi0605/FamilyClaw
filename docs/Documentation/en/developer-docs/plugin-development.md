@@ -9,7 +9,7 @@ outline: deep
 
 # Plugin Development
 
-Plugin development is not "adding a patch point into the host." It is the current official extension model in FamilyClaw.
+Plugin development is not "adding a patch point into the host." It is the current extension model in FamilyClaw.
 
 If you do not remember the full rule set yet, remember these four lines first:
 
@@ -30,9 +30,9 @@ Recommended order:
 
 These pages together form the current plugin development handbook inside the official docs site. You do not need to leave `docs/Documentation` to piece the rules together.
 
-## Current official plugin types
+## Current supported plugin types
 
-Based on `apps/api-server/app/modules/plugin/schemas.py`, the current official types are:
+Based on `apps/api-server/app/modules/plugin/schemas.py`, the current supported types are:
 
 - `integration`
 - `action`
@@ -93,7 +93,7 @@ Decide whether it is:
 - `action`
 - `channel`
 - `ai-provider`
-- or another official type
+- or another supported type
 
 If the type is wrong, the manifest, execution path, and config scope all go wrong with it.
 

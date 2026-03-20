@@ -27,7 +27,7 @@
 
 - 后端已经有正式 ZIP 安装接口：`POST /api/v1/ai-config/{household_id}/plugin-packages`
 - 后端已经支持同 `plugin_id` 的覆盖升级、版本目录托管、挂载切换和无需重启的后续识别
-- 手动 ZIP 安装目录已经固定为 `data/plugins/third_party/manual/<household_id>/<plugin_id>/<version>--<timestamp>--<id>/`
+- 手动 ZIP 安装目录已经固定为 `data/plugins/third_party/local/<household_id>/<plugin_id>/<version>--<timestamp>--<id>/`
 - 运行时安装插件现在按 `subprocess_runner` 边界处理，列表刷新和下一次执行都会认当前挂载
 - 插件市场安装、启用、升级也已经按“无需重启后端服务”的语义落地
 - `user-app` 里的 ZIP 上传入口、冲突覆盖确认和安装后刷新也已经接通，这份 Spec 可以收口

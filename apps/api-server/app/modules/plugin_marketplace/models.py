@@ -20,7 +20,7 @@ class PluginMarketplaceSource(Base):
     mirror_api_base_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     branch: Mapped[str] = mapped_column(String(100), nullable=False)
     entry_root: Mapped[str] = mapped_column(String(255), nullable=False)
-    trusted_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_sync_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     last_sync_error_json: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -43,7 +43,9 @@ class PluginMountTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_database_url = settings.database_url
         self._previous_plugin_storage_root = settings.plugin_storage_root
+        self._previous_plugin_dev_root = settings.plugin_dev_root
         settings.plugin_storage_root = self._tempdir.name
+        settings.plugin_dev_root = str((Path(self._tempdir.name) / "plugins-dev").resolve())
 
         from tests.test_db_support import PostgresTestDatabase
 
@@ -58,6 +60,7 @@ class PluginMountTests(unittest.TestCase):
         self.db.close()
         self._db_helper.close()
         settings.plugin_storage_root = self._previous_plugin_storage_root
+        settings.plugin_dev_root = self._previous_plugin_dev_root
         self._tempdir.cleanup()
 
     def test_register_update_delete_plugin_mount(self) -> None:
@@ -87,7 +90,7 @@ class PluginMountTests(unittest.TestCase):
             self.assertEqual("subprocess_runner", created.execution_backend)
             self.assertTrue(Path(created.plugin_root).resolve().is_relative_to(self._plugin_storage_root()))
             self.assertIn(
-                str((self._plugin_storage_root() / "third_party" / "manual" / household.id).resolve()),
+                str((self._plugin_storage_root() / "third_party" / "local" / household.id).resolve()),
                 str(Path(created.plugin_root).resolve()),
             )
 
@@ -98,6 +101,7 @@ class PluginMountTests(unittest.TestCase):
             snapshot = list_registered_plugins_for_household(self.db, household_id=household.id)
             mounted_plugin = next(item for item in snapshot.items if item.id == "third-party-sync-plugin")
             self.assertEqual("third_party", mounted_plugin.source_type)
+            self.assertEqual("local", mounted_plugin.install_method)
             self.assertEqual("subprocess_runner", mounted_plugin.execution_backend)
 
             updated = update_plugin_mount(
@@ -168,6 +172,74 @@ class PluginMountTests(unittest.TestCase):
         message = log_error.call_args.args[0]
         self.assertIn("家庭插件 manifest 无效", message)
         self.assertIn("third-party-sync-plugin", message)
+
+    def test_plugins_dev_overrides_installed_third_party_plugin_and_survives_installation_delete(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Dev Override Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        mounted_root = self._create_plugin_fixture(Path(self._tempdir.name), plugin_id="dev-shadow-plugin", version="1.0.0")
+        register_plugin_mount(
+            self.db,
+            household_id=household.id,
+            payload=PluginMountCreate(
+                source_type="third_party",
+                install_method="local",
+                plugin_root=str(mounted_root),
+                python_path=sys.executable,
+                working_dir=str(mounted_root),
+                timeout_seconds=20,
+            ),
+        )
+        self.db.flush()
+
+        dev_root = self._create_plugin_fixture(
+            Path(settings.plugin_dev_root),
+            plugin_id="dev-shadow-plugin",
+            version="9.9.9",
+            name="Dev Shadow Plugin",
+        )
+
+        plugin = get_household_plugin(self.db, household_id=household.id, plugin_id="dev-shadow-plugin")
+        self.assertEqual("9.9.9", plugin.version)
+        self.assertEqual("third_party", plugin.source_type)
+        self.assertEqual("local", plugin.install_method)
+        assert plugin.runner_config is not None
+        self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
+        self.assertEqual(str((dev_root / "manifest.json").resolve()), str(Path(plugin.manifest_path).resolve()))
+
+        delete_household_plugin_installation(self.db, household_id=household.id, plugin_id="dev-shadow-plugin")
+        self.db.commit()
+
+        self.assertEqual([], list_plugin_mounts(self.db, household_id=household.id))
+        plugin_after_delete = get_household_plugin(self.db, household_id=household.id, plugin_id="dev-shadow-plugin")
+        assert plugin_after_delete.runner_config is not None
+        self.assertEqual("9.9.9", plugin_after_delete.version)
+        self.assertEqual(str(dev_root.resolve()), str(Path(plugin_after_delete.runner_config.plugin_root).resolve()))
+        self.assertTrue(dev_root.exists())
+
+    def test_plugins_dev_cannot_override_builtin_plugin(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Builtin Priority Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        self.db.flush()
+
+        builtin_snapshot = list_registered_plugins_for_household(self.db, household_id=household.id)
+        builtin_plugin = next(item for item in builtin_snapshot.items if item.source_type == "builtin")
+        self._create_plugin_fixture(
+            Path(settings.plugin_dev_root),
+            plugin_id=builtin_plugin.id,
+            version="9.9.9",
+            name="Builtin Shadow Attempt",
+        )
+
+        current = get_household_plugin(self.db, household_id=household.id, plugin_id=builtin_plugin.id)
+        self.assertEqual("builtin", current.source_type)
+        self.assertEqual(str(Path(builtin_plugin.manifest_path).resolve()), str(Path(current.manifest_path).resolve()))
+        self.assertFalse(str(Path(current.manifest_path).resolve()).startswith(str(Path(settings.plugin_dev_root).resolve())))
 
     def test_install_plugin_package_creates_manual_release_mount_with_subprocess_runner(self) -> None:
         household = create_household(
@@ -570,7 +642,14 @@ class PluginMountTests(unittest.TestCase):
 
         self.assertEqual("plugin_builtin_delete_forbidden", ctx.exception.error_code)
 
-    def _create_third_party_plugin(self, root: Path, *, plugin_id: str) -> Path:
+    def _create_third_party_plugin(
+        self,
+        root: Path,
+        *,
+        plugin_id: str,
+        version: str = "0.1.0",
+        name: str = "第三方插件",
+    ) -> Path:
         plugin_root = root / plugin_id
         package_dir = plugin_root / "plugin"
         package_dir.mkdir(parents=True)
@@ -581,6 +660,46 @@ class PluginMountTests(unittest.TestCase):
                     "id": plugin_id,
                     "name": "第三方插件",
                     "version": "0.1.0",
+                    "types": ["integration"],
+                    "permissions": ["health.read", "memory.write.observation"],
+                    "risk_level": "low",
+                    "triggers": ["manual"],
+                    "entrypoints": {
+                        "integration": "plugin.integration.sync",
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (package_dir / "integration.py").write_text(
+            "def sync(payload=None):\n    return {'records': []}\n",
+            encoding="utf-8",
+        )
+        (package_dir / "ingestor.py").write_text(
+            "def transform(payload=None):\n    return []\n",
+            encoding="utf-8",
+        )
+        return plugin_root
+
+    def _create_plugin_fixture(
+        self,
+        root: Path,
+        *,
+        plugin_id: str,
+        version: str = "0.1.0",
+        name: str = "Third Party Plugin",
+    ) -> Path:
+        plugin_root = root / plugin_id
+        package_dir = plugin_root / "plugin"
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / "__init__.py").write_text("", encoding="utf-8")
+        (plugin_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "id": plugin_id,
+                    "name": name,
+                    "version": version,
                     "types": ["integration"],
                     "permissions": ["health.read", "memory.write.observation"],
                     "risk_level": "low",

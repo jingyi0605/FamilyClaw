@@ -14,6 +14,7 @@ apps/api-server/data/*.sqlite3
 apps/api-server/data/logs
 apps/api-server/data/models/embeddings/
 apps/api-server/data/
+apps/api-server/plugins-dev/
 apps/api-server/scripts/20260314-语义路由评估.py
 .claude/settings.local.json
 *.log
@@ -32,3 +33,5 @@ docs/Documentation/.vitepress/dist/
 docs/Documentation/.vitepress/cache/
 apps/familyclaw-www/
 apps/familyclaw-marketplace/
+tmp/*
+apps/api-server/tests/*

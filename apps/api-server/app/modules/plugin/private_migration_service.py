@@ -26,8 +26,8 @@ def ensure_plugin_private_migrations(
     if migration_root is None:
         return
 
-    # 第一期先收口宿主同进程插件；第三方 runner 环境的私有迁移后续再扩。
-    if plugin.source_type not in {"builtin", "official"}:
+    # 只允许宿主内置插件在主进程里执行私有迁移，避免第三方插件拿到过高权限。
+    if plugin.source_type != "builtin":
         return
 
     database_url = _resolve_database_url(db)

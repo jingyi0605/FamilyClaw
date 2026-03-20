@@ -192,7 +192,6 @@ const SHELL_MESSAGES = {
     'userGuide.settings.title': '设置页里可以重新打开这套导览',
     'userGuide.settings.content': '主题、语言、通知等体验设置都在这里。以后如果你想再快速回顾应用入口，也可以直接从这个按钮重新开始。',
     'locale.source.builtin': '内置',
-    'locale.source.official': '官方',
     'locale.source.thirdParty': '第三方',
   },
   'en-US': {
@@ -368,7 +367,6 @@ const SHELL_MESSAGES = {
     'userGuide.settings.title': 'Settings also gives you a way to replay this tour later',
     'userGuide.settings.content': 'Theme, language, notifications, and other experience controls live here. If you ever want a fast refresher of the main app entrances, this is the button to use.',
     'locale.source.builtin': 'Built-in',
-    'locale.source.official': 'Official',
     'locale.source.thirdParty': 'Third-party',
   },
 } as const;

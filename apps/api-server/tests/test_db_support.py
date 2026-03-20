@@ -1,5 +1,6 @@
 import os
 import re
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -41,13 +42,18 @@ class PostgresTestDatabase:
         self.schema_name = self._build_schema_name(test_id)
         self.database_url = build_schema_database_url(self.base_database_url, self.schema_name)
         self._previous_database_url: str | None = None
+        self._previous_plugin_dev_root: str | None = None
+        self._plugin_dev_root_tempdir: tempfile.TemporaryDirectory[str] | None = None
         self._admin_engine = None
         self.engine = None
         self.SessionLocal = None
 
     def setup(self, *, upgrade_head: bool = True) -> None:
         self._previous_database_url = settings.database_url
+        self._previous_plugin_dev_root = settings.plugin_dev_root
         settings.database_url = self.database_url
+        self._plugin_dev_root_tempdir = tempfile.TemporaryDirectory(prefix="familyclaw-test-plugins-dev-")
+        settings.plugin_dev_root = str(Path(self._plugin_dev_root_tempdir.name).resolve())
 
         self._admin_engine = build_database_engine(
             self.base_database_url,
@@ -85,6 +91,11 @@ class PostgresTestDatabase:
             self._admin_engine.dispose()
         if self._previous_database_url is not None:
             settings.database_url = self._previous_database_url
+        if self._previous_plugin_dev_root is not None:
+            settings.plugin_dev_root = self._previous_plugin_dev_root
+        if self._plugin_dev_root_tempdir is not None:
+            self._plugin_dev_root_tempdir.cleanup()
+            self._plugin_dev_root_tempdir = None
 
     @staticmethod
     def _build_schema_name(test_id: str) -> str:

@@ -254,7 +254,6 @@ function SettingsLanguageSection() {
   const localeSourceLabels = useMemo(
     () => ({
       builtin: t('locale.source.builtin'),
-      official: t('locale.source.official'),
       third_party: t('locale.source.thirdParty'),
     }),
     [t],

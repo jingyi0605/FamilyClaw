@@ -149,7 +149,7 @@
     1. 托管目录变成按版本落盘
     2. 首次安装后能从现有插件列表接口看到新挂载
   - 怎么验证：
-    - 手动 ZIP 安装目录已落到 `/data/plugins/third_party/manual/<household_id>/<plugin_id>/<version>--<timestamp>--<id>/`
+- 手动 ZIP 安装目录已落到 `/data/plugins/third_party/local/<household_id>/<plugin_id>/<version>--<timestamp>--<id>/`
     - 首次安装会创建 `PluginMount`，并固定 `execution_backend=subprocess_runner`
   - 对应需求：`requirements.md` 需求 2、需求 4、需求 5
   - 对应设计：`design.md` §2.3.1、§3.2.3、§4.1、§4.3

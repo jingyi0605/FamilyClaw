@@ -10,9 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import (
-    OFFICIAL_PLUGIN_MARKETPLACE_BRANCH,
-    OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT,
-    OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL,
+    SYSTEM_PLUGIN_MARKETPLACE_BRANCH,
+    SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT,
+    SYSTEM_PLUGIN_MARKETPLACE_REPO_URL,
     settings,
 )
 from app.db.utils import new_uuid, utc_now_iso
@@ -43,10 +43,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class PluginStartupSyncResult:
-    official_created: int = 0
-    official_updated: int = 0
-    manual_created: int = 0
-    manual_updated: int = 0
+    local_created: int = 0
+    local_updated: int = 0
     marketplace_mount_created: int = 0
     marketplace_mount_updated: int = 0
     marketplace_instance_created: int = 0
@@ -70,23 +68,14 @@ def sync_persisted_plugins_on_startup(db: Session) -> PluginStartupSyncResult:
     changed_household_ids: set[str] = set()
     theme_pack_registry_household_ids: set[str] = set()
 
-    result.official_created, result.official_updated, official_skipped = _sync_official_plugin_mounts(
+    result.local_created, result.local_updated, local_skipped = _sync_local_plugin_mounts(
         db,
         household_ids=household_ids,
         builtin_plugin_ids=builtin_plugin_ids,
         changed_household_ids=changed_household_ids,
         theme_pack_registry_household_ids=theme_pack_registry_household_ids,
     )
-    result.skipped += official_skipped
-
-    result.manual_created, result.manual_updated, manual_skipped = _sync_manual_plugin_mounts(
-        db,
-        household_ids=household_ids,
-        builtin_plugin_ids=builtin_plugin_ids,
-        changed_household_ids=changed_household_ids,
-        theme_pack_registry_household_ids=theme_pack_registry_household_ids,
-    )
-    result.skipped += manual_skipped
+    result.skipped += local_skipped
 
     (
         result.marketplace_mount_created,
@@ -108,13 +97,11 @@ def sync_persisted_plugins_on_startup(db: Session) -> PluginStartupSyncResult:
     result.theme_pack_registry_refresh = len(theme_pack_registry_household_ids)
 
     logger.info(
-        "Startup plugin sync finished official(created=%s updated=%s) "
-        "manual(created=%s updated=%s) marketplace(mount_created=%s mount_updated=%s instance_created=%s instance_updated=%s) "
+        "Startup plugin sync finished local(created=%s updated=%s) "
+        "marketplace(mount_created=%s mount_updated=%s instance_created=%s instance_updated=%s) "
         "theme_pack_registry_refresh=%s skipped=%s",
-        result.official_created,
-        result.official_updated,
-        result.manual_created,
-        result.manual_updated,
+        result.local_created,
+        result.local_updated,
         result.marketplace_mount_created,
         result.marketplace_mount_updated,
         result.marketplace_instance_created,
@@ -125,7 +112,7 @@ def sync_persisted_plugins_on_startup(db: Session) -> PluginStartupSyncResult:
     return result
 
 
-def _sync_official_plugin_mounts(
+def _sync_local_plugin_mounts(
     db: Session,
     *,
     household_ids: set[str],
@@ -133,68 +120,30 @@ def _sync_official_plugin_mounts(
     changed_household_ids: set[str],
     theme_pack_registry_household_ids: set[str],
 ) -> tuple[int, int, int]:
-    official_root = Path(settings.plugin_storage_root).resolve() / "official"
-    if not official_root.exists():
+    local_root = Path(settings.plugin_storage_root).resolve() / "third_party" / "local"
+    if not local_root.exists():
         return 0, 0, 0
 
     created = 0
     updated = 0
     skipped = 0
-    for manifest_path in sorted(official_root.glob("*/manifest.json")):
-        plugin_root = manifest_path.parent.resolve()
-        for household_id in sorted(household_ids):
-            status = _upsert_plugin_mount_from_disk(
-                db,
-                household_id=household_id,
-                source_type="official",
-                plugin_root=plugin_root,
-                manifest_path=manifest_path.resolve(),
-                builtin_plugin_ids=builtin_plugin_ids,
-                enabled_on_create=True,
-                changed_household_ids=changed_household_ids,
-                theme_pack_registry_household_ids=theme_pack_registry_household_ids,
-            )
-            if status == "created":
-                created += 1
-            elif status == "updated":
-                updated += 1
-            elif status == "skipped":
-                skipped += 1
-    return created, updated, skipped
-
-
-def _sync_manual_plugin_mounts(
-    db: Session,
-    *,
-    household_ids: set[str],
-    builtin_plugin_ids: set[str],
-    changed_household_ids: set[str],
-    theme_pack_registry_household_ids: set[str],
-) -> tuple[int, int, int]:
-    manual_root = Path(settings.plugin_storage_root).resolve() / "third_party" / "manual"
-    if not manual_root.exists():
-        return 0, 0, 0
-
-    created = 0
-    updated = 0
-    skipped = 0
-    for household_dir in sorted(path for path in manual_root.iterdir() if path.is_dir()):
+    for household_dir in sorted(path for path in local_root.iterdir() if path.is_dir()):
         household_id = household_dir.name
         if household_id not in household_ids:
-            logger.warning("Startup plugin sync skipped manual plugin because household does not exist household_id=%s", household_id)
+            logger.warning("Startup plugin sync skipped local plugin because household does not exist household_id=%s", household_id)
             skipped += 1
             continue
-        for plugin_dir in _iter_manual_plugin_roots(household_dir):
-            resolved_manual_root = _resolve_manual_plugin_runtime_root(plugin_dir)
-            if resolved_manual_root is None:
+        for plugin_dir in _iter_local_plugin_roots(household_dir):
+            resolved_local_root = _resolve_local_plugin_runtime_root(plugin_dir)
+            if resolved_local_root is None:
                 skipped += 1
                 continue
-            plugin_root, manifest_path = resolved_manual_root
+            plugin_root, manifest_path = resolved_local_root
             try:
                 manifest = load_plugin_manifest(manifest_path)
             except PluginManifestValidationError as exc:
                 logger.warning(
-                    "Startup plugin sync skipped manual plugin because manifest is invalid household_id=%s plugin_root=%s error=%s",
+                    "Startup plugin sync skipped local plugin because manifest is invalid household_id=%s plugin_root=%s error=%s",
                     household_id,
                     plugin_dir,
                     exc,
@@ -203,7 +152,7 @@ def _sync_manual_plugin_mounts(
                 continue
             if manifest.id != plugin_dir.name:
                 logger.warning(
-                    "Startup plugin sync skipped manual plugin because plugin_id does not match directory household_id=%s directory_plugin_id=%s manifest_plugin_id=%s",
+                    "Startup plugin sync skipped local plugin because plugin_id does not match directory household_id=%s directory_plugin_id=%s manifest_plugin_id=%s",
                     household_id,
                     plugin_dir.name,
                     manifest.id,
@@ -214,6 +163,7 @@ def _sync_manual_plugin_mounts(
                 db,
                 household_id=household_id,
                 source_type="third_party",
+                install_method="local",
                 plugin_root=plugin_root.resolve(),
                 manifest_path=manifest_path,
                 builtin_plugin_ids=builtin_plugin_ids,
@@ -231,7 +181,7 @@ def _sync_manual_plugin_mounts(
     return created, updated, skipped
 
 
-def _resolve_manual_plugin_runtime_root(plugin_dir: Path) -> tuple[Path, Path] | None:
+def _resolve_local_plugin_runtime_root(plugin_dir: Path) -> tuple[Path, Path] | None:
     candidates: list[tuple[Path, Path]] = []
 
     def _add_candidate(root: Path) -> None:
@@ -249,17 +199,17 @@ def _resolve_manual_plugin_runtime_root(plugin_dir: Path) -> tuple[Path, Path] |
 
     if not candidates:
         logger.warning(
-            "Startup plugin sync skipped manual plugin because no manifest was found in plugin directory or release directories plugin_root=%s",
+            "Startup plugin sync skipped local plugin because no manifest was found in plugin directory or release directories plugin_root=%s",
             plugin_dir,
         )
         return None
 
-    candidates.sort(key=_manual_release_sort_key, reverse=True)
+    candidates.sort(key=_local_release_sort_key, reverse=True)
     chosen_root, manifest_path = candidates[0]
     return chosen_root, manifest_path
 
 
-def _iter_manual_plugin_roots(household_dir: Path) -> list[Path]:
+def _iter_local_plugin_roots(household_dir: Path) -> list[Path]:
     plugin_dirs: list[Path] = []
     seen: set[str] = set()
 
@@ -284,15 +234,15 @@ def _iter_manual_plugin_roots(household_dir: Path) -> list[Path]:
     return plugin_dirs
 
 
-def _manual_release_sort_key(candidate: tuple[Path, Path]) -> tuple[int, str, float]:
-    release_stamp = _extract_manual_release_stamp(candidate[0].name)
+def _local_release_sort_key(candidate: tuple[Path, Path]) -> tuple[int, str, float]:
+    release_stamp = _extract_local_release_stamp(candidate[0].name)
     fallback_mtime = candidate[0].stat().st_mtime
     if release_stamp is None:
         return 0, "", fallback_mtime
     return 1, release_stamp, fallback_mtime
 
 
-def _extract_manual_release_stamp(dirname: str) -> str | None:
+def _extract_local_release_stamp(dirname: str) -> str | None:
     parts = dirname.split("--")
     if len(parts) >= 2 and parts[1]:
         return parts[1]
@@ -318,117 +268,104 @@ def _sync_marketplace_plugins(
     instance_updated = 0
     skipped = 0
 
-    for trusted_root in sorted(path for path in install_root.iterdir() if path.is_dir()):
-        trusted_level = trusted_root.name
-        if trusted_level not in {"official", "third_party"}:
+    for household_dir in sorted(path for path in install_root.iterdir() if path.is_dir()):
+        household_id = household_dir.name
+        if household_id not in household_ids:
             logger.warning(
-                "Startup plugin sync skipped marketplace trusted level because it is unsupported trusted_level=%s",
-                trusted_level,
+                "Startup plugin sync skipped marketplace plugin because household does not exist household_id=%s",
+                household_id,
             )
             skipped += 1
             continue
-        marketplace_root = trusted_root / "marketplace"
-        if not marketplace_root.is_dir():
-            continue
-        for household_dir in sorted(path for path in marketplace_root.iterdir() if path.is_dir()):
-            household_id = household_dir.name
-            if household_id not in household_ids:
-                logger.warning(
-                    "Startup plugin sync skipped marketplace plugin because household does not exist household_id=%s trusted_level=%s",
-                    household_id,
-                    trusted_level,
+        for plugin_dir in sorted(path for path in household_dir.iterdir() if path.is_dir()):
+            for version_dir in sorted(path for path in plugin_dir.iterdir() if path.is_dir()):
+                manifest_path = (version_dir / "manifest.json").resolve()
+                if not manifest_path.is_file():
+                    logger.warning(
+                        "Startup plugin sync skipped marketplace plugin because manifest is missing household_id=%s plugin_root=%s",
+                        household_id,
+                        version_dir,
+                    )
+                    skipped += 1
+                    continue
+                try:
+                    manifest = load_plugin_manifest(manifest_path)
+                except PluginManifestValidationError as exc:
+                    logger.warning(
+                        "Startup plugin sync skipped marketplace plugin because manifest is invalid household_id=%s plugin_root=%s error=%s",
+                        household_id,
+                        version_dir,
+                        exc,
+                    )
+                    skipped += 1
+                    continue
+                if manifest.id != plugin_dir.name:
+                    logger.warning(
+                        "Startup plugin sync skipped marketplace plugin because plugin_id does not match directory household_id=%s directory_plugin_id=%s manifest_plugin_id=%s",
+                        household_id,
+                        plugin_dir.name,
+                        manifest.id,
+                    )
+                    skipped += 1
+                    continue
+                if manifest.version != version_dir.name:
+                    logger.warning(
+                        "Startup plugin sync skipped marketplace plugin because version does not match directory household_id=%s plugin_id=%s directory_version=%s manifest_version=%s",
+                        household_id,
+                        manifest.id,
+                        version_dir.name,
+                        manifest.version,
+                    )
+                    skipped += 1
+                    continue
+
+                mount_status = _upsert_plugin_mount_from_disk(
+                    db,
+                    household_id=household_id,
+                    source_type="third_party",
+                    install_method="marketplace",
+                    plugin_root=version_dir.resolve(),
+                    manifest_path=manifest_path,
+                    builtin_plugin_ids=builtin_plugin_ids,
+                    enabled_on_create=False,
+                    changed_household_ids=changed_household_ids,
+                    theme_pack_registry_household_ids=theme_pack_registry_household_ids,
+                    execution_backend="subprocess_runner",
+                    manifest=manifest,
                 )
-                skipped += 1
-                continue
-            for plugin_dir in sorted(path for path in household_dir.iterdir() if path.is_dir()):
-                for version_dir in sorted(path for path in plugin_dir.iterdir() if path.is_dir()):
-                    manifest_path = (version_dir / "manifest.json").resolve()
-                    if not manifest_path.is_file():
-                        logger.warning(
-                            "Startup plugin sync skipped marketplace plugin because manifest is missing household_id=%s plugin_root=%s",
-                            household_id,
-                            version_dir,
-                        )
-                        skipped += 1
-                        continue
-                    try:
-                        manifest = load_plugin_manifest(manifest_path)
-                    except PluginManifestValidationError as exc:
-                        logger.warning(
-                            "Startup plugin sync skipped marketplace plugin because manifest is invalid household_id=%s plugin_root=%s error=%s",
-                            household_id,
-                            version_dir,
-                            exc,
-                        )
-                        skipped += 1
-                        continue
-                    if manifest.id != plugin_dir.name:
-                        logger.warning(
-                            "Startup plugin sync skipped marketplace plugin because plugin_id does not match directory household_id=%s directory_plugin_id=%s manifest_plugin_id=%s",
-                            household_id,
-                            plugin_dir.name,
-                            manifest.id,
-                        )
-                        skipped += 1
-                        continue
-                    if manifest.version != version_dir.name:
-                        logger.warning(
-                            "Startup plugin sync skipped marketplace plugin because version does not match directory household_id=%s plugin_id=%s directory_version=%s manifest_version=%s",
-                            household_id,
-                            manifest.id,
-                            version_dir.name,
-                            manifest.version,
-                        )
-                        skipped += 1
-                        continue
+                if mount_status == "created":
+                    mount_created += 1
+                elif mount_status == "updated":
+                    mount_updated += 1
+                elif mount_status == "skipped":
+                    skipped += 1
+                    continue
 
-                    mount_status = _upsert_plugin_mount_from_disk(
-                        db,
-                        household_id=household_id,
-                        source_type=trusted_level,
-                        plugin_root=version_dir.resolve(),
-                        manifest_path=manifest_path,
-                        builtin_plugin_ids=builtin_plugin_ids,
-                        enabled_on_create=False,
-                        changed_household_ids=changed_household_ids,
-                        theme_pack_registry_household_ids=theme_pack_registry_household_ids,
-                        execution_backend="subprocess_runner",
-                        manifest=manifest,
-                    )
-                    if mount_status == "created":
-                        mount_created += 1
-                    elif mount_status == "updated":
-                        mount_updated += 1
-                    elif mount_status == "skipped":
-                        skipped += 1
-                        continue
+                restore_context = _resolve_marketplace_restore_context(
+                    db,
+                    household_id=household_id,
+                    plugin_id=manifest.id,
+                    installed_version=manifest.version,
+                    plugin_root=version_dir.resolve(),
+                    manifest_path=manifest_path,
+                )
+                if restore_context is None:
+                    skipped += 1
+                    continue
 
-                    restore_context = _resolve_marketplace_restore_context(
-                        db,
-                        household_id=household_id,
-                        plugin_id=manifest.id,
-                        trusted_level=trusted_level,
-                        installed_version=manifest.version,
-                        plugin_root=version_dir.resolve(),
-                        manifest_path=manifest_path,
-                    )
-                    if restore_context is None:
-                        skipped += 1
-                        continue
-
-                    instance_status = _upsert_marketplace_instance_from_disk(
-                        db,
-                        household_id=household_id,
-                        plugin_root=version_dir.resolve(),
-                        manifest_path=manifest_path,
-                        manifest_version=manifest.version,
-                        plugin_id=manifest.id,
-                        restore_context=restore_context,
-                    )
-                    if instance_status == "created":
-                        instance_created += 1
-                    elif instance_status == "updated":
-                        instance_updated += 1
+                instance_status = _upsert_marketplace_instance_from_disk(
+                    db,
+                    household_id=household_id,
+                    plugin_root=version_dir.resolve(),
+                    manifest_path=manifest_path,
+                    manifest_version=manifest.version,
+                    plugin_id=manifest.id,
+                    restore_context=restore_context,
+                )
+                if instance_status == "created":
+                    instance_created += 1
+                elif instance_status == "updated":
+                    instance_updated += 1
     return mount_created, mount_updated, instance_created, instance_updated, skipped
 
 
@@ -441,17 +378,17 @@ def _ensure_builtin_marketplace_source_row(db: Session) -> PluginMarketplaceSour
     row = PluginMarketplaceSource(
         source_id=BUILTIN_MARKETPLACE_SOURCE_ID,
         market_id=None,
-        name="官方插件市场",
+        name="内置插件市场",
         owner=None,
-        repo_url=OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL.strip(),
-        repo_provider=_infer_repo_provider(OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL),
+        repo_url=SYSTEM_PLUGIN_MARKETPLACE_REPO_URL.strip(),
+        repo_provider=_infer_repo_provider(SYSTEM_PLUGIN_MARKETPLACE_REPO_URL),
         api_base_url=None,
         mirror_repo_url=None,
         mirror_repo_provider=None,
         mirror_api_base_url=None,
-        branch=OFFICIAL_PLUGIN_MARKETPLACE_BRANCH.strip() or "main",
-        entry_root=OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins",
-        trusted_level="official",
+        branch=SYSTEM_PLUGIN_MARKETPLACE_BRANCH.strip() or "main",
+        entry_root=SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins",
+        is_system=True,
         enabled=True,
         last_sync_status="idle",
         last_sync_error_json=None,
@@ -480,6 +417,7 @@ def _upsert_plugin_mount_from_disk(
     *,
     household_id: str,
     source_type: str,
+    install_method: str,
     plugin_root: Path,
     manifest_path: Path,
     builtin_plugin_ids: set[str],
@@ -531,7 +469,7 @@ def _upsert_plugin_mount_from_disk(
     manifest_path_value = str(manifest_path.resolve())
     working_dir_value = plugin_root_value
     python_path_value = sys.executable
-    execution_backend_value = execution_backend or ("in_process" if source_type == "official" else "subprocess_runner")
+    execution_backend_value = execution_backend or "subprocess_runner"
     now = utc_now_iso()
 
     if existing is None:
@@ -540,6 +478,7 @@ def _upsert_plugin_mount_from_disk(
             household_id=household_id,
             plugin_id=current_manifest.id,
             source_type=source_type,
+            install_method=install_method,
             execution_backend=execution_backend_value,
             manifest_path=manifest_path_value,
             plugin_root=plugin_root_value,
@@ -559,6 +498,9 @@ def _upsert_plugin_mount_from_disk(
     changed = False
     if existing.source_type != source_type:
         existing.source_type = source_type
+        changed = True
+    if existing.install_method != install_method:
+        existing.install_method = install_method
         changed = True
     if existing.execution_backend != execution_backend_value:
         existing.execution_backend = execution_backend_value
@@ -590,7 +532,6 @@ def _resolve_marketplace_restore_context(
     *,
     household_id: str,
     plugin_id: str,
-    trusted_level: str,
     installed_version: str,
     plugin_root: Path,
     manifest_path: Path,
@@ -605,21 +546,8 @@ def _resolve_marketplace_restore_context(
             db,
             source_id=existing_instance.source_id,
             plugin_id=plugin_id,
-            trusted_level=trusted_level,
             source_repo=existing_instance.source_repo,
             market_repo=existing_instance.market_repo,
-        )
-        if context is not None:
-            return context
-
-    if trusted_level == "official":
-        context = _build_marketplace_restore_context(
-            db,
-            source_id=BUILTIN_MARKETPLACE_SOURCE_ID,
-            plugin_id=plugin_id,
-            trusted_level=trusted_level,
-            source_repo=None,
-            market_repo=None,
         )
         if context is not None:
             return context
@@ -643,7 +571,6 @@ def _resolve_marketplace_restore_context(
             db,
             source_id=task.source_id,
             plugin_id=plugin_id,
-            trusted_level=trusted_level,
             source_repo=task.source_repo,
             market_repo=task.market_repo,
         )
@@ -652,8 +579,6 @@ def _resolve_marketplace_restore_context(
 
     candidates: list[_MarketplaceRestoreContext] = []
     for source in marketplace_repository.list_marketplace_sources(db, enabled_only=False):
-        if source.trusted_level != trusted_level:
-            continue
         snapshot = marketplace_repository.get_marketplace_entry_snapshot(
             db,
             source_id=source.source_id,
@@ -675,19 +600,17 @@ def _resolve_marketplace_restore_context(
 
     if len(candidates) > 1:
         logger.warning(
-            "Startup plugin sync skipped marketplace instance because source resolution is ambiguous household_id=%s plugin_id=%s trusted_level=%s candidate_source_ids=%s",
+            "Startup plugin sync skipped marketplace instance because source resolution is ambiguous household_id=%s plugin_id=%s candidate_source_ids=%s",
             household_id,
             plugin_id,
-            trusted_level,
             [item.source.source_id for item in candidates],
         )
         return None
 
     logger.warning(
-        "Startup plugin sync skipped marketplace instance because no matching source snapshot was found household_id=%s plugin_id=%s trusted_level=%s",
+        "Startup plugin sync skipped marketplace instance because no matching source snapshot was found household_id=%s plugin_id=%s",
         household_id,
         plugin_id,
-        trusted_level,
     )
     return None
 
@@ -713,12 +636,11 @@ def _build_marketplace_restore_context(
     *,
     source_id: str,
     plugin_id: str,
-    trusted_level: str,
     source_repo: str | None,
     market_repo: str | None,
 ) -> _MarketplaceRestoreContext | None:
     source = marketplace_repository.get_marketplace_source(db, source_id)
-    if source is None or source.trusted_level != trusted_level:
+    if source is None:
         return None
     snapshot = marketplace_repository.get_marketplace_entry_snapshot(db, source_id=source_id, plugin_id=plugin_id)
     if snapshot is None or snapshot.sync_status != "ready":

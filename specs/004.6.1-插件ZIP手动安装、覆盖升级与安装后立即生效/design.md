@@ -91,7 +91,7 @@
 3. 后端将 ZIP 解压到临时目录。
 4. 校验 `manifest.json`、入口、必要文件和路径安全。
 5. 计算托管目标目录：
-   - `data/plugins/third_party/manual/<household_id>/<plugin_id>/<version>--<timestamp>--<id>/`
+- `data/plugins/third_party/local/<household_id>/<plugin_id>/<version>--<timestamp>--<id>/`
 6. 复制插件内容到托管目录。
 7. 创建或补齐 `PluginMount`，执行后端固定为 `subprocess_runner`，首次安装默认 `enabled=false`。
 8. 返回安装结果。
@@ -183,7 +183,7 @@
 
 | 目录 | 用途 | 说明 |
 | --- | --- | --- |
-| `data/plugins/third_party/manual/<household_id>/<plugin_id>/<version>--<timestamp>--<id>/` | 手工 ZIP 安装 release 目录 | 每次安装生成独立 release，便于覆盖升级时安全切换 |
+| `data/plugins/third_party/local/<household_id>/<plugin_id>/<version>--<timestamp>--<id>/` | 手工 ZIP 安装 release 目录 | 每次安装生成独立 release，便于覆盖升级时安全切换 |
 | `PluginMount.plugin_root` | 当前生效目录 | 永远指向当前版本目录 |
 | `PluginMount.manifest_path` | 当前 manifest | 永远指向当前版本目录里的 manifest |
 

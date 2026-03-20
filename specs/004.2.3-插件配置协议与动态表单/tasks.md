@@ -78,10 +78,10 @@
   - 状态：DONE
   - 这一步做什么：去掉巨型静态省市区枚举，改成动态 provider 和地区目录级联。
   - 主要改哪里：
-    - `apps/api-server/data/plugins/official/official_weather/manifest.json`
-    - `apps/api-server/data/plugins/official/official_weather/locales/zh-CN.json`
-    - `apps/api-server/data/plugins/official/official_weather/locales/en-US.json`
-    - `apps/api-server/data/plugins/official/official_weather/service.py`
+- `apps/api-server/plugins-dev/official_weather/manifest.json`
+- `apps/api-server/plugins-dev/official_weather/locales/zh-CN.json`
+- `apps/api-server/plugins-dev/official_weather/locales/en-US.json`
+- `apps/api-server/plugins-dev/official_weather/service.py`
   - 验证结果：
     - 支持从宿主读取可用地区 provider
     - 支持按 provider 拉省、市、区县

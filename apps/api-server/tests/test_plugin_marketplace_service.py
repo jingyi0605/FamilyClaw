@@ -1,6 +1,7 @@
 ﻿import io
 import hashlib
 import json
+import tempfile
 import unittest
 import zipfile
 from copy import deepcopy
@@ -40,6 +41,7 @@ from app.modules.plugin_marketplace.service import (
     get_marketplace_instance_for_household_plugin,
     get_marketplace_version_options,
     list_marketplace_catalog,
+    list_marketplace_sources,
     operate_marketplace_instance_version,
     resolve_marketplace_plugin_config_status,
     set_marketplace_instance_enabled,
@@ -187,6 +189,9 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         from tests.test_db_support import PostgresTestDatabase
 
+        self._tempdir = tempfile.TemporaryDirectory()
+        self._previous_plugin_dev_root = settings.plugin_dev_root
+        settings.plugin_dev_root = str((Path(self._tempdir.name) / "plugins-dev").resolve())
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
         self.db: Session = self._db_helper.SessionLocal()
@@ -205,6 +210,8 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.db.close()
         self._db_helper.close()
+        settings.plugin_dev_root = self._previous_plugin_dev_root
+        self._tempdir.cleanup()
 
     def test_sync_marketplace_source_keeps_invalid_entry_and_metrics_degrade(self) -> None:
         client = self._build_client_with_valid_and_invalid_entries()
@@ -233,6 +240,28 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertIsNone(catalog.items[0].repository_metrics.stargazers_count)
         self.assertIsNone(catalog.items[0].repository_metrics.forks_count)
         self.assertFalse(catalog.items[0].repository_metrics.availability.stargazers_count)
+
+    def test_list_marketplace_sources_exposes_is_system_flag(self) -> None:
+        sources = list_marketplace_sources(self.db)
+        builtin_source = next(
+            source
+            for source in sources
+            if source.source_id == marketplace_service.BUILTIN_MARKETPLACE_SOURCE_ID
+        )
+        self.assertTrue(builtin_source.is_system)
+
+        client = self._build_client_for_install()
+        new_source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=new_source.source_id, client=client)
+        self.db.commit()
+
+        refreshed_sources = list_marketplace_sources(self.db)
+        third_party_source = next(item for item in refreshed_sources if item.repo_url == MARKET_REPO_URL)
+        self.assertFalse(third_party_source.is_system)
 
     def test_sync_marketplace_source_can_run_twice_without_duplicate_snapshot_conflict(self) -> None:
         client = self._build_client_for_install()
@@ -370,6 +399,39 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertTrue(plugin.enabled)
         self.assertEqual("configured", plugin.config_status)
         self.assertEqual("subprocess_runner", plugin.execution_backend)
+
+    def test_plugins_dev_overrides_marketplace_runtime_but_preserves_marketplace_state(self) -> None:
+        client = self._build_client_for_install()
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        create_marketplace_install_task(
+            self.db,
+            payload=MarketplaceInstallTaskCreateRequest(
+                household_id=self.household_id,
+                source_id=source.source_id,
+                plugin_id="demo-plugin",
+                version="1.0.0",
+            ),
+            client=client,
+        )
+        self.db.commit()
+
+        dev_root = self._create_dev_plugin_fixture(plugin_id="demo-plugin", version="9.9.9", name="Dev Demo Plugin")
+
+        plugin = get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin")
+        self.assertEqual("9.9.9", plugin.version)
+        self.assertEqual("marketplace", plugin.install_method)
+        self.assertEqual("installed", plugin.install_status)
+        self.assertEqual("unconfigured", plugin.config_status)
+        self.assertIsNotNone(plugin.marketplace_instance_id)
+        assert plugin.runner_config is not None
+        self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
+        self.assertEqual(str((dev_root / "manifest.json").resolve()), str(Path(plugin.manifest_path).resolve()))
 
     def test_marketplace_plugin_with_defaults_can_enable_and_create_default_instance(self) -> None:
         client = self._build_client_for_default_enabled_integration_install()
@@ -616,12 +678,12 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
 
     def test_builtin_marketplace_source_install_and_upgrade_keep_subprocess_runner_backend(self) -> None:
         client = self._build_client_for_official_version_switch()
-        previous_repo = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL
-        previous_branch = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH
-        previous_entry_root = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT
-        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL = OFFICIAL_MARKET_REPO_URL
-        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH = "main"
-        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
+        previous_repo = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL
+        previous_branch = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH
+        previous_entry_root = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = OFFICIAL_MARKET_REPO_URL
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = "main"
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
 
         try:
             source = ensure_builtin_marketplace_source(self.db, client=client)
@@ -670,9 +732,9 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             self.assertEqual("subprocess_runner", upgraded_plugin.execution_backend)
             self.assertEqual("1.1.0", upgraded_plugin.version)
         finally:
-            marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL = previous_repo
-            marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH = previous_branch
-            marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT = previous_entry_root
+            marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = previous_repo
+            marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = previous_branch
+            marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = previous_entry_root
 
     def test_add_marketplace_source_supports_gitlab_repo_and_gitea_mirror(self) -> None:
         client = self._build_client_for_gitlab_mirror_source()
@@ -1561,8 +1623,8 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             "default_branch": "main",
             "entry_root": "plugins",
         }
-        if is_system is not None:
-            payload["is_system"] = is_system
+        if legacy_trusted_level is None and is_system is not None:
+            legacy_trusted_level = "official" if is_system else "third_party"
         if legacy_trusted_level is not None:
             payload["trusted_level"] = legacy_trusted_level
         return payload
@@ -1732,6 +1794,33 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
                 "def sync(payload=None):\n    return {'ok': True, 'payload': payload or {}}\n",
             )
         return buffer.getvalue()
+
+    def _create_dev_plugin_fixture(self, *, plugin_id: str, version: str, name: str) -> Path:
+        plugin_root = Path(settings.plugin_dev_root) / plugin_id
+        package_dir = plugin_root / "plugin"
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / "__init__.py").write_text("", encoding="utf-8")
+        (plugin_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "id": plugin_id,
+                    "name": name,
+                    "version": version,
+                    "types": ["integration"],
+                    "permissions": ["device.read"],
+                    "risk_level": "low",
+                    "triggers": ["manual"],
+                    "entrypoints": {"integration": "plugin.integration.sync"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (package_dir / "integration.py").write_text(
+            "def sync(payload=None):\n    return {'ok': True}\n",
+            encoding="utf-8",
+        )
+        return plugin_root
 
     @staticmethod
     def _sha256(content: bytes) -> str:

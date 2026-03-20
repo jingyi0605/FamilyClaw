@@ -12,6 +12,7 @@ from app.db.utils import new_uuid, utc_now_iso
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.plugin.models import PluginMount
+from app.modules.plugin.service import list_registered_plugins_for_household
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from app.modules.plugin import repository as plugin_repository
 from app.modules.plugin_marketplace.models import PluginMarketplaceEntrySnapshot, PluginMarketplaceSource
@@ -28,8 +29,12 @@ class PluginStartupSyncTests(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_plugin_storage_root = settings.plugin_storage_root
         self._previous_marketplace_install_root = settings.plugin_marketplace_install_root
+        self._previous_plugin_dev_root = settings.plugin_dev_root
         settings.plugin_storage_root = self._tempdir.name
-        settings.plugin_marketplace_install_root = self._tempdir.name
+        settings.plugin_marketplace_install_root = str(
+            (Path(self._tempdir.name) / "third_party" / "marketplace").resolve()
+        )
+        settings.plugin_dev_root = str((Path(self._tempdir.name) / "plugins-dev").resolve())
 
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
@@ -40,10 +45,11 @@ class PluginStartupSyncTests(unittest.TestCase):
         self._db_helper.close()
         settings.plugin_storage_root = self._previous_plugin_storage_root
         settings.plugin_marketplace_install_root = self._previous_marketplace_install_root
+        settings.plugin_dev_root = self._previous_plugin_dev_root
         self._tempdir.cleanup()
 
-    def test_sync_official_plugins_mounts_all_households_and_is_idempotent(self) -> None:
-        plugin_root = self._create_plugin_dir(
+    def test_sync_legacy_official_plugins_are_ignored(self) -> None:
+        self._create_plugin_dir(
             Path(self._tempdir.name) / "official" / "ai_provider_kimi_coding_plan",
             plugin_id="ai-provider-kimi-coding-plan",
             name="Kimi Coding Plan",
@@ -58,27 +64,24 @@ class PluginStartupSyncTests(unittest.TestCase):
         second_result = sync_persisted_plugins_on_startup(self.db)
         self.db.commit()
 
-        self.assertEqual(2, first_result.official_created)
-        self.assertEqual(0, second_result.official_created)
-        self.assertEqual(0, second_result.official_updated)
+        self.assertEqual(0, first_result.local_created)
+        self.assertEqual(0, second_result.local_created)
+        self.assertEqual(0, second_result.local_updated)
 
         for household_id in (first_household.id, second_household.id):
             mounts = plugin_repository.list_plugin_mounts(self.db, household_id=household_id)
-            self.assertEqual(1, len(mounts))
-            self.assertEqual("official", mounts[0].source_type)
-            self.assertEqual(str(plugin_root.resolve()), str(Path(mounts[0].plugin_root).resolve()))
-            self.assertTrue(mounts[0].enabled)
+            self.assertEqual([], mounts)
 
     def test_sync_manual_plugins_repairs_paths_and_preserves_enabled_state(self) -> None:
         household = self._create_household("手工插件家庭")
         manual_root = self._create_plugin_dir(
-            Path(self._tempdir.name) / "third_party" / "manual" / household.id / "manual-sync-plugin",
+            Path(self._tempdir.name) / "third_party" / "local" / household.id / "manual-sync-plugin",
             plugin_id="manual-sync-plugin",
             name="Manual Sync Plugin",
             version="0.1.0",
         )
         missing_row_root = self._create_plugin_dir(
-            Path(self._tempdir.name) / "third_party" / "manual" / household.id / "manual-created-plugin",
+            Path(self._tempdir.name) / "third_party" / "local" / household.id / "manual-created-plugin",
             plugin_id="manual-created-plugin",
             name="Manual Created Plugin",
             version="0.1.0",
@@ -88,6 +91,7 @@ class PluginStartupSyncTests(unittest.TestCase):
             household_id=household.id,
             plugin_id="manual-sync-plugin",
             source_type="third_party",
+            install_method="local",
             execution_backend="subprocess_runner",
             manifest_path=str((Path(self._tempdir.name) / "stale" / "manifest.json").resolve()),
             plugin_root=str((Path(self._tempdir.name) / "stale").resolve()),
@@ -103,8 +107,8 @@ class PluginStartupSyncTests(unittest.TestCase):
         result = sync_persisted_plugins_on_startup(self.db)
         self.db.commit()
 
-        self.assertEqual(1, result.manual_created)
-        self.assertEqual(1, result.manual_updated)
+        self.assertEqual(1, result.local_created)
+        self.assertEqual(1, result.local_updated)
 
         mounts = {item.plugin_id: item for item in plugin_repository.list_plugin_mounts(self.db, household_id=household.id)}
         repaired = mounts["manual-sync-plugin"]
@@ -119,7 +123,7 @@ class PluginStartupSyncTests(unittest.TestCase):
         release_root = self._create_plugin_dir(
             Path(self._tempdir.name)
             / "third_party"
-            / "manual"
+            / "local"
             / household.id
             / "manual-release-plugin"
             / "1.2.0--20260319T120000Z--abcd1234",
@@ -132,15 +136,46 @@ class PluginStartupSyncTests(unittest.TestCase):
         result = sync_persisted_plugins_on_startup(self.db)
         self.db.commit()
 
-        self.assertEqual(1, result.manual_created)
+        self.assertEqual(1, result.local_created)
         mounts = plugin_repository.list_plugin_mounts(self.db, household_id=household.id)
         self.assertEqual(1, len(mounts))
         self.assertEqual("manual-release-plugin", mounts[0].plugin_id)
         self.assertEqual(str(release_root.resolve()), str(Path(mounts[0].plugin_root).resolve()))
         self.assertEqual("subprocess_runner", mounts[0].execution_backend)
 
-    def test_sync_official_theme_pack_plugins_mounts_all_households(self) -> None:
-        theme_root = self._create_theme_pack_dir(
+    def test_plugins_dev_overrides_synced_local_mount_without_creating_dev_mount(self) -> None:
+        household = self._create_household("开发覆盖家庭")
+        local_root = self._create_plugin_dir(
+            Path(self._tempdir.name) / "third_party" / "local" / household.id / "dev-sync-plugin",
+            plugin_id="dev-sync-plugin",
+            name="Installed Sync Plugin",
+            version="1.0.0",
+        )
+        dev_root = self._create_plugin_dir(
+            Path(settings.plugin_dev_root) / "dev-sync-plugin",
+            plugin_id="dev-sync-plugin",
+            name="Dev Sync Plugin",
+            version="9.9.9",
+        )
+        self.db.commit()
+
+        result = sync_persisted_plugins_on_startup(self.db)
+        self.db.commit()
+
+        self.assertEqual(1, result.local_created)
+        mounts = plugin_repository.list_plugin_mounts(self.db, household_id=household.id)
+        self.assertEqual(1, len(mounts))
+        self.assertEqual(str(local_root.resolve()), str(Path(mounts[0].plugin_root).resolve()))
+
+        snapshot = list_registered_plugins_for_household(self.db, household_id=household.id)
+        plugin = next(item for item in snapshot.items if item.id == "dev-sync-plugin")
+        self.assertEqual("9.9.9", plugin.version)
+        assert plugin.runner_config is not None
+        self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
+        self.assertEqual(str((dev_root / "manifest.json").resolve()), str(Path(plugin.manifest_path).resolve()))
+
+    def test_sync_legacy_official_theme_pack_plugins_are_ignored(self) -> None:
+        self._create_theme_pack_dir(
             Path(self._tempdir.name) / "official" / "theme_chun_he_jing_ming_pack",
             plugin_id="official.theme.chun-he-jing-ming",
             theme_id="chun-he-jing-ming",
@@ -154,18 +189,15 @@ class PluginStartupSyncTests(unittest.TestCase):
         result = sync_persisted_plugins_on_startup(self.db)
         self.db.commit()
 
-        self.assertEqual(2, result.official_created)
+        self.assertEqual(0, result.local_created)
         for household_id in (first_household.id, second_household.id):
             mounts = plugin_repository.list_plugin_mounts(self.db, household_id=household_id)
-            by_plugin = {item.plugin_id: item for item in mounts}
-            self.assertIn("official.theme.chun-he-jing-ming", by_plugin)
-            self.assertEqual(str(theme_root.resolve()), str(Path(by_plugin["official.theme.chun-he-jing-ming"].plugin_root).resolve()))
-            self.assertEqual("official", by_plugin["official.theme.chun-he-jing-ming"].source_type)
+            self.assertEqual([], mounts)
 
     def test_sync_marketplace_plugins_restores_instance_without_reinstall(self) -> None:
         household = self._create_household("市场插件家庭")
         plugin_root = self._create_plugin_dir(
-            Path(self._tempdir.name) / "third_party" / "marketplace" / household.id / "demo-plugin" / "1.0.0",
+            Path(settings.plugin_marketplace_install_root) / household.id / "demo-plugin" / "1.0.0",
             plugin_id="demo-plugin",
             name="Demo Plugin",
             version="1.0.0",
@@ -183,7 +215,7 @@ class PluginStartupSyncTests(unittest.TestCase):
             mirror_api_base_url=None,
             branch="main",
             entry_root="plugins",
-            trusted_level="third_party",
+            is_system=False,
             enabled=True,
             last_sync_status="success",
             last_sync_error_json=None,
@@ -251,6 +283,7 @@ class PluginStartupSyncTests(unittest.TestCase):
             household_id=household.id,
             plugin_id="demo-plugin",
             source_type="third_party",
+            install_method="marketplace",
             execution_backend="subprocess_runner",
             manifest_path=str((Path(self._tempdir.name) / "stale-market" / "manifest.json").resolve()),
             plugin_root=str((Path(self._tempdir.name) / "stale-market").resolve()),
@@ -288,7 +321,7 @@ class PluginStartupSyncTests(unittest.TestCase):
     def test_startup_sync_marks_theme_pack_registry_refresh_when_theme_pack_mount_changes(self) -> None:
         household = self._create_household("主题插件家庭")
         self._create_plugin_dir(
-            Path(self._tempdir.name) / "third_party" / "manual" / household.id / "third-party-theme-pack",
+            Path(self._tempdir.name) / "third_party" / "local" / household.id / "third-party-theme-pack",
             plugin_id="third-party-theme-pack",
             name="Third Theme Pack",
             version="0.1.0",
@@ -310,7 +343,7 @@ class PluginStartupSyncTests(unittest.TestCase):
         result = sync_persisted_plugins_on_startup(self.db)
         self.db.commit()
 
-        self.assertEqual(1, result.manual_created)
+        self.assertEqual(1, result.local_created)
         self.assertEqual(1, result.theme_pack_registry_refresh)
 
     def _create_household(self, name: str):

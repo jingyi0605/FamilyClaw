@@ -124,6 +124,8 @@ def resolve_non_market_version_governance(
     declared_version: str | None,
     installed_version: str | None,
 ) -> PluginVersionGovernanceRead:
+    if source_type == "manual":
+        source_type = "local"
     normalized_declared_version = _normalize_version_text(declared_version)
     normalized_installed_version = _normalize_version_text(installed_version) or normalized_declared_version
     blocked_reason = None

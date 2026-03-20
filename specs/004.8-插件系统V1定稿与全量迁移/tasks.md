@@ -217,7 +217,7 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
 - [x] 2.5 纠偏宿主与官方插件导入 / 读取边界
   - 状态：DONE
   - 这一步到底做什么：把 `official` 插件从宿主导入期依赖里拿掉，并把“宿主不做领域专用归一化”这条读取边界锁死。
-  - 做完你能看到什么：即使 `apps/api-server/data/plugins/official/` 目录缺失，宿主导入与迁移链路仍然成立；设备读取链路里也不再出现天气专用修补。
+- 做完你能看到什么：即使历史目录 `apps/api-server/data/plugins/official/` 缺失，宿主导入与迁移链路仍然成立；当前正式开发目录改为 `plugins-dev`，设备读取链路里也不再出现天气专用修补。
   - 先依赖什么：2.2
   - 主要改哪里：
     - `C:\Code\FamilyClaw\apps\api-server\app\modules\device\service.py`
@@ -240,7 +240,7 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
   - 状态：DONE
   - 2026-03-19 实际回写：
     - 已新增宿主通用插件私有 migration runner，在插件执行准备阶段按插件根目录 `migrations/` 自动补齐私有 Alembic。
-    - 已把天气私有绑定表迁到 `apps/api-server/data/plugins/official/official_weather/migrations/`，宿主核心 revision `20260318_0054` 改为占位 no-op。
+- 历史记录：天气私有绑定表曾迁到 `apps/api-server/data/plugins/official/official_weather/migrations/`；当前正式开发目录应理解为 `apps/api-server/plugins-dev/official_weather/migrations/`。
     - 已修正天气私有 ORM 建模边界：插件模型复用宿主共享 `Base`，但不再进入宿主核心模型聚合入口；同时移除私有 migration runner 的进程内投机缓存，避免进程状态覆盖数据库真实迁移状态。
     - 已补插件规范、迁移路线图、开发者手册和 004.8 设计文档，写死私有迁移目录、触发时机、ORM 建模边界与 `official` 运行时托管目录口径。
     - 已通过 `test_plugin_private_migrations_weather.py`、`test_weather_default_device.py`、`test_weather_entity_copy.py`、`test_host_import_without_official_weather.py`、`test_device_service_no_weather_special_case.py` 回归，确认宿主核心不再依赖天气私有表。
@@ -278,7 +278,7 @@ AI 供应商彻底插件化迁移的任务拆分已经独立到：
   - 2026-03-18 实际回写：
     - `official-weather` 已从宿主天气专线迁到插件内 `integration -> device -> entity -> dashboard card` 主链路。
     - 宿主已移除天气专用 API 注册与 `app.modules.weather` 源码依赖，默认天气设备与附加地区天气都改由插件托管实例创建和同步。
-    - 2026-03-18 19:xx 纠偏回写：`official-weather` 已继续从错误的 `app/plugins/builtin/official_weather` 迁到 `apps/api-server/data/plugins/official/official_weather`，并把 manifest 入口、官方插件挂载、同进程加载与测试链路一起改到 `official` 分类。
+- 2026-03-18 19:xx 纠偏回写：这条记录描述的是历史迁移中间态。当前正式口径已经改为 `app/plugins/builtin` 与 `plugins-dev` / `third_party/*` 三段模型，不再继续使用 `official` 分类。
   - 这一步到底做什么：把 `official-weather`、`health-basic`、`homeassistant_*`、`open_xiaoai_speaker` 等插件改到正式类型和正式入口。
   - 做完你能看到什么：这些插件不会再各写各的主链路。
   - 先依赖什么：2.4

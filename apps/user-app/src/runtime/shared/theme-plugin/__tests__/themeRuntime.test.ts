@@ -89,13 +89,13 @@ test('拿到家庭上下文后可加载远端主题插件资源', async () => {
     fetchRegistry: async () => ({
       items: [
         {
-          plugin_id: 'official.theme.aurora',
+          plugin_id: 'third.party.theme.aurora',
           theme_id: 'aurora',
           display_name: '极光',
           resource_source: 'managed_plugin_dir',
           resource_version: '2.0.0',
           theme_schema_version: 1,
-          source_type: 'official',
+          source_type: 'third_party',
           state: 'ready',
           enabled: true,
         },
@@ -104,7 +104,7 @@ test('拿到家庭上下文后可加载远端主题插件资源', async () => {
     fetchResource: async () => {
       fetchResourceCallCount += 1;
       return {
-        plugin_id: 'official.theme.aurora',
+        plugin_id: 'third.party.theme.aurora',
         theme_id: 'aurora',
         resource_version: '2.0.0',
         theme_schema_version: 1,
@@ -127,7 +127,7 @@ test('拿到家庭上下文后可加载远端主题插件资源', async () => {
   assert.equal(fetchResourceCallCount, 1);
   assert.equal(state.status, 'ready');
   assert.equal(state.active_theme?.id, 'aurora');
-  assert.equal(state.active_theme?.plugin_id, 'official.theme.aurora');
+  assert.equal(state.active_theme?.plugin_id, 'third.party.theme.aurora');
 });
 
 test('已选主题插件失效时进入 missing 状态且不静默回退', async () => {
@@ -150,19 +150,19 @@ test('已选主题插件失效时进入 missing 状态且不静默回退', async
 test('已选主题被禁用时保留待重选状态并返回禁用原因', async () => {
   const runtime = createRuntime({
     readStoredSelection: () => ({
-      plugin_id: 'official.theme.aurora',
+      plugin_id: 'third.party.theme.aurora',
       theme_id: 'aurora',
     }),
     fetchRegistry: async () => ({
       items: [
         {
-          plugin_id: 'official.theme.aurora',
+          plugin_id: 'third.party.theme.aurora',
           theme_id: 'aurora',
           display_name: '极光',
           resource_source: 'managed_plugin_dir',
           resource_version: '2.0.0',
           theme_schema_version: 1,
-          source_type: 'official',
+          source_type: 'third_party',
           state: 'disabled',
           enabled: false,
           disabled_reason: 'plugin_disabled_by_household',
@@ -176,7 +176,7 @@ test('已选主题被禁用时保留待重选状态并返回禁用原因', async
   const state = runtime.getState();
 
   assert.equal(state.status, 'missing');
-  assert.equal(state.selection?.plugin_id, 'official.theme.aurora');
+  assert.equal(state.selection?.plugin_id, 'third.party.theme.aurora');
   assert.equal(state.theme_fallback_notice?.disabledReason, 'plugin_disabled_by_household');
   assert.equal(state.disabled_reason_by_theme_id.aurora, 'plugin_disabled_by_household');
 });

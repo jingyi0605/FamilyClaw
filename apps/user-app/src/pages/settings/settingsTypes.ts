@@ -516,9 +516,10 @@ export type ChannelAccountStatusRead = {
   recent_inbound_count: number;
 };
 
-export type PluginSourceType = 'builtin' | 'official' | 'third_party';
+export type PluginSourceType = 'builtin' | 'third_party';
 export type PluginRiskLevel = 'low' | 'medium' | 'high';
-export type PluginVersionGovernanceSourceType = 'builtin' | 'marketplace' | 'manual';
+export type PluginInstallMethod = 'local' | 'marketplace';
+export type PluginVersionGovernanceSourceType = 'builtin' | 'marketplace' | 'local';
 export type PluginVersionCompatibilityStatus = 'compatible' | 'host_too_old' | 'unknown';
 export type PluginVersionUpdateState =
   | 'up_to_date'
@@ -766,6 +767,7 @@ export type PluginRegistryItem = {
     enabled_by_default: boolean;
   }>;
   source_type: PluginSourceType;
+  install_method?: PluginInstallMethod | null;
   install_status?: string | null;
   config_status?: PluginConfigState | null;
   marketplace_instance_id?: string | null;
@@ -1134,7 +1136,6 @@ export type PluginJobListRead = {
   page_size: number;
 };
 
-export type MarketplaceTrustedLevel = 'official' | 'third_party';
 export type MarketplaceSyncStatus = 'idle' | 'syncing' | 'success' | 'failed';
 export type MarketplaceEntrySyncStatus = 'ready' | 'invalid';
 export type MarketplaceRepoProvider = 'github' | 'gitlab' | 'gitee' | 'gitea';
@@ -1163,7 +1164,7 @@ export type MarketplaceSourceRead = {
   effective_repo_url: string;
   branch: string;
   entry_root: string;
-  trusted_level: MarketplaceTrustedLevel;
+  is_system: boolean;
   enabled: boolean;
   last_sync_status: MarketplaceSyncStatus | null;
   last_sync_error: Record<string, unknown> | null;
@@ -1284,7 +1285,7 @@ export type MarketplaceCatalogItemRead = {
   readme_url: string;
   risk_level: PluginRiskLevel;
   latest_version: string;
-  trusted_level: MarketplaceTrustedLevel;
+  is_system: boolean;
   sync_status: MarketplaceEntrySyncStatus;
   sync_error: Record<string, unknown> | null;
   categories: string[];

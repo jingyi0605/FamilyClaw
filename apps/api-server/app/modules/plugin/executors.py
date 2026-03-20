@@ -116,7 +116,7 @@ def resolve_execution_backend(plugin: PluginRegistryItem, request: PluginExecuti
         return request.execution_backend
     if plugin.execution_backend is not None:
         return plugin.execution_backend
-    if plugin.source_type in {"builtin", "official"}:
+    if plugin.source_type == "builtin":
         return "in_process"
     return "subprocess_runner"
 

@@ -1,6 +1,6 @@
 export type ThemeResourceSource = 'builtin_bundle' | 'managed_plugin_dir';
 export type ThemeRegistryState = 'ready' | 'disabled' | 'invalid' | 'stale';
-export type ThemePluginSourceType = 'builtin' | 'official' | 'third_party';
+export type ThemePluginSourceType = 'builtin' | 'third_party';
 export type ThemeRuntimeStatus = 'booting' | 'loading' | 'ready' | 'missing' | 'error';
 
 export type ThemeRuntimeSelection = {

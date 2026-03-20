@@ -8,18 +8,14 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_MARKETPLACE_TRUSTED_LEVELS: tuple[str, ...] = ("official", "third_party")
-
-
 def iter_household_plugin_storage_paths(household_id: str) -> tuple[Path, ...]:
     """返回 household 级插件落盘目录，供清理和诊断复用。"""
     storage_root = Path(settings.plugin_storage_root).resolve()
     install_root = Path(settings.plugin_marketplace_install_root).resolve()
     paths: set[Path] = {
-        (storage_root / "third_party" / "manual" / household_id).resolve(),
+        (storage_root / "third_party" / "local" / household_id).resolve(),
+        (install_root / household_id).resolve(),
     }
-    for trusted_level in _MARKETPLACE_TRUSTED_LEVELS:
-        paths.add((install_root / trusted_level / "marketplace" / household_id).resolve())
     return tuple(sorted(paths))
 
 

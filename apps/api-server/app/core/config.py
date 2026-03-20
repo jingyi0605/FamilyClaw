@@ -8,9 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_URL = "postgresql+psycopg://familyclaw:change-me@127.0.0.1:5432/familyclaw"
 VoiceRuntimeMode = Literal["embedded", "disabled"]
-OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL = "https://github.com/jingyi0605/familyclaw-marketplace.git"
-OFFICIAL_PLUGIN_MARKETPLACE_BRANCH = "main"
-OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
+SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = "https://github.com/jingyi0605/familyclaw-marketplace.git"
+SYSTEM_PLUGIN_MARKETPLACE_BRANCH = "main"
+SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
 
 
 class AiProviderRuntimeConfig(BaseModel):
@@ -78,7 +78,10 @@ class Settings(BaseSettings):
     plugin_config_secret_seed: str = "familyclaw-dev-plugin-config-seed"
     plugin_marketplace_github_token: str | None = None
     plugin_storage_root: str = str((BASE_DIR / "data" / "plugins").resolve())
-    plugin_marketplace_install_root: str = str((BASE_DIR / "data" / "plugins").resolve())
+    plugin_marketplace_install_root: str = str((BASE_DIR / "data" / "plugins" / "third_party" / "marketplace").resolve())
+    # `plugins-dev` 是仓库内第三方插件开发源码目录，同时也是开发覆盖源；
+    # 它会参与家庭插件注册表合并，但不会写入安装态目录或挂载记录。
+    plugin_dev_root: str = str((BASE_DIR / "plugins-dev").resolve())
     scheduler_worker_enabled: bool = True
     scheduler_worker_poll_interval_seconds: float = 1.0
     scheduler_worker_batch_size: int = 100

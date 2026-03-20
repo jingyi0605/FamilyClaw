@@ -43,8 +43,7 @@ type ActivateOptions = {
 const PLUGIN_THEME_SELECTION_STORAGE_KEY = 'familyclaw-theme-plugin-selection-v1';
 const THEME_SOURCE_WEIGHT: Record<ThemePluginSourceType, number> = {
   builtin: 0,
-  official: 1,
-  third_party: 2,
+  third_party: 1,
 };
 const BUILTIN_THEME_FIXED_ORDER = [
   'chun-he-jing-ming',
@@ -113,8 +112,11 @@ function normalizeSourceType(
   value: unknown,
   fallback: ThemePluginSourceType,
 ): ThemePluginSourceType {
-  if (value === 'builtin' || value === 'official' || value === 'third_party') {
+  if (value === 'builtin' || value === 'third_party') {
     return value;
+  }
+  if (value === 'official') {
+    return 'third_party';
   }
   return fallback;
 }
@@ -223,7 +225,7 @@ function normalizeRemoteRegistryItem(
 
   const defaultSourceType: ThemePluginSourceType = builtinPluginIds.has(pluginId)
     ? 'builtin'
-    : 'official';
+    : 'third_party';
 
   const enabled = readBoolean(raw.enabled, true);
   const sourceType = normalizeSourceType(raw.source_type ?? raw.sourceType, defaultSourceType);

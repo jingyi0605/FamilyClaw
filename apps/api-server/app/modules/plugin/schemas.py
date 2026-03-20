@@ -31,8 +31,9 @@ PluginManifestType = Literal[
     "context_engine",
 ]
 RiskLevel = Literal["low", "medium", "high"]
-PluginSourceType = Literal["builtin", "official", "third_party"]
-PluginVersionGovernanceSourceType = Literal["builtin", "marketplace", "manual"]
+PluginSourceType = Literal["builtin", "third_party"]
+PluginInstallMethod = Literal["local", "marketplace"]
+PluginVersionGovernanceSourceType = Literal["builtin", "marketplace", "local"]
 PluginVersionCompatibilityStatus = Literal["compatible", "host_too_old", "unknown"]
 PluginVersionUpdateState = Literal[
     "up_to_date",
@@ -88,6 +89,28 @@ ENTRYPOINT_KEY_BY_TYPE: dict[PluginType, str] = {
     "context_engine": "context_engine",
 }
 NON_EXECUTABLE_PLUGIN_TYPES = {"locale-pack", "theme-pack", "ai-provider"}
+
+
+def _normalize_plugin_source_type(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized == "official":
+        return "third_party"
+    return normalized
+
+
+def _normalize_plugin_install_method(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized == "manual":
+        return "local"
+    return normalized
 
 
 def _normalize_text_list(values: list[str], *, field_name: str) -> list[str]:
@@ -1477,6 +1500,11 @@ class PluginStateOverrideRead(BaseModel):
     created_at: str
     updated_at: str
 
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: str | None) -> str | None:
+        return _normalize_plugin_source_type(value)
+
 
 class PluginStateUpdateRequest(BaseModel):
     enabled: bool
@@ -1605,12 +1633,32 @@ class PluginRegistryItem(BaseModel):
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
     schedule_templates: list[PluginManifestScheduleTemplate] = Field(default_factory=list)
     source_type: PluginSourceType = "builtin"
+    install_method: PluginInstallMethod | None = None
     execution_backend: PluginExecutionBackend | None = None
     runner_config: PluginRunnerConfig | None = None
     install_status: str | None = None
     config_status: PluginConfigState | None = None
     marketplace_instance_id: str | None = None
     version_governance: PluginVersionGovernanceRead | None = None
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: str | None) -> str | None:
+        return _normalize_plugin_source_type(value)
+
+    @field_validator("install_method", mode="before")
+    @classmethod
+    def normalize_install_method(cls, value: str | None) -> str | None:
+        return _normalize_plugin_install_method(value)
+
+    @model_validator(mode="after")
+    def validate_install_method(self) -> "PluginRegistryItem":
+        if self.source_type == "builtin":
+            self.install_method = None
+            return self
+        if self.install_method is None:
+            raise ValueError("third_party 插件必须声明 install_method")
+        return self
 
 
 class PluginRegistrySnapshot(BaseModel):
@@ -1626,6 +1674,11 @@ class PluginLocaleRead(BaseModel):
     source_type: PluginSourceType
     messages: dict[str, str] = Field(default_factory=dict)
     overridden_plugin_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: str | None) -> str | None:
+        return _normalize_plugin_source_type(value)
 
 
 class PluginLocaleListRead(BaseModel):
@@ -1651,6 +1704,11 @@ class PluginThemeRegistryItemRead(BaseModel):
     preview: dict[str, Any] = Field(default_factory=dict)
     fallback_theme_id: str | None = None
 
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: str | None) -> str | None:
+        return _normalize_plugin_source_type(value)
+
 
 class PluginThemeRegistrySnapshotRead(BaseModel):
     household_id: str
@@ -1670,6 +1728,11 @@ class PluginThemeResourceRead(BaseModel):
     theme_schema_version: int
     platform_targets: list[Literal["h5", "rn"]] = Field(default_factory=list)
     tokens: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: str | None) -> str | None:
+        return _normalize_plugin_source_type(value)
 
 
 class HomeDashboardCardActionRead(BaseModel):
@@ -1843,7 +1906,8 @@ class HomeDashboardRead(BaseModel):
 
 
 class PluginMountBase(BaseModel):
-    source_type: Literal["official", "third_party"] = "third_party"
+    source_type: Literal["third_party"] = "third_party"
+    install_method: PluginInstallMethod = "local"
     execution_backend: Literal["subprocess_runner"] = "subprocess_runner"
     plugin_root: str = Field(min_length=1)
     manifest_path: str | None = None
@@ -1854,19 +1918,42 @@ class PluginMountBase(BaseModel):
     stderr_limit_bytes: int = Field(default=65536, ge=1024, le=1048576)
     enabled: bool = True
 
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: str | None) -> str | None:
+        normalized = _normalize_plugin_source_type(value)
+        return "third_party" if normalized is None else normalized
+
+    @field_validator("install_method", mode="before")
+    @classmethod
+    def normalize_install_method(cls, value: str | None) -> str | None:
+        normalized = _normalize_plugin_install_method(value)
+        return "local" if normalized is None else normalized
+
 
 class PluginMountCreate(PluginMountBase):
     pass
 
 
 class PluginMountUpdate(BaseModel):
-    source_type: Literal["official", "third_party"] | None = None
+    source_type: Literal["third_party"] | None = None
+    install_method: PluginInstallMethod | None = None
     python_path: str | None = None
     working_dir: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1, le=300)
     stdout_limit_bytes: int | None = Field(default=None, ge=1024, le=1048576)
     stderr_limit_bytes: int | None = Field(default=None, ge=1024, le=1048576)
     enabled: bool | None = None
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: str | None) -> str | None:
+        return _normalize_plugin_source_type(value)
+
+    @field_validator("install_method", mode="before")
+    @classmethod
+    def normalize_install_method(cls, value: str | None) -> str | None:
+        return _normalize_plugin_install_method(value)
 
 
 class PluginMountRead(BaseModel):
@@ -1884,7 +1971,8 @@ class PluginMountRead(BaseModel):
     dashboard_cards: list[PluginManifestDashboardCardSpec] = Field(default_factory=list)
     config_specs: list[PluginManifestConfigSpec] = Field(default_factory=list)
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
-    source_type: Literal["official", "third_party"]
+    source_type: Literal["third_party"]
+    install_method: PluginInstallMethod
     execution_backend: Literal["subprocess_runner"] = "subprocess_runner"
     manifest_path: str
     plugin_root: str
@@ -1896,6 +1984,18 @@ class PluginMountRead(BaseModel):
     enabled: bool
     created_at: str
     updated_at: str
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: str | None) -> str | None:
+        normalized = _normalize_plugin_source_type(value)
+        return "third_party" if normalized is None else normalized
+
+    @field_validator("install_method", mode="before")
+    @classmethod
+    def normalize_install_method(cls, value: str | None) -> str | None:
+        normalized = _normalize_plugin_install_method(value)
+        return "local" if normalized is None else normalized
 
 
 PluginPackageInstallAction = Literal["installed", "upgraded", "reinstalled"]
@@ -1911,6 +2011,7 @@ class PluginPackageInstallRead(BaseModel):
     overwritten: bool = False
     enabled: bool
     source_type: Literal["third_party"] = "third_party"
+    install_method: Literal["local"] = "local"
     execution_backend: Literal["subprocess_runner"] = "subprocess_runner"
     plugin_root: str
     manifest_path: str

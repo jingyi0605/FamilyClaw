@@ -35,9 +35,10 @@
   - `ai_provider_kimi_coding_plan`
   - `ai_provider_glm_coding_plan`
 - 已收口插件目录：
-  - 官方插件手工挂载：`apps/api-server/data/plugins/official/...`
-  - 第三方插件手工挂载：`apps/api-server/data/plugins/third_party/manual/...`
-  - 插件市场安装：`apps/api-server/data/plugins/<trusted_level>/marketplace/...`
+- 历史官方插件手工挂载：`apps/api-server/data/plugins/official/...`，仅表示旧方案，当前已废弃
+- 当前第三方开发源码目录：`apps/api-server/plugins-dev/...`
+- 当前第三方本地安装目录：`apps/api-server/data/plugins/third_party/local/...`
+- 当前插件市场安装目录：`apps/api-server/data/plugins/third_party/marketplace/...`
 - 已补启动自动恢复：
   - 官方插件会在服务启动时自动发现并补齐到现有家庭挂载记录
   - 第三方手工插件会从 `data/plugins/third_party/manual/...` 恢复 `plugin_mounts`

@@ -40,7 +40,7 @@ One sentence version:
 
 The host is the platform kernel. Plugins are the domain integration layer.
 
-## Current official plugin types
+## Current supported plugin types
 
 - `integration`
 - `action`
@@ -97,7 +97,7 @@ If you are changing this logic, read the plugin enable/disable section in [Backe
 
 Dynamic configuration dependency is a host capability. Plugins do not get to invent their own private protocol for this.
 
-Current official dynamic option sources:
+Current supported dynamic option sources:
 
 - `region_provider_list`
 - `region_catalog_children`

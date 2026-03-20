@@ -23,8 +23,6 @@ function formatSourceType(sourceType: PluginSourceType, locale: string | undefin
   switch (sourceType) {
     case 'builtin':
       return { label: getPageMessage(locale, 'settings.plugin.source.builtin'), tone: 'info' as const };
-    case 'official':
-      return { label: getPageMessage(locale, 'settings.plugin.source.official'), tone: 'success' as const };
     case 'third_party':
       return { label: getPageMessage(locale, 'settings.plugin.source.thirdParty'), tone: 'warning' as const };
     default:
