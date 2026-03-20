@@ -148,10 +148,17 @@
 | `categories` | array[string] | 否 | 分类 | 允许人工补充 |
 | `risk_level` | string | 是 | 风险等级 | 与 manifest 自洽 |
 | `permissions` | array[string] | 是 | 权限声明 | 与 manifest 自洽 |
-| `latest_version` | string | 是 | 最新版本 | 必须能在 `versions` 中找到 |
-| `versions` | array[object] | 是 | 可安装版本信息 | 至少一个 |
+| `latest_version` | string | 是 | 最新版本 | 必须能在 `versions` 中找到，且必须指向最高版本 |
+| `versions` | array[object] | 是 | 可安装版本信息 | 至少一个；所有版本都保存在同一个 `entry.json` 里 |
 | `install` | object | 是 | 安装信息 | 满足 `004.6` 现有规则 |
 | `maintainers` | array[object] | 否 | 维护者 | 可来自 Issue |
+
+补充死规矩：
+
+1. 正式多版本条目必须来自仓库里的 tag，`git_ref` 统一写成 `refs/tags/<tag>`
+2. 没有 tag / release 时，只允许退化成引用 branch 的单版本开发态条目
+3. `release_asset` 必须提供 `artifact_url`
+4. `source_archive` 可以显式提供 `artifact_url`，也可以由宿主按 `git_ref` 推导
 
 ### 3.3 接口契约
 
@@ -298,11 +305,10 @@
 ### 8.1 风险
 
 - GitHub Actions 权限不够时，机器人创建 PR 可能失败
-- 第三方仓库版本发布方式不统一，自动生成 `versions` 可能需要多种兼容
+- 第三方仓库版本发布方式不统一，自动生成 `versions` 需要明确优先级和兜底边界
 - 如果 Issue Form 设计过于复杂，作者照样填不明白
 
 ### 8.2 待确认项
 
 - 机器人是直接用 `GITHUB_TOKEN` 还是单独的 Bot Token
-- 版本信息优先从 release/tag 读取，还是允许作者在 Issue 里补充兜底
 - 作者触发“重新校验”是用评论命令、标签还是重新编辑 Issue

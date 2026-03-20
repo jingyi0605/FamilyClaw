@@ -263,9 +263,37 @@
   - 对应需求：`requirements.md` 需求 5、需求 6、需求 7
   - 对应设计：`design.md` §2.1、§2.3.5、§4.1、§6.3
 
+- [x] 3.3 补齐多版本条目、tag 与发布归档规则
+  - 状态：DONE
+  - 完成日期：2026-03-20
+  - 这一步到底做什么：把“一个插件怎么保存多个版本、tag 怎么写、什么时候允许 branch 兜底”写成正式规则，并同步补到校验器和文档里。
+  - 做完你能看到什么：市场条目不再只是“能跑”，而是对多版本和 tag 边界有明确硬约束。
+  - 先依赖什么：2.2、3.2
+  - 开始前先看：
+    - `requirements.md` 需求 2、需求 3
+    - `design.md` §3.2.3「GeneratedMarketplaceEntry」
+  - 主要改哪里：
+    - 市场仓库 `scripts/marketplace_submission_lib.py`
+    - 市场仓库 `schemas/entry.schema.json`
+    - 市场仓库 `docs/contributing/plugin-submission.md`
+    - `docs/开发者文档/插件开发/zh-CN/`
+  - 这一步先不做什么：不强制 release asset，不扩展到签名与制品托管平台。
+  - 完成内容：
+    - 已把多版本条目固定为单个 `plugins/<plugin_id>/entry.json` 下的 `versions[]`
+    - 已明确正式多版本必须来自 tag，`git_ref` 统一为 `refs/tags/<tag>`
+    - 已明确 `latest_version` 必须指向最高版本，单版本 branch 仅作为开发态兜底
+  - 怎么算完成：
+    1. 文档能直接回答“多版本怎么存、tag 怎么写”
+    2. 自动校验会拦住不合法的多版本条目
+  - 怎么验证：
+    - 脚本单测覆盖 tag 规范和 `latest_version` 校验
+    - 用样例仓库演练多版本生成结果
+  - 对应需求：`requirements.md` 需求 2、需求 3
+  - 对应设计：`design.md` §3.2.3
+
 ### 最终检查
 
-- [x] 3.3 最终检查点
+- [x] 3.4 最终检查点
   - 状态：DONE
   - 完成日期：2026-03-20
   - 这一步到底做什么：确认这份 Spec 真能指导实现，不是只有概念图和漂亮话。

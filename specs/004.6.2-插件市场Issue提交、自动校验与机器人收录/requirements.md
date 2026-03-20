@@ -73,6 +73,7 @@
 1. WHEN 收录 Issue 创建或更新 THEN System SHALL 自动检查插件仓库是否可访问。
 2. WHEN 插件仓库可访问 THEN System SHALL 自动检查 `manifest.json`、README、版本信息和必要安装信息。
 3. WHEN 关键校验失败 THEN System SHALL 在 Issue 或检查结果里明确反馈失败原因，而不是只给一句 workflow failed。
+4. WHEN 机器人从插件仓库推导市场版本 THEN System SHALL 优先依据仓库里的 release / tag 生成 `versions[]`，而不是让作者在 Issue 文本里手填版本矩阵。
 
 ### 需求 3：系统必须自动生成或更新市场条目 PR
 
@@ -83,6 +84,7 @@
 1. WHEN 收录 Issue 通过自动校验 THEN System SHALL 生成或更新 `plugins/<plugin_id>/entry.json`。
 2. WHEN 同一个 Issue 被补充信息后重新触发 THEN System SHALL 更新对应机器人 PR，而不是重复创建一堆 PR。
 3. WHEN 机器人生成 PR THEN System SHALL 在 PR 和 Issue 之间建立清楚的互相引用。
+4. WHEN 条目包含多个版本 THEN System SHALL 把这些版本保存在同一个 `entry.json` 的 `versions[]`，并保证 `latest_version` 指向当前最高版本。
 
 ### 需求 4：市场条目必须坚持“自动生成为主，人工补充为辅”
 

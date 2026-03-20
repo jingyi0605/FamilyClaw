@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.plugin.schemas import PluginConfigState, PluginVersionGovernanceRead
+from app.modules.plugin.versioning import compare_plugin_versions
 
 
 MarketplaceRepoProvider = Literal["github", "gitlab", "gitee", "gitea"]
@@ -208,9 +209,26 @@ class MarketplaceEntry(BaseModel):
     def validate_versions(self) -> "MarketplaceEntry":
         if not self.versions:
             raise ValueError("versions 至少要有一个可安装版本")
-        version_map = {item.version: item for item in self.versions}
+        version_map: dict[str, MarketplaceVersionEntry] = {}
+        for item in self.versions:
+            if item.version in version_map:
+                raise ValueError(f"versions 里不能重复声明版本 {item.version}")
+            version_map[item.version] = item
         if self.latest_version not in version_map:
             raise ValueError("latest_version 必须能在 versions 里找到")
+        if len(self.versions) > 1:
+            for item in self.versions:
+                if not item.git_ref.startswith("refs/tags/"):
+                    raise ValueError("多版本市场条目只能引用 tag，git_ref 必须写成 refs/tags/<tag>")
+        highest_version = self.versions[0].version
+        try:
+            for item in self.versions[1:]:
+                if compare_plugin_versions(item.version, highest_version) > 0:
+                    highest_version = item.version
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        if self.latest_version != highest_version:
+            raise ValueError(f"latest_version 必须指向当前最高版本 {highest_version}")
         return self
 
     def resolve_version(self, version: str | None) -> MarketplaceVersionEntry:
