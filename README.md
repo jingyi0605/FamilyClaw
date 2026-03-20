@@ -172,6 +172,7 @@ FamilyClaw 拥有一套成熟的插件系统，目前内置 **32+ 个插件**：
 
 **安装步骤：**
 
+```bash
 # 1. 如果你已经有docker应用程序，一条命令即可运行
 docker run -d \
   --name familyclaw \
