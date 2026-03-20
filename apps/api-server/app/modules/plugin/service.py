@@ -955,6 +955,37 @@ def require_available_household_plugin(
     return plugin
 
 
+def _apply_post_enable_side_effects(
+    db: Session,
+    *,
+    household_id: str,
+    plugin: PluginRegistryItem,
+    updated_by: str | None,
+) -> None:
+    integration_capability = plugin.capabilities.integration
+    if integration_capability is None or not integration_capability.auto_create_default_instance:
+        return
+
+    from app.modules.integration.service import (
+        ensure_default_integration_instance,
+        sync_plugin_managed_integration_instance,
+    )
+
+    default_instance = ensure_default_integration_instance(
+        db,
+        household_id=household_id,
+        plugin=plugin,
+        updated_by=updated_by,
+    )
+    if default_instance is not None and not integration_capability.supports_discovery:
+        sync_plugin_managed_integration_instance(
+            db,
+            plugin=plugin,
+            instance=default_instance,
+            sync_scope="device_sync",
+        )
+
+
 def set_household_plugin_enabled(
     db: Session,
     *,
@@ -984,13 +1015,28 @@ def set_household_plugin_enabled(
             payload=payload,
         )
         sync_household_plugin_region_providers(db, household_id)
-        return get_household_plugin(
+        current = get_household_plugin(
             db,
             household_id=household_id,
             plugin_id=plugin_id,
             root_dir=root_dir,
             state_file=state_file,
         )
+        if payload.enabled:
+            _apply_post_enable_side_effects(
+                db,
+                household_id=household_id,
+                plugin=current,
+                updated_by=updated_by,
+            )
+            current = get_household_plugin(
+                db,
+                household_id=household_id,
+                plugin_id=plugin_id,
+                root_dir=root_dir,
+                state_file=state_file,
+            )
+        return current
     now = utc_now_iso()
     row = repository.get_plugin_state_override(db, household_id=household_id, plugin_id=plugin_id)
     if row is None:
@@ -1013,26 +1059,19 @@ def set_household_plugin_enabled(
     db.flush()
     sync_household_plugin_region_providers(db, household_id)
     if payload.enabled:
-        integration_capability = current.capabilities.integration
-        if integration_capability is not None and integration_capability.auto_create_default_instance:
-            from app.modules.integration.service import (
-                ensure_default_integration_instance,
-                sync_plugin_managed_integration_instance,
-            )
-
-            default_instance = ensure_default_integration_instance(
-                db,
-                household_id=household_id,
-                plugin=current,
-                updated_by=updated_by,
-            )
-            if default_instance is not None and not integration_capability.supports_discovery:
-                sync_plugin_managed_integration_instance(
-                    db,
-                    plugin=current,
-                    instance=default_instance,
-                    sync_scope="device_sync",
-                )
+        current = get_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            root_dir=root_dir,
+            state_file=state_file,
+        )
+        _apply_post_enable_side_effects(
+            db,
+            household_id=household_id,
+            plugin=current,
+            updated_by=updated_by,
+        )
     return get_household_plugin(
         db,
         household_id=household_id,

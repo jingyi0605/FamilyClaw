@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
@@ -15,9 +16,15 @@ import app.modules.plugin_marketplace.service as marketplace_service
 from app.core.config import settings
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin.config_service import save_plugin_config_form
 from app.modules.plugin.schemas import PluginConfigUpdateRequest, PluginStateUpdateRequest
-from app.modules.plugin.service import delete_household_plugin_installation, get_household_plugin, list_plugin_mounts
+from app.modules.plugin.service import (
+    delete_household_plugin_installation,
+    get_household_plugin,
+    list_plugin_mounts,
+    set_household_plugin_enabled,
+)
 from app.modules.plugin_marketplace.github_client import GitHubMarketplaceClientError
 from app.modules.plugin_marketplace.repository import list_marketplace_entry_snapshots, list_marketplace_install_tasks
 from app.modules.plugin_marketplace.schemas import (
@@ -31,6 +38,7 @@ from app.modules.plugin_marketplace.service import (
     create_marketplace_install_task,
     ensure_builtin_marketplace_source,
     get_marketplace_instance_for_household_plugin,
+    get_marketplace_version_options,
     list_marketplace_catalog,
     operate_marketplace_instance_version,
     resolve_marketplace_plugin_config_status,
@@ -363,6 +371,66 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertEqual("configured", plugin.config_status)
         self.assertEqual("subprocess_runner", plugin.execution_backend)
 
+    def test_marketplace_plugin_with_defaults_can_enable_and_create_default_instance(self) -> None:
+        client = self._build_client_for_default_enabled_integration_install()
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        create_marketplace_install_task(
+            self.db,
+            payload=MarketplaceInstallTaskCreateRequest(
+                household_id=self.household_id,
+                source_id=source.source_id,
+                plugin_id="demo-plugin",
+                version="1.0.0",
+            ),
+            client=client,
+        )
+        self.db.commit()
+
+        self.assertEqual(
+            "configured",
+            resolve_marketplace_plugin_config_status(
+                self.db,
+                household_id=self.household_id,
+                plugin_id="demo-plugin",
+            ),
+        )
+
+        plugin = set_household_plugin_enabled(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+            payload=PluginStateUpdateRequest(enabled=True),
+            updated_by="test-suite",
+        )
+        self.db.commit()
+
+        self.assertTrue(plugin.enabled)
+        self.assertEqual("configured", plugin.config_status)
+
+        marketplace_instance = get_marketplace_instance_for_household_plugin(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+        )
+        assert marketplace_instance is not None
+        self.assertTrue(marketplace_instance.enabled)
+        self.assertEqual("configured", marketplace_instance.config_status)
+
+        integration_instance = self.db.scalar(
+            select(IntegrationInstance).where(
+                IntegrationInstance.household_id == self.household_id,
+                IntegrationInstance.plugin_id == "demo-plugin",
+            )
+        )
+        assert integration_instance is not None
+        self.assertEqual("active", integration_instance.status)
+
     def test_install_accepts_repo_root_relative_manifest_and_dependency_paths(self) -> None:
         archive = self._build_plugin_archive(
             manifest_version="1.0.0",
@@ -419,6 +487,89 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertEqual("installed", task.install_status)
         self.assertTrue(Path(task.manifest_path).resolve().is_file())
         self.assertEqual("manifest.json", Path(task.manifest_path).name)
+
+    def test_version_options_mark_installable_versions_for_uninstalled_plugin(self) -> None:
+        client = self._build_client_for_version_options()
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        self.db.commit()
+
+        result = get_marketplace_version_options(
+            self.db,
+            source_id=source.source_id,
+            plugin_id="demo-plugin",
+            household_id=self.household_id,
+        )
+
+        self.assertEqual(["2.0.0", "1.2.0", "1.1.0", "1.0.0", "0.9.0"], [item.version for item in result.items])
+        self.assertEqual("2.0.0", result.latest_version)
+        self.assertEqual("1.1.0", result.latest_compatible_version)
+
+        action_map = {item.version: item for item in result.items}
+        self.assertEqual("install", action_map["1.1.0"].action)
+        self.assertTrue(action_map["1.1.0"].can_install)
+        self.assertFalse(action_map["1.1.0"].can_switch)
+        self.assertTrue(action_map["1.1.0"].is_latest_compatible)
+
+        self.assertEqual("unavailable", action_map["2.0.0"].action)
+        self.assertEqual("host_too_old", action_map["2.0.0"].compatibility_status)
+        self.assertIn("最低", action_map["2.0.0"].blocked_reason or "")
+
+        self.assertEqual("unavailable", action_map["1.2.0"].action)
+        self.assertEqual("unknown", action_map["1.2.0"].compatibility_status)
+        self.assertIn("min_app_version", action_map["1.2.0"].blocked_reason or "")
+
+    def test_version_options_mark_upgrade_rollback_current_and_unavailable_versions_for_installed_plugin(self) -> None:
+        client = self._build_client_for_version_options()
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        create_marketplace_install_task(
+            self.db,
+            payload=MarketplaceInstallTaskCreateRequest(
+                household_id=self.household_id,
+                source_id=source.source_id,
+                plugin_id="demo-plugin",
+                version="1.0.0",
+            ),
+            client=client,
+        )
+        self.db.commit()
+
+        result = get_marketplace_version_options(
+            self.db,
+            source_id=source.source_id,
+            plugin_id="demo-plugin",
+            household_id=self.household_id,
+        )
+
+        action_map = {item.version: item for item in result.items}
+
+        self.assertEqual("upgrade", action_map["1.1.0"].action)
+        self.assertTrue(action_map["1.1.0"].can_switch)
+        self.assertFalse(action_map["1.1.0"].can_install)
+
+        self.assertEqual("rollback", action_map["0.9.0"].action)
+        self.assertTrue(action_map["0.9.0"].can_switch)
+
+        self.assertEqual("current", action_map["1.0.0"].action)
+        self.assertTrue(action_map["1.0.0"].is_installed)
+        self.assertFalse(action_map["1.0.0"].can_switch)
+
+        self.assertEqual("unavailable", action_map["2.0.0"].action)
+        self.assertEqual("host_too_old", action_map["2.0.0"].compatibility_status)
+
+        self.assertEqual("unavailable", action_map["1.2.0"].action)
+        self.assertEqual("unknown", action_map["1.2.0"].compatibility_status)
 
     def test_delete_household_plugin_installation_clears_marketplace_install_state(self) -> None:
         client = self._build_client_for_install()
@@ -979,6 +1130,31 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         }
         return FakeGitHubMarketplaceClient(files=files, directories=directories, metadata=metadata, downloads=downloads)
 
+    def _build_client_for_default_enabled_integration_install(self) -> FakeGitHubMarketplaceClient:
+        archive = self._build_plugin_archive(
+            manifest_version="1.0.0",
+            plugin_scope_uses_defaults=True,
+            auto_create_default_instance=True,
+            include_integration_instance_scope=True,
+        )
+        files = {
+            (MARKET_REPO_URL, "market.json", "main"): self._build_market_manifest(),
+            (MARKET_REPO_URL, "plugins/demo-plugin/entry.json", "main"): self._build_entry_payload(),
+        }
+        directories = {
+            (MARKET_REPO_URL, "plugins", "main"): [
+                {"name": "demo-plugin", "type": "dir"},
+            ],
+        }
+        metadata = {
+            MARKET_REPO_URL: {"default_branch": "main", "stargazers_count": 10, "forks_count": 2},
+            PLUGIN_REPO_URL: {"default_branch": "main", "stargazers_count": 8, "forks_count": 1},
+        }
+        downloads = {
+            "https://example.com/demo-plugin-1.0.0.zip": archive,
+        }
+        return FakeGitHubMarketplaceClient(files=files, directories=directories, metadata=metadata, downloads=downloads)
+
     def _build_client_for_incremental_sync(self) -> FakeGitHubMarketplaceClient:
         files = {
             (MARKET_REPO_URL, "market.json", "main"): self._build_market_manifest(),
@@ -1211,6 +1387,67 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         }
         return FakeGitHubMarketplaceClient(files=files, directories=directories, metadata=metadata, downloads=downloads)
 
+    def _build_client_for_version_options(self) -> FakeGitHubMarketplaceClient:
+        versions = [
+            {
+                "version": "0.9.0",
+                "git_ref": "refs/tags/v0.9.0",
+                "artifact_type": "source_archive",
+                "artifact_url": "https://example.com/demo-plugin-0.9.0.zip",
+                "min_app_version": "0.1.0",
+            },
+            {
+                "version": "1.0.0",
+                "git_ref": "refs/tags/v1.0.0",
+                "artifact_type": "source_archive",
+                "artifact_url": "https://example.com/demo-plugin-1.0.0.zip",
+                "min_app_version": "0.1.0",
+            },
+            {
+                "version": "1.1.0",
+                "git_ref": "refs/tags/v1.1.0",
+                "artifact_type": "source_archive",
+                "artifact_url": "https://example.com/demo-plugin-1.1.0.zip",
+                "min_app_version": "0.1.0",
+            },
+            {
+                "version": "1.2.0",
+                "git_ref": "refs/tags/v1.2.0",
+                "artifact_type": "source_archive",
+                "artifact_url": "https://example.com/demo-plugin-1.2.0.zip",
+                "min_app_version": None,
+            },
+            {
+                "version": "2.0.0",
+                "git_ref": "refs/tags/v2.0.0",
+                "artifact_type": "source_archive",
+                "artifact_url": "https://example.com/demo-plugin-2.0.0.zip",
+                "min_app_version": "9.9.9",
+            },
+        ]
+        files = {
+            (MARKET_REPO_URL, "market.json", "main"): self._build_market_manifest(),
+            (MARKET_REPO_URL, "plugins/demo-plugin/entry.json", "main"): self._build_entry_payload(
+                versions=versions,
+                latest_version="2.0.0",
+            ),
+        }
+        directories = {
+            (MARKET_REPO_URL, "plugins", "main"): [{"name": "demo-plugin", "type": "dir"}],
+        }
+        metadata = {
+            MARKET_REPO_URL: {"default_branch": "main", "stargazers_count": 10, "forks_count": 2},
+            PLUGIN_REPO_URL: {"default_branch": "main", "stargazers_count": 8, "forks_count": 1},
+        }
+        downloads = {
+            "https://example.com/demo-plugin-0.9.0.zip": self._build_plugin_archive(manifest_version="0.9.0"),
+            "https://example.com/demo-plugin-1.0.0.zip": self._build_plugin_archive(manifest_version="1.0.0"),
+            "https://example.com/demo-plugin-1.1.0.zip": self._build_plugin_archive(manifest_version="1.1.0"),
+            "https://example.com/demo-plugin-1.2.0.zip": self._build_plugin_archive(manifest_version="1.2.0"),
+            "https://example.com/demo-plugin-2.0.0.zip": self._build_plugin_archive(manifest_version="2.0.0"),
+        }
+        return FakeGitHubMarketplaceClient(files=files, directories=directories, metadata=metadata, downloads=downloads)
+
     def _build_client_for_config_breaking_upgrade(self) -> FakeGitHubMarketplaceClient:
         versions = [
             {
@@ -1375,15 +1612,73 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         package_root: str | None = None,
         repo_root_readme: bool = False,
         repo_root_requirements: bool = False,
+        plugin_scope_uses_defaults: bool = False,
+        auto_create_default_instance: bool = False,
+        include_integration_instance_scope: bool = False,
     ) -> bytes:
-        config_fields = [
-            {"key": "base_url", "label": "Base URL", "type": "string", "required": True},
-            {"key": "api_key", "label": "API Key", "type": "secret", "required": True},
+        if plugin_scope_uses_defaults:
+            config_fields = [
+                {"key": "provider_type", "label": "Provider Type", "type": "string", "required": True, "default": "demo"},
+                {"key": "refresh_interval", "label": "Refresh Interval", "type": "integer", "required": False, "default": 30},
+            ]
+            ui_fields = ["provider_type", "refresh_interval"]
+        else:
+            config_fields = [
+                {"key": "base_url", "label": "Base URL", "type": "string", "required": True},
+                {"key": "api_key", "label": "API Key", "type": "secret", "required": True},
+            ]
+            ui_fields = ["base_url", "api_key"]
+            if extra_required_field:
+                config_fields.append({"key": "tenant_id", "label": "Tenant ID", "type": "string", "required": True})
+                ui_fields.append("tenant_id")
+
+        config_specs = [
+            {
+                "scope_type": "plugin",
+                "title": "Demo Config",
+                "schema_version": 1,
+                "config_schema": {
+                    "fields": config_fields
+                },
+                "ui_schema": {
+                    "sections": [
+                        {
+                            "id": "basic",
+                            "title": "Basic",
+                            "fields": ui_fields,
+                        }
+                    ]
+                },
+            }
         ]
-        ui_fields = ["base_url", "api_key"]
-        if extra_required_field:
-            config_fields.append({"key": "tenant_id", "label": "Tenant ID", "type": "string", "required": True})
-            ui_fields.append("tenant_id")
+        if include_integration_instance_scope:
+            config_specs.append(
+                {
+                    "scope_type": "integration_instance",
+                    "title": "Instance Config",
+                    "schema_version": 1,
+                    "config_schema": {
+                        "fields": [
+                            {
+                                "key": "binding_type",
+                                "label": "Binding Type",
+                                "type": "string",
+                                "required": True,
+                                "default": "default_household",
+                            }
+                        ]
+                    },
+                    "ui_schema": {
+                        "sections": [
+                            {
+                                "id": "instance",
+                                "title": "Instance",
+                                "fields": ["binding_type"],
+                            }
+                        ]
+                    },
+                }
+            )
         manifest = {
             "id": "demo-plugin",
             "name": "Demo Plugin",
@@ -1395,26 +1690,22 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             "entrypoints": {
                 "integration": "plugin.integration.sync",
             },
-            "config_specs": [
-                {
-                    "scope_type": "plugin",
-                    "title": "Demo Config",
-                    "schema_version": 1,
-                    "config_schema": {
-                        "fields": config_fields
-                    },
-                    "ui_schema": {
-                        "sections": [
-                            {
-                                "id": "basic",
-                                "title": "Basic",
-                                "fields": ui_fields,
-                            }
-                        ]
-                    },
-                }
-            ],
+            "config_specs": config_specs,
         }
+        if auto_create_default_instance:
+            manifest["capabilities"] = {
+                "integration": {
+                    "domains": ["demo"],
+                    "instance_model": "multi_instance",
+                    "refresh_mode": "manual",
+                    "supports_discovery": False,
+                    "supports_actions": False,
+                    "supports_cards": False,
+                    "auto_create_default_instance": True,
+                    "default_instance_display_name": "Demo Default",
+                    "default_instance_config": {"binding_type": "default_household"},
+                }
+            }
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             archive_root = f"demo-plugin-{manifest_version}"

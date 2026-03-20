@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from functools import cmp_to_key
 from pathlib import Path, PurePosixPath
 from typing import Any
 import logging
@@ -30,6 +31,7 @@ from app.modules.plugin.schemas import (
 )
 from app.modules.plugin.versioning import (
     MarketplaceVersionFact,
+    compare_plugin_versions,
     resolve_host_compatibility,
     resolve_marketplace_version_governance,
 )
@@ -74,6 +76,8 @@ from app.modules.plugin_marketplace.schemas import (
     MarketplaceSourceRead,
     MarketplaceSourceSyncResultRead,
     MarketplaceSyncStatus,
+    MarketplaceVersionOptionRead,
+    MarketplaceVersionOptionsRead,
 )
 
 
@@ -383,6 +387,123 @@ def get_marketplace_version_governance(
                 status_code=409,
             )
     return _resolve_marketplace_version_governance_from_rows(snapshot=snapshot, instance=instance)
+
+
+def _sort_marketplace_versions_desc(versions: list[Any]) -> list[Any]:
+    # 统一在后端按语义版本从高到低排序，前端不再自己猜顺序。
+    return sorted(
+        versions,
+        key=cmp_to_key(lambda left, right: compare_plugin_versions(right.version, left.version)),
+    )
+
+
+def _resolve_marketplace_version_action(
+    *,
+    installed_version: str | None,
+    target_version: str,
+    compatibility_status: str,
+) -> tuple[str, bool, bool, str | None]:
+    if installed_version is None:
+        if compatibility_status == "compatible":
+            return "install", True, False, None
+        return "unavailable", False, False, None
+
+    if target_version == installed_version:
+        return "current", False, False, None
+
+    if compatibility_status != "compatible":
+        return "unavailable", False, False, None
+
+    try:
+        compare_result = compare_plugin_versions(target_version, installed_version)
+    except ValueError as exc:
+        return "unavailable", False, False, str(exc)
+
+    if compare_result > 0:
+        return "upgrade", False, True, None
+    if compare_result < 0:
+        return "rollback", False, True, None
+    return "current", False, False, None
+
+
+def get_marketplace_version_options(
+    db: Session,
+    *,
+    source_id: str,
+    plugin_id: str,
+    household_id: str | None = None,
+) -> MarketplaceVersionOptionsRead:
+    source = _require_source(db, source_id=source_id)
+    snapshot = _require_snapshot(db, source_id=source_id, plugin_id=plugin_id)
+    if snapshot.sync_status != "ready":
+        raise PluginMarketplaceServiceError(
+            "这个插件市场条目当前不可用，不能读取版本列表。",
+            error_code="marketplace_entry_invalid",
+            status_code=409,
+        )
+
+    entry = _load_marketplace_entry_from_snapshot(snapshot)
+    instance = None
+    if household_id is not None:
+        instance = repository.get_marketplace_instance_for_plugin(db, household_id=household_id, plugin_id=plugin_id)
+        if instance is not None and instance.source_id != source_id:
+            raise PluginMarketplaceServiceError(
+                "当前家庭安装的插件来源和市场来源不一致。",
+                error_code="plugin_source_mismatch",
+                field="source_id",
+                status_code=409,
+            )
+
+    governance = _resolve_marketplace_version_governance_from_rows(snapshot=snapshot, instance=instance)
+    sorted_versions = _sort_marketplace_versions_desc(entry.versions)
+    items: list[MarketplaceVersionOptionRead] = []
+    installed_version = governance.installed_version
+
+    for version_entry in sorted_versions:
+        compatibility = resolve_host_compatibility(
+            host_version=settings.app_version,
+            min_app_version=version_entry.min_app_version,
+            target_version=version_entry.version,
+        )
+        action, can_install, can_switch, compare_error = _resolve_marketplace_version_action(
+            installed_version=installed_version,
+            target_version=version_entry.version,
+            compatibility_status=compatibility.status,
+        )
+        blocked_reason = compare_error or compatibility.blocked_reason
+        if action in {"install", "upgrade", "rollback"}:
+            blocked_reason = None
+        elif action == "current" and compatibility.status == "compatible" and compare_error is None:
+            blocked_reason = None
+
+        items.append(
+            MarketplaceVersionOptionRead(
+                version=version_entry.version,
+                git_ref=version_entry.git_ref,
+                artifact_type=version_entry.artifact_type,
+                artifact_url=version_entry.artifact_url,
+                checksum=version_entry.checksum,
+                published_at=version_entry.published_at,
+                min_app_version=version_entry.min_app_version,
+                is_latest=version_entry.version == entry.latest_version,
+                is_latest_compatible=version_entry.version == governance.latest_compatible_version,
+                is_installed=version_entry.version == installed_version,
+                compatibility_status=compatibility.status,
+                blocked_reason=blocked_reason,
+                action=action,
+                can_install=can_install,
+                can_switch=can_switch,
+            )
+        )
+
+    return MarketplaceVersionOptionsRead(
+        source_id=source_id,
+        plugin_id=plugin_id,
+        installed_version=installed_version,
+        latest_version=entry.latest_version,
+        latest_compatible_version=governance.latest_compatible_version,
+        items=items,
+    )
 
 
 def _build_repository_metrics(
@@ -1920,7 +2041,8 @@ def resolve_marketplace_plugin_config_status(
     has_unconfigured = False
     for scope in scope_list.items:
         if not scope.instances:
-            has_unconfigured = True
+            if scope.scope_type == "plugin":
+                has_unconfigured = True
             continue
         for instance in scope.instances:
             form = get_plugin_config_form(

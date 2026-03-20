@@ -854,10 +854,11 @@ def _build_view_payload(
             values[field.key] = actual_value
         _validate_field_value(field, actual_value, has_value=has_value, field_errors=field_errors)
 
-    if not has_persisted_record:
-        state: PluginConfigState = "unconfigured"
-    elif field_errors:
-        state = "invalid"
+    if field_errors:
+        if has_persisted_record:
+            state: PluginConfigState = "invalid"
+        else:
+            state = "unconfigured"
     else:
         state = "configured"
     return field_errors, values, secret_fields, state
