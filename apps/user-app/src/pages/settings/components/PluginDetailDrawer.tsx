@@ -4,7 +4,6 @@ import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils'
 import { ApiError, settingsApi } from '../settingsApi';
 import type {
   MarketplaceCatalogItemRead,
-  MarketplaceVersionEntry,
   PluginJobListItemRead,
   PluginJobListRead,
   PluginManifestType,
@@ -12,8 +11,6 @@ import type {
   PluginRiskLevel,
   PluginSourceType,
   PluginVersionGovernanceRead,
-  PluginVersionOperationResultRead,
-  PluginVersionOperationType,
 } from '../settingsTypes';
 
 function resolveDateLocale(locale: string | undefined) {
@@ -181,11 +178,7 @@ export function PluginDetailDrawer(props: {
   onClose: () => void;
   isEnabled: boolean;
   onToggle: (plugin: PluginRegistryItem) => void;
-  onOperateMarketplaceVersion: (
-    item: MarketplaceCatalogItemRead,
-    operation: PluginVersionOperationType,
-    targetVersion: string,
-  ) => Promise<PluginVersionOperationResultRead>;
+  onOpenMarketplaceDetail?: (item: MarketplaceCatalogItemRead) => void;
   isToggling: boolean;
   onDelete: (plugin: PluginRegistryItem) => Promise<void>;
   isDeleting: boolean;
@@ -199,7 +192,7 @@ export function PluginDetailDrawer(props: {
     onClose,
     isEnabled,
     onToggle,
-    onOperateMarketplaceVersion,
+    onOpenMarketplaceDetail,
     isToggling,
     onDelete,
     isDeleting,
@@ -209,17 +202,10 @@ export function PluginDetailDrawer(props: {
   const [jobs, setJobs] = useState<PluginJobListItemRead[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState('');
-  const [versionTargets, setVersionTargets] = useState<MarketplaceVersionEntry[]>([]);
   const [versionGovernance, setVersionGovernance] = useState<PluginVersionGovernanceRead | null>(null);
-  const [versionLoading, setVersionLoading] = useState(false);
-  const [versionError, setVersionError] = useState('');
-  const [versionStatus, setVersionStatus] = useState('');
-  const [selectedTargetVersion, setSelectedTargetVersion] = useState('');
-  const [operatingVersion, setOperatingVersion] = useState<PluginVersionOperationType | null>(null);
   const [actionError, setActionError] = useState('');
   const copy = useMemo(() => ({
     jobsLoadFailed: getPageMessage(locale, 'settings.plugin.jobs.loadFailed'),
-    versionLoadFailed: getPageMessage(locale, 'settings.plugin.versionSwitch.loadFailed'),
     enabled: getPageMessage(locale, 'settings.plugin.enabled'),
     disabled: getPageMessage(locale, 'settings.plugin.disabled'),
     thirdPartyTitle: getPageMessage(locale, 'settings.plugin.thirdPartyTitle'),
@@ -260,14 +246,8 @@ export function PluginDetailDrawer(props: {
     deleting: getPageMessage(locale, 'settings.plugin.deleting'),
     deleteConfirmMessage: getPageMessage(locale, 'settings.plugin.deleteConfirmMessage', { plugin: plugin?.name ?? '' }),
     deleteFailed: getPageMessage(locale, 'settings.plugin.deleteFailed'),
-    targetVersion: getPageMessage(locale, 'settings.plugin.versionSwitch.targetVersion'),
-    targetVersionPlaceholder: getPageMessage(locale, 'settings.plugin.versionSwitch.targetVersionPlaceholder'),
-    loadingVersionInfo: getPageMessage(locale, 'settings.plugin.versionSwitch.loading'),
-    noVersionTargets: getPageMessage(locale, 'settings.plugin.versionSwitch.noTargets'),
-    upgrade: getPageMessage(locale, 'plugins.marketplace.action.upgrade'),
-    rollback: getPageMessage(locale, 'plugins.marketplace.action.rollback'),
-    upgradeProcessing: getPageMessage(locale, 'plugins.marketplace.action.upgrading'),
-    rollbackProcessing: getPageMessage(locale, 'plugins.marketplace.action.rollingBack'),
+    versionManagedInMarketplace: getPageMessage(locale, 'settings.plugin.versionSwitch.manageInMarketplace'),
+    openMarketplaceDetail: getPageMessage(locale, 'settings.plugin.versionSwitch.openMarketplaceDetail'),
   }), [locale, plugin?.name]);
 
   useEffect(() => {
@@ -311,74 +291,12 @@ export function PluginDetailDrawer(props: {
 
   useEffect(() => {
     if (!plugin || !isOpen) {
-      setVersionTargets([]);
       setVersionGovernance(null);
-      setVersionLoading(false);
-      setVersionError('');
-      setVersionStatus('');
-      setSelectedTargetVersion('');
-      setOperatingVersion(null);
       return;
     }
 
     setVersionGovernance(marketplaceItem?.version_governance ?? plugin.version_governance ?? null);
-    setVersionStatus('');
-    setVersionError('');
-    setSelectedTargetVersion('');
-
-    if (!householdId || !marketplaceItem) {
-      setVersionTargets([]);
-      setVersionLoading(false);
-      return;
-    }
-
-    const activeMarketplaceItem = marketplaceItem;
-    const activePlugin = plugin;
-    const activeHouseholdId = householdId;
-    let cancelled = false;
-
-    async function loadVersionInfo() {
-      setVersionLoading(true);
-      const [detailResult, governanceResult] = await Promise.allSettled([
-        settingsApi.getMarketplaceEntryDetail(activeMarketplaceItem.source_id, activeMarketplaceItem.plugin_id, activeHouseholdId),
-        settingsApi.getMarketplaceVersionGovernance(activeMarketplaceItem.source_id, activeMarketplaceItem.plugin_id, activeHouseholdId),
-      ]);
-
-      if (cancelled) {
-        return;
-      }
-
-      let hasError = false;
-
-      if (detailResult.status === 'fulfilled') {
-        setVersionTargets(detailResult.value.versions);
-      } else {
-        setVersionTargets([]);
-        hasError = true;
-      }
-
-      if (governanceResult.status === 'fulfilled') {
-        setVersionGovernance(governanceResult.value);
-      } else {
-        setVersionGovernance(activeMarketplaceItem.version_governance ?? activePlugin.version_governance ?? null);
-        hasError = true;
-      }
-
-      setVersionError(hasError ? copy.versionLoadFailed : '');
-      setVersionLoading(false);
-    }
-
-    void loadVersionInfo();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    copy.versionLoadFailed,
-    householdId,
-    isOpen,
-    marketplaceItem,
-    plugin,
-  ]);
+  }, [isOpen, marketplaceItem, plugin]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -399,46 +317,13 @@ export function PluginDetailDrawer(props: {
   const compatibilityEntries = buildCompatibilityEntries(plugin.compatibility);
   const effectiveGovernance = versionGovernance ?? marketplaceItem?.version_governance ?? plugin.version_governance ?? null;
   const installedVersion = effectiveGovernance?.installed_version ?? plugin.installed_version ?? plugin.version;
-  const selectableTargets = versionTargets.filter(item => item.version !== installedVersion);
-  const canOperateMarketplaceVersion = Boolean(
-    marketplaceItem?.install_state.instance_id
-    && selectedTargetVersion
-    && selectedTargetVersion !== installedVersion,
-  );
-  const isBusy = isToggling || isDeleting || operatingVersion !== null;
+  const isBusy = isToggling || isDeleting;
 
   function handleClose() {
     if (isBusy) {
       return;
     }
     onClose();
-  }
-
-  async function handleMarketplaceVersionOperation(operation: PluginVersionOperationType) {
-    if (!marketplaceItem || !selectedTargetVersion) {
-      return;
-    }
-    setOperatingVersion(operation);
-    setVersionError('');
-    setVersionStatus('');
-    try {
-      const result = await onOperateMarketplaceVersion(marketplaceItem, operation, selectedTargetVersion);
-      setVersionGovernance(result.governance);
-      const statusKey = operation === 'upgrade'
-        ? 'plugins.marketplace.status.upgraded'
-        : 'plugins.marketplace.status.rolledBack';
-      const message = result.state_change_reason
-        ? getPageMessage(locale, 'plugins.marketplace.status.versionChangedWithState', {
-            message: getPageMessage(locale, statusKey, { version: result.target_version }),
-            reason: result.state_change_reason,
-          })
-        : getPageMessage(locale, statusKey, { version: result.target_version });
-      setVersionStatus(message);
-    } catch (error) {
-      setVersionError(error instanceof ApiError ? error.message : copy.versionLoadFailed);
-    } finally {
-      setOperatingVersion(null);
-    }
   }
 
   async function handleDelete() {
@@ -546,8 +431,6 @@ export function PluginDetailDrawer(props: {
 
           <div className="plugin-detail-section">
             <h3>{copy.versionGovernance}</h3>
-            {versionError ? <div className="settings-note settings-note--error">{versionError}</div> : null}
-            {versionStatus ? <div className="settings-note settings-note--success">{versionStatus}</div> : null}
             {effectiveGovernance ? (
               <>
                 <div className="plugin-detail-grid">
@@ -576,53 +459,19 @@ export function PluginDetailDrawer(props: {
                     <span className="plugin-detail-grid__value">{effectiveGovernance.blocked_reason || getPageMessage(locale, 'settings.plugin.versionValue.unknown')}</span>
                   </div>
                 </div>
-
-                {marketplaceItem?.install_state.instance_id ? (
-                  <div className="plugin-detail-entrypoints">
-                    <div className="plugin-detail-entrypoint-item">
-                      <span className="plugin-detail-entrypoint-key">{copy.targetVersion}</span>
-                      <span className="plugin-detail-entrypoint-value">
-                        <select
-                          className="marketplace-source-form__input"
-                          value={selectedTargetVersion}
-                          onChange={(event) => setSelectedTargetVersion(event.target.value)}
-                          disabled={versionLoading || isBusy}
-                        >
-                          <option value="">{copy.targetVersionPlaceholder}</option>
-                          {selectableTargets.map((item) => (
-                            <option key={item.version} value={item.version}>
-                              {item.version}
-                            </option>
-                          ))}
-                        </select>
-                      </span>
-                    </div>
-                  </div>
-                ) : null}
-
-                {versionLoading ? (
-                  <div className="plugin-detail-loading settings-loading-copy settings-loading-copy--center">{copy.loadingVersionInfo}</div>
-                ) : null}
-                {!versionLoading && marketplaceItem?.install_state.instance_id && selectableTargets.length === 0 ? (
-                  <div className="plugin-detail-empty">{copy.noVersionTargets}</div>
-                ) : null}
-                {marketplaceItem?.install_state.instance_id ? (
-                  <div className="marketplace-card__actions">
+                {marketplaceItem && onOpenMarketplaceDetail ? (
+                  <div className="marketplace-card__hint">
+                    <span>{copy.versionManagedInMarketplace}</span>
                     <button
-                      className="btn btn--primary btn--sm"
+                      className="btn btn--ghost btn--sm"
                       type="button"
-                      onClick={() => void handleMarketplaceVersionOperation('upgrade')}
-                      disabled={!canOperateMarketplaceVersion || isBusy}
+                      onClick={() => {
+                        onClose();
+                        onOpenMarketplaceDetail(marketplaceItem);
+                      }}
+                      disabled={isBusy}
                     >
-                      {operatingVersion === 'upgrade' ? copy.upgradeProcessing : copy.upgrade}
-                    </button>
-                    <button
-                      className="btn btn--outline btn--sm"
-                      type="button"
-                      onClick={() => void handleMarketplaceVersionOperation('rollback')}
-                      disabled={!canOperateMarketplaceVersion || isBusy}
-                    >
-                      {operatingVersion === 'rollback' ? copy.rollbackProcessing : copy.rollback}
+                      {copy.openMarketplaceDetail}
                     </button>
                   </div>
                 ) : null}

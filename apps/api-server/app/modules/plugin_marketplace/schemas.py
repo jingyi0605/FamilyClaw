@@ -5,12 +5,15 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.modules.plugin.schemas import PluginConfigState, PluginVersionGovernanceRead
+from app.modules.plugin.schemas import (
+    PluginConfigState,
+    PluginVersionCompatibilityStatus,
+    PluginVersionGovernanceRead,
+)
 from app.modules.plugin.versioning import compare_plugin_versions
 
 
 MarketplaceRepoProvider = Literal["github", "gitlab", "gitee", "gitea"]
-MarketplaceTrustedLevel = Literal["official", "third_party"]
 MarketplaceSyncStatus = Literal["idle", "syncing", "success", "failed"]
 MarketplaceEntrySyncStatus = Literal["ready", "invalid"]
 MarketplaceInstallStatus = Literal[
@@ -26,6 +29,7 @@ MarketplaceInstallStatus = Literal[
 ]
 MarketplaceArtifactType = Literal["release_asset", "source_archive"]
 PluginVersionOperationType = Literal["upgrade", "rollback"]
+MarketplaceVersionOptionAction = Literal["install", "upgrade", "rollback", "current", "unavailable"]
 
 
 def _normalize_text(value: str, *, field_name: str) -> str:
@@ -248,7 +252,7 @@ class MarketplaceManifest(BaseModel):
     repo_url: str = Field(min_length=1, max_length=255)
     default_branch: str = Field(min_length=1, max_length=100)
     entry_root: str = Field(default="plugins", min_length=1, max_length=255)
-    trusted_level: MarketplaceTrustedLevel
+    trusted_level: str | None = Field(default=None, exclude=True)
 
     @field_validator("market_id", "name", "owner", "default_branch", "entry_root")
     @classmethod
@@ -318,7 +322,7 @@ class MarketplaceSourceRead(BaseModel):
     effective_repo_url: str
     branch: str
     entry_root: str
-    trusted_level: MarketplaceTrustedLevel
+    is_system: bool
     enabled: bool
     last_sync_status: MarketplaceSyncStatus | None = None
     last_sync_error: dict[str, Any] | None = None
@@ -356,7 +360,7 @@ class MarketplaceCatalogItemRead(BaseModel):
     readme_url: str
     risk_level: Literal["low", "medium", "high"]
     latest_version: str
-    trusted_level: MarketplaceTrustedLevel
+    is_system: bool
     sync_status: MarketplaceEntrySyncStatus
     sync_error: dict[str, Any] | None = None
     categories: list[str] = Field(default_factory=list)
@@ -380,6 +384,33 @@ class MarketplaceEntryDetailRead(BaseModel):
     install: MarketplaceEntryInstallSpec
     maintainers: list[MarketplaceMaintainer] = Field(default_factory=list)
     raw_entry: dict[str, Any] = Field(default_factory=dict)
+
+
+class MarketplaceVersionOptionRead(BaseModel):
+    version: str
+    git_ref: str
+    artifact_type: MarketplaceArtifactType
+    artifact_url: str | None = None
+    checksum: str | None = None
+    published_at: str | None = None
+    min_app_version: str | None = None
+    is_latest: bool = False
+    is_latest_compatible: bool = False
+    is_installed: bool = False
+    compatibility_status: PluginVersionCompatibilityStatus
+    blocked_reason: str | None = None
+    action: MarketplaceVersionOptionAction
+    can_install: bool = False
+    can_switch: bool = False
+
+
+class MarketplaceVersionOptionsRead(BaseModel):
+    source_id: str
+    plugin_id: str
+    installed_version: str | None = None
+    latest_version: str
+    latest_compatible_version: str | None = None
+    items: list[MarketplaceVersionOptionRead] = Field(default_factory=list)
 
 
 class MarketplaceInstallTaskCreateRequest(BaseModel):

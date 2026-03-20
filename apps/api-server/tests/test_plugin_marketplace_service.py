@@ -314,7 +314,7 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertEqual("installed", instance.install_status)
         self.assertFalse(instance.enabled)
         self.assertEqual("unconfigured", instance.config_status)
-        expected_marketplace_root = (Path(settings.plugin_marketplace_install_root).resolve() / "third_party" / "marketplace").resolve()
+        expected_marketplace_root = Path(settings.plugin_marketplace_install_root).resolve()
         self.assertTrue(Path(task.plugin_root).resolve().is_relative_to(expected_marketplace_root))
         self.assertTrue(Path(instance.plugin_root).resolve().is_relative_to(expected_marketplace_root))
 
@@ -518,7 +518,7 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
 
         self.assertEqual("unavailable", action_map["2.0.0"].action)
         self.assertEqual("host_too_old", action_map["2.0.0"].compatibility_status)
-        self.assertIn("最低", action_map["2.0.0"].blocked_reason or "")
+        self.assertIn("至少", action_map["2.0.0"].blocked_reason or "")
 
         self.assertEqual("unavailable", action_map["1.2.0"].action)
         self.assertEqual("unknown", action_map["1.2.0"].compatibility_status)
@@ -614,7 +614,7 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertEqual("not_installed", entry.install_state.install_status)
         self.assertIsNone(entry.install_state.instance_id)
 
-    def test_official_marketplace_install_and_upgrade_keep_subprocess_runner_backend(self) -> None:
+    def test_builtin_marketplace_source_install_and_upgrade_keep_subprocess_runner_backend(self) -> None:
         client = self._build_client_for_official_version_switch()
         previous_repo = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL
         previous_branch = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH
@@ -639,7 +639,8 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             self.db.commit()
 
             installed_plugin = get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin")
-            self.assertEqual("official", installed_plugin.source_type)
+            self.assertEqual("third_party", installed_plugin.source_type)
+            self.assertEqual("marketplace", installed_plugin.install_method)
             self.assertEqual("subprocess_runner", installed_plugin.execution_backend)
             self.assertEqual("1.0.0", installed_plugin.version)
 
@@ -664,7 +665,8 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             self.db.commit()
 
             upgraded_plugin = get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin")
-            self.assertEqual("official", upgraded_plugin.source_type)
+            self.assertEqual("third_party", upgraded_plugin.source_type)
+            self.assertEqual("marketplace", upgraded_plugin.install_method)
             self.assertEqual("subprocess_runner", upgraded_plugin.execution_backend)
             self.assertEqual("1.1.0", upgraded_plugin.version)
         finally:
@@ -1330,7 +1332,7 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         files = {
             (OFFICIAL_MARKET_REPO_URL, "market.json", "main"): self._build_market_manifest(
                 repo_url=OFFICIAL_MARKET_REPO_URL,
-                trusted_level="official",
+                is_system=True,
             ),
             (OFFICIAL_MARKET_REPO_URL, "plugins/demo-plugin/entry.json", "main"): self._build_entry_payload(
                 versions=versions,
@@ -1548,17 +1550,22 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
     @staticmethod
     def _build_market_manifest(
         repo_url: str = MARKET_REPO_URL,
-        trusted_level: str = "third_party",
+        legacy_trusted_level: str | None = None,
+        is_system: bool | None = None,
     ) -> dict:
-        return {
+        payload = {
             "market_id": "demo-market",
             "name": "Demo Market",
             "owner": "demo",
             "repo_url": repo_url,
             "default_branch": "main",
             "entry_root": "plugins",
-            "trusted_level": trusted_level,
         }
+        if is_system is not None:
+            payload["is_system"] = is_system
+        if legacy_trusted_level is not None:
+            payload["trusted_level"] = legacy_trusted_level
+        return payload
 
     @staticmethod
     def _build_entry_payload(

@@ -17,6 +17,7 @@ from app.modules.plugin_marketplace import (
     MarketplaceSourceCreateRequest,
     MarketplaceSourceRead,
     MarketplaceSourceSyncResultRead,
+    MarketplaceVersionOptionsRead,
     PluginVersionOperationRequest,
     PluginVersionOperationResultRead,
     PluginMarketplaceServiceError,
@@ -24,6 +25,7 @@ from app.modules.plugin_marketplace import (
     create_marketplace_install_task,
     get_marketplace_entry_detail,
     get_marketplace_instance,
+    get_marketplace_version_options,
     get_marketplace_version_governance,
     list_marketplace_catalog,
     list_marketplace_sources,
@@ -140,6 +142,27 @@ def get_marketplace_version_governance_endpoint(
         ensure_actor_can_access_household(actor, household_id)
     try:
         return get_marketplace_version_governance(
+            db,
+            source_id=source_id,
+            plugin_id=plugin_id,
+            household_id=household_id,
+        )
+    except PluginMarketplaceServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+
+@router.get("/catalog/{source_id}/{plugin_id}/version-options", response_model=MarketplaceVersionOptionsRead)
+def get_marketplace_version_options_endpoint(
+    source_id: str,
+    plugin_id: str,
+    household_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> MarketplaceVersionOptionsRead:
+    if household_id is not None:
+        ensure_actor_can_access_household(actor, household_id)
+    try:
+        return get_marketplace_version_options(
             db,
             source_id=source_id,
             plugin_id=plugin_id,

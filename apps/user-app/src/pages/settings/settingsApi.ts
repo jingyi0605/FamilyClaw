@@ -44,6 +44,7 @@ import type {
   MarketplaceSourceCreateRequest,
   MarketplaceSourceRead,
   MarketplaceSourceSyncResultRead,
+  MarketplaceVersionOptionsRead,
   HouseholdVoiceprintSummaryRead,
   PluginConfigFormRead,
   PluginConfigResolveRequest,
@@ -663,6 +664,15 @@ export const settingsApi = {
     }
     return request<PluginVersionGovernanceRead>(
       `/plugin-marketplace/catalog/${encodeURIComponent(sourceId)}/${encodeURIComponent(pluginId)}/version-governance${query.toString() ? `?${query.toString()}` : ''}`,
+    );
+  },
+  getMarketplaceVersionOptions(sourceId: string, pluginId: string, householdId?: string) {
+    const query = new URLSearchParams();
+    if (householdId) {
+      query.set('household_id', householdId);
+    }
+    return request<MarketplaceVersionOptionsRead>(
+      `/plugin-marketplace/catalog/${encodeURIComponent(sourceId)}/${encodeURIComponent(pluginId)}/version-options${query.toString() ? `?${query.toString()}` : ''}`,
     );
   },
   createMarketplaceInstallTask(payload: MarketplaceInstallTaskCreateRequest) {

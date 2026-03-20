@@ -13,12 +13,19 @@ import { SettingsPageShell } from '../settings/SettingsPageShell';
 import { PluginDetailDrawer } from '../settings/components/PluginDetailDrawer';
 import { SettingsDialog } from '../settings/components/SettingsSharedBlocks';
 import { ApiError, settingsApi } from '../settings/settingsApi';
+import {
+  getDefaultMarketplaceVersionSelection,
+  isMarketplaceVersionActionable,
+  resolveMarketplaceVersionOptionByVersion,
+} from './marketplaceVersionOptions';
 import type {
   MarketplaceCatalogItemRead,
   MarketplaceEntryDetailRead,
   MarketplaceInstallStateRead,
   MarketplaceRepoProvider,
   MarketplaceSourceRead,
+  MarketplaceVersionOptionRead,
+  MarketplaceVersionOptionsRead,
   PluginManifestType,
   PluginPackageInstallRead,
   PluginRegistryItem,
@@ -304,6 +311,51 @@ function formatVersionCompatibilityStatus(
   }
 }
 
+function buildMarketplaceVersionBadges(
+  option: MarketplaceVersionOptionRead,
+  locale: string | undefined,
+): Array<{ key: string; label: string; tone: 'success' | 'warning' | 'danger' | 'secondary' | 'info' }> {
+  const badges: Array<{ key: string; label: string; tone: 'success' | 'warning' | 'danger' | 'secondary' | 'info' }> = [];
+
+  if (option.is_installed) {
+    badges.push({
+      key: 'installed',
+      label: getPageMessage(locale, 'plugins.marketplace.detail.versionBadge.current'),
+      tone: 'success',
+    });
+  }
+  if (option.is_latest) {
+    badges.push({
+      key: 'latest',
+      label: getPageMessage(locale, 'plugins.marketplace.detail.versionBadge.latest'),
+      tone: 'info',
+    });
+  }
+  if (option.is_latest_compatible) {
+    badges.push({
+      key: 'latest-compatible',
+      label: getPageMessage(locale, 'plugins.marketplace.detail.versionBadge.latestCompatible'),
+      tone: 'warning',
+    });
+  }
+  if (option.compatibility_status === 'host_too_old') {
+    badges.push({
+      key: 'host-too-old',
+      label: getPageMessage(locale, 'plugins.marketplace.detail.versionBadge.hostTooOld'),
+      tone: 'danger',
+    });
+  }
+  if (option.compatibility_status === 'unknown') {
+    badges.push({
+      key: 'compatibility-unknown',
+      label: getPageMessage(locale, 'plugins.marketplace.detail.versionBadge.unknown'),
+      tone: 'secondary',
+    });
+  }
+
+  return badges;
+}
+
 function formatMarketplaceMetric(value: number | null | undefined, locale: string | undefined) {
   if (value === null || value === undefined) {
     return getPageMessage(locale, 'plugins.marketplace.metric.unavailable');
@@ -390,8 +442,14 @@ function PluginsPageContent() {
     pluginId: string;
   } | null>(null);
   const [marketplaceDetail, setMarketplaceDetail] = useState<MarketplaceEntryDetailRead | null>(null);
+  const [marketplaceVersionOptions, setMarketplaceVersionOptions] = useState<MarketplaceVersionOptionsRead | null>(null);
+  const [selectedMarketplaceVersion, setSelectedMarketplaceVersion] = useState('');
   const [marketplaceDetailLoading, setMarketplaceDetailLoading] = useState(false);
   const [marketplaceDetailError, setMarketplaceDetailError] = useState('');
+  const [marketplaceConfirmAction, setMarketplaceConfirmAction] = useState<{
+    item: MarketplaceCatalogItemRead;
+    option: MarketplaceVersionOptionRead;
+  } | null>(null);
   const [marketplaceForm, setMarketplaceForm] = useState<MarketplaceSourceFormState>(createEmptyMarketplaceForm);
   const [zipInstallOpen, setZipInstallOpen] = useState(false);
   const [zipOverwriteConfirmOpen, setZipOverwriteConfirmOpen] = useState(false);
@@ -478,6 +536,8 @@ function PluginsPageContent() {
   const reloadMarketplaceDetail = useCallback(async (options?: { silent?: boolean }) => {
     if (!marketplaceDetailTarget) {
       setMarketplaceDetail(null);
+      setMarketplaceVersionOptions(null);
+      setSelectedMarketplaceVersion('');
       if (!options?.silent) {
         setMarketplaceDetailError('');
       }
@@ -488,14 +548,30 @@ function PluginsPageContent() {
       setMarketplaceDetailError('');
     }
     try {
-      const result = await settingsApi.getMarketplaceEntryDetail(
-        marketplaceDetailTarget.sourceId,
-        marketplaceDetailTarget.pluginId,
-        currentHouseholdId ?? undefined,
-      );
-      setMarketplaceDetail(result);
+      const [detailResult, versionOptionsResult] = await Promise.all([
+        settingsApi.getMarketplaceEntryDetail(
+          marketplaceDetailTarget.sourceId,
+          marketplaceDetailTarget.pluginId,
+          currentHouseholdId ?? undefined,
+        ),
+        settingsApi.getMarketplaceVersionOptions(
+          marketplaceDetailTarget.sourceId,
+          marketplaceDetailTarget.pluginId,
+          currentHouseholdId ?? undefined,
+        ),
+      ]);
+      setMarketplaceDetail(detailResult);
+      setMarketplaceVersionOptions(versionOptionsResult);
+      setSelectedMarketplaceVersion((current) => {
+        if (current && versionOptionsResult.items.some(item => item.version === current)) {
+          return current;
+        }
+        return getDefaultMarketplaceVersionSelection(versionOptionsResult);
+      });
     } catch (detailError) {
       setMarketplaceDetail(null);
+      setMarketplaceVersionOptions(null);
+      setSelectedMarketplaceVersion('');
       setMarketplaceDetailError(
         detailError instanceof ApiError ? detailError.message : page('plugins.operationFailed'),
       );
@@ -607,29 +683,14 @@ function PluginsPageContent() {
     if (!marketplaceDetailOpen || !marketplaceDetailTarget) {
       return;
     }
-    const target = marketplaceDetailTarget;
     let cancelled = false;
 
     async function loadMarketplaceDetail() {
-      setMarketplaceDetailLoading(true);
-      setMarketplaceDetailError('');
       try {
-        const result = await settingsApi.getMarketplaceEntryDetail(
-          target.sourceId,
-          target.pluginId,
-          currentHouseholdId ?? undefined,
-        );
-        if (!cancelled) {
-          setMarketplaceDetail(result);
-        }
+        await reloadMarketplaceDetail();
       } catch (detailError) {
         if (!cancelled) {
-          setMarketplaceDetail(null);
           setMarketplaceDetailError(detailError instanceof ApiError ? detailError.message : page('plugins.operationFailed'));
-        }
-      } finally {
-        if (!cancelled) {
-          setMarketplaceDetailLoading(false);
         }
       }
     }
@@ -638,7 +699,7 @@ function PluginsPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [currentHouseholdId, marketplaceDetailOpen, marketplaceDetailTarget, page]);
+  }, [marketplaceDetailOpen, marketplaceDetailTarget, page, reloadMarketplaceDetail]);
 
   useEffect(() => {
     if (!currentHouseholdId || !selectedPluginId) {
@@ -687,6 +748,8 @@ function PluginsPageContent() {
   function openMarketplaceDetail(item: MarketplaceCatalogItemRead) {
     setMarketplaceDetailTarget({ sourceId: item.source_id, pluginId: item.plugin_id });
     setMarketplaceDetail(null);
+    setMarketplaceVersionOptions(null);
+    setSelectedMarketplaceVersion('');
     setMarketplaceDetailError('');
     setMarketplaceDetailOpen(true);
   }
@@ -695,7 +758,10 @@ function PluginsPageContent() {
     setMarketplaceDetailOpen(false);
     setMarketplaceDetailTarget(null);
     setMarketplaceDetail(null);
+    setMarketplaceVersionOptions(null);
+    setSelectedMarketplaceVersion('');
     setMarketplaceDetailError('');
+    setMarketplaceConfirmAction(null);
   }
 
   function closeMarketplacePanel() {
@@ -950,14 +1016,13 @@ function PluginsPageContent() {
     }
   }
 
-  async function handleInstallMarketplacePlugin(item: MarketplaceCatalogItemRead) {
+  async function handleInstallMarketplacePlugin(item: MarketplaceCatalogItemRead, targetVersion: string): Promise<boolean> {
     if (!currentHouseholdId) {
-      return;
+      return false;
     }
-    const targetVersion = item.version_governance?.latest_compatible_version;
     if (!targetVersion) {
       setMarketError(item.version_governance?.blocked_reason || page('plugins.marketplace.status.noCompatibleVersion'));
-      return;
+      return false;
     }
     const installKey = `${item.source_id}:${item.plugin_id}`;
     setInstallingKey(installKey);
@@ -973,8 +1038,10 @@ function PluginsPageContent() {
       await Promise.all([reloadInstalledPlugins(), reloadMarketplace()]);
       await refreshOpenedMarketplaceDetail();
       setMarketStatus(page('plugins.marketplace.status.installed', { version: targetVersion }));
+      return true;
     } catch (installError) {
       setMarketError(installError instanceof ApiError ? installError.message : page('plugins.operationFailed'));
+      return false;
     } finally {
       setInstallingKey(null);
     }
@@ -1044,6 +1111,39 @@ function PluginsPageContent() {
     }
   }
 
+  function openMarketplaceVersionConfirm(item: MarketplaceCatalogItemRead, option: MarketplaceVersionOptionRead) {
+    if (!isMarketplaceVersionActionable(option.action)) {
+      return;
+    }
+    setMarketplaceConfirmAction({ item, option });
+  }
+
+  function closeMarketplaceVersionConfirm() {
+    if (marketplaceBusyInstanceId || installingKey) {
+      return;
+    }
+    setMarketplaceConfirmAction(null);
+  }
+
+  async function handleConfirmMarketplaceVersionAction() {
+    if (!marketplaceConfirmAction) {
+      return;
+    }
+    const { item, option } = marketplaceConfirmAction;
+    if (option.action === 'install') {
+      const installed = await handleInstallMarketplacePlugin(item, option.version);
+      if (installed) {
+        setMarketplaceConfirmAction(null);
+      }
+      return;
+    }
+
+    if (option.action === 'upgrade' || option.action === 'rollback') {
+      await handleOperateMarketplaceVersion(item, option.action, option.version);
+      setMarketplaceConfirmAction(null);
+    }
+  }
+
   const pluginStats = useMemo(() => {
     const enabled = filteredPlugins.filter(plugin => plugin.enabled).length;
     const total = filteredPlugins.length;
@@ -1087,6 +1187,32 @@ function PluginsPageContent() {
     }
     return marketCatalog.find(item => item.plugin_id === detailPlugin.id && Boolean(item.install_state.instance_id)) ?? null;
   }, [detailPlugin, marketCatalog]);
+
+  const marketplaceConfirmItem = marketplaceConfirmAction?.item ?? null;
+  const marketplaceConfirmOption = marketplaceConfirmAction?.option ?? null;
+  const marketplaceConfirmBusy = Boolean(
+    marketplaceConfirmItem
+    && (
+      installingKey === `${marketplaceConfirmItem.source_id}:${marketplaceConfirmItem.plugin_id}`
+      || marketplaceBusyInstanceId === marketplaceConfirmItem.install_state.instance_id
+    ),
+  );
+  const marketplaceConfirmCurrentVersion = marketplaceConfirmItem?.install_state.installed_version ?? null;
+  const marketplaceConfirmTitle = marketplaceConfirmOption?.action === 'upgrade'
+    ? page('plugins.marketplace.confirm.title.upgrade')
+    : marketplaceConfirmOption?.action === 'rollback'
+      ? page('plugins.marketplace.confirm.title.rollback')
+      : page('plugins.marketplace.confirm.title.install');
+  const marketplaceConfirmSubmitLabel = marketplaceConfirmOption?.action === 'upgrade'
+    ? page('plugins.marketplace.confirm.confirm.upgrade')
+    : marketplaceConfirmOption?.action === 'rollback'
+      ? page('plugins.marketplace.confirm.confirm.rollback')
+      : page('plugins.marketplace.confirm.confirm.install');
+  const marketplaceConfirmActionLabel = marketplaceConfirmOption?.action === 'upgrade'
+    ? page('plugins.marketplace.confirm.action.upgrade')
+    : marketplaceConfirmOption?.action === 'rollback'
+      ? page('plugins.marketplace.confirm.action.rollback')
+      : page('plugins.marketplace.confirm.action.install');
 
   useEffect(() => {
     if (!detailPlugin) {
@@ -1224,20 +1350,12 @@ function PluginsPageContent() {
     const installKey = `${item.source_id}:${item.plugin_id}`;
     const isInstalling = installingKey === installKey;
     const isBusyInstance = marketplaceBusyInstanceId === item.install_state.instance_id;
-    const preferredInstallVersion = governance?.latest_compatible_version ?? null;
-    const quickUpgradeVersion = governance?.latest_compatible_version ?? null;
-    const governanceInstalledVersion = governance?.installed_version ?? null;
-    const canInstall = Boolean(preferredInstallVersion);
+    const versionOptions = marketplaceVersionOptions;
+    const selectedVersionOption = resolveMarketplaceVersionOptionByVersion(versionOptions, selectedMarketplaceVersion)
+      ?? resolveMarketplaceVersionOptionByVersion(versionOptions, getDefaultMarketplaceVersionSelection(versionOptions));
     const canEnable = Boolean(
       item.install_state.instance_id
       && (item.install_state.enabled || item.install_state.config_status === 'configured'),
-    );
-    const canQuickUpgrade = Boolean(
-      item.install_state.instance_id
-      && quickUpgradeVersion
-      && governanceInstalledVersion
-      && quickUpgradeVersion !== governanceInstalledVersion
-      && governance?.update_state === 'upgrade_available',
     );
     const toggleLabel = item.install_state.enabled
       ? page('plugins.marketplace.action.disable')
@@ -1331,32 +1449,6 @@ function PluginsPageContent() {
           </div>
 
           <div className="marketplace-card__actions marketplace-card__actions--detail">
-            {item.install_state.install_status === 'not_installed' || item.install_state.install_status === 'install_failed' ? (
-              <button
-                className="btn btn--primary btn--sm"
-                onClick={() => void handleInstallMarketplacePlugin(item)}
-                disabled={isInstalling || !canInstall}
-              >
-                <Download size={14} />
-                {isInstalling
-                  ? page('plugins.marketplace.action.installing')
-                  : page('plugins.marketplace.action.installVersion', { version: preferredInstallVersion ?? page('settings.plugin.versionValue.unknown') })}
-              </button>
-            ) : null}
-
-            {canQuickUpgrade && quickUpgradeVersion ? (
-              <button
-                className="btn btn--primary btn--sm"
-                onClick={() => void handleOperateMarketplaceVersion(item, 'upgrade', quickUpgradeVersion)}
-                disabled={isBusyInstance}
-              >
-                <RefreshCw size={14} className={isBusyInstance ? 'animate-spin' : undefined} />
-                {isBusyInstance
-                  ? page('plugins.marketplace.action.updating')
-                  : page('plugins.marketplace.action.upgradeVersion', { version: quickUpgradeVersion })}
-              </button>
-            ) : null}
-
             {item.install_state.instance_id ? (
               <button
                 className="btn btn--outline btn--sm"
@@ -1401,6 +1493,95 @@ function PluginsPageContent() {
                 <span className="marketplace-detail-section__empty">{page('plugins.marketplace.detail.emptyCategories')}</span>
               )}
             </div>
+          </Card>
+
+          <Card className="marketplace-detail-section marketplace-detail-section--full">
+            <div className="marketplace-detail-section__header">
+              <div>
+                <h4>{page('plugins.marketplace.detail.versionList')}</h4>
+                <p className="marketplace-detail-panel__hint">{page('plugins.marketplace.detail.versionListHint')}</p>
+              </div>
+              {selectedVersionOption ? (
+                <span className="marketplace-detail-section__selected">
+                  {page('plugins.marketplace.detail.versionSelected', { version: formatVersionValue(selectedVersionOption.version, locale) })}
+                </span>
+              ) : null}
+            </div>
+
+            {(!versionOptions || versionOptions.items.length === 0) && !marketplaceDetailLoading ? (
+              <div className="marketplace-detail-section__empty">{page('plugins.marketplace.detail.versionListEmpty')}</div>
+            ) : null}
+
+            {versionOptions?.items?.length ? (
+              <div className="marketplace-version-list">
+                {versionOptions.items.map((option) => {
+                  const badges = buildMarketplaceVersionBadges(option, locale);
+                  const isSelected = option.version === selectedVersionOption?.version;
+                  const actionable = isMarketplaceVersionActionable(option.action);
+                  const isActionBusy = option.action === 'install' ? isInstalling : isBusyInstance;
+                  let actionLabel = page('plugins.marketplace.detail.versionAction.unavailable');
+
+                  if (option.action === 'install') {
+                    actionLabel = page('plugins.marketplace.action.installVersion', { version: formatVersionValue(option.version, locale) });
+                  } else if (option.action === 'upgrade') {
+                    actionLabel = page('plugins.marketplace.action.upgradeVersion', { version: formatVersionValue(option.version, locale) });
+                  } else if (option.action === 'rollback') {
+                    actionLabel = page('plugins.marketplace.action.rollbackVersion', { version: formatVersionValue(option.version, locale) });
+                  } else if (option.action === 'current') {
+                    actionLabel = page('plugins.marketplace.detail.versionAction.current');
+                  }
+
+                  return (
+                    <div
+                      key={option.version}
+                      className={`marketplace-version-list__item ${isSelected ? 'marketplace-version-list__item--selected' : ''}`}
+                      onClick={() => setSelectedMarketplaceVersion(option.version)}
+                    >
+                      <div className="marketplace-version-list__title">
+                        <div className="marketplace-version-list__identity">
+                          <strong>{formatVersionValue(option.version, locale)}</strong>
+                          <div className="marketplace-version-list__badges">
+                            {badges.map((badge) => (
+                              <span key={`${option.version}-${badge.key}`} className={`badge badge--${badge.tone}`}>{badge.label}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <button
+                          className={`btn btn--sm ${actionable ? 'btn--primary' : 'btn--outline'}`}
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openMarketplaceVersionConfirm(item, option);
+                          }}
+                          disabled={!actionable || isActionBusy}
+                        >
+                          {isActionBusy
+                            ? page(option.action === 'install' ? 'plugins.marketplace.action.installing' : 'plugins.marketplace.action.updating')
+                            : actionLabel}
+                        </button>
+                      </div>
+
+                      <div className="marketplace-version-list__facts">
+                        <div className="marketplace-version-list__fact">
+                          <span className="marketplace-version-list__fact-label">{page('plugins.marketplace.detail.publishedAt')}</span>
+                          <span>{formatTimestamp(option.published_at, locale)}</span>
+                        </div>
+                        <div className="marketplace-version-list__fact">
+                          <span className="marketplace-version-list__fact-label">{page('plugins.marketplace.detail.minAppVersion')}</span>
+                          <span>{formatVersionValue(option.min_app_version, locale)}</span>
+                        </div>
+                      </div>
+
+                      {option.blocked_reason ? (
+                        <div className="marketplace-version-list__reason">
+                          {option.blocked_reason}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
           </Card>
         </div>
       </div>
@@ -2107,6 +2288,79 @@ function PluginsPageContent() {
           {renderMarketplaceDetailContent()}
         </SettingsDialog>
 
+        <SettingsDialog
+          open={Boolean(marketplaceConfirmOption && marketplaceConfirmItem)}
+          title={marketplaceConfirmTitle}
+          description={marketplaceConfirmItem?.name ?? page('plugins.marketplace.detail.loading')}
+          className="plugin-marketplace-source-modal"
+          headerExtra={(
+            <button
+              type="button"
+              className="member-modal__close"
+              onClick={closeMarketplaceVersionConfirm}
+              aria-label={page('plugins.marketplace.confirm.close')}
+              disabled={marketplaceConfirmBusy}
+            >
+              <X size={16} />
+            </button>
+          )}
+          onClose={closeMarketplaceVersionConfirm}
+        >
+          <div className="plugin-marketplace-source-modal__body">
+            <div className="plugin-detail-entrypoints">
+              <div className="plugin-detail-entrypoint-item">
+                <span className="plugin-detail-entrypoint-key">{page('plugins.marketplace.confirm.pluginLabel')}</span>
+                <span className="plugin-detail-entrypoint-value">{marketplaceConfirmItem?.name ?? page('plugins.noneYet')}</span>
+              </div>
+              {marketplaceConfirmCurrentVersion ? (
+                <div className="plugin-detail-entrypoint-item">
+                  <span className="plugin-detail-entrypoint-key">{page('plugins.marketplace.confirm.currentVersion')}</span>
+                  <span className="plugin-detail-entrypoint-value">{formatVersionValue(marketplaceConfirmCurrentVersion, locale)}</span>
+                </div>
+              ) : null}
+              <div className="plugin-detail-entrypoint-item">
+                <span className="plugin-detail-entrypoint-key">{page('plugins.marketplace.confirm.targetVersion')}</span>
+                <span className="plugin-detail-entrypoint-value">
+                  {formatVersionValue(marketplaceConfirmOption?.version, locale)}
+                </span>
+              </div>
+              <div className="plugin-detail-entrypoint-item">
+                <span className="plugin-detail-entrypoint-key">{page('plugins.marketplace.confirm.actionType')}</span>
+                <span className="plugin-detail-entrypoint-value">
+                  {marketplaceConfirmOption ? marketplaceConfirmActionLabel : page('plugins.noneYet')}
+                </span>
+              </div>
+            </div>
+
+            {marketplaceConfirmOption?.blocked_reason ? (
+              <div className="settings-note settings-note--warning">
+                {marketplaceConfirmOption.blocked_reason}
+              </div>
+            ) : null}
+
+            <div className="plugin-marketplace-source-form__actions">
+              <button
+                type="button"
+                className="btn btn--outline"
+                onClick={closeMarketplaceVersionConfirm}
+                disabled={marketplaceConfirmBusy}
+              >
+                {page('plugins.action.cancel')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => void handleConfirmMarketplaceVersionAction()}
+                disabled={marketplaceConfirmBusy || !marketplaceConfirmOption}
+              >
+                {marketplaceConfirmBusy
+                  ? page(marketplaceConfirmOption?.action === 'install' ? 'plugins.marketplace.action.installing' : 'plugins.marketplace.action.updating')
+                  : marketplaceConfirmSubmitLabel}
+              </button>
+            </div>
+          </div>
+        </SettingsDialog>
+
         <PluginDetailDrawer
           plugin={detailPlugin}
           marketplaceItem={detailMarketplaceItem}
@@ -2118,7 +2372,7 @@ function PluginsPageContent() {
             void handleTogglePlugin(plugin);
             closePluginDetail();
           }}
-          onOperateMarketplaceVersion={handleOperateMarketplaceVersion}
+          onOpenMarketplaceDetail={openMarketplaceDetail}
           isToggling={togglingPluginId === detailPlugin?.id}
           onDelete={handleDeletePlugin}
           isDeleting={deletingPluginId === detailPlugin?.id}

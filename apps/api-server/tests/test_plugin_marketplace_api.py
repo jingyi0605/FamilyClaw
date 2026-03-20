@@ -18,6 +18,7 @@ from app.db.session import get_db
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.plugin_marketplace.github_client import GitHubMarketplaceClientError
+import app.modules.plugin_marketplace.service as marketplace_service
 
 
 OFFICIAL_MARKET_REPO_URL = "https://github.com/demo/official-marketplace"
@@ -147,12 +148,12 @@ class PluginMarketplaceApiTests(unittest.TestCase):
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
         self.SessionLocal = self._db_helper.SessionLocal
-        self._previous_official_repo = settings.plugin_marketplace_official_repo_url
-        self._previous_official_branch = settings.plugin_marketplace_official_branch
-        self._previous_entry_root = settings.plugin_marketplace_official_entry_root
-        settings.plugin_marketplace_official_repo_url = OFFICIAL_MARKET_REPO_URL
-        settings.plugin_marketplace_official_branch = "main"
-        settings.plugin_marketplace_official_entry_root = "plugins"
+        self._previous_official_repo = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL
+        self._previous_official_branch = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH
+        self._previous_entry_root = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT
+        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL = OFFICIAL_MARKET_REPO_URL
+        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH = "main"
+        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
 
         self.fake_client = self._build_fake_client()
         self._patcher = patch(
@@ -202,9 +203,9 @@ class PluginMarketplaceApiTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.client.close()
         self._patcher.stop()
-        settings.plugin_marketplace_official_repo_url = self._previous_official_repo
-        settings.plugin_marketplace_official_branch = self._previous_official_branch
-        settings.plugin_marketplace_official_entry_root = self._previous_entry_root
+        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL = self._previous_official_repo
+        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH = self._previous_official_branch
+        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT = self._previous_entry_root
         self._db_helper.close()
 
     def test_add_sync_install_and_enable_endpoint_flow(self) -> None:
@@ -256,6 +257,51 @@ class PluginMarketplaceApiTests(unittest.TestCase):
             enable_response.json()["detail"]["error_code"],
         )
 
+    def test_version_options_endpoint_returns_backend_computed_actions(self) -> None:
+        add_response = self.client.post(
+            f"{settings.api_v1_prefix}/plugin-marketplace/sources",
+            json={"repo_url": THIRD_PARTY_MARKET_REPO_URL},
+        )
+        self.assertEqual(200, add_response.status_code)
+        source_id = add_response.json()["source_id"]
+
+        sync_response = self.client.post(f"{settings.api_v1_prefix}/plugin-marketplace/sources/{source_id}/sync")
+        self.assertEqual(200, sync_response.status_code)
+
+        options_before_install = self.client.get(
+            f"{settings.api_v1_prefix}/plugin-marketplace/catalog/{source_id}/demo-plugin/version-options",
+            params={"household_id": self.household_id},
+        )
+        self.assertEqual(200, options_before_install.status_code)
+        before_items = {item["version"]: item for item in options_before_install.json()["items"]}
+        self.assertEqual(["2.0.0", "1.2.0", "1.1.0", "1.0.0", "0.9.0"], [item["version"] for item in options_before_install.json()["items"]])
+        self.assertEqual("install", before_items["1.1.0"]["action"])
+        self.assertEqual("unavailable", before_items["2.0.0"]["action"])
+        self.assertEqual("host_too_old", before_items["2.0.0"]["compatibility_status"])
+        self.assertEqual("unavailable", before_items["1.2.0"]["action"])
+        self.assertEqual("unknown", before_items["1.2.0"]["compatibility_status"])
+
+        install_response = self.client.post(
+            f"{settings.api_v1_prefix}/plugin-marketplace/install-tasks",
+            json={
+                "household_id": self.household_id,
+                "source_id": source_id,
+                "plugin_id": "demo-plugin",
+                "version": "1.0.0",
+            },
+        )
+        self.assertEqual(200, install_response.status_code)
+
+        options_after_install = self.client.get(
+            f"{settings.api_v1_prefix}/plugin-marketplace/catalog/{source_id}/demo-plugin/version-options",
+            params={"household_id": self.household_id},
+        )
+        self.assertEqual(200, options_after_install.status_code)
+        after_items = {item["version"]: item for item in options_after_install.json()["items"]}
+        self.assertEqual("upgrade", after_items["1.1.0"]["action"])
+        self.assertEqual("rollback", after_items["0.9.0"]["action"])
+        self.assertEqual("current", after_items["1.0.0"]["action"])
+
     @staticmethod
     def _build_fake_client() -> FakeGitHubMarketplaceClient:
         files = {
@@ -266,7 +312,7 @@ class PluginMarketplaceApiTests(unittest.TestCase):
                 "repo_url": OFFICIAL_MARKET_REPO_URL,
                 "default_branch": "main",
                 "entry_root": "plugins",
-                "trusted_level": "official",
+                "is_system": True,
             },
             (THIRD_PARTY_MARKET_REPO_URL, "market.json", "main"): {
                 "market_id": "third-party-market",
@@ -275,7 +321,7 @@ class PluginMarketplaceApiTests(unittest.TestCase):
                 "repo_url": THIRD_PARTY_MARKET_REPO_URL,
                 "default_branch": "main",
                 "entry_root": "plugins",
-                "trusted_level": "third_party",
+                "is_system": False,
             },
             (THIRD_PARTY_MARKET_REPO_URL, "plugins/demo-plugin/entry.json", "main"): {
                 "plugin_id": "demo-plugin",
@@ -288,14 +334,42 @@ class PluginMarketplaceApiTests(unittest.TestCase):
                 "categories": ["demo"],
                 "risk_level": "low",
                 "permissions": ["device.read"],
-                "latest_version": "1.0.0",
+                "latest_version": "2.0.0",
                 "versions": [
+                    {
+                        "version": "0.9.0",
+                        "git_ref": "refs/tags/v0.9.0",
+                        "artifact_type": "source_archive",
+                        "artifact_url": "https://example.com/demo-plugin-0.9.0.zip",
+                        "min_app_version": "0.1.0",
+                    },
                     {
                         "version": "1.0.0",
                         "git_ref": "refs/tags/v1.0.0",
                         "artifact_type": "source_archive",
                         "artifact_url": "https://example.com/demo-plugin-1.0.0.zip",
                         "min_app_version": "0.1.0",
+                    },
+                    {
+                        "version": "1.1.0",
+                        "git_ref": "refs/tags/v1.1.0",
+                        "artifact_type": "source_archive",
+                        "artifact_url": "https://example.com/demo-plugin-1.1.0.zip",
+                        "min_app_version": "0.1.0",
+                    },
+                    {
+                        "version": "1.2.0",
+                        "git_ref": "refs/tags/v1.2.0",
+                        "artifact_type": "source_archive",
+                        "artifact_url": "https://example.com/demo-plugin-1.2.0.zip",
+                        "min_app_version": None,
+                    },
+                    {
+                        "version": "2.0.0",
+                        "git_ref": "refs/tags/v2.0.0",
+                        "artifact_type": "source_archive",
+                        "artifact_url": "https://example.com/demo-plugin-2.0.0.zip",
+                        "min_app_version": "9.9.9",
                     }
                 ],
                 "install": {
@@ -315,7 +389,11 @@ class PluginMarketplaceApiTests(unittest.TestCase):
             PLUGIN_REPO_URL: {"default_branch": "main", "stargazers_count": 3, "forks_count": 1},
         }
         downloads = {
+            "https://example.com/demo-plugin-0.9.0.zip": PluginMarketplaceApiTests._build_plugin_archive("0.9.0"),
             "https://example.com/demo-plugin-1.0.0.zip": PluginMarketplaceApiTests._build_plugin_archive(),
+            "https://example.com/demo-plugin-1.1.0.zip": PluginMarketplaceApiTests._build_plugin_archive("1.1.0"),
+            "https://example.com/demo-plugin-1.2.0.zip": PluginMarketplaceApiTests._build_plugin_archive("1.2.0"),
+            "https://example.com/demo-plugin-2.0.0.zip": PluginMarketplaceApiTests._build_plugin_archive("2.0.0"),
         }
         return FakeGitHubMarketplaceClient(
             files=files,
@@ -325,11 +403,11 @@ class PluginMarketplaceApiTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _build_plugin_archive() -> bytes:
+    def _build_plugin_archive(version: str = "1.0.0") -> bytes:
         manifest = {
             "id": "demo-plugin",
             "name": "Demo Plugin",
-            "version": "1.0.0",
+            "version": version,
             "types": ["integration"],
             "permissions": ["device.read"],
             "risk_level": "low",
@@ -362,12 +440,13 @@ class PluginMarketplaceApiTests(unittest.TestCase):
         }
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
-            archive.writestr("demo-plugin-1.0.0/manifest.json", json.dumps(manifest, ensure_ascii=False))
-            archive.writestr("demo-plugin-1.0.0/README.md", "# Demo Plugin\n")
-            archive.writestr("demo-plugin-1.0.0/requirements.txt", "httpx>=0.28\n")
-            archive.writestr("demo-plugin-1.0.0/plugin/__init__.py", "")
+            archive_root = f"demo-plugin-{version}"
+            archive.writestr(f"{archive_root}/manifest.json", json.dumps(manifest, ensure_ascii=False))
+            archive.writestr(f"{archive_root}/README.md", "# Demo Plugin\n")
+            archive.writestr(f"{archive_root}/requirements.txt", "httpx>=0.28\n")
+            archive.writestr(f"{archive_root}/plugin/__init__.py", "")
             archive.writestr(
-                "demo-plugin-1.0.0/plugin/integration.py",
+                f"{archive_root}/plugin/integration.py",
                 "def sync(payload=None):\n    return {'ok': True, 'payload': payload or {}}\n",
             )
         return buffer.getvalue()

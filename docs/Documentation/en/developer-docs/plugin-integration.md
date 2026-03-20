@@ -95,7 +95,22 @@ These resource plugins do not go through heavy execution flows. The real flow is
 - `POST /api/v1/plugin-marketplace/sources`
 - `POST /api/v1/plugin-marketplace/sources/{source_id}/sync`
 - `GET /api/v1/plugin-marketplace/catalog`
+- `GET /api/v1/plugin-marketplace/catalog/{source_id}/{plugin_id}/version-options`
 - `POST /api/v1/plugin-marketplace/install-tasks`
+- `POST /api/v1/plugin-marketplace/instances/{instance_id}/version-operations`
+
+#### Version action contract
+
+The plugin marketplace detail page no longer infers version governance on the frontend.
+
+The backend now exposes `version-options` as the per-version action contract for the UI. Each item tells the frontend:
+
+- whether the version is the latest version, the latest compatible version, or the currently installed version
+- whether the host is compatible, too old, or missing compatibility metadata
+- which action applies right now: `install`, `upgrade`, `rollback`, `current`, or `unavailable`
+- why a version is blocked when it cannot be installed or switched to
+
+This keeps version ordering, compatibility checks, and upgrade versus rollback semantics in one place. The frontend should only render what the backend already decided and route user actions to the existing install or version-operation endpoints.
 
 ### Integrations and channels
 

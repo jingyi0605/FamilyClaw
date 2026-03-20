@@ -1224,10 +1224,39 @@ export type MarketplaceVersionEntry = {
   version: string;
   git_ref: string;
   artifact_type: 'release_asset' | 'source_archive';
-  artifact_url: string;
+  artifact_url: string | null;
   checksum: string | null;
   published_at: string | null;
   min_app_version: string | null;
+};
+
+export type MarketplaceVersionOptionAction = 'install' | 'upgrade' | 'rollback' | 'current' | 'unavailable';
+
+export type MarketplaceVersionOptionRead = {
+  version: string;
+  git_ref: string;
+  artifact_type: 'release_asset' | 'source_archive';
+  artifact_url: string | null;
+  checksum: string | null;
+  published_at: string | null;
+  min_app_version: string | null;
+  is_latest: boolean;
+  is_latest_compatible: boolean;
+  is_installed: boolean;
+  compatibility_status: PluginVersionCompatibilityStatus;
+  blocked_reason: string | null;
+  action: MarketplaceVersionOptionAction;
+  can_install: boolean;
+  can_switch: boolean;
+};
+
+export type MarketplaceVersionOptionsRead = {
+  source_id: string;
+  plugin_id: string;
+  installed_version: string | null;
+  latest_version: string;
+  latest_compatible_version: string | null;
+  items: MarketplaceVersionOptionRead[];
 };
 
 export type MarketplacePublisher = {
