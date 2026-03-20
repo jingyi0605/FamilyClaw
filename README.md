@@ -17,6 +17,12 @@
   <img src="https://img.shields.io/badge/platforms-Web%20%7C%20iOS%20%7C%20Android%20%7C%20HarmonyOS-brightgreen" alt="Platforms" />
 </p>
 
+<p align="center">
+  官网：<a href="https://familyclaw.cc">familyclaw.cc</a> |
+  官方文档：<a href="https://docs.familyclaw.cc">docs.familyclaw.cc</a> |
+  官方交流群：964063018
+</p>
+
 ---
 
 [中文](#中文) | [English](#english)
