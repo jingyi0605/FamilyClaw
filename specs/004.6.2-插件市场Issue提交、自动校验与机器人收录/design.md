@@ -159,6 +159,7 @@
 2. 没有 tag / release 时，只允许退化成引用 branch 的单版本开发态条目
 3. `release_asset` 必须提供 `artifact_url`
 4. `source_archive` 可以显式提供 `artifact_url`，也可以由宿主按 `git_ref` 推导
+5. 多版本条目的 `min_app_version` 不是插件级一份总值，而是每个版本各自一份；机器人要按每个 tag 读取对应版本的 manifest
 
 ### 3.3 接口契约
 

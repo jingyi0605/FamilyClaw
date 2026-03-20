@@ -282,6 +282,7 @@
     - 已把多版本条目固定为单个 `plugins/<plugin_id>/entry.json` 下的 `versions[]`
     - 已明确正式多版本必须来自 tag，`git_ref` 统一为 `refs/tags/<tag>`
     - 已明确 `latest_version` 必须指向最高版本，单版本 branch 仅作为开发态兜底
+    - 已补充逐 tag 读取 manifest 的规则，让每个版本都保存自己独立的 `min_app_version`
   - 怎么算完成：
     1. 文档能直接回答“多版本怎么存、tag 怎么写”
     2. 自动校验会拦住不合法的多版本条目

@@ -126,6 +126,24 @@ version_history:
 
 一句话：`manifest.json` 解决“这个版本最低支持哪个宿主”，tag / release 解决“市场里到底有哪些真实版本可装”。
 
+### 2.2.1 每次发新版本前要更新哪些字段
+
+如果你准备打新 tag，别只改 README 或只改 release 标题。正式发布前至少检查这几项：
+
+1. `manifest.version` 已更新到这次要发布的版本号
+2. `compatibility.min_app_version` 已按这个版本的真实最低宿主要求更新
+3. 如果配置项、依赖或安装方式变了，对应的 README、`requirements.txt` 也已经同步
+4. 确认要打的 tag 和 `manifest.version` 一致，比如 `manifest.version = 1.2.0` 时打 `v1.2.0`
+
+现在的市场机器人会按每个 tag 分别读取当时的 `manifest.json`。
+
+这意味着：
+
+- `v1.2.0` 会读取 `v1.2.0` 对应提交里的 `manifest.version`
+- `v1.1.0` 会读取 `v1.1.0` 对应提交里的 `compatibility.min_app_version`
+
+如果你忘了在打 tag 之前更新这些字段，市场会直接把这个版本拦下，而不是帮你猜。
+
 ## 3. 枚举字段不再只有静态选项
 
 以前 `enum` / `multi_enum` 只能写死 `enum_options`。

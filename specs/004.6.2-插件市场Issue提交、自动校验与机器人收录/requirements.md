@@ -74,6 +74,7 @@
 2. WHEN 插件仓库可访问 THEN System SHALL 自动检查 `manifest.json`、README、版本信息和必要安装信息。
 3. WHEN 关键校验失败 THEN System SHALL 在 Issue 或检查结果里明确反馈失败原因，而不是只给一句 workflow failed。
 4. WHEN 机器人从插件仓库推导市场版本 THEN System SHALL 优先依据仓库里的 release / tag 生成 `versions[]`，而不是让作者在 Issue 文本里手填版本矩阵。
+5. WHEN 市场条目保留多个版本 THEN System SHALL 为每个版本分别读取对应 tag 下的 `manifest.json`，并写入该版本自己的 `min_app_version`。
 
 ### 需求 3：系统必须自动生成或更新市场条目 PR
 

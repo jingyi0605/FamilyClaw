@@ -42,6 +42,37 @@ def _build_entry_payload(*, versions: list[dict], latest_version: str) -> dict:
 
 
 class MarketplaceSubmissionRuleTests(unittest.TestCase):
+    def test_build_version_manifest_overrides_uses_tag_manifest_values(self) -> None:
+        overrides = _MODULE.build_version_manifest_overrides(
+            tag_names=["v1.0.0", "v0.9.0"],
+            release_published_at_by_tag={"v1.0.0": "2026-03-20T12:00:00Z"},
+            load_manifest_for_git_ref=lambda git_ref: {
+                "version": "1.0.0",
+                "compatibility": {"min_app_version": "0.2.0"},
+            }
+            if git_ref == "refs/tags/v1.0.0"
+            else {
+                "version": "0.9.0",
+                "compatibility": {"min_app_version": "0.1.0"},
+            },
+        )
+
+        self.assertEqual("1.0.0", overrides["refs/tags/v1.0.0"]["version"])
+        self.assertEqual("0.2.0", overrides["refs/tags/v1.0.0"]["min_app_version"])
+        self.assertEqual("2026-03-20T12:00:00Z", overrides["refs/tags/v1.0.0"]["published_at"])
+        self.assertEqual("0.1.0", overrides["refs/tags/v0.9.0"]["min_app_version"])
+
+    def test_build_version_manifest_overrides_rejects_tag_manifest_version_mismatch(self) -> None:
+        with self.assertRaises(_MODULE.ValidationError):
+            _MODULE.build_version_manifest_overrides(
+                tag_names=["v1.0.0"],
+                release_published_at_by_tag={},
+                load_manifest_for_git_ref=lambda git_ref: {
+                    "version": "0.9.0",
+                    "compatibility": {"min_app_version": "0.1.0"},
+                },
+            )
+
     def test_build_versions_normalizes_tags_and_sorts_desc(self) -> None:
         versions = _MODULE.build_versions(
             manifest_version="1.0.0",
@@ -58,11 +89,17 @@ class MarketplaceSubmissionRuleTests(unittest.TestCase):
                 {"name": "v1.0.0"},
             ],
             min_app_version="0.1.0",
+            version_manifest_overrides={
+                "refs/tags/v1.0.0": {"version": "1.0.0", "min_app_version": "0.2.0"},
+                "refs/tags/v0.9.0": {"version": "0.9.0", "min_app_version": "0.1.0"},
+            },
         )
 
         self.assertEqual(["1.0.0", "0.9.0"], [item["version"] for item in versions])
         self.assertEqual("refs/tags/v1.0.0", versions[0]["git_ref"])
         self.assertEqual("refs/tags/v0.9.0", versions[1]["git_ref"])
+        self.assertEqual("0.2.0", versions[0]["min_app_version"])
+        self.assertEqual("0.1.0", versions[1]["min_app_version"])
         self.assertEqual(
             "https://github.com/demo/demo-plugin/archive/refs/tags/v1.0.0.zip",
             versions[0]["artifact_url"],
