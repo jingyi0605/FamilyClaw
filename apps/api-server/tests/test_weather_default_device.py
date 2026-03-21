@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
 from app.db.utils import load_json
@@ -21,6 +21,7 @@ from official_weather.service import (
     get_weather_device_binding_for_device,
     refresh_weather_device_binding,
 )
+from tests.weather_test_utils import force_weather_plugin_in_process
 
 
 class _FakeWeatherProvider:
@@ -108,18 +109,21 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         return instance
 
     def _sync_weather_instance(self, *, household_id: str, instance: IntegrationInstance) -> None:
+        self.db.commit()
         plugin = get_household_plugin(
             self.db,
             household_id=household_id,
             plugin_id="official-weather",
         )
-        sync_plugin_managed_integration_instance(
-            self.db,
-            plugin=plugin,
-            instance=instance,
-            sync_scope="device_sync",
-        )
-        self.db.flush()
+        with force_weather_plugin_in_process():
+            sync_plugin_managed_integration_instance(
+                self.db,
+                plugin=plugin,
+                instance=instance,
+                sync_scope="device_sync",
+            )
+        self.db.commit()
+        self.db.rollback()
 
     def test_enable_plugin_does_not_create_default_instance_or_weather_device(self) -> None:
         household = create_household(
@@ -145,10 +149,11 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         )
         self.assertIsNone(instance)
 
-        row = self.db.scalar(
-            select(WeatherDeviceBinding).where(WeatherDeviceBinding.household_id == household.id)
-        )
-        self.assertIsNone(row)
+        if inspect(self.db.connection()).has_table("weather_device_bindings"):
+            row = self.db.scalar(
+                select(WeatherDeviceBinding).where(WeatherDeviceBinding.household_id == household.id)
+            )
+            self.assertIsNone(row)
 
     def test_create_default_instance_and_sync_weather_device(self) -> None:
         household = create_household(

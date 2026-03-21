@@ -16,6 +16,7 @@ from app.modules.plugin.schemas import PluginStateUpdateRequest
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from app.modules.plugin.service import get_household_plugin, load_plugin_manifest, set_household_plugin_enabled
 from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
+from tests.weather_test_utils import force_weather_plugin_in_process
 
 
 class _FakeWeatherProvider:
@@ -92,18 +93,21 @@ class DashboardEncodingTests(unittest.TestCase):
         return instance
 
     def _sync_default_weather_instance(self, *, household_id: str, instance: IntegrationInstance) -> None:
+        self.db.commit()
         plugin = get_household_plugin(
             self.db,
             household_id=household_id,
             plugin_id="official-weather",
         )
-        sync_plugin_managed_integration_instance(
-            self.db,
-            plugin=plugin,
-            instance=instance,
-            sync_scope="device_sync",
-        )
-        self.db.flush()
+        with force_weather_plugin_in_process():
+            sync_plugin_managed_integration_instance(
+                self.db,
+                plugin=plugin,
+                instance=instance,
+                sync_scope="device_sync",
+            )
+        self.db.commit()
+        self.db.rollback()
 
     def test_home_dashboard_weather_card_uses_plugin_locale_when_snapshot_missing(self) -> None:
         household = create_household(

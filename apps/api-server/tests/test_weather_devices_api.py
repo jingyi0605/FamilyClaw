@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -9,14 +10,19 @@ from app.api.dependencies import ActorContext, require_admin_actor, require_boun
 from app.api.v1.endpoints.integrations import router as integrations_router
 from app.core.config import settings
 from app.db.session import get_db
-from app.db.utils import dump_json, new_uuid
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.integration import service as integration_service
+from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin.schemas import PluginStateUpdateRequest
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
-from app.modules.plugin.service import set_household_plugin_enabled
-from app.modules.region.models import RegionNode
+from app.modules.plugin.service import get_household_plugin, set_household_plugin_enabled
 from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
+from tests.weather_test_utils import (
+    build_weather_test_region_provider,
+    force_weather_plugin_in_process,
+    register_region_provider,
+)
 
 
 class _FakeWeatherProvider:
@@ -57,6 +63,9 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
         self.SessionLocal = self._db_helper.SessionLocal
+        self._region_provider = build_weather_test_region_provider()
+        self._region_provider_context = register_region_provider(self._region_provider)
+        self._region_provider_context.__enter__()
 
         app = FastAPI()
         app.include_router(integrations_router, prefix=settings.api_v1_prefix)
@@ -103,25 +112,6 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
             sync_persisted_plugins_on_startup(db)
             db.flush()
 
-            self._insert_region_node(
-                db,
-                provider_code="china_mca",
-                region_code="310000",
-                name="上海市",
-                full_name="中国 上海市",
-                latitude=31.2304,
-                longitude=121.4737,
-            )
-            self._insert_region_node(
-                db,
-                provider_code="china_mca",
-                region_code="000000",
-                name="无坐标地区",
-                full_name="中国 无坐标地区",
-                latitude=None,
-                longitude=None,
-            )
-
             with patch(
                 "official_weather.service.get_weather_provider",
                 return_value=_FakeWeatherProvider(_build_snapshot()),
@@ -137,6 +127,7 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
+        self._region_provider_context.__exit__(None, None, None)
         self._db_helper.close()
 
     def test_list_create_and_sync_region_weather_instance(self) -> None:
@@ -156,8 +147,10 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
                 "display_name": "上海天气",
                 "config": {
                     "binding_type": "region_node",
-                    "provider_code": "china_mca",
-                    "region_code": "310000",
+                    "provider_code": self._region_provider.provider_code,
+                    "province_code": "310000",
+                    "city_code": "310100",
+                    "district_code": "310115",
                 },
             },
         )
@@ -166,23 +159,26 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
         region_instance_id = created_payload["id"]
         self.assertEqual("official-weather", created_payload["plugin_id"])
 
-        with patch(
-            "official_weather.service.get_weather_provider",
-            return_value=_FakeWeatherProvider(_build_snapshot(source_type="weatherapi", updated_at="2026-03-18T04:00:00Z")),
-        ):
-            candidates_response = self.client.post(
-                f"{settings.api_v1_prefix}/integrations/instances/{region_instance_id}/actions",
-                json={"action": "sync", "payload": {"sync_scope": "device_candidates"}},
-            )
-            self.assertEqual(200, candidates_response.status_code)
-            candidates = candidates_response.json()["output"]["items"]
-            self.assertEqual(1, len(candidates))
-            self.assertEqual("中国 上海市", candidates[0]["name"])
+        with force_weather_plugin_in_process():
+            with patch(
+                "official_weather.service.get_weather_provider",
+                return_value=_FakeWeatherProvider(
+                    _build_snapshot(source_type="weatherapi", updated_at="2026-03-18T04:00:00Z")
+                ),
+            ):
+                candidates_response = self.client.post(
+                    f"{settings.api_v1_prefix}/integrations/instances/{region_instance_id}/actions",
+                    json={"action": "sync", "payload": {"sync_scope": "device_candidates"}},
+                )
+                self.assertEqual(200, candidates_response.status_code)
+                candidates = candidates_response.json()["output"]["items"]
+                self.assertEqual(1, len(candidates))
+                self.assertEqual("中国 上海市", candidates[0]["name"])
 
-            sync_response = self.client.post(
-                f"{settings.api_v1_prefix}/integrations/instances/{region_instance_id}/actions",
-                json={"action": "sync", "payload": {"sync_scope": "device_sync"}},
-            )
+                sync_response = self.client.post(
+                    f"{settings.api_v1_prefix}/integrations/instances/{region_instance_id}/actions",
+                    json={"action": "sync", "payload": {"sync_scope": "device_sync"}},
+                )
 
         self.assertEqual(200, sync_response.status_code)
         sync_payload = sync_response.json()
@@ -207,58 +203,90 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
                 "display_name": "无坐标天气",
                 "config": {
                     "binding_type": "region_node",
-                    "provider_code": "china_mca",
-                    "region_code": "000000",
+                    "provider_code": self._region_provider.provider_code,
+                    "province_code": "990000",
+                    "city_code": "990100",
+                    "district_code": "990101",
                 },
             },
         )
         self.assertEqual(201, create_response.status_code)
         instance_id = create_response.json()["id"]
 
-        response = self.client.post(
-            f"{settings.api_v1_prefix}/integrations/instances/{instance_id}/actions",
-            json={"action": "sync", "payload": {"sync_scope": "device_sync"}},
-        )
+        with force_weather_plugin_in_process():
+            response = self.client.post(
+                f"{settings.api_v1_prefix}/integrations/instances/{instance_id}/actions",
+                json={"action": "sync", "payload": {"sync_scope": "device_sync"}},
+            )
         self.assertEqual(200, response.status_code)
         payload = response.json()["output"]
         self.assertEqual("weather_coordinate_missing", payload["instance_status"]["error_code"])
         self.assertEqual(1, payload["summary"]["failed_entities"])
 
-    def _insert_region_node(
-        self,
-        db: Session,
-        *,
-        provider_code: str,
-        region_code: str,
-        name: str,
-        full_name: str,
-        latitude: float | None,
-        longitude: float | None,
-    ) -> None:
-        db.add(
-            RegionNode(
-                id=new_uuid(),
-                provider_code=provider_code,
-                country_code="CN",
-                region_code=region_code,
-                parent_region_code=None,
-                admin_level="city",
-                name=name,
-                full_name=full_name,
-                path_codes=dump_json(["CN", region_code]) or "[]",
-                path_names=dump_json(["中国", name]) or "[]",
-                timezone="Asia/Shanghai",
-                source_version="test",
-                imported_at="2026-03-18T03:00:00Z",
-                latitude=latitude,
-                longitude=longitude,
-                coordinate_precision="city" if latitude is not None and longitude is not None else None,
-                coordinate_source="provider_builtin" if latitude is not None and longitude is not None else None,
-                coordinate_updated_at="2026-03-18T03:00:00Z" if latitude is not None and longitude is not None else None,
-                enabled=True,
-                extra=None,
-            )
+    def test_plugin_managed_sync_payload_includes_database_url_for_subprocess_plugin(self) -> None:
+        create_response = self.client.post(
+            f"{settings.api_v1_prefix}/integrations/instances",
+            json={
+                "household_id": self.household_id,
+                "plugin_id": "official-weather",
+                "display_name": "家庭天气",
+                "config": {
+                    "binding_type": "default_household",
+                },
+            },
         )
+        self.assertEqual(201, create_response.status_code)
+        instance_id = create_response.json()["id"]
+
+        with self.SessionLocal() as db:
+            instance = db.get(IntegrationInstance, instance_id)
+            assert instance is not None
+            plugin = get_household_plugin(
+                db,
+                household_id=self.household_id,
+                plugin_id="official-weather",
+            )
+            plugin.execution_backend = "subprocess_runner"
+            expected_database_url = integration_service._resolve_database_url(db)
+
+            captured_request: dict[str, object] = {}
+
+            def _fake_run_plugin_sync_pipeline(*args, **kwargs):
+                request = kwargs.get("request")
+                if request is None and len(args) >= 3:
+                    request = args[2]
+                captured_request["payload"] = request.payload
+                return SimpleNamespace(
+                    execution=SimpleNamespace(
+                        output={},
+                        success=True,
+                        error_code=None,
+                        error_message=None,
+                    )
+                )
+
+            with patch(
+                "app.modules.integration.service.run_plugin_sync_pipeline",
+                side_effect=_fake_run_plugin_sync_pipeline,
+            ):
+                result = integration_service._execute_plugin_managed_sync_action(
+                    db,
+                    plugin=plugin,
+                    instance=instance,
+                    sync_scope="device_sync",
+                    selected_external_ids=[],
+                    options={},
+                )
+
+        self.assertEqual("sync", result.action)
+        payload = captured_request["payload"]
+        assert isinstance(payload, dict)
+        system_context = payload["_system_context"]
+        assert isinstance(system_context, dict)
+        runtime_context = system_context["integration_runtime"]
+        assert isinstance(runtime_context, dict)
+        self.assertEqual(expected_database_url, runtime_context["database_url"])
+        self.assertNotIn("db_session", runtime_context)
 
 
 if __name__ == "__main__":

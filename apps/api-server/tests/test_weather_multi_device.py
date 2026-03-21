@@ -6,7 +6,7 @@ from unittest.mock import patch
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.utils import dump_json, load_json, new_uuid
+from app.db.utils import load_json
 from app.modules.device.models import DeviceBinding, DeviceEntity
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
@@ -23,11 +23,15 @@ from app.modules.plugin.dashboard_service import get_home_dashboard, save_member
 from app.modules.plugin.schemas import MemberDashboardLayoutItem, MemberDashboardLayoutUpdateRequest, PluginStateUpdateRequest
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from app.modules.plugin.service import get_household_plugin, set_household_plugin_enabled
-from app.modules.region.models import RegionNode
 from official_weather.providers import WeatherProviderError
 from official_weather.repository import get_weather_device_binding_for_integration_instance
 from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
 from official_weather.service import refresh_weather_device_binding
+from tests.weather_test_utils import (
+    build_weather_test_region_provider,
+    force_weather_plugin_in_process,
+    register_region_provider,
+)
 
 
 class _CoordinateAwareWeatherProvider:
@@ -83,6 +87,9 @@ class WeatherMultiDeviceTests(unittest.TestCase):
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
         self.db: Session = self._db_helper.SessionLocal()
+        self._region_provider = build_weather_test_region_provider()
+        self._region_provider_context = register_region_provider(self._region_provider)
+        self._region_provider_context.__enter__()
 
         household = create_household(
             self.db,
@@ -102,11 +109,6 @@ class WeatherMultiDeviceTests(unittest.TestCase):
             self.db,
             MemberCreate(household_id=household.id, name="天气管理员", role="admin"),
         )
-        self.db.flush()
-
-        self._insert_region_node("china_mca", "310000", "上海市", "中国 上海市", 31.2304, 121.4737)
-        self._insert_region_node("china_mca", "320500", "苏州市", "中国 江苏省 苏州市", 31.2989, 120.5853)
-        self._insert_region_node("china_mca", "330100", "杭州市", "中国 浙江省 杭州市", 30.2741, 120.1551)
         self.db.flush()
 
         default_provider = _CoordinateAwareWeatherProvider(
@@ -142,17 +144,21 @@ class WeatherMultiDeviceTests(unittest.TestCase):
             )
             default_instance = self.db.get(IntegrationInstance, created_default.id)
             assert default_instance is not None
+            self.db.commit()
             plugin = get_household_plugin(
                 self.db,
                 household_id=self.household_id,
                 plugin_id="official-weather",
             )
-            sync_plugin_managed_integration_instance(
-                self.db,
-                plugin=plugin,
-                instance=default_instance,
-                sync_scope="device_sync",
-            )
+            with force_weather_plugin_in_process():
+                sync_plugin_managed_integration_instance(
+                    self.db,
+                    plugin=plugin,
+                    instance=default_instance,
+                    sync_scope="device_sync",
+                )
+            self.db.commit()
+            self.db.rollback()
 
         self.suzhou_instance = create_integration_instance(
             self.db,
@@ -162,8 +168,10 @@ class WeatherMultiDeviceTests(unittest.TestCase):
                 display_name="苏州天气",
                 config={
                     "binding_type": "region_node",
-                    "provider_code": "china_mca",
-                    "region_code": "320500",
+                    "provider_code": self._region_provider.provider_code,
+                    "province_code": "320000",
+                    "city_code": "320500",
+                    "district_code": "320505",
                 },
             ),
             updated_by="test-suite",
@@ -176,12 +184,15 @@ class WeatherMultiDeviceTests(unittest.TestCase):
                 display_name="杭州天气",
                 config={
                     "binding_type": "region_node",
-                    "provider_code": "china_mca",
-                    "region_code": "330100",
+                    "provider_code": self._region_provider.provider_code,
+                    "province_code": "330000",
+                    "city_code": "330100",
+                    "district_code": "330106",
                 },
             ),
             updated_by="test-suite",
         )
+        self.db.commit()
 
         region_provider = _CoordinateAwareWeatherProvider(
             snapshots={
@@ -203,25 +214,28 @@ class WeatherMultiDeviceTests(unittest.TestCase):
             "official_weather.service.get_weather_provider",
             return_value=region_provider,
         ):
-            asyncio.run(
-                execute_integration_instance_action(
-                    self.db,
-                    instance_id=self.suzhou_instance.id,
-                    payload=IntegrationInstanceActionRequest(action="sync", payload={"sync_scope": "device_sync"}),
+            with force_weather_plugin_in_process():
+                asyncio.run(
+                    execute_integration_instance_action(
+                        self.db,
+                        instance_id=self.suzhou_instance.id,
+                        payload=IntegrationInstanceActionRequest(action="sync", payload={"sync_scope": "device_sync"}),
+                    )
                 )
-            )
-            asyncio.run(
-                execute_integration_instance_action(
-                    self.db,
-                    instance_id=self.hangzhou_instance.id,
-                    payload=IntegrationInstanceActionRequest(action="sync", payload={"sync_scope": "device_sync"}),
+                asyncio.run(
+                    execute_integration_instance_action(
+                        self.db,
+                        instance_id=self.hangzhou_instance.id,
+                        payload=IntegrationInstanceActionRequest(action="sync", payload={"sync_scope": "device_sync"}),
+                    )
                 )
-            )
 
         self.db.commit()
+        self.db.rollback()
 
     def tearDown(self) -> None:
         self.db.close()
+        self._region_provider_context.__exit__(None, None, None)
         self._db_helper.close()
 
     def test_refresh_failure_does_not_affect_other_weather_device(self) -> None:
@@ -433,40 +447,6 @@ class WeatherMultiDeviceTests(unittest.TestCase):
             if card.card_ref.startswith("plugin:official-weather:home:weather-")
         ]
         self.assertEqual([target_card_ref], visible_weather_cards)
-
-    def _insert_region_node(
-        self,
-        provider_code: str,
-        region_code: str,
-        name: str,
-        full_name: str,
-        latitude: float,
-        longitude: float,
-    ) -> None:
-        self.db.add(
-            RegionNode(
-                id=new_uuid(),
-                provider_code=provider_code,
-                country_code="CN",
-                region_code=region_code,
-                parent_region_code=None,
-                admin_level="city",
-                name=name,
-                full_name=full_name,
-                path_codes=dump_json(["CN", region_code]) or "[]",
-                path_names=dump_json(["中国", name]) or "[]",
-                timezone="Asia/Shanghai",
-                source_version="test",
-                imported_at="2026-03-18T03:00:00Z",
-                latitude=latitude,
-                longitude=longitude,
-                coordinate_precision="city",
-                coordinate_source="provider_builtin",
-                coordinate_updated_at="2026-03-18T03:00:00Z",
-                enabled=True,
-                extra=None,
-            )
-        )
 
 
 if __name__ == "__main__":

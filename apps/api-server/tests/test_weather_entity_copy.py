@@ -17,6 +17,7 @@ from app.modules.plugin.service import get_household_plugin, set_household_plugi
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
 from official_weather.service import get_weather_device_binding_for_device, normalize_weather_capabilities_payload
+from tests.weather_test_utils import force_weather_plugin_in_process
 
 
 class _FakeWeatherProvider:
@@ -99,13 +100,16 @@ class WeatherEntityCopyTests(unittest.TestCase):
             household_id=household_id,
             plugin_id="official-weather",
         )
-        sync_plugin_managed_integration_instance(
-            self.db,
-            plugin=plugin,
-            instance=instance,
-            sync_scope="device_sync",
-        )
-        self.db.flush()
+        self.db.commit()
+        with force_weather_plugin_in_process():
+            sync_plugin_managed_integration_instance(
+                self.db,
+                plugin=plugin,
+                instance=instance,
+                sync_scope="device_sync",
+            )
+        self.db.commit()
+        self.db.rollback()
 
     def test_weather_plugin_refresh_writes_canonical_entities(self) -> None:
         household = create_household(
