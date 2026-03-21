@@ -55,6 +55,7 @@
   - 结果：新增 `app/plugins/_sdk/ai_provider_drivers.py` 与 `app/plugins/_sdk/ai_provider_messages.py`，由插件侧复用。
 - [x] 5.5 迁移 builtin provider 到插件内 driver
   - 结果：builtin provider manifest 全部改为指向各自插件目录内的 `driver.build_driver`。
+  - 追加收口：`plugins-dev` 下的百炼 / Kimi / GLM Coding Plan 也改成自带 `driver.py`、品牌资源和完整 manifest 契约，不再指回 builtin driver。
 - [x] 5.6 改造流式调用入口
   - 结果：`family_qa` 与 `llm_task` 不再直接调用核心协议 runtime，而是先解析 provider driver，再走 `driver.stream`。
 
@@ -66,6 +67,7 @@
   - 结果：任务状态与实际代码一致。
 - [x] 6.3 增加后端边界回归测试
   - 结果：测试明确禁止核心重新出现协议 builder、协议分支和 manifest 指回核心 builder。
+  - 追加收口：新增 Coding Plan 插件专项测试，明确校验提速策略只能留在插件侧实现。
 
 ## 剩余长期要求
 
