@@ -30,8 +30,10 @@ docker run -d \
   -p 8080:8080 \
   -p 4399:4399 \
   -v /srv/familyclaw-data:/data \
-  jingyi0605/familyclaw:0.1.0
+  jingyi0605/familyclaw:latest
 ```
+
+The default install path uses `latest`. Only replace it with a concrete tag when you need precise rollback, issue reproduction, or a fixed release target.
 
 Parameter notes, based on the repository Dockerfile and scripts:
 

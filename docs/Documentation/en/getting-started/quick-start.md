@@ -31,8 +31,10 @@ docker run -d \
   -p 8080:8080 \
   -p 4399:4399 \
   -v /srv/familyclaw-data:/data \
-  jingyi0605/familyclaw:0.1.0
+  jingyi0605/familyclaw:latest
 ```
+
+This documentation uses `latest` as the default install entry. Only pin a concrete tag when you need precise rollback, issue reproduction, or a fixed release target.
 
 3. On first start, the container generates a random database password and voice gateway token, then stores them under `/srv/familyclaw-data/runtime/secrets/`. About one minute later, open `http://<server-ip>:8080` in a browser. If the login page appears, the system is up.
 4. The initial account is `user` / `user`. After login, follow the setup flow to change the account and password.

@@ -33,8 +33,9 @@ outline: deep
      -p 8080:8080 \
      -p 4399:4399 \
      -v /srv/familyclaw-data:/data \
-     jingyi0605/familyclaw:0.1.0
+     jingyi0605/familyclaw:latest
    ```
+   This guide uses `latest` by default so release docs do not need constant churn. Only pin a concrete tag when you need rollback, issue reproduction, or a fixed release target.
    On first start, the container writes the generated database password and voice gateway token into `/srv/familyclaw-data/runtime/secrets/`.
 4. Verify:
    - `docker ps` should show the container as `Up`.

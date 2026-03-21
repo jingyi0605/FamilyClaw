@@ -5,6 +5,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.app_version import load_repo_app_version
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_URL = "postgresql+psycopg://familyclaw:change-me@127.0.0.1:5432/familyclaw"
 VoiceRuntimeMode = Literal["embedded", "disabled"]
@@ -39,7 +41,7 @@ class AiRuntimeConfig(BaseModel):
 
 class Settings(BaseSettings):
     app_name: str = "FamilyClaw API Server"
-    app_version: str = "0.1.0"
+    app_version: str = Field(default_factory=load_repo_app_version)
     environment: str = "development"
     build_channel: str | None = None
     build_time: str | None = None

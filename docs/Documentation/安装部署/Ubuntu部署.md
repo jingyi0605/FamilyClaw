@@ -33,8 +33,9 @@ outline: deep
      -p 8080:8080 \
      -p 4399:4399 \
      -v /srv/familyclaw-data:/data \
-     jingyi0605/familyclaw:0.1.0
+     jingyi0605/familyclaw:latest
    ```
+   这里默认用 `latest`，避免每次发版都改部署文档。只有在要精确回滚、复现问题，或者明确锁定版本时，才改成具体标签。
    首次启动会自动把随机数据库密码和语音网关 token 写入 `/srv/familyclaw-data/runtime/secrets/`。
 4. 验证：
    - `docker ps` 显示容器 Up。

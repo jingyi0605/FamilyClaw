@@ -25,8 +25,9 @@ outline: deep
      -p 8080:8080 `
      -p 4399:4399 `
      -v D:/familyclaw-data:/data `
-     jingyi0605/familyclaw:0.1.0
+     jingyi0605/familyclaw:latest
    ```
+   这里默认用 `latest`。只有在你要精确回滚、复现旧版本问题，或者明确锁定某个发布版时，才手动改成具体标签。
    （Windows 下卷路径请用 `/` 分隔。首次启动会把随机数据库密码和语音网关 token 写入 `D:/familyclaw-data/runtime/secrets/`）
 4. 浏览器访问 `http://localhost:8080` 看到登录页即成功。
 

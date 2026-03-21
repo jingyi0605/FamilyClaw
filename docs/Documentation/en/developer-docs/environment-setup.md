@@ -92,6 +92,30 @@ The most important keys are:
 - `FAMILYCLAW_AI_PROVIDER_CONFIGS`
 - `OPENAI_API_KEY` if you use an OpenAI-compatible provider
 
+### 5.1 Sync project version metadata
+
+Version handling now follows two simple rules:
+
+- The backend development runtime reads the repository root `VERSION` file by default. Do not keep another handwritten formal version in backend config.
+- Files such as `pyproject.toml`, `package.json`, `package-lock.json`, and `Dockerfile` cannot read `VERSION` on their own, so they must be synchronized by script.
+
+Common commands:
+
+```bash
+# Windows
+py -3.11 apps/scripts/sync_versions.py
+py -3.11 apps/scripts/sync_versions.py --check
+
+# macOS / Linux
+python3 apps/scripts/sync_versions.py
+python3 apps/scripts/sync_versions.py --check
+```
+
+Recommended habit:
+
+- After changing the root `VERSION`, run the sync script once.
+- Before committing release-related changes, run `--check` to make sure version drift is gone.
+
 ### 6. Start the backend
 
 The repository already provides the official development script. Do not improvise your own startup command:

@@ -30,8 +30,10 @@ docker run -d \
   -p 8080:8080 \
   -p 4399:4399 \
   -v /srv/familyclaw-data:/data \
-  jingyi0605/familyclaw:0.1.0
+  jingyi0605/familyclaw:latest
 ```
+
+安装文档默认使用 `latest`。只有在需要精确回滚、排查旧版本问题，或者要锁定某个发布版时，才手动改成具体版本标签。
 
 参数说明（基于仓库 Dockerfile 与脚本）：
 

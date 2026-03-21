@@ -52,22 +52,16 @@ apps/api-server/
 └── .env.example
 ```
 
-Current major modules under `app/modules/` include:
+The common host-side modules under `app/modules/` are easier to understand by responsibility. Do not treat this as a frozen exhaustive list:
 
-- `account`
-- `agent`
-- `ai_gateway`
-- `channel`
-- `context`
-- `conversation`
-- `device`, `device_action`, `device_integration`
-- `household`
-- `integration`
-- `memory`
-- `plugin`, `plugin_marketplace`
-- `reminder`, `scheduler`
-- `voice`, `voiceprint`
-- `weather`
+- Accounts and household: `account`, `household`, `member`, `permission`, `relationship`
+- Conversation and AI: `agent`, `ai_gateway`, `context`, `conversation`, `family_qa`, `memory`, `realtime`
+- Devices and integrations: `channel`, `integration`, `device`, `device_action`, `device_control`, `device_integration`, `region`, `room`, `scene`
+- Plugins and scheduling: `plugin`, `plugin_marketplace`, `scheduler`, `reminder`, `reminder_scheduler`
+- Audio and voice: `voice`, `voiceprint`
+- Audit and delivery: `audit`, `delivery`
+
+Domain capabilities such as weather have already moved into the plugin system. There is no host-side `app/modules/weather` module anymore; see `apps/api-server/data/plugins/official/official_weather/`.
 
 ## Hard rules you do not get to ignore
 

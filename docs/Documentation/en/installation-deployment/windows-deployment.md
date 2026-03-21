@@ -25,8 +25,9 @@ outline: deep
      -p 8080:8080 `
      -p 4399:4399 `
      -v D:/familyclaw-data:/data `
-     jingyi0605/familyclaw:0.1.0
+     jingyi0605/familyclaw:latest
    ```
+   This guide uses `latest` by default. Only pin a concrete tag when you need precise rollback, issue reproduction, or a fixed release target.
    Use `/` in the mounted path on Windows. On first start, the generated database password and voice gateway token are written into `D:/familyclaw-data/runtime/secrets/`.
 4. Open `http://localhost:8080` in a browser. If the login page appears, startup succeeded.
 
