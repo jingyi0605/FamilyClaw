@@ -5,6 +5,7 @@ import type {
 } from '../settingsTypes';
 import {
   formatVoiceprintTime,
+  getVoiceprintEnrollmentProgressMeta,
   type VoiceprintWizardState,
 } from './speakerVoiceprintHelpers';
 import { VoiceprintDialog } from './VoiceprintSharedBlocks';
@@ -55,15 +56,7 @@ export function VoiceprintEnrollmentWizard(props: {
   const { t, locale } = useI18n();
   const selectedMember = getSelectedMember(props.members, props.wizard.memberId);
   const isWaiting = props.wizard.step === 'waiting';
-  const progressCount = props.enrollment?.sample_count ?? 0;
-  const progressGoal = props.enrollment?.sample_goal ?? 3;
-  const currentRound = Math.max(
-    1,
-    Math.min(
-      progressGoal,
-      props.enrollment?.status === 'processing' ? progressCount : progressCount + 1,
-    ),
-  );
+  const progressMeta = getVoiceprintEnrollmentProgressMeta(props.enrollment);
   const phraseText = (props.enrollment?.expected_phrase ?? '').trim() || t('voiceprint.wizard.promptFallback');
   const memberName = selectedMember?.member_name ?? t('voiceprint.wizard.noMember');
 
@@ -188,7 +181,7 @@ export function VoiceprintEnrollmentWizard(props: {
             <div className="speaker-voiceprint-wizard__prompt-card">
               <div className="speaker-voiceprint-wizard__prompt-meta">
                 <span className="speaker-voiceprint-wizard__label">{t('voiceprint.wizard.roundLabel')}</span>
-                <strong>{t('voiceprint.wizard.roundValue', { current: currentRound, goal: progressGoal })}</strong>
+                <strong>{t('voiceprint.wizard.roundValue', { current: progressMeta.currentRound, goal: progressMeta.progressGoal })}</strong>
               </div>
               <div className="speaker-voiceprint-wizard__prompt-meta">
                 <span className="speaker-voiceprint-wizard__label">{t('voiceprint.wizard.promptLabel')}</span>
@@ -198,7 +191,7 @@ export function VoiceprintEnrollmentWizard(props: {
             <div className="speaker-voiceprint-wizard__progress-card">
               <div>
                 <span className="speaker-voiceprint-wizard__label">{t('voiceprint.wizard.progress')}</span>
-                <strong>{t('voiceprint.wizard.progressValue', { count: progressCount, goal: progressGoal })}</strong>
+                <strong>{t('voiceprint.wizard.progressValue', { count: progressMeta.progressCount, goal: progressMeta.progressGoal })}</strong>
               </div>
               <div>
                 <span className="speaker-voiceprint-wizard__label">{t('voiceprint.wizard.taskStatus')}</span>

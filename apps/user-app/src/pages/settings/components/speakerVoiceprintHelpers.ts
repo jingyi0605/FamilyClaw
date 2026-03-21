@@ -78,6 +78,32 @@ export function getVoiceprintConversationCopy(
   };
 }
 
+export function getVoiceprintEnrollmentProgressMeta(
+  enrollment: Pick<VoiceprintEnrollmentRead, 'sample_goal' | 'sample_count' | 'status'> | null | undefined,
+): {
+  progressGoal: number;
+  sampleCount: number;
+  currentRound: number;
+  progressCount: number;
+} {
+  const progressGoal = Math.max(intOrFallback(enrollment?.sample_goal, 3), 1);
+  const sampleCount = Math.min(progressGoal, Math.max(intOrFallback(enrollment?.sample_count, 0), 0));
+  // 等待页上下两块必须共用同一套轮次口径，不然用户会同时看到两个不同的“当前进度”。
+  const currentRound = Math.max(
+    1,
+    Math.min(
+      progressGoal,
+      enrollment?.status === 'processing' ? sampleCount : sampleCount + 1,
+    ),
+  );
+  return {
+    progressGoal,
+    sampleCount,
+    currentRound,
+    progressCount: currentRound,
+  };
+}
+
 export function getVoiceprintMemberStatusMeta(
   summary: HouseholdVoiceprintMemberSummaryRead,
   t: TranslateFn = defaultTranslate,
@@ -166,4 +192,11 @@ export function formatVoiceprintTime(
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function intOrFallback(value: number | null | undefined, fallback: number) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return fallback;
+  }
+  return Math.trunc(value);
 }

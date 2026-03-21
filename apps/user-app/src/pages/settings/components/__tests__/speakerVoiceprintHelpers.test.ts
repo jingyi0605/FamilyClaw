@@ -9,6 +9,7 @@ import {
   createVoiceprintWizardState,
   getNextWizardStateFromEnrollment,
   getVoiceprintConversationCopy,
+  getVoiceprintEnrollmentProgressMeta,
   getVoiceprintMemberStatusMeta,
 } from '../speakerVoiceprintHelpers';
 
@@ -86,6 +87,26 @@ test('向导状态工厂同时支持首次录入、更新和继续查看进度',
   assert.equal(waitingWizard.step, 'waiting');
   assert.equal(waitingWizard.memberId, 'member-3');
   assert.equal(waitingWizard.enrollmentId, 'enrollment-3');
+});
+
+test('等待页的当前轮次和当前进度必须使用同一套口径', () => {
+  const recordingMeta = getVoiceprintEnrollmentProgressMeta(
+    createEnrollment({ status: 'recording', sample_count: 2, sample_goal: 3 }),
+  );
+  assert.equal(recordingMeta.currentRound, 3);
+  assert.equal(recordingMeta.progressCount, 3);
+
+  const processingMeta = getVoiceprintEnrollmentProgressMeta(
+    createEnrollment({ status: 'processing', sample_count: 3, sample_goal: 3 }),
+  );
+  assert.equal(processingMeta.currentRound, 3);
+  assert.equal(processingMeta.progressCount, 3);
+
+  const pendingMeta = getVoiceprintEnrollmentProgressMeta(
+    createEnrollment({ status: 'pending', sample_count: 0, sample_goal: 3 }),
+  );
+  assert.equal(pendingMeta.currentRound, 1);
+  assert.equal(pendingMeta.progressCount, 1);
 });
 
 test('向导状态机会把进行中、成功、失败结果映射到对应页面', () => {
