@@ -1,6 +1,6 @@
 {
   "name": "@familyclaw/user-app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "overrides": {
     "stylelint": "16.10.0"
