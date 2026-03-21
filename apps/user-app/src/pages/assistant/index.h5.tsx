@@ -98,12 +98,24 @@ function formatMessageTime(value: string, locale: string) {
 
 function normalizeContent(content: string): string {
   if (!content) return '';
-  return content
+  let normalized = content
     .replace(/\r\n/g, '\n')
+    .replace(/\n[ \t]+\n/g, '\n\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^[\s\t]*\n/gm, '\n')
     .replace(/\n[\s\t]*$/gm, '\n')
     .trim();
+
+  // 列表项之间如果混入重复空行，统一收敛成一行，避免被错误拆成多个段落。
+  while (true) {
+    const next = normalized
+      .replace(/((?:^|\n)\s*[-*+]\s+.+)\n{2,}(?=\s*[-*+]\s+)/g, '$1\n')
+      .replace(/((?:^|\n)\s*\d+\.\s+.+)\n{2,}(?=\s*\d+\.\s+)/g, '$1\n');
+    if (next === normalized) {
+      return normalized;
+    }
+    normalized = next;
+  }
 }
 
 function escapeHtml(text: string): string {
@@ -113,28 +125,81 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;');
 }
 
-function renderMarkdown(text: string): string {
-  if (!text) return '';
-  let result = escapeHtml(text);
-  result = result.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const langAttr = lang ? ` data-lang="${lang}"` : '';
-    return `<pre class="md-code-block"${langAttr}><code>${code.trim()}</code></pre>`;
+function restoreTokens(text: string, tokenMap: Map<string, string>): string {
+  let restored = text;
+  tokenMap.forEach((value, key) => {
+    restored = restored.split(key).join(value);
   });
-  result = result.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
-  result = result.replace(/^### (.+)$/gm, '<h4 class="md-heading md-heading--h4">$1</h4>');
-  result = result.replace(/^## (.+)$/gm, '<h3 class="md-heading md-heading--h3">$1</h3>');
-  result = result.replace(/^# (.+)$/gm, '<h2 class="md-heading md-heading--h2">$1</h2>');
+  return restored;
+}
+
+function renderInlineMarkdown(text: string): string {
+  if (!text) return '';
+
+  const inlineCodeTokens = new Map<string, string>();
+  let tokenIndex = 0;
+  let result = escapeHtml(text).replace(/`([^`]+)`/g, (_, code: string) => {
+    const token = `__FC_INLINE_CODE_${tokenIndex += 1}__`;
+    inlineCodeTokens.set(token, `<code class="md-inline-code">${code}</code>`);
+    return token;
+  });
+
   result = result.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
   result = result.replace(/\*\*(.+?)\*\*/g, '<strong class="md-bold">$1</strong>');
   result = result.replace(/\*(.+?)\*/g, '<em class="md-italic">$1</em>');
   result = result.replace(/~~(.+?)~~/g, '<del class="md-strikethrough">$1</del>');
-  result = result.replace(/^\s*[-*+]\s+(.+)$/gm, '<li class="md-list-item">$1</li>');
-  result = result.replace(/(<li[^>]*>.*?<\/li>\n?)+/g, match => `<ul class="md-list">${match}</ul>`);
-  result = result.replace(/^\s*\d+\.\s+(.+)$/gm, '<li class="md-list-item md-list-item--ordered">$1</li>');
-  result = result.replace(/(<li[^>]*--ordered[^>]*>.*?<\/li>\n?)+/g, match => `<ol class="md-list md-list--ordered">${match}</ol>`);
-  result = result.replace(/\n\n/g, '</p><p class="md-paragraph">');
-  result = result.replace(/\n/g, '<br/>');
-  return `<p class="md-paragraph">${result}</p>`;
+
+  return restoreTokens(result, inlineCodeTokens);
+}
+
+function renderMarkdown(text: string): string {
+  const normalized = normalizeContent(text);
+  if (!normalized) return '';
+
+  const codeBlockTokens = new Map<string, string>();
+  let tokenIndex = 0;
+  const tokenized = normalized.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang: string, code: string) => {
+    const token = `__FC_CODE_BLOCK_${tokenIndex += 1}__`;
+    const langAttr = lang ? ` data-lang="${lang}"` : '';
+    codeBlockTokens.set(token, `<pre class="md-code-block"${langAttr}><code>${escapeHtml(code.trim())}</code></pre>`);
+    return token;
+  });
+
+  const blocks = tokenized
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean);
+
+  return blocks.map(block => {
+    if (codeBlockTokens.has(block)) {
+      return codeBlockTokens.get(block) ?? '';
+    }
+
+    const headingMatch = block.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch && !block.includes('\n')) {
+      const level = Math.min(headingMatch[1].length + 1, 4);
+      return `<h${level} class="md-heading md-heading--h${level}">${renderInlineMarkdown(headingMatch[2])}</h${level}>`;
+    }
+
+    const lines = block.split('\n').map(line => line.trim()).filter(Boolean);
+    const unorderedItems = lines.map(line => line.match(/^[-*+]\s+(.+)$/));
+    if (unorderedItems.length > 0 && unorderedItems.every(Boolean)) {
+      const items = unorderedItems
+        .map(match => `<li class="md-list-item">${renderInlineMarkdown(match?.[1] ?? '')}</li>`)
+        .join('');
+      return `<ul class="md-list">${items}</ul>`;
+    }
+
+    const orderedItems = lines.map(line => line.match(/^\d+\.\s+(.+)$/));
+    if (orderedItems.length > 0 && orderedItems.every(Boolean)) {
+      const items = orderedItems
+        .map(match => `<li class="md-list-item md-list-item--ordered">${renderInlineMarkdown(match?.[1] ?? '')}</li>`)
+        .join('');
+      return `<ol class="md-list md-list--ordered">${items}</ol>`;
+    }
+
+    return `<p class="md-paragraph">${renderInlineMarkdown(block).replace(/\n/g, '<br/>')}</p>`;
+  }).join('');
 }
 
 function formatLocalizedList(items: string[], locale: string) {
