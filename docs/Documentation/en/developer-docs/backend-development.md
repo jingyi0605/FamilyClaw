@@ -167,6 +167,12 @@ These are the groups developers touch most often right now:
 | Scheduled tasks | `/api/v1/scheduled-tasks` | Task definitions, start-stop, draft confirmation |
 | Voiceprints | `/api/v1/voiceprints` | Enrollment, summary, deletion |
 
+Current voiceprint behavior:
+
+- enrollment defaults to 6 rounds instead of 3
+- the first 4 rounds use the same base phrase, and the last 2 rounds switch to different short phrases
+- realtime identification trims silence, runs basic VAD, and normalizes loudness before sending audio to the voiceprint model
+
 ### Frequently used concrete endpoints
 
 - `GET /api/v1/healthz`

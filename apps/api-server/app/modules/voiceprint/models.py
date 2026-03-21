@@ -34,8 +34,9 @@ class VoiceprintEnrollment(Base):
         nullable=False,
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    base_phrase: Mapped[str | None] = mapped_column(Text, nullable=True)
     expected_phrase: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sample_goal: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    sample_goal: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
     sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     expires_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -134,4 +135,3 @@ class MemberVoiceprintSample(Base):
     sample_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="accepted")
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
-

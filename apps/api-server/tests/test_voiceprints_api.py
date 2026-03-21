@@ -110,7 +110,7 @@ class VoiceprintsApiTests(unittest.TestCase):
         self._db_helper.close()
         self._tempdir.cleanup()
 
-    def test_create_enrollment_uses_default_three_samples(self) -> None:
+    def test_create_enrollment_uses_default_six_samples(self) -> None:
         response = self.client.post(
             f"{settings.api_v1_prefix}/voiceprints/enrollments",
             json={
@@ -124,7 +124,7 @@ class VoiceprintsApiTests(unittest.TestCase):
         self.assertEqual(201, response.status_code)
         payload = response.json()
         self.assertEqual("pending", payload["status"])
-        self.assertEqual(3, payload["sample_goal"])
+        self.assertEqual(6, payload["sample_goal"])
         self.assertEqual(0, payload["sample_count"])
         self.assertEqual("鎴戞槸濡堝", payload["expected_phrase"])
         self.assertIsNotNone(payload["expires_at"])
@@ -173,7 +173,7 @@ class VoiceprintsApiTests(unittest.TestCase):
         self.assertEqual(201, response.status_code)
         payload = response.json()
         self.assertTrue(payload["expected_phrase"])
-        self.assertEqual(3, payload["sample_goal"])
+        self.assertEqual(6, payload["sample_goal"])
 
     def test_create_enrollment_rejects_terminal_conflict(self) -> None:
         with self.SessionLocal() as db:

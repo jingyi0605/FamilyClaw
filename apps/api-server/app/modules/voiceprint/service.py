@@ -38,6 +38,8 @@ _PENDING_ENROLLMENT_STATUSES = ("pending", "recording", "processing")
 _ENROLLMENT_EXPIRE_MINUTES = 30
 _ENROLLMENT_SAMPLE_MIN_DURATION_MS = 1000
 _ENROLLMENT_SAMPLE_MAX_DURATION_MS = 8000
+_DEFAULT_ENROLLMENT_SAMPLE_GOAL = 6
+_DEFAULT_ENROLLMENT_BASE_REPEAT = 4
 _VOICEPRINT_IDENTIFICATION_LIMIT = 3
 _VOICEPRINT_CONFLICT_SCORE_MARGIN = 0.05
 _VOICEPRINT_ENROLLMENT_EXPIRED_MESSAGE = "这次声纹录入任务已过期，请重新开始。"
@@ -190,15 +192,17 @@ def create_voiceprint_enrollment(db: Session, payload: VoiceprintEnrollmentCreat
         member_id=payload.member_id,
         terminal_id=payload.terminal_id,
         status="pending",
-        expected_phrase=_resolve_expected_phrase(
+        base_phrase=_resolve_base_phrase(
             expected_phrase=payload.expected_phrase,
             member_id=payload.member_id,
             terminal_id=payload.terminal_id,
         ),
+        expected_phrase=None,
         sample_goal=payload.sample_goal,
         sample_count=0,
         expires_at=_build_enrollment_expires_at(),
     )
+    _sync_enrollment_phrase_state(enrollment)
     db.add(enrollment)
     return enrollment
 
@@ -236,6 +240,7 @@ def get_voiceprint_enrollment_or_404(db: Session, enrollment_id: str) -> Voicepr
     enrollment = db.get(VoiceprintEnrollment, enrollment_id)
     if enrollment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="voiceprint enrollment not found")
+    _sync_enrollment_phrase_state(enrollment)
     return enrollment
 
 
@@ -244,8 +249,9 @@ def cancel_voiceprint_enrollment(db: Session, enrollment: VoiceprintEnrollment) 
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="voiceprint enrollment cannot be cancelled",
-        )
+    )
     enrollment.status = "cancelled"
+    _sync_enrollment_phrase_state(enrollment)
     enrollment.updated_at = utc_now_iso()
     db.add(enrollment)
     return enrollment
@@ -264,6 +270,7 @@ def mark_voiceprint_enrollment_failed(
     if enrollment.status in {"completed", "cancelled"}:
         return enrollment
     enrollment.status = "failed"
+    _sync_enrollment_phrase_state(enrollment)
     enrollment.error_code = error_code
     enrollment.error_message = error_message
     enrollment.updated_at = utc_now_iso()
@@ -290,6 +297,7 @@ def get_pending_voiceprint_enrollment_by_terminal(
     enrollment = db.scalar(statement)
     if enrollment is None:
         return None
+    _sync_enrollment_phrase_state(enrollment)
     return PendingVoiceprintEnrollmentRead(
         enrollment_id=enrollment.id,
         target_member_id=enrollment.member_id,
@@ -580,6 +588,7 @@ def process_voiceprint_enrollment_sample(
     provider: VoiceprintProvider | None = None,
 ) -> VoiceprintEnrollmentProcessResult:
     enrollment = get_voiceprint_enrollment_or_404(db, enrollment_id)
+    _sync_enrollment_phrase_state(enrollment)
     if enrollment.status in {"completed", "cancelled"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="voiceprint enrollment is not accepting samples")
 
@@ -603,6 +612,7 @@ def process_voiceprint_enrollment_sample(
         sample.sample_payload_json = dump_json({"rejection_reason": validation_error})
         db.add(sample)
         enrollment.status = "recording" if enrollment.sample_count > 0 else "pending"
+        _sync_enrollment_phrase_state(enrollment)
         enrollment.error_code = "voiceprint_sample_invalid"
         enrollment.error_message = validation_error
         enrollment.updated_at = utc_now_iso()
@@ -643,10 +653,12 @@ def process_voiceprint_enrollment_sample(
     enrollment.sample_count = len(accepted_samples)
     enrollment.error_code = None
     enrollment.error_message = None
+    _sync_enrollment_phrase_state(enrollment)
     enrollment.updated_at = utc_now_iso()
 
     if enrollment.sample_count < enrollment.sample_goal:
         enrollment.status = "recording"
+        _sync_enrollment_phrase_state(enrollment)
         db.add(enrollment)
         return _build_enrollment_process_result(
             outcome="recorded",
@@ -936,7 +948,7 @@ def _build_enrollment_expires_at() -> str:
     return expires_at.astimezone().isoformat()
 
 
-def _resolve_expected_phrase(*, expected_phrase: str | None, member_id: str, terminal_id: str) -> str:
+def _resolve_base_phrase(*, expected_phrase: str | None, member_id: str, terminal_id: str) -> str:
     normalized_phrase = _normalize_optional_text(expected_phrase)
     if normalized_phrase:
         return normalized_phrase
@@ -944,9 +956,79 @@ def _resolve_expected_phrase(*, expected_phrase: str | None, member_id: str, ter
 
 
 def _select_default_expected_phrase(*, member_id: str, terminal_id: str) -> str:
-    stable_seed = f"{member_id}:{terminal_id}"
+    return _select_default_expected_phrase_by_offset(member_id=member_id, terminal_id=terminal_id, offset=0)
+
+
+def _select_default_expected_phrase_by_offset(*, member_id: str, terminal_id: str, offset: int) -> str:
+    stable_seed = f"{member_id}:{terminal_id}:{offset}"
     phrase_index = sum(ord(char) for char in stable_seed) % len(_DEFAULT_ENROLLMENT_PHRASES)
     return _DEFAULT_ENROLLMENT_PHRASES[phrase_index]
+
+
+def _resolve_sample_goal(sample_goal: int | None) -> int:
+    goal = int(sample_goal or _DEFAULT_ENROLLMENT_SAMPLE_GOAL)
+    return max(goal, 1)
+
+
+def _build_enrollment_phrase_plan(
+    *,
+    member_id: str,
+    terminal_id: str,
+    base_phrase: str,
+    sample_goal: int,
+) -> list[str]:
+    goal = _resolve_sample_goal(sample_goal)
+    repeated_rounds = min(goal, _DEFAULT_ENROLLMENT_BASE_REPEAT)
+    plan = [base_phrase] * repeated_rounds
+    remaining = goal - len(plan)
+    if remaining <= 0:
+        return plan
+
+    normalized_base = _normalize_phrase(base_phrase)
+    alternates: list[str] = []
+    offset = 1
+    while len(alternates) < remaining:
+        candidate = _select_default_expected_phrase_by_offset(
+            member_id=member_id,
+            terminal_id=terminal_id,
+            offset=offset,
+        )
+        offset += 1
+        if _normalize_phrase(candidate) == normalized_base:
+            continue
+        if any(_normalize_phrase(item) == _normalize_phrase(candidate) for item in alternates):
+            continue
+        alternates.append(candidate)
+    return plan + alternates
+
+
+def _get_enrollment_base_phrase(enrollment: VoiceprintEnrollment) -> str:
+    base_phrase = _normalize_optional_text(getattr(enrollment, "base_phrase", None))
+    if base_phrase:
+        return base_phrase
+    fallback = _normalize_optional_text(enrollment.expected_phrase)
+    if fallback:
+        return fallback
+    return _select_default_expected_phrase(member_id=enrollment.member_id, terminal_id=enrollment.terminal_id)
+
+
+def _get_current_enrollment_phrase(enrollment: VoiceprintEnrollment) -> str | None:
+    plan = _build_enrollment_phrase_plan(
+        member_id=enrollment.member_id,
+        terminal_id=enrollment.terminal_id,
+        base_phrase=_get_enrollment_base_phrase(enrollment),
+        sample_goal=enrollment.sample_goal,
+    )
+    if not plan:
+        return None
+    next_index = min(max(enrollment.sample_count, 0), len(plan) - 1)
+    return plan[next_index]
+
+
+def _sync_enrollment_phrase_state(enrollment: VoiceprintEnrollment) -> None:
+    enrollment.base_phrase = _get_enrollment_base_phrase(enrollment)
+    enrollment.sample_goal = _resolve_sample_goal(enrollment.sample_goal)
+    enrollment.expected_phrase = _get_current_enrollment_phrase(enrollment)
 
 
 def _normalize_optional_text(value: str | None) -> str | None:
@@ -962,6 +1044,7 @@ def _validate_enrollment_sample(
     sample: MemberVoiceprintSample,
     transcript_text: str,
 ) -> str | None:
+    _sync_enrollment_phrase_state(enrollment)
     sample_path = Path(sample.artifact_path).expanduser()
     if not sample_path.is_file():
         return "样本文件不存在，无法继续建档"
@@ -1046,6 +1129,7 @@ def _build_or_update_profile_from_samples(
     sample_embeddings = _load_embeddings_from_samples(accepted_member_samples)
     if not sample_embeddings:
         enrollment.status = "failed"
+        _sync_enrollment_phrase_state(enrollment)
         enrollment.error_code = "voiceprint_embedding_missing"
         enrollment.error_message = "没有可聚合的 embedding，无法生成声纹档案"
         enrollment.updated_at = utc_now_iso()
@@ -1067,6 +1151,7 @@ def _build_or_update_profile_from_samples(
         )
     except VoiceprintProviderError as exc:
         enrollment.status = "failed"
+        _sync_enrollment_phrase_state(enrollment)
         enrollment.error_code = exc.code
         enrollment.error_message = exc.message
         enrollment.updated_at = utc_now_iso()
@@ -1112,6 +1197,7 @@ def _build_or_update_profile_from_samples(
         db.add(item)
 
     enrollment.status = "completed"
+    _sync_enrollment_phrase_state(enrollment)
     enrollment.error_code = None
     enrollment.error_message = None
     enrollment.updated_at = utc_now_iso()

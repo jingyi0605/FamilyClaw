@@ -10,6 +10,16 @@ from app.core.config import settings
 
 
 DEFAULT_VOICEPRINT_PROVIDER_CODE = "sherpa_onnx_wespeaker_resnet34"
+_PREPROCESS_TRIM_RATIO = 0.02
+_PREPROCESS_TRIM_MIN_AMPLITUDE = 0.005
+_PREPROCESS_TRIM_PAD_MS = 80
+_PREPROCESS_VAD_FRAME_MS = 30
+_PREPROCESS_VAD_HOP_MS = 10
+_PREPROCESS_VAD_PAD_MS = 120
+_PREPROCESS_VAD_MIN_KEEP_MS = 400
+_PREPROCESS_TARGET_RMS = 0.08
+_PREPROCESS_MAX_GAIN = 8.0
+_PREPROCESS_PEAK_LIMIT = 0.95
 
 
 class VoiceprintProviderError(RuntimeError):
@@ -73,6 +83,136 @@ class VoiceprintVerifyResult:
     threshold: float
     matched: bool
     score: float
+
+
+def _trim_silence(samples, sample_rate: int):
+    abs_samples = samples.__abs__()
+    if int(abs_samples.size) == 0:
+        return samples, {"applied": False, "reason": "empty"}
+    peak = float(abs_samples.max())
+    threshold = max(_PREPROCESS_TRIM_MIN_AMPLITUDE, peak * _PREPROCESS_TRIM_RATIO)
+    non_silent = abs_samples >= threshold
+    if not bool(non_silent.any()):
+        return samples, {"applied": False, "reason": "no_non_silent", "threshold": round(threshold, 6)}
+
+    indices = non_silent.nonzero()[0]
+    pad = max(int(sample_rate * _PREPROCESS_TRIM_PAD_MS / 1000), 0)
+    start = max(int(indices[0]) - pad, 0)
+    end = min(int(indices[-1]) + pad + 1, int(samples.shape[0]))
+    trimmed = samples[start:end]
+    return trimmed, {
+        "applied": start > 0 or end < int(samples.shape[0]),
+        "threshold": round(threshold, 6),
+        "start": start,
+        "end": end,
+        "output_frames": int(trimmed.shape[0]),
+    }
+
+
+def _apply_energy_vad(samples, sample_rate: int):
+    total_frames = int(samples.shape[0])
+    if total_frames <= 0:
+        return samples, {"applied": False, "reason": "empty"}
+
+    frame_size = max(int(sample_rate * _PREPROCESS_VAD_FRAME_MS / 1000), 1)
+    hop_size = max(int(sample_rate * _PREPROCESS_VAD_HOP_MS / 1000), 1)
+    if total_frames <= frame_size:
+        return samples, {"applied": False, "reason": "too_short"}
+
+    energies = []
+    starts = []
+    start = 0
+    while start < total_frames:
+        end = min(start + frame_size, total_frames)
+        frame = samples[start:end]
+        energies.append(float((frame * frame).mean()))
+        starts.append(start)
+        if end >= total_frames:
+            break
+        start += hop_size
+
+    if not energies:
+        return samples, {"applied": False, "reason": "no_frames"}
+
+    try:
+        import numpy as np
+    except ModuleNotFoundError as exc:
+        raise VoiceprintProviderError("voiceprint_provider_unavailable", f"missing numpy dependency: {exc.name}") from exc
+
+    energy_array = np.asarray(energies, dtype="float32")
+    max_energy = float(energy_array.max())
+    noise_floor = float(np.percentile(energy_array, 20))
+    threshold = max(noise_floor * 2.5, max_energy * 0.1, 1e-5)
+    voiced_frames = energy_array >= threshold
+    if not bool(voiced_frames.any()):
+        return samples, {"applied": False, "reason": "no_voiced_frame", "threshold": round(threshold, 6)}
+
+    mask = np.zeros(total_frames, dtype=bool)
+    pad = max(int(sample_rate * _PREPROCESS_VAD_PAD_MS / 1000), 0)
+    for index, is_voiced in enumerate(voiced_frames.tolist()):
+        if not is_voiced:
+            continue
+        frame_start = max(starts[index] - pad, 0)
+        frame_end = min(starts[index] + frame_size + pad, total_frames)
+        mask[frame_start:frame_end] = True
+
+    kept = samples[mask]
+    min_keep_frames = max(int(sample_rate * _PREPROCESS_VAD_MIN_KEEP_MS / 1000), 1)
+    if int(kept.shape[0]) < min_keep_frames:
+        return samples, {
+            "applied": False,
+            "reason": "kept_too_short",
+            "threshold": round(threshold, 6),
+            "kept_frames": int(kept.shape[0]),
+        }
+
+    return kept, {
+        "applied": True,
+        "threshold": round(threshold, 6),
+        "kept_frames": int(kept.shape[0]),
+        "original_frames": total_frames,
+    }
+
+
+def _normalize_loudness(samples):
+    rms = float(sqrt(float((samples * samples).mean())))
+    peak = float(samples.__abs__().max()) if int(samples.shape[0]) > 0 else 0.0
+    if rms <= 0 or peak <= 0:
+        return samples, {"applied": False, "reason": "silent", "rms": round(rms, 6), "peak": round(peak, 6)}
+
+    target_gain = min(_PREPROCESS_TARGET_RMS / rms, _PREPROCESS_MAX_GAIN)
+    peak_gain = _PREPROCESS_PEAK_LIMIT / peak
+    gain = min(target_gain, peak_gain)
+    if gain <= 0:
+        return samples, {"applied": False, "reason": "invalid_gain", "rms": round(rms, 6), "peak": round(peak, 6)}
+
+    normalized = samples * gain
+    normalized_peak = float(normalized.__abs__().max()) if int(normalized.shape[0]) > 0 else 0.0
+    if normalized_peak > _PREPROCESS_PEAK_LIMIT and normalized_peak > 0:
+        normalized = normalized * (_PREPROCESS_PEAK_LIMIT / normalized_peak)
+        normalized_peak = float(normalized.__abs__().max())
+
+    normalized_rms = float(sqrt(float((normalized * normalized).mean())))
+    return normalized, {
+        "applied": abs(gain - 1.0) > 1e-3,
+        "gain": round(gain, 6),
+        "rms_before": round(rms, 6),
+        "rms_after": round(normalized_rms, 6),
+        "peak_after": round(normalized_peak, 6),
+    }
+
+
+def preprocess_waveform(samples, sample_rate: int):
+    trimmed, trim_meta = _trim_silence(samples, sample_rate)
+    voiced, vad_meta = _apply_energy_vad(trimmed, sample_rate)
+    normalized, loudness_meta = _normalize_loudness(voiced)
+    return normalized, {
+        "trim": trim_meta,
+        "vad": vad_meta,
+        "loudness": loudness_meta,
+        "input_frames": int(samples.shape[0]),
+        "output_frames": int(normalized.shape[0]),
+    }
 
 
 class VoiceprintProvider:
@@ -174,6 +314,7 @@ class SherpaOnnxVoiceprintProvider(VoiceprintProvider):
             raise VoiceprintProviderError("voiceprint_model_missing", f"声纹模型不存在: {model_path}")
 
         try:
+            import numpy as np
             import soundfile as sf
             import sherpa_onnx
         except ModuleNotFoundError as exc:
@@ -183,8 +324,11 @@ class SherpaOnnxVoiceprintProvider(VoiceprintProvider):
             ) from exc
 
         samples, sample_rate = sf.read(str(waveform_path), dtype="float32", always_2d=False)
+        samples = np.asarray(samples, dtype="float32")
         if hasattr(samples, "ndim") and getattr(samples, "ndim") > 1:
             samples = samples.mean(axis=1)
+        samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+        samples, preprocess_metadata = preprocess_waveform(samples, int(sample_rate))
 
         extractor = self._get_or_create_extractor(sherpa_onnx=sherpa_onnx, model_path=str(model_path))
         stream = extractor.create_stream()
@@ -200,6 +344,7 @@ class SherpaOnnxVoiceprintProvider(VoiceprintProvider):
                 "model_path": str(model_path),
                 "sample_rate": int(sample_rate),
                 "execution_provider": settings.voiceprint_execution_provider,
+                "preprocess": preprocess_metadata,
             },
         )
 

@@ -73,6 +73,7 @@ class VoiceprintServiceTests(unittest.TestCase):
                 room_type="living_room",
                 privacy_level="public",
             )
+            db.flush()
             member = create_member(
                 db,
                 MemberCreate(
@@ -99,6 +100,7 @@ class VoiceprintServiceTests(unittest.TestCase):
                 member_id=member.id,
                 terminal_id=device.id,
                 status="pending",
+                base_phrase="鎴戞槸濡堝",
                 expected_phrase="鎴戞槸濡堝",
                 sample_goal=3,
                 sample_count=0,
@@ -116,23 +118,42 @@ class VoiceprintServiceTests(unittest.TestCase):
         self._tempdir.cleanup()
 
     def test_process_samples_builds_profile_and_supports_household_search_verify(self) -> None:
-        sample_paths = [self._create_artifact(f"sample-{index}.wav") for index in range(1, 4)]
+        sample_paths = [self._create_artifact(f"sample-{index}.wav") for index in range(1, 7)]
         query_path = self._create_artifact("query.wav")
         provider = FakeVoiceprintProvider(
             {
                 sample_paths[0]: [1.0, 0.0, 0.0],
                 sample_paths[1]: [0.98, 0.05, 0.0],
                 sample_paths[2]: [0.96, 0.09, 0.0],
+                sample_paths[3]: [0.97, 0.07, 0.01],
+                sample_paths[4]: [0.95, 0.1, 0.02],
+                sample_paths[5]: [0.94, 0.11, 0.03],
                 query_path: [0.99, 0.03, 0.0],
             }
         )
 
         with self.SessionLocal() as db:
+            enrollment = db.get(VoiceprintEnrollment, self.enrollment_id)
+            assert enrollment is not None
+            enrollment.sample_goal = 6
+            db.add(enrollment)
+            db.commit()
+            alternate_phrases: list[str] = []
             for index, sample_path in enumerate(sample_paths, start=1):
+                enrollment = db.get(VoiceprintEnrollment, self.enrollment_id)
+                assert enrollment is not None
+                if index <= 4:
+                    transcript_text = "鎴戞槸濡堝"
+                elif index == 5:
+                    transcript_text = enrollment.expected_phrase or ""
+                    alternate_phrases.append(transcript_text)
+                else:
+                    transcript_text = enrollment.expected_phrase or ""
+                    alternate_phrases.append(transcript_text)
                 result = process_voiceprint_enrollment_sample(
                     db,
                     enrollment_id=self.enrollment_id,
-                    transcript_text="鎴戞槸濡堝",
+                    transcript_text=transcript_text,
                     artifact_id=f"artifact-{index}",
                     artifact_path=sample_path,
                     artifact_sha256=f"sha-{index}",
@@ -143,7 +164,7 @@ class VoiceprintServiceTests(unittest.TestCase):
                     provider=provider,
                 )
                 db.commit()
-                expected_outcome = "completed" if index == 3 else "recorded"
+                expected_outcome = "completed" if index == 6 else "recorded"
                 self.assertEqual(expected_outcome, result.outcome)
 
             enrollment = db.get(VoiceprintEnrollment, self.enrollment_id)
@@ -166,11 +187,14 @@ class VoiceprintServiceTests(unittest.TestCase):
             assert enrollment is not None
             assert profile is not None
             self.assertEqual("completed", enrollment.status)
-            self.assertEqual(3, enrollment.sample_count)
-            self.assertEqual(3, profile.sample_count)
-            self.assertEqual(3, len(samples))
+            self.assertEqual(6, enrollment.sample_count)
+            self.assertEqual(6, profile.sample_count)
+            self.assertEqual(6, len(samples))
             self.assertTrue(all(item.status == "accepted" for item in samples))
             self.assertTrue(all(item.profile_id == profile.id for item in samples))
+            self.assertEqual(2, len(alternate_phrases))
+            self.assertTrue(all(item and item != "鎴戞槸濡堝" for item in alternate_phrases))
+            self.assertNotEqual(alternate_phrases[0], alternate_phrases[1])
 
             search_result = search_voiceprint_profiles_in_household(
                 db,
@@ -327,7 +351,7 @@ class VoiceprintServiceTests(unittest.TestCase):
             result = process_voiceprint_enrollment_sample(
                 db,
                 enrollment_id=self.enrollment_id,
-                transcript_text="鎴戜笉鏄濡?,
+                transcript_text="phrase mismatch",
                 artifact_id="artifact-mismatch",
                 artifact_path=sample_path,
                 artifact_sha256="sha-mismatch",
@@ -356,6 +380,42 @@ class VoiceprintServiceTests(unittest.TestCase):
         self.assertEqual(1, len(samples))
         self.assertEqual("rejected", samples[0].status)
 
+    def test_enrollment_switches_to_two_alternate_phrases_after_four_base_rounds(self) -> None:
+        sample_paths = [self._create_artifact(f"switch-{index}.wav") for index in range(1, 7)]
+        provider = FakeVoiceprintProvider({path: [1.0, 0.0, 0.0] for path in sample_paths})
+
+        with self.SessionLocal() as db:
+            enrollment = db.get(VoiceprintEnrollment, self.enrollment_id)
+            assert enrollment is not None
+            enrollment.sample_goal = 6
+            db.add(enrollment)
+            db.commit()
+            expected_phrases: list[str] = []
+            for index, sample_path in enumerate(sample_paths, start=1):
+                enrollment = db.get(VoiceprintEnrollment, self.enrollment_id)
+                assert enrollment is not None
+                expected_phrases.append(enrollment.expected_phrase or "")
+                result = process_voiceprint_enrollment_sample(
+                    db,
+                    enrollment_id=self.enrollment_id,
+                    transcript_text=enrollment.expected_phrase or "",
+                    artifact_id=f"artifact-switch-{index}",
+                    artifact_path=sample_path,
+                    artifact_sha256=f"sha-switch-{index}",
+                    sample_rate=16000,
+                    channels=1,
+                    sample_width=2,
+                    duration_ms=2200,
+                    provider=provider,
+                )
+                db.commit()
+                self.assertEqual("completed" if index == 6 else "recorded", result.outcome)
+
+        self.assertEqual(["鎴戞槸濡堝"] * 4, expected_phrases[:4])
+        self.assertNotEqual("鎴戞槸濡堝", expected_phrases[4])
+        self.assertNotEqual("鎴戞槸濡堝", expected_phrases[5])
+        self.assertNotEqual(expected_phrases[4], expected_phrases[5])
+
     def _create_artifact(self, name: str) -> str:
         path = Path(self._tempdir.name) / name
         path.write_bytes(b"fake-wave")
@@ -382,18 +442,21 @@ class VoiceprintServiceTests(unittest.TestCase):
             member_id=other_member.id,
             terminal_id=self.terminal_id,
             status="pending",
+            base_phrase="鎴戞槸鐖哥埜",
             expected_phrase="鎴戞槸鐖哥埜",
-            sample_goal=3,
+            sample_goal=len(artifact_paths),
             sample_count=0,
         )
         db.add(other_enrollment)
         db.flush()
 
         for index, artifact_path in enumerate(artifact_paths, start=1):
+            enrollment = db.get(VoiceprintEnrollment, other_enrollment.id)
+            assert enrollment is not None
             process_voiceprint_enrollment_sample(
                 db,
                 enrollment_id=other_enrollment.id,
-                transcript_text="鎴戞槸鐖哥埜",
+                transcript_text=enrollment.expected_phrase or "",
                 artifact_id=f"artifact-other-{index}",
                 artifact_path=artifact_path,
                 artifact_sha256=f"sha-other-{index}",

@@ -14,7 +14,7 @@ class VoiceprintEnrollmentCreate(BaseModel):
     member_id: str = Field(min_length=1)
     terminal_id: str = Field(min_length=1)
     expected_phrase: str | None = Field(default=None, max_length=200)
-    sample_goal: int = Field(default=3, ge=1, le=10)
+    sample_goal: int = Field(default=6, ge=1, le=10)
 
 
 class VoiceprintEnrollmentRead(BaseModel):
