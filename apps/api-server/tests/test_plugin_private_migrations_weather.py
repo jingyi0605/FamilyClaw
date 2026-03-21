@@ -14,6 +14,7 @@ from app.modules.plugin.service import get_household_plugin, set_household_plugi
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from official_weather.models import WeatherDeviceBinding
 from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
+from tests.weather_test_utils import force_weather_plugin_in_process
 
 
 class _FakeWeatherProvider:
@@ -115,12 +116,16 @@ class WeatherPluginPrivateMigrationTests(unittest.TestCase):
                 household_id=household.id,
                 plugin_id="official-weather",
             )
-            sync_plugin_managed_integration_instance(
-                self.db,
-                plugin=plugin,
-                instance=instance,
-                sync_scope="device_sync",
-            )
+            self.db.commit()
+            with force_weather_plugin_in_process():
+                sync_plugin_managed_integration_instance(
+                    self.db,
+                    plugin=plugin,
+                    instance=instance,
+                    sync_scope="device_sync",
+                )
+            self.db.commit()
+            self.db.rollback()
 
         self.assertTrue(self._has_weather_binding_table())
         row = self.db.scalar(

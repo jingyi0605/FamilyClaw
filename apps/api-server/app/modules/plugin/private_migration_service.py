@@ -26,8 +26,8 @@ def ensure_plugin_private_migrations(
     if migration_root is None:
         return
 
-    # 只允许宿主内置插件在主进程里执行私有迁移，避免第三方插件拿到过高权限。
-    if plugin.source_type != "builtin":
+    # 私有迁移由宿主统一跑，builtin / third_party 都走同一条受控入口。
+    if plugin.source_type not in {"builtin", "third_party"}:
         return
 
     database_url = _resolve_database_url(db)
@@ -88,7 +88,6 @@ def _run_plugin_private_migrations(
     alembic_config.attributes["sqlalchemy_url"] = database_url
     alembic_config.attributes["plugin_root"] = str(_resolve_plugin_root(plugin))
     alembic_config.attributes["version_table"] = _build_plugin_version_table_name(plugin.id)
-    alembic_config.attributes["connection"] = db.connection()
 
     with _plugin_runtime_import_path(_resolve_plugin_root(plugin)):
         command.upgrade(alembic_config, "head")

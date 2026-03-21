@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -54,6 +55,7 @@ class PostgresTestDatabase:
         settings.database_url = self.database_url
         self._plugin_dev_root_tempdir = tempfile.TemporaryDirectory(prefix="familyclaw-test-plugins-dev-")
         settings.plugin_dev_root = str(Path(self._plugin_dev_root_tempdir.name).resolve())
+        self._seed_builtin_test_dev_plugins()
 
         self._admin_engine = build_database_engine(
             self.base_database_url,
@@ -96,6 +98,21 @@ class PostgresTestDatabase:
         if self._plugin_dev_root_tempdir is not None:
             self._plugin_dev_root_tempdir.cleanup()
             self._plugin_dev_root_tempdir = None
+
+    def _seed_builtin_test_dev_plugins(self) -> None:
+        plugin_dev_root = Path(settings.plugin_dev_root).resolve()
+        plugin_dev_root.mkdir(parents=True, exist_ok=True)
+
+        repo_plugin_dev_root = Path(__file__).resolve().parents[1] / "plugins-dev"
+        weather_plugin_root = repo_plugin_dev_root / "official_weather"
+        if not weather_plugin_root.exists():
+            return
+
+        shutil.copytree(
+            weather_plugin_root,
+            plugin_dev_root / "official_weather",
+            dirs_exist_ok=True,
+        )
 
     @staticmethod
     def _build_schema_name(test_id: str) -> str:
