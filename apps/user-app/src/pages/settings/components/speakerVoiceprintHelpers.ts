@@ -86,7 +86,7 @@ export function getVoiceprintEnrollmentProgressMeta(
   currentRound: number;
   progressCount: number;
 } {
-  const progressGoal = Math.max(intOrFallback(enrollment?.sample_goal, 3), 1);
+  const progressGoal = Math.max(intOrFallback(enrollment?.sample_goal, 6), 1);
   const sampleCount = Math.min(progressGoal, Math.max(intOrFallback(enrollment?.sample_count, 0), 0));
   // 等待页上下两块必须共用同一套轮次口径，不然用户会同时看到两个不同的“当前进度”。
   const currentRound = Math.max(

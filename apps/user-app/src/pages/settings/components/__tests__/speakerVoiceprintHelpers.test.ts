@@ -40,7 +40,7 @@ function createEnrollment(
     terminal_id: 'device-1',
     status: 'pending',
     expected_phrase: '我是妈妈',
-    sample_goal: 3,
+    sample_goal: 6,
     sample_count: 1,
     expires_at: '2026-03-16T12:00:00+08:00',
     error_code: null,
