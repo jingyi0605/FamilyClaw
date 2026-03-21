@@ -2,6 +2,11 @@
   animation: fadeIn 0.28s ease;
 }
 
+.page--home,
+.page--home * {
+  box-sizing: border-box;
+}
+
 .page--home {
   /* ===== 页面级尺寸变量（缩小并统一） ===== */
 
@@ -49,6 +54,21 @@
   --badge-radius: var(--radius-sm);
 
   position: relative;
+}
+
+.page--home .memory-main-tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.page--home .memory-main-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.page--home .memory-main-tab {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .page--home > * {
@@ -153,6 +173,7 @@
 .dashboard-header-bar__left {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--spacing-md);
 }
 
@@ -160,12 +181,15 @@
   font-size: var(--font-size-md);
   font-weight: 500;
   color: var(--text-secondary);
+  min-width: 0;
 }
 
 .dashboard-header-bar__right {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--spacing-sm);
+  justify-content: flex-end;
 }
 
 .dashboard-header-bar__time {
@@ -392,6 +416,25 @@
   border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
   background: var(--color-danger-light);
   color: var(--color-danger);
+}
+
+.dashboard-mobile-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--spacing-sm);
+}
+
+.remove-card-btn--mobile {
+  position: static;
+  width: auto;
+  height: auto;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-md);
+}
+
+.remove-card-btn--mobile span {
+  font-size: var(--card-meta-size);
 }
 
 .dashboard-resize-handle {
@@ -1244,7 +1287,20 @@ body.dashboard-resizing {
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
+  .page--home {
+    --card-gap: var(--spacing-sm);
+    --card-padding: var(--spacing-md);
+    --card-min-height-compact: 136px;
+    --card-min-height-regular: 168px;
+    --card-min-height-tall: 220px;
+  }
+
+  .page--home .memory-main-tabs {
+    margin-bottom: var(--spacing-md);
+    padding-bottom: 2px;
+  }
+
   .welcome-banner {
     flex-direction: column;
     align-items: flex-start;
@@ -1258,6 +1314,27 @@ body.dashboard-resizing {
   .welcome-banner__right {
     width: 100%;
     align-items: flex-start;
+  }
+
+  .dashboard-header-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-sm);
+  }
+
+  .dashboard-header-bar__left,
+  .dashboard-header-bar__right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .dashboard-header-bar__greeting {
+    flex: 1;
+    line-height: 1.5;
+  }
+
+  .dashboard-header-bar__time {
+    white-space: normal;
   }
 
   .edit-dashboard-btn {
@@ -1277,6 +1354,18 @@ body.dashboard-resizing {
     grid-column: 1 / -1;
   }
 
+  .dashboard-grid__item {
+    min-width: 0;
+  }
+
+  .card,
+  .dashboard-stat-card,
+  .mini-room-card,
+  .quick-action-btn,
+  .dashboard-action-button {
+    padding: var(--spacing-md);
+  }
+
   .dashboard-resize-handle--width {
     right: calc(var(--spacing-xs) * -1.5);
     width: var(--spacing-sm);
@@ -1292,6 +1381,40 @@ body.dashboard-resizing {
   .weather-card__forecast {
     flex-direction: column;
     gap: var(--spacing-xs);
+  }
+
+  .weather-card__main,
+  .event-item,
+  .dashboard-list__item,
+  .mini-member-card {
+    align-items: flex-start;
+  }
+
+  .weather-card__main,
+  .event-item,
+  .mini-member-card,
+  .quick-action-btn,
+  .dashboard-action-button {
+    flex-wrap: wrap;
+  }
+
+  .event-item__time {
+    width: 100%;
+    padding-left: calc(var(--icon-box-md) + var(--spacing-xs));
+    white-space: normal;
+  }
+
+  .dashboard-list__item {
+    flex-direction: column;
+    gap: var(--spacing-xs);
+  }
+
+  .dashboard-list__item span {
+    white-space: normal;
+  }
+
+  .member-status-badge {
+    margin-left: calc(var(--icon-box-md) + var(--spacing-xs));
   }
 
   .stats-section__header,

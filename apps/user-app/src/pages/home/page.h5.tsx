@@ -64,6 +64,17 @@ type ResizeSession = {
 const HEIGHT_ORDER: MemberDashboardLayoutItem['height'][] = ['compact', 'regular', 'tall'];
 const WIDTH_RESIZE_STEP = 72;
 const HEIGHT_RESIZE_STEP = 64;
+const MOBILE_LAYOUT_BREAKPOINT = 900;
+
+function isMobileDashboardLayout() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  if (window.innerWidth <= MOBILE_LAYOUT_BREAKPOINT) {
+    return true;
+  }
+  return window.matchMedia?.('(pointer: coarse)').matches ?? false;
+}
 
 function clampIndex(value: number, max: number) {
   return Math.min(Math.max(value, 0), max);
@@ -1017,6 +1028,7 @@ export default function HomePage() {
   const { t } = useI18n();
   const { memberDisplayName, dashboard, layoutItems, loading, savingLayout, error, saveLayout } = useHomeDashboardData();
   const [editMode, setEditMode] = useState(false);
+  const [mobileLayout, setMobileLayout] = useState(isMobileDashboardLayout);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [resizeSession, setResizeSession] = useState<ResizeSession | null>(null);
@@ -1039,7 +1051,7 @@ export default function HomePage() {
   }, [resizeSession]);
 
   useEffect(() => {
-    if (!resizeSessionRef.current) {
+    if (mobileLayout || !resizeSessionRef.current) {
       return undefined;
     }
 
@@ -1089,7 +1101,32 @@ export default function HomePage() {
       window.removeEventListener('mouseup', handleMouseUp);
       document.body.classList.remove('dashboard-resizing');
     };
-  }, [isResizing, layoutItems]);
+  }, [isResizing, layoutItems, mobileLayout]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const updateLayoutMode = () => {
+      setMobileLayout(isMobileDashboardLayout());
+    };
+
+    updateLayoutMode();
+    window.addEventListener('resize', updateLayoutMode);
+    return () => window.removeEventListener('resize', updateLayoutMode);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileLayout) {
+      return;
+    }
+    setResizeSession(null);
+    resizeSessionRef.current = null;
+    setDragIdx(null);
+    setDragOverIdx(null);
+    dragRef.current = null;
+  }, [mobileLayout]);
 
   const persistLayout = async (nextItems: MemberDashboardLayoutItem[]) => {
     const success = await saveLayout(nextItems);
@@ -1167,6 +1204,8 @@ export default function HomePage() {
   };
 
   const [activeTab, setActiveTab] = useState('home');
+  const desktopEditMode = editMode && !mobileLayout;
+  const mobileManageMode = editMode && mobileLayout;
 
   const tabs = [{ id: 'home', label: t('dashboard.tab.home') }];
 
@@ -1185,7 +1224,7 @@ export default function HomePage() {
             {tab.label}
           </button>
         ))}
-        {editMode && (
+        {desktopEditMode && (
           <button
             type="button"
             className="memory-main-tab memory-main-tab--add"
@@ -1243,11 +1282,11 @@ export default function HomePage() {
           return (
             <div
               key={item.card_ref}
-              className={`dashboard-grid__item dashboard-grid__item--${item.size} dashboard-grid__item--${item.height} ${editMode ? 'dashboard-grid__item--editing' : ''} ${dragIdx === idx ? 'dashboard-grid__item--dragging' : ''} ${dragOverIdx === idx ? 'dashboard-grid__item--drag-over' : ''} ${resizeSession?.cardRef === item.card_ref ? 'dashboard-grid__item--resizing' : ''}`}
-              onDragOver={editMode ? handleDragOver(idx) : undefined}
-              onDrop={editMode ? handleDrop(idx) : undefined}
+              className={`dashboard-grid__item dashboard-grid__item--${item.size} dashboard-grid__item--${item.height} ${desktopEditMode ? 'dashboard-grid__item--editing' : ''} ${dragIdx === idx ? 'dashboard-grid__item--dragging' : ''} ${dragOverIdx === idx ? 'dashboard-grid__item--drag-over' : ''} ${resizeSession?.cardRef === item.card_ref ? 'dashboard-grid__item--resizing' : ''}`}
+              onDragOver={desktopEditMode ? handleDragOver(idx) : undefined}
+              onDrop={desktopEditMode ? handleDrop(idx) : undefined}
             >
-              {editMode ? (
+              {desktopEditMode ? (
                 <DashboardItemControls
                   t={t}
                   onHide={() => void hideCard(item.card_ref)}
@@ -1258,6 +1297,19 @@ export default function HomePage() {
                 />
               ) : null}
               <DashboardCardPanel card={card} t={t} />
+              {mobileManageMode ? (
+                <div className="dashboard-mobile-actions">
+                  <button
+                    className="remove-card-btn remove-card-btn--mobile"
+                    type="button"
+                    onClick={() => void hideCard(item.card_ref)}
+                    title={t('home.hideCard')}
+                  >
+                    <X size={14} />
+                    <span>{t('home.hideCard')}</span>
+                  </button>
+                </div>
+              ) : null}
             </div>
           );
         })}
