@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { PageHeader } from '@familyclaw/user-ui';
-import { useI18n } from '../../runtime/h5-shell';
+import { useH5PageLayoutMode, useI18n } from '../../runtime/h5-shell';
 import { SettingsNav, type SettingsNavKey } from './SettingsNav';
 
 export function SettingsPageShell(props: {
@@ -8,9 +8,15 @@ export function SettingsPageShell(props: {
   children: ReactNode;
 }) {
   const { t } = useI18n();
+  const layoutMode = useH5PageLayoutMode('settings');
 
   return (
-    <div className="page page--settings">
+    <div
+      className="page page--settings"
+      data-layout-mode={layoutMode.id}
+      data-layout-touch={layoutMode.isTouchLayout ? 'true' : 'false'}
+      data-layout-nav={layoutMode.navVariant}
+    >
       <PageHeader title={t('settings.title')} />
       <SettingsNav activeKey={props.activeKey} />
       <div className="settings-content">{props.children}</div>
