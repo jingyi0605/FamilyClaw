@@ -16,9 +16,9 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.core.config import (
-    OFFICIAL_PLUGIN_MARKETPLACE_BRANCH,
-    OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT,
-    OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL,
+    SYSTEM_PLUGIN_MARKETPLACE_BRANCH,
+    SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT,
+    SYSTEM_PLUGIN_MARKETPLACE_REPO_URL,
     settings,
 )
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
@@ -81,7 +81,7 @@ from app.modules.plugin_marketplace.schemas import (
 )
 
 
-BUILTIN_MARKETPLACE_SOURCE_ID = "builtin-official-marketplace"
+BUILTIN_MARKETPLACE_SOURCE_ID = "builtin-system-marketplace"
 MARKETPLACE_ENTRY_FILE_NAME = "entry.json"
 MARKETPLACE_MANIFEST_FILE_NAME = "market.json"
 MARKETPLACE_INVALID_SUMMARY = "插件市场条目校验失败"
@@ -238,7 +238,7 @@ def _to_source_read(row: PluginMarketplaceSource) -> MarketplaceSourceRead:
         effective_repo_url=effective_access.repo_url,
         branch=row.branch,
         entry_root=row.entry_root,
-        trusted_level=row.trusted_level,
+        is_system=row.is_system,
         enabled=row.enabled,
         last_sync_status=row.last_sync_status,
         last_sync_error=raw_error if isinstance(raw_error, dict) else None,
@@ -738,7 +738,7 @@ def _to_catalog_item(
         readme_url=snapshot.readme_url,
         risk_level=snapshot.risk_level,
         latest_version=snapshot.latest_version,
-        trusted_level=source.trusted_level,
+        is_system=source.is_system,
         sync_status=snapshot.sync_status,
         sync_error=sync_error if isinstance(sync_error, dict) else None,
         categories=categories if isinstance(categories, list) else [],
@@ -843,11 +843,11 @@ def ensure_builtin_marketplace_source(
     if existing is not None:
         return existing
 
-    branch = OFFICIAL_PLUGIN_MARKETPLACE_BRANCH.strip() or "main"
-    entry_root = OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins"
+    branch = SYSTEM_PLUGIN_MARKETPLACE_BRANCH.strip() or "main"
+    entry_root = SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins"
     marketplace_client = _get_client(client)
     repo_provider = _resolve_repo_provider(
-        repo_url=OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL.strip(),
+        repo_url=SYSTEM_PLUGIN_MARKETPLACE_REPO_URL.strip(),
         explicit_provider=None,
         client=marketplace_client,
         field_name="repo_provider",
@@ -856,9 +856,9 @@ def ensure_builtin_marketplace_source(
     row = PluginMarketplaceSource(
         source_id=BUILTIN_MARKETPLACE_SOURCE_ID,
         market_id=None,
-        name="官方插件市场",
+        name="内置插件市场",
         owner=None,
-        repo_url=OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL.strip(),
+        repo_url=SYSTEM_PLUGIN_MARKETPLACE_REPO_URL.strip(),
         repo_provider=repo_provider,
         api_base_url=None,
         mirror_repo_url=None,
@@ -866,7 +866,7 @@ def ensure_builtin_marketplace_source(
         mirror_api_base_url=None,
         branch=branch,
         entry_root=entry_root,
-        trusted_level="official",
+        is_system=True,
         enabled=True,
         last_sync_status="idle",
         last_sync_error_json=None,
@@ -948,13 +948,6 @@ def add_marketplace_source(
     branch = (payload.branch or (metadata or {}).get("default_branch") or "main").strip()
     manifest = _load_marketplace_manifest(client=marketplace_client, access=metadata_access, branch=branch)
     entry_root = payload.entry_root or manifest.entry_root
-    if manifest.trusted_level != "third_party":
-        raise PluginMarketplaceServiceError(
-            "手动添加的市场源必须声明为 third_party，不能伪装成官方市场。",
-            error_code="market_repo_structure_invalid",
-            field="repo_url",
-            status_code=400,
-        )
 
     existing = repository.get_marketplace_source_by_repo(
         db,
@@ -984,7 +977,7 @@ def add_marketplace_source(
         mirror_api_base_url=payload.mirror_api_base_url,
         branch=branch,
         entry_root=entry_root,
-        trusted_level="third_party",
+        is_system=False,
         enabled=True,
         last_sync_status="idle",
         last_sync_error_json=None,
@@ -1022,12 +1015,6 @@ def sync_marketplace_source(
         if manifest.entry_root != source.entry_root:
             raise PluginMarketplaceServiceError(
                 "市场仓库 market.json 里的 entry_root 和当前源配置不一致。",
-                error_code="market_repo_structure_invalid",
-                status_code=400,
-            )
-        if manifest.trusted_level != source.trusted_level:
-            raise PluginMarketplaceServiceError(
-                "市场仓库 market.json 里的 trusted_level 和当前源配置不一致。",
                 error_code="market_repo_structure_invalid",
                 status_code=400,
             )
@@ -1223,7 +1210,7 @@ def list_marketplace_catalog(
 
     items.sort(
         key=lambda item: (
-            0 if item.trusted_level == "official" else 1,
+            0 if item.is_system else 1,
             item.name.lower(),
             item.plugin_id,
             item.source_id,
@@ -1514,12 +1501,11 @@ def _get_install_root() -> Path:
 
 def _get_marketplace_install_target_root(
     *,
-    trusted_level: str,
     household_id: str,
     plugin_id: str,
     version: str,
 ) -> Path:
-    return (_get_install_root() / trusted_level / "marketplace" / household_id / plugin_id / version).resolve()
+    return (_get_install_root() / household_id / plugin_id / version).resolve()
 
 
 def create_marketplace_install_task(
@@ -1545,6 +1531,7 @@ def create_marketplace_install_task(
         household_id=payload.household_id,
         plugin_id=payload.plugin_id,
     )
+    existing_mount = _get_plugin_mount_row(db, household_id=payload.household_id, plugin_id=payload.plugin_id)
     if existing_instance is not None and existing_instance.install_status == "installed":
         if existing_instance.source_id != payload.source_id:
             raise PluginMarketplaceServiceError(
@@ -1555,6 +1542,12 @@ def create_marketplace_install_task(
         raise PluginMarketplaceServiceError(
             "这个插件已经安装过了。",
             error_code="plugin_already_installed",
+            status_code=409,
+        )
+    if existing_mount is not None and existing_mount.install_method not in {None, "marketplace"}:
+        raise PluginMarketplaceServiceError(
+            "这个插件当前已经通过本地安装方式存在，不能直接切到市场安装。",
+            error_code="plugin_source_mismatch",
             status_code=409,
         )
 
@@ -1640,7 +1633,6 @@ def create_marketplace_install_task(
             _set_install_task_stage(task, stage="installing")
             db.flush()
             target_root = _get_marketplace_install_target_root(
-                trusted_level=source.trusted_level,
                 household_id=payload.household_id,
                 plugin_id=payload.plugin_id,
                 version=version_entry.version,
@@ -1652,13 +1644,18 @@ def create_marketplace_install_task(
 
         relative_manifest_path = manifest_path.resolve().relative_to(package_root.resolve())
         target_manifest_path = (target_root / relative_manifest_path).resolve()
-        mount_row = _get_plugin_mount_row(db, household_id=payload.household_id, plugin_id=payload.plugin_id)
+        mount_row = existing_mount or _get_plugin_mount_row(
+            db,
+            household_id=payload.household_id,
+            plugin_id=payload.plugin_id,
+        )
         if mount_row is None:
             register_plugin_mount(
                 db,
                 household_id=payload.household_id,
                 payload=PluginMountCreate(
-                    source_type=source.trusted_level,
+                    source_type="third_party",
+                    install_method="marketplace",
                     plugin_root=str(target_root),
                     manifest_path=str(target_manifest_path),
                     python_path=sys.executable,
@@ -1667,7 +1664,8 @@ def create_marketplace_install_task(
                 ),
             )
         else:
-            mount_row.source_type = source.trusted_level
+            mount_row.source_type = "third_party"
+            mount_row.install_method = "marketplace"
             mount_row.execution_backend = "subprocess_runner"
             mount_row.manifest_path = str(target_manifest_path)
             mount_row.plugin_root = str(target_root)
@@ -1856,7 +1854,6 @@ def _switch_marketplace_instance_version(
             )
 
             target_root = _get_marketplace_install_target_root(
-                trusted_level=source.trusted_level,
                 household_id=instance.household_id,
                 plugin_id=instance.plugin_id,
                 version=target_version_entry.version,
@@ -1881,7 +1878,8 @@ def _switch_marketplace_instance_version(
         instance.installed_at = utc_now_iso()
         instance.updated_at = utc_now_iso()
 
-        mount.source_type = source.trusted_level
+        mount.source_type = "third_party"
+        mount.install_method = "marketplace"
         mount.execution_backend = "subprocess_runner"
         mount.manifest_path = str(target_manifest_path)
         mount.plugin_root = str(target_root)

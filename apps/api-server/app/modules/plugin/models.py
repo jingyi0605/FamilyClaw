@@ -63,6 +63,7 @@ class PluginMount(Base):
     )
     plugin_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    install_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
     execution_backend: Mapped[str] = mapped_column(String(30), nullable=False, default="subprocess_runner")
     manifest_path: Mapped[str] = mapped_column(Text, nullable=False)
     plugin_root: Mapped[str] = mapped_column(Text, nullable=False)

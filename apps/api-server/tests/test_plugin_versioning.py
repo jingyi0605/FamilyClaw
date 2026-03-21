@@ -52,12 +52,12 @@ class PluginVersioningTests(unittest.TestCase):
 
     def test_resolve_non_market_version_governance_returns_stable_state(self) -> None:
         result = resolve_non_market_version_governance(
-            source_type="manual",
+            source_type="local",
             declared_version="1.0.0",
             installed_version="1.0.0",
         )
         self.assertEqual("not_market_managed", result.update_state)
-        self.assertEqual("manual", result.source_type)
+        self.assertEqual("local", result.source_type)
 
 
 if __name__ == "__main__":

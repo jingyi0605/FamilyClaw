@@ -148,12 +148,12 @@ class PluginMarketplaceApiTests(unittest.TestCase):
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
         self.SessionLocal = self._db_helper.SessionLocal
-        self._previous_official_repo = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL
-        self._previous_official_branch = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH
-        self._previous_entry_root = marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT
-        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL = OFFICIAL_MARKET_REPO_URL
-        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH = "main"
-        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
+        self._previous_official_repo = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL
+        self._previous_official_branch = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH
+        self._previous_entry_root = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = OFFICIAL_MARKET_REPO_URL
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = "main"
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
 
         self.fake_client = self._build_fake_client()
         self._patcher = patch(
@@ -203,9 +203,9 @@ class PluginMarketplaceApiTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.client.close()
         self._patcher.stop()
-        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_REPO_URL = self._previous_official_repo
-        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_BRANCH = self._previous_official_branch
-        marketplace_service.OFFICIAL_PLUGIN_MARKETPLACE_ENTRY_ROOT = self._previous_entry_root
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = self._previous_official_repo
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = self._previous_official_branch
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = self._previous_entry_root
         self._db_helper.close()
 
     def test_add_sync_install_and_enable_endpoint_flow(self) -> None:
@@ -214,18 +214,24 @@ class PluginMarketplaceApiTests(unittest.TestCase):
             json={"repo_url": THIRD_PARTY_MARKET_REPO_URL},
         )
         self.assertEqual(200, add_response.status_code)
-        source_id = add_response.json()["source_id"]
+        add_data = add_response.json()
+        self.assertFalse(add_data["is_system"])
+        source_id = add_data["source_id"]
 
         sync_response = self.client.post(f"{settings.api_v1_prefix}/plugin-marketplace/sources/{source_id}/sync")
         self.assertEqual(200, sync_response.status_code)
-        self.assertEqual(1, sync_response.json()["ready_entries"])
+        sync_data = sync_response.json()
+        self.assertFalse(sync_data["source"]["is_system"])
+        self.assertEqual(1, sync_data["ready_entries"])
 
         catalog_response = self.client.get(
             f"{settings.api_v1_prefix}/plugin-marketplace/catalog",
             params={"household_id": self.household_id},
         )
         self.assertEqual(200, catalog_response.status_code)
-        self.assertEqual(1, len(catalog_response.json()["items"]))
+        catalog_data = catalog_response.json()
+        self.assertEqual(1, len(catalog_data["items"]))
+        self.assertFalse(catalog_data["items"][0]["is_system"])
 
         install_response = self.client.post(
             f"{settings.api_v1_prefix}/plugin-marketplace/install-tasks",
@@ -243,9 +249,11 @@ class PluginMarketplaceApiTests(unittest.TestCase):
             f"{settings.api_v1_prefix}/plugin-marketplace/catalog",
             params={"household_id": self.household_id},
         )
-        instance_id = catalog_after_install.json()["items"][0]["install_state"]["instance_id"]
+        catalog_after_install_data = catalog_after_install.json()
+        instance_id = catalog_after_install_data["items"][0]["install_state"]["instance_id"]
         self.assertIsNotNone(instance_id)
-        self.assertFalse(catalog_after_install.json()["items"][0]["install_state"]["enabled"])
+        self.assertFalse(catalog_after_install_data["items"][0]["install_state"]["enabled"])
+        self.assertFalse(catalog_after_install_data["items"][0]["is_system"])
 
         enable_response = self.client.post(
             f"{settings.api_v1_prefix}/plugin-marketplace/instances/{instance_id}/enable",
@@ -256,6 +264,29 @@ class PluginMarketplaceApiTests(unittest.TestCase):
             "plugin_marketplace_not_configured",
             enable_response.json()["detail"]["error_code"],
         )
+
+    def test_list_sources_exposes_is_system_flag(self) -> None:
+        list_response = self.client.get(f"{settings.api_v1_prefix}/plugin-marketplace/sources")
+        self.assertEqual(200, list_response.status_code)
+        sources = list_response.json()
+        builtin_source = next(item for item in sources if item["repo_url"] == OFFICIAL_MARKET_REPO_URL)
+        self.assertTrue(builtin_source["is_system"])
+
+        add_response = self.client.post(
+            f"{settings.api_v1_prefix}/plugin-marketplace/sources",
+            json={"repo_url": THIRD_PARTY_MARKET_REPO_URL},
+        )
+        self.assertEqual(200, add_response.status_code)
+        add_data = add_response.json()
+        self.assertFalse(add_data["is_system"])
+        sync_response = self.client.post(f"{settings.api_v1_prefix}/plugin-marketplace/sources/{add_data['source_id']}/sync")
+        self.assertEqual(200, sync_response.status_code)
+
+        relist_response = self.client.get(f"{settings.api_v1_prefix}/plugin-marketplace/sources")
+        self.assertEqual(200, relist_response.status_code)
+        relist_sources = relist_response.json()
+        third_party_source = next(item for item in relist_sources if item["repo_url"] == THIRD_PARTY_MARKET_REPO_URL)
+        self.assertFalse(third_party_source["is_system"])
 
     def test_version_options_endpoint_returns_backend_computed_actions(self) -> None:
         add_response = self.client.post(
@@ -312,7 +343,7 @@ class PluginMarketplaceApiTests(unittest.TestCase):
                 "repo_url": OFFICIAL_MARKET_REPO_URL,
                 "default_branch": "main",
                 "entry_root": "plugins",
-                "is_system": True,
+                "trusted_level": "official",
             },
             (THIRD_PARTY_MARKET_REPO_URL, "market.json", "main"): {
                 "market_id": "third-party-market",
@@ -321,7 +352,7 @@ class PluginMarketplaceApiTests(unittest.TestCase):
                 "repo_url": THIRD_PARTY_MARKET_REPO_URL,
                 "default_branch": "main",
                 "entry_root": "plugins",
-                "is_system": False,
+                "trusted_level": "third_party",
             },
             (THIRD_PARTY_MARKET_REPO_URL, "plugins/demo-plugin/entry.json", "main"): {
                 "plugin_id": "demo-plugin",
