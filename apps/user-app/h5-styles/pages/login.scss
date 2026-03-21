@@ -944,6 +944,27 @@ body,
     display: none;
   }
 
+  .theme-switcher__dropdown {
+    width: 50vw;
+  }
+
+  .theme-switcher__list {
+    max-height: none;
+  }
+
+  .lang-switcher__dropdown {
+    right: auto;
+    left: 0;
+    min-width: 50vw;
+    max-width: 50vw;
+  }
+
+  .theme-switcher__item,
+  .lang-switcher__item {
+    border: none;
+    background: transparent;
+  }
+
   .login-container {
     width: 80%;
     margin: 0 10%;

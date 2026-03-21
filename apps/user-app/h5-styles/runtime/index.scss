@@ -9884,10 +9884,12 @@ body::before {
   gap: var(--spacing-sm);
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
+  border: none;
   border-radius: var(--radius-md);
   transition: all var(--transition);
   cursor: pointer;
   text-align: left;
+  background: transparent;
 }
 
 .theme-switcher__item:hover {
@@ -9997,8 +9999,11 @@ body::before {
   gap: var(--spacing-sm);
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
+  border: none;
+  border-radius: var(--radius-md);
   transition: all var(--transition);
   cursor: pointer;
+  background: transparent;
 }
 
 .lang-switcher__item:hover {
@@ -10572,12 +10577,18 @@ body::before {
   }
 
   .theme-switcher__dropdown {
-    width: min(280px, calc(100vw - 24px));
+    width: 50vw;
+  }
+
+  .theme-switcher__list {
+    max-height: none;
   }
 
   .lang-switcher__dropdown {
-    min-width: 148px;
-    max-width: calc(100vw - 24px);
+    right: auto;
+    left: 0;
+    min-width: 50vw;
+    max-width: 50vw;
   }
 
   .login-container {
