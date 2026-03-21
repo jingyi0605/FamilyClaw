@@ -22,6 +22,7 @@ import {
   RnTabBar,
   rnFoundationTokens,
   rnSemanticTokens,
+  useRnPageLayoutMode,
 } from '../../runtime/rn-shell';
 
 /* ─── 辅助函数 ─── */
@@ -237,40 +238,46 @@ const styles = StyleSheet.create({
 
 function HomeContent() {
   const { t } = useI18n();
+  const layoutMode = useRnPageLayoutMode('dashboard');
   const { memberDisplayName, dashboard, layoutItems, loading, error } = useHomeDashboardData();
   const cardMap = buildCardMap(dashboard?.cards ?? []);
   const visibleItems = buildVisibleLayoutItems(layoutItems, cardMap);
+  const contentSpacing = layoutMode.headerDensity === 'compact'
+    ? rnFoundationTokens.spacing.sm
+    : rnFoundationTokens.spacing.md;
 
   return (
     <RnPageShell safeAreaBottom={false}>
       <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.homeOverview} style={styles.guideAnchor}>
-        <WelcomeBanner memberDisplayName={memberDisplayName} t={t} />
+        <View style={{ gap: contentSpacing }}>
+          <WelcomeBanner memberDisplayName={memberDisplayName} t={t} />
 
-        {error ? (
-          <RnCard variant="warning">
-            <RnText variant="body" tone="warning">{error}</RnText>
-          </RnCard>
-        ) : null}
+          {error ? (
+            <RnCard variant="warning">
+              <RnText variant="body" tone="warning">{error}</RnText>
+            </RnCard>
+          ) : null}
 
-        {loading && !dashboard ? (
-          <RnSection title={t('common.loading')}>
-            <RnText variant="body" tone="secondary">{t('common.loading')}</RnText>
-          </RnSection>
-        ) : null}
+          {loading && !dashboard ? (
+            <RnSection title={t('common.loading')}>
+              <RnText variant="body" tone="secondary">{t('common.loading')}</RnText>
+            </RnSection>
+          ) : null}
 
-      {!loading && visibleItems.length === 0 ? (
-        <RnEmptyState
-          icon="📊"
-          title={t('home.emptyDashboard')}
-          description={t('home.emptyDashboardDesc')}
-        />
-      ) : null}
+          {!loading && visibleItems.length === 0 ? (
+            <RnEmptyState
+              icon="📊"
+              title={t('home.emptyDashboard')}
+              description={t('home.emptyDashboardDesc')}
+            />
+          ) : null}
 
-      {visibleItems.map(item => {
-        const card = cardMap[item.card_ref];
-        if (!card) return null;
-        return <DashboardCard key={item.card_ref} card={card} t={t} />;
-      })}
+          {visibleItems.map(item => {
+            const card = cardMap[item.card_ref];
+            if (!card) return null;
+            return <DashboardCard key={item.card_ref} card={card} t={t} />;
+          })}
+        </View>
 
         <RnTabBar />
       </GuideAnchor>

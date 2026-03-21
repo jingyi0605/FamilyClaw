@@ -10,6 +10,7 @@ type RnRoutePlaceholderProps = {
   path: string;
   title: string;
   guideAnchorId?: string;
+  description?: string;
 };
 
 export function RnRoutePlaceholder(props: RnRoutePlaceholderProps) {
@@ -28,7 +29,7 @@ export function RnRoutePlaceholder(props: RnRoutePlaceholderProps) {
               {props.title}
             </RnText>
             <RnText variant="body" tone="secondary" style={{ marginBottom: rnFoundationTokens.spacing.sm }}>
-              {getPageMessage(locale, 'rn.placeholder.description')}
+              {props.description ?? getPageMessage(locale, 'rn.placeholder.description')}
             </RnText>
             <RnButton variant="secondary" onPress={() => void Taro.reLaunch({ url: '/pages/entry/index' })}>
               {getPageMessage(locale, 'featurePlaceholder.backToEntry')}

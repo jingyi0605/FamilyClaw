@@ -10,8 +10,20 @@ export { UiInput } from './components/UiInput';
 export { UiTag } from './components/UiTag';
 export { UiText } from './components/UiText';
 export {
+  createSharedThemeContract,
+  resolveSharedThemeContract,
+  sharedPageLayoutBlueprint,
+  type SharedThemeContract,
+  type SharedThemeValueSource,
+} from './theme/contract';
+export {
+  mapThemeContractToCssVariables,
+  mapThemeContractToRnTokens,
+} from './theme/contractMappers';
+export {
   userAppComponentTokens,
   userAppFoundationTokens,
+  userAppPagePatternTokens,
   userAppSemanticTokens,
   userAppTokens,
 } from './theme/tokens';

@@ -1,3 +1,6 @@
+import { resolveSharedThemeContract } from './contract';
+import { mapThemeContractToCssVariables } from './contractMappers';
+
 export type ThemeId = string;
 
 export interface UserAppTheme {
@@ -264,65 +267,5 @@ export function getRuntimeThemePlaceholder(): UserAppTheme {
 }
 
 export function getThemeCssVariables(theme: UserAppTheme) {
-  return {
-    '--bg-app': theme.bgApp,
-    '--bg-surface': theme.bgSurface,
-    '--bg-card': theme.bgCard,
-    '--bg-card-hover': theme.bgCardHover,
-    '--bg-sidebar': theme.bgSidebar,
-    '--bg-input': theme.bgInput,
-    '--bg-tertiary': theme.bgInput,
-    '--text-primary': theme.textPrimary,
-    '--text-secondary': theme.textSecondary,
-    '--text-tertiary': theme.textTertiary,
-    '--text-inverse': theme.textInverse,
-    '--brand-primary': theme.brandPrimary,
-    '--brand-primary-hover': theme.brandPrimaryHover,
-    '--brand-primary-light': theme.brandPrimaryLight,
-    '--brand-secondary': theme.brandSecondary,
-    '--color-success': theme.success,
-    '--color-success-light': theme.successLight,
-    '--color-warning': theme.warning,
-    '--color-warning-light': theme.warningLight,
-    '--color-danger': theme.danger,
-    '--color-danger-light': theme.dangerLight,
-    '--color-info': theme.info,
-    '--color-info-light': theme.infoLight,
-    '--border': theme.border,
-    '--border-default': theme.border,
-    '--border-light': theme.borderLight,
-    '--divider': theme.divider,
-    '--shadow-sm': theme.shadowSm,
-    '--shadow-md': theme.shadowMd,
-    '--shadow-lg': theme.shadowLg,
-    '--radius-sm': theme.radiusSm,
-    '--radius-md': theme.radiusMd,
-    '--radius-lg': theme.radiusLg,
-    '--radius-xl': theme.radiusXl,
-    '--radius-full': '999px',
-    '--font-size-xs': theme.fontSizeXs,
-    '--font-size-sm': theme.fontSizeSm,
-    '--font-size-md': theme.fontSizeMd,
-    '--font-size-lg': theme.fontSizeLg,
-    '--font-size-xl': theme.fontSizeXl,
-    '--font-size-xxl': theme.fontSizeXxl,
-    '--font-size-hero': theme.fontSizeHero,
-    '--spacing-xs': theme.spacingXs,
-    '--spacing-sm': theme.spacingSm,
-    '--spacing-md': theme.spacingMd,
-    '--spacing-lg': theme.spacingLg,
-    '--spacing-xl': theme.spacingXl,
-    '--spacing-xxl': theme.spacingXxl,
-    '--nav-width': theme.navWidth,
-    '--nav-bg': theme.navBg,
-    '--nav-text': theme.navText,
-    '--nav-text-active': theme.navTextActive,
-    '--nav-item-hover': theme.navItemHover,
-    '--nav-item-active': theme.navItemActive,
-    '--transition': theme.transition,
-    '--glow-color': theme.glowColor,
-    '--gradient-primary': theme.gradientPrimary,
-    '--gradient-card': theme.gradientCard,
-    '--animation-speed': theme.animationSpeed,
-  } as const;
+  return mapThemeContractToCssVariables(resolveSharedThemeContract(theme));
 }

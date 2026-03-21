@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 import './styles-entry';
 import { GuideAnchor, USER_GUIDE_ANCHOR_IDS } from '../../runtime';
-import { useI18n } from '../../runtime/h5-shell';
+import { useH5PageLayoutMode, useI18n } from '../../runtime/h5-shell';
 import type { ShellMessageKey } from '../../runtime/h5-shell/i18n/I18nProvider';
 import {
   buildCardMap,
@@ -64,18 +64,6 @@ type ResizeSession = {
 const HEIGHT_ORDER: MemberDashboardLayoutItem['height'][] = ['compact', 'regular', 'tall'];
 const WIDTH_RESIZE_STEP = 72;
 const HEIGHT_RESIZE_STEP = 64;
-const MOBILE_LAYOUT_BREAKPOINT = 900;
-
-function isMobileDashboardLayout() {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  if (window.innerWidth <= MOBILE_LAYOUT_BREAKPOINT) {
-    return true;
-  }
-  return window.matchMedia?.('(pointer: coarse)').matches ?? false;
-}
-
 function clampIndex(value: number, max: number) {
   return Math.min(Math.max(value, 0), max);
 }
@@ -1026,13 +1014,14 @@ function DashboardItemControls({
 
 export default function HomePage() {
   const { t } = useI18n();
+  const layoutMode = useH5PageLayoutMode('dashboard');
   const { memberDisplayName, dashboard, layoutItems, loading, savingLayout, error, saveLayout } = useHomeDashboardData();
   const [editMode, setEditMode] = useState(false);
-  const [mobileLayout, setMobileLayout] = useState(isMobileDashboardLayout);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [resizeSession, setResizeSession] = useState<ResizeSession | null>(null);
   const isResizing = resizeSession !== null;
+  const mobileLayout = layoutMode.isTouchLayout;
   const dragRef = useRef<number | null>(null);
   const resizeSessionRef = useRef<ResizeSession | null>(null);
   const previewLayoutItems = resizeSession
@@ -1051,7 +1040,7 @@ export default function HomePage() {
   }, [resizeSession]);
 
   useEffect(() => {
-    if (mobileLayout || !resizeSessionRef.current) {
+    if (!layoutMode.allowMouseResize || !resizeSessionRef.current) {
       return undefined;
     }
 
@@ -1101,21 +1090,7 @@ export default function HomePage() {
       window.removeEventListener('mouseup', handleMouseUp);
       document.body.classList.remove('dashboard-resizing');
     };
-  }, [isResizing, layoutItems, mobileLayout]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return undefined;
-    }
-
-    const updateLayoutMode = () => {
-      setMobileLayout(isMobileDashboardLayout());
-    };
-
-    updateLayoutMode();
-    window.addEventListener('resize', updateLayoutMode);
-    return () => window.removeEventListener('resize', updateLayoutMode);
-  }, []);
+  }, [layoutItems, layoutMode.allowMouseResize]);
 
   useEffect(() => {
     if (!mobileLayout) {
@@ -1204,13 +1179,18 @@ export default function HomePage() {
   };
 
   const [activeTab, setActiveTab] = useState('home');
-  const desktopEditMode = editMode && !mobileLayout;
+  const desktopEditMode = editMode && layoutMode.allowDragSort;
   const mobileManageMode = editMode && mobileLayout;
 
   const tabs = [{ id: 'home', label: t('dashboard.tab.home') }];
 
   return (
-    <div className="page page--home">
+    <div
+      className="page page--home"
+      data-layout-mode={layoutMode.id}
+      data-layout-touch={layoutMode.isTouchLayout ? 'true' : 'false'}
+      data-layout-columns={String(layoutMode.columns)}
+    >
       <PageHeader title={t('dashboard.title')} />
 
       <div className="memory-main-tabs">

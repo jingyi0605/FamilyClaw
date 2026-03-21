@@ -13,6 +13,7 @@ import {
   RnButton,
   rnFoundationTokens,
   rnSemanticTokens,
+  useRnPageLayoutMode,
 } from '../../runtime/rn-shell';
 import type {
   ThemeFallbackNotice,
@@ -458,6 +459,7 @@ const aboutStyles = StyleSheet.create({
 function SettingsContent() {
   const router = useRouter();
   const { t, locale, locales, setLocale, formatLocaleLabel } = useI18n();
+  const layoutMode = useRnPageLayoutMode('settings');
   const {
     theme: currentTheme,
     themeList,
@@ -571,46 +573,48 @@ function SettingsContent() {
 
   return (
     <RnPageShell safeAreaBottom={false}>
-      <RnPageHeader title={t('settings.title')} />
-      <SegmentedControl
-        options={sectionOptions}
-        value={activeSection}
-        onChange={section => setActiveSection(section as SettingsSection)}
-      />
-
-      {activeSection === 'appearance' ? (
-        <AppearanceSection
-          currentTheme={currentTheme}
-          themeList={themeList}
-          themeListLoading={themeListLoading}
-          themeListError={themeListError}
-          themeFallbackNotice={themeFallbackNotice}
-          getThemeVersionInfo={getThemeVersionInfo}
-          onThemeChange={selection => setTheme(selection)}
-          t={t}
+      <View style={{ gap: layoutMode.headerDensity === 'compact' ? rnFoundationTokens.spacing.sm : rnFoundationTokens.spacing.md }}>
+        <RnPageHeader title={t('settings.title')} />
+        <SegmentedControl
+          options={sectionOptions}
+          value={activeSection}
+          onChange={section => setActiveSection(section as SettingsSection)}
         />
-      ) : null}
 
-      {activeSection === 'language' ? (
-        <LanguageSection
-          locale={locale}
-          locales={processedLocales}
-          timezone={timezone}
-          onLocaleChange={handleLocaleChange}
-          onTimezoneChange={handleTimezoneChange}
-          formatLocaleLabel={item => formatLocaleLabel(item)}
-          t={t}
-        />
-      ) : null}
+        {activeSection === 'appearance' ? (
+          <AppearanceSection
+            currentTheme={currentTheme}
+            themeList={themeList}
+            themeListLoading={themeListLoading}
+            themeListError={themeListError}
+            themeFallbackNotice={themeFallbackNotice}
+            getThemeVersionInfo={getThemeVersionInfo}
+            onThemeChange={selection => setTheme(selection)}
+            t={t}
+          />
+        ) : null}
 
-      {activeSection === 'about' ? (
-        <AboutSection
-          versionInfo={versionInfo}
-          loading={versionLoading}
-          onReplayGuide={() => startGuide('manual')}
-          t={t}
-        />
-      ) : null}
+        {activeSection === 'language' ? (
+          <LanguageSection
+            locale={locale}
+            locales={processedLocales}
+            timezone={timezone}
+            onLocaleChange={handleLocaleChange}
+            onTimezoneChange={handleTimezoneChange}
+            formatLocaleLabel={item => formatLocaleLabel(item)}
+            t={t}
+          />
+        ) : null}
+
+        {activeSection === 'about' ? (
+          <AboutSection
+            versionInfo={versionInfo}
+            loading={versionLoading}
+            onReplayGuide={() => startGuide('manual')}
+            t={t}
+          />
+        ) : null}
+      </View>
 
       <RnTabBar />
     </RnPageShell>

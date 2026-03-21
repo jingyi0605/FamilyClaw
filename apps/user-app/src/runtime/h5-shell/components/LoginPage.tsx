@@ -103,6 +103,13 @@ export function H5LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [focusedField, setFocusedField] = useState<string | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return window.innerWidth <= 900;
+  });
+  const pageRef = useRef<HTMLDivElement>(null);
   const usernameInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
 
@@ -124,6 +131,43 @@ export function H5LoginPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const syncViewport = () => {
+      setIsMobileViewport(window.innerWidth <= 900);
+    };
+
+    syncViewport();
+    window.addEventListener('resize', syncViewport);
+
+    return () => {
+      window.removeEventListener('resize', syncViewport);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return undefined;
+    }
+
+    const body = document.body;
+    const html = document.documentElement;
+    const pageElement = pageRef.current?.closest('.taro_page');
+
+    html.classList.add('login-page-host');
+    body.classList.add('login-page-host');
+    pageElement?.classList.add('login-page-host__page');
+
+    return () => {
+      html.classList.remove('login-page-host');
+      body.classList.remove('login-page-host');
+      pageElement?.classList.remove('login-page-host__page');
+    };
+  }, []);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextUsername = (usernameInputRef.current?.value ?? username).trim();
@@ -137,7 +181,7 @@ export function H5LoginPage() {
   }
 
   return (
-    <div className="login-page">
+    <div ref={pageRef} className="login-page">
       <div className="login-bg">
         <div className="login-bg__gradient" />
         <FloatingShapes />
@@ -152,8 +196,8 @@ export function H5LoginPage() {
       <div className="login-container">
         <div className="login-brand">
           <div className="login-brand__content">
-            <div className="login-brand__logo">
-              <svg width="56" height="56" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" className="login-brand__logo-icon">
+            <div className={`login-brand__logo ${isMobileViewport ? 'login-brand__logo--stacked' : ''}`}>
+              <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" className="login-brand__logo-icon">
                 <path d="M14 25c-1.1 0-2.2-.7-3.3-1.8C8.6 20.5 7 18 7 15c0-2.8 2-5 4.5-5 1.2 0 2 .5 2.5 1.3.5-.8 1.3-1.3 2.5-1.3 2.5 0 4.5 2.2 4.5 5 0 3-1.6 5.5-3.7 8.2C16.2 24.3 15.1 25 14 25Z" fill="currentColor" opacity="0.9" />
                 <ellipse cx="7.5" cy="8" rx="2.5" ry="3" fill="currentColor" />
                 <ellipse cx="14" cy="6" rx="2.5" ry="3" fill="currentColor" />
@@ -164,21 +208,23 @@ export function H5LoginPage() {
               <span className="login-brand__logo-text">FamilyClaw</span>
             </div>
             <h1 className="login-brand__title">{t('login.welcome')}</h1>
-            <p className="login-brand__desc">{t('login.subtitle')}</p>
-            <div className="login-brand__features">
-              <div className="login-brand__feature">
-                <span className="login-brand__feature-icon">💬</span>
-                <span>{t('login.feature1')}</span>
+            {isMobileViewport ? null : <p className="login-brand__desc">{t('login.subtitle')}</p>}
+            {isMobileViewport ? null : (
+              <div className="login-brand__features">
+                <div className="login-brand__feature">
+                  <span className="login-brand__feature-icon">💬</span>
+                  <span>{t('login.feature1')}</span>
+                </div>
+                <div className="login-brand__feature">
+                  <span className="login-brand__feature-icon">🧠</span>
+                  <span>{t('login.feature2')}</span>
+                </div>
+                <div className="login-brand__feature">
+                  <span className="login-brand__feature-icon">🔒</span>
+                  <span>{t('login.feature3')}</span>
+                </div>
               </div>
-              <div className="login-brand__feature">
-                <span className="login-brand__feature-icon">🧠</span>
-                <span>{t('login.feature2')}</span>
-              </div>
-              <div className="login-brand__feature">
-                <span className="login-brand__feature-icon">🔒</span>
-                <span>{t('login.feature3')}</span>
-              </div>
-            </div>
+            )}
           </div>
           <div className="login-brand__decoration">
             <div className="login-brand__orb login-brand__orb--1" />
@@ -200,7 +246,7 @@ export function H5LoginPage() {
               </label>
               <div className="login-form__input-wrapper">
                 <span className="login-form__input-icon">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                     <circle cx="12" cy="7" r="4" />
                   </svg>
@@ -230,7 +276,7 @@ export function H5LoginPage() {
               </label>
               <div className="login-form__input-wrapper">
                 <span className="login-form__input-icon">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>

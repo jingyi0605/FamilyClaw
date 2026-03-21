@@ -5,12 +5,14 @@ import process from 'node:process';
 const appRoot = path.resolve(import.meta.dirname, '..');
 
 const protectedFiles = [
+  '../../packages/user-ui/src/theme/contract.ts',
   'src/components/AppUi.tsx',
   'src/components/AppShellPage.tsx',
   'src/components/AuthShellPage.tsx',
   'src/components/MainShellPage.tsx',
   'src/components/FeaturePlaceholder.tsx',
   'src/runtime/guard.tsx',
+  'src/runtime/shared/layout/pageLayout.ts',
   'src/pages/login/index.tsx',
   'src/pages/settings/SettingsPageShell.tsx',
   'src/pages/settings/index.tsx',
@@ -31,11 +33,13 @@ const rules = [
     name: '禁止手写 rem',
     pattern: /(?<![\w-])\d*\.?\d+rem\b/g,
     message: '请改用 token、共享组件，或在样式文件里继续走设计稿 px + Taro 换算链路。',
+    excludeFiles: ['../../packages/user-ui/src/theme/contract.ts'],
   },
   {
     name: '禁止在 JSX/TS 里写固定 px',
     pattern: /['"`]\d*\.?\d+px['"`]/g,
     message: '请改用 token、共享组件，避免在 JSX/TS 里直接写死像素字符串。',
+    excludeFiles: ['../../packages/user-ui/src/theme/contract.ts'],
   },
   {
     name: '禁止把 AI 供应商 Logo 映射写回核心',
@@ -57,6 +61,12 @@ const rules = [
     pattern: /\bbuildRegistryAdapter\b|capabilities\.ai_provider/g,
     message: 'AI 设置页只能消费 /provider-adapters 返回的插件契约，不能再从 PluginRegistryItem 重建 provider adapter。',
   },
+  {
+    name: '禁止在共享契约层夹带平台专属实现',
+    pattern: /\bStyleSheet\b|\bSafeArea\b|\belevation\s*:\s*\d+|position\s*:\s*fixed|\bmatchMedia\b/g,
+    message: '共享契约和共享布局层只能定义语义、token 和布局模式，平台专属实现必须留在 H5/RN 适配层。',
+    files: ['../../packages/user-ui/src/theme/contract.ts', 'src/runtime/shared/layout/pageLayout.ts'],
+  },
 ];
 
 function getLineNumber(source, index) {
@@ -70,6 +80,12 @@ for (const relativePath of protectedFiles) {
   const source = readFileSync(absolutePath, 'utf8');
 
   for (const rule of rules) {
+    if (rule.files && !rule.files.some(candidate => relativePath.includes(candidate))) {
+      continue;
+    }
+    if (rule.excludeFiles && rule.excludeFiles.some(candidate => relativePath.includes(candidate))) {
+      continue;
+    }
     const matches = [...source.matchAll(rule.pattern)];
     for (const match of matches) {
       violations.push({

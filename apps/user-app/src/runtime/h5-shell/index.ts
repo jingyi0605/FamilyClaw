@@ -5,3 +5,4 @@ export { ThemeSwitcher } from './components/ThemeSwitcher';
 export { LanguageSwitcher } from './components/LanguageSwitcher';
 export { H5LoginPage } from './components/LoginPage';
 export { AppLayoutShell } from './components/AppLayoutShell';
+export { useH5PageLayoutMode } from './layout/useH5PageLayoutMode';

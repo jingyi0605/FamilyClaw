@@ -16,6 +16,7 @@ import type {
   ScheduledTaskConversationProposalPayload,
 } from './assistant.types';
 import { GuardedPage, useAuthContext, useHouseholdContext, useI18n, useSetupContext, useTheme } from '../../runtime';
+import { useH5PageLayoutMode } from '../../runtime/h5-shell';
 import './styles-entry';
 
 type EmptyStateProps = {
@@ -405,6 +406,7 @@ function AssistantPageContent() {
   const { setupStatus } = useSetupContext();
   const { currentHouseholdId, currentHousehold } = useHouseholdContext();
   const { t, locale } = useI18n();
+  const layoutMode = useH5PageLayoutMode('assistant');
   const { themeId } = useTheme();
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState('');
@@ -437,6 +439,13 @@ function AssistantPageContent() {
     [agents, defaultAgent, selectedAgentId],
   );
   const canSwitchAgent = conversationAgents.length > 1;
+
+  useEffect(() => {
+    if (!layoutMode.isTouchLayout) {
+      return;
+    }
+    setContextPanelOpen(false);
+  }, [layoutMode.isTouchLayout]);
   const recentFacts = useMemo(() => {
     const uniqueFacts: ConversationMessage['facts'] = [];
     const seen = new Set<string>();
@@ -1185,7 +1194,12 @@ function AssistantPageContent() {
   }
 
   return (
-    <div className="page page--assistant">
+    <div
+      className="page page--assistant"
+      data-layout-mode={layoutMode.id}
+      data-layout-touch={layoutMode.isTouchLayout ? 'true' : 'false'}
+      data-layout-panel={layoutMode.panelBehavior}
+    >
       <PageHeader title={t('nav.assistant')} />
 
       <div className="memory-main-tabs">
