@@ -138,6 +138,13 @@ Pay special attention to:
 - `supports_discovery`
 - `supports_actions`
 - `supports_cards`
+- `instance_display_name_placeholder`
+- `instance_display_name_placeholder_key`
+
+Those last two fields are only for the instance-name input placeholder during manual creation.
+
+- They are hints, not saved defaults.
+- The host should render them, not turn them into actual input values.
 
 ### `channel`
 

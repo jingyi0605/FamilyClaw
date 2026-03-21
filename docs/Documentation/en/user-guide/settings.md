@@ -20,6 +20,7 @@ outline: deep
 
 - **Appearance and themes**: choose built-in themes or plugin-provided themes. If a theme is unavailable, the page shows a disabled warning. When you switch themes, the new theme takes effect and is saved immediately.
 - **Language and time zone**: choose the default family language and time zone. This affects time display and translation resources, and the page may need a refresh afterward.
+- **Devices and integrations**: create instances for connected plugins. The instance-name field now stays empty by default, and each plugin can declare its own suggested placeholder. The system only renders that suggestion instead of silently saving the plugin name as your final instance name.
 - **Notifications and accessibility**: this area is still mostly placeholder content in the current version.
 - **AI Settings shortcut**: a direct entry into the AI configuration subpage.
 
@@ -61,6 +62,7 @@ Those local providers are handled as local-only by default and are not automatic
 
 - **Theme is missing or invalid**: the related theme plugin may be disabled or uninstalled. Switch to another available theme.
 - **Language or time zone did not take effect**: refresh the page or log in again, then confirm that the current family context is the one you intended to change.
+- **Why is the instance-name field empty when I create an integration?**: this is now the default behavior. The placeholder suggestion comes from the plugin when available; otherwise the page falls back to a generic hint. The final name still must be confirmed and entered by the user.
 - **Cannot save AI provider configuration**: check the required fields and secret values, or confirm the related plugin is enabled.
 
 ## Completion standard

@@ -199,6 +199,10 @@ class DashboardEncodingTests(unittest.TestCase):
         self.assertEqual("天气插件", manifest.name)
         assert manifest.capabilities.integration is not None
         self.assertEqual("家庭天气", manifest.capabilities.integration.default_instance_display_name)
+        self.assertEqual(
+            "official_weather.integration.instance_name_placeholder",
+            manifest.capabilities.integration.instance_display_name_placeholder_key,
+        )
         self.assertEqual(["zh-CN", "en-US"], [item.id for item in manifest.locales])
         self.assertEqual("official_weather.config.provider.title", manifest.config_specs[0].title_key)
         self.assertEqual(

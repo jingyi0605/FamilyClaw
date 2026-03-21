@@ -62,6 +62,51 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(["integration"], manifest.types)
         self.assertEqual("app.plugins.builtin.health_basic.integration.sync", manifest.entrypoints.integration)
 
+    def test_manifest_accepts_integration_instance_name_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "placeholder-demo",
+                        "name": "Placeholder Demo",
+                        "version": "0.1.0",
+                        "types": ["integration"],
+                        "permissions": ["device.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {"integration": "plugin.integration.sync"},
+                        "capabilities": {
+                            "integration": {
+                                "domains": ["demo"],
+                                "instance_model": "multi_instance",
+                                "refresh_mode": "manual",
+                                "supports_discovery": False,
+                                "supports_actions": False,
+                                "supports_cards": False,
+                                "instance_display_name_placeholder": "例如：客厅 Demo / 书房 Demo",
+                                "instance_display_name_placeholder_key": "plugin.demo.instance_name_placeholder",
+                                "entity_types": ["demo.entity"],
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        assert manifest.capabilities.integration is not None
+        self.assertEqual(
+            "例如：客厅 Demo / 书房 Demo",
+            manifest.capabilities.integration.instance_display_name_placeholder,
+        )
+        self.assertEqual(
+            "plugin.demo.instance_name_placeholder",
+            manifest.capabilities.integration.instance_display_name_placeholder_key,
+        )
+
     def test_load_locale_pack_manifest_without_entrypoints(self) -> None:
         manifest = load_plugin_manifest(
             self.builtin_root / "locale_zh_tw_pack" / "manifest.json"

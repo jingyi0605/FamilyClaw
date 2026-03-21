@@ -14,6 +14,7 @@ import {
   resolvePluginFieldLabel,
   resolvePluginMaybeKey,
   resolvePluginOptionLabel,
+  resolvePluginTextValue,
   resolvePluginWidgetHelpText,
   resolvePluginWidgetPlaceholder,
 } from '../pluginConfigI18n';
@@ -54,6 +55,8 @@ type InstanceFormContext = {
   pluginId: string;
   pluginName: string;
   description: string | null;
+  instanceDisplayNamePlaceholder: string | null;
+  instanceDisplayNamePlaceholderKey: string | null;
   configSpec: PluginManifestConfigSpec;
 };
 type OpenXiaoaiGatewayCandidate = {
@@ -472,6 +475,15 @@ function SettingsIntegrationsContent() {
   const configureActionDisabledReason = selectedConfigureAction?.disabled_reason ?? '';
   const deleteActionDisabled = selectedDeleteAction?.disabled ?? false;
   const deleteActionDisabledReason = selectedDeleteAction?.disabled_reason ?? '';
+  const createDisplayNamePlaceholder = formContext
+    ? (
+      resolvePluginTextValue(
+        formContext.instanceDisplayNamePlaceholder,
+        formContext.instanceDisplayNamePlaceholderKey,
+        t,
+      ) || page('settings.integrations.modal.instance.displayNamePlaceholder')
+    )
+    : page('settings.integrations.modal.instance.displayNamePlaceholder');
 
   function formatOpenXiaoaiGatewaySummary(candidate: OpenXiaoaiGatewayCandidate) {
     return page('settings.integrations.modal.create.gateway.summary', {
@@ -556,10 +568,11 @@ function SettingsIntegrationsContent() {
         pluginId: item.plugin_id,
         pluginName: item.name,
         description: item.description ?? null,
+        instanceDisplayNamePlaceholder: item.instance_display_name_placeholder ?? null,
+        instanceDisplayNamePlaceholderKey: item.instance_display_name_placeholder_key ?? null,
         configSpec: resolvedForm.config_spec,
       });
       setCreateDraft(buildDraft(resolvedForm.config_spec, {
-        displayName: item.name,
         form: resolvedForm,
       }));
       setCatalogModalOpen(false);
@@ -594,6 +607,8 @@ function SettingsIntegrationsContent() {
         pluginId: instance.plugin_id,
         pluginName: catalogItem?.name ?? instance.plugin_id,
         description: catalogItem?.description ?? instance.description ?? null,
+        instanceDisplayNamePlaceholder: catalogItem?.instance_display_name_placeholder ?? null,
+        instanceDisplayNamePlaceholderKey: catalogItem?.instance_display_name_placeholder_key ?? null,
         configSpec: configForm.config_spec,
       });
       setCreateDraft(buildDraft(configForm.config_spec, {
@@ -1441,7 +1456,9 @@ function SettingsIntegrationsContent() {
                       displayName: event.target.value,
                       fieldErrors: { ...current.fieldErrors, display_name: '' },
                     }))}
-                    placeholder={page('settings.integrations.modal.instance.displayNamePlaceholder')}
+                    placeholder={instanceFormMode === 'create'
+                      ? createDisplayNamePlaceholder
+                      : page('settings.integrations.modal.instance.displayNamePlaceholder')}
                   />
                   {createDraft.fieldErrors.display_name ? <div className="form-help">{resolvePluginMaybeKey(createDraft.fieldErrors.display_name, t)}</div> : null}
                 </div>

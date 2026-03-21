@@ -21,6 +21,7 @@
       "supports_discovery": false,
       "supports_actions": false,
       "supports_cards": true,
+      "instance_display_name_placeholder": "例如：Apple Health / 小米运动健康",
       "entity_types": ["health.steps", "health.sleep", "health.heart_rate"],
       "default_cache_ttl_seconds": 1800,
       "max_stale_seconds": 21600

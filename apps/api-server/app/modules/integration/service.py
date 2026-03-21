@@ -96,6 +96,12 @@ def list_integration_catalog(
                 plugin_id=plugin.id,
                 name=plugin.name,
                 description=_build_plugin_description(plugin),
+                instance_display_name_placeholder=plugin.capabilities.integration.instance_display_name_placeholder
+                if plugin.capabilities.integration is not None
+                else None,
+                instance_display_name_placeholder_key=plugin.capabilities.integration.instance_display_name_placeholder_key
+                if plugin.capabilities.integration is not None
+                else None,
                 source_type=plugin.source_type,
                 risk_level=plugin.risk_level,
                 resource_support=resource_support,

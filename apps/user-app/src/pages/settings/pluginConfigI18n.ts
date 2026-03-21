@@ -29,6 +29,14 @@ function resolvePluginText(
   return resolvePluginMaybeKey(text, translate);
 }
 
+export function resolvePluginTextValue(
+  text: string | null | undefined,
+  key: string | null | undefined,
+  translate: Translate,
+): string {
+  return resolvePluginText(text, key, translate);
+}
+
 export function resolvePluginConfigSpecTitle(configSpec: PluginManifestConfigSpec, translate: Translate): string {
   return resolvePluginText(configSpec.title, configSpec.title_key, translate);
 }

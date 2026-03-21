@@ -856,6 +856,8 @@ export type IntegrationCatalogItem = {
   icon_url?: string | null;
   source_type: PluginSourceType;
   risk_level: PluginRiskLevel;
+  instance_display_name_placeholder?: string | null;
+  instance_display_name_placeholder_key?: string | null;
   resource_support: IntegrationResourceSupport;
   config_schema_available: boolean;
   config_spec?: PluginManifestConfigSpec | null;

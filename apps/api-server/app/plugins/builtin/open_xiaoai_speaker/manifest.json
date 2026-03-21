@@ -19,6 +19,7 @@
       "supports_discovery": true,
       "supports_actions": true,
       "supports_cards": false,
+      "instance_display_name_placeholder": "例如：小爱音箱网关",
       "entity_types": ["device.speaker"],
       "default_cache_ttl_seconds": 60,
       "max_stale_seconds": 600

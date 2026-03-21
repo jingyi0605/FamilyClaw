@@ -501,6 +501,8 @@ class PluginManifestIntegrationSpec(BaseModel):
     auto_create_default_instance: bool = False
     default_instance_display_name: str | None = Field(default=None, max_length=100)
     default_instance_config: dict[str, Any] = Field(default_factory=dict)
+    instance_display_name_placeholder: str | None = Field(default=None, max_length=100)
+    instance_display_name_placeholder_key: str | None = Field(default=None, max_length=255)
     entity_types: list[str] = Field(default_factory=list)
     default_cache_ttl_seconds: int = Field(default=300, ge=0, le=86400)
     max_stale_seconds: int = Field(default=3600, ge=0, le=604800)
@@ -518,9 +520,9 @@ class PluginManifestIntegrationSpec(BaseModel):
             raise ValueError("instance_model 不能为空")
         return normalized
 
-    @field_validator("default_instance_display_name")
+    @field_validator("default_instance_display_name", "instance_display_name_placeholder")
     @classmethod
-    def validate_default_instance_display_name(cls, value: str | None) -> str | None:
+    def validate_optional_display_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         normalized = value.strip()
@@ -529,6 +531,11 @@ class PluginManifestIntegrationSpec(BaseModel):
         return normalized
 
     @model_validator(mode="after")
+    @field_validator("instance_display_name_placeholder_key")
+    @classmethod
+    def validate_instance_display_name_placeholder_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
+
     def validate_stale_window(self) -> "PluginManifestIntegrationSpec":
         if self.max_stale_seconds < self.default_cache_ttl_seconds:
             raise ValueError("max_stale_seconds 不能小于 default_cache_ttl_seconds")

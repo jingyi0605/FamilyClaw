@@ -103,6 +103,8 @@ class IntegrationCatalogItemRead(BaseModel):
     plugin_id: str
     name: str
     description: str | None = None
+    instance_display_name_placeholder: str | None = None
+    instance_display_name_placeholder_key: str | None = None
     icon_url: str | None = None
     source_type: PluginSourceType
     risk_level: RiskLevel

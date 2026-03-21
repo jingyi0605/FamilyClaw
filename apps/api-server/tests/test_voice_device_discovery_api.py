@@ -91,8 +91,14 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         )
 
         self.assertEqual(200, catalog.status_code)
-        plugin_ids = {item["plugin_id"] for item in catalog.json()["items"]}
+        catalog_items = catalog.json()["items"]
+        plugin_ids = {item["plugin_id"] for item in catalog_items}
         self.assertIn("open-xiaoai-speaker", plugin_ids)
+        open_xiaoai_item = next(item for item in catalog_items if item["plugin_id"] == "open-xiaoai-speaker")
+        self.assertEqual(
+            "例如：小爱音箱网关",
+            open_xiaoai_item["instance_display_name_placeholder"],
+        )
 
         response = self._create_instance(gateway_id="gateway-living-room")
         self.assertEqual(201, response.status_code)
