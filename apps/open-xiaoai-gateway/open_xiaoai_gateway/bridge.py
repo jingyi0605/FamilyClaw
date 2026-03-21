@@ -654,6 +654,28 @@ class OpenXiaoAIGateway:
             max_size=None,
         )
 
+    def _log_api_websocket_closed(self, *, state: GatewayRuntimeState, exc: ConnectionClosed, action: str) -> None:
+        logger.info(
+            "%s terminal_id=%s fingerprint=%s code=%s reason=%s",
+            action,
+            state.context.terminal_id,
+            state.context.fingerprint,
+            getattr(exc.rcvd, "code", None),
+            getattr(exc.rcvd, "reason", ""),
+        )
+
+    async def _send_api_message(self, *, api_websocket, state: GatewayRuntimeState, message: str, event_type: str) -> None:
+        # Treat a closed api websocket as a disconnect, not a playback failure.
+        try:
+            await api_websocket.send(message)
+        except ConnectionClosed as exc:
+            self._log_api_websocket_closed(
+                state=state,
+                exc=exc,
+                action=f"skip api event because websocket already closed event_type={event_type}",
+            )
+            raise
+
     async def _forward_api_commands(self, api_websocket, state: GatewayRuntimeState) -> None:
         try:
             async for raw_message in api_websocket:
@@ -701,6 +723,8 @@ class OpenXiaoAIGateway:
                         state=state,
                         command=command,
                     )
+                except ConnectionClosed:
+                    raise
                 except Exception:
                     logger.exception("failed to dispatch command type=%s", command.type)
                     failed_event = build_playback_failed_event(
@@ -709,17 +733,16 @@ class OpenXiaoAIGateway:
                         error_code="playback_failed",
                     )
                     if failed_event is not None:
-                        await api_websocket.send(failed_event.model_dump_json())
+                        await self._send_api_message(
+                            api_websocket=api_websocket,
+                            state=state,
+                            message=failed_event.model_dump_json(),
+                            event_type="playback.failed",
+                        )
                     if command.type == "play.start":
                         await self._dispatch_next_pending_playback(api_websocket=api_websocket, state=state, reason="play_start_dispatch_failed")
         except ConnectionClosed as exc:
-            logger.info(
-                "api websocket closed terminal_id=%s fingerprint=%s code=%s reason=%s",
-                state.context.terminal_id,
-                state.context.fingerprint,
-                getattr(exc.rcvd, "code", None),
-                getattr(exc.rcvd, "reason", ""),
-            )
+            self._log_api_websocket_closed(state=state, exc=exc, action="api websocket closed")
 
     async def _handle_play_start_command(self, *, api_websocket, state: GatewayRuntimeState, command: GatewayCommand) -> None:
         session_id = str(command.session_id or "").strip()
@@ -803,6 +826,13 @@ class OpenXiaoAIGateway:
                         state=state,
                         command=command,
                     )
+                except ConnectionClosed as exc:
+                    self._log_api_websocket_closed(
+                        state=state,
+                        exc=exc,
+                        action="playback worker stop because api websocket closed",
+                    )
+                    return
                 except Exception:
                     logger.exception("failed to dispatch queued play.start playback_id=%s", command.payload.get("playback_id"))
                     failed_event = build_playback_failed_event(
@@ -811,7 +841,20 @@ class OpenXiaoAIGateway:
                         error_code="playback_failed",
                     )
                     if failed_event is not None:
-                        await api_websocket.send(failed_event.model_dump_json())
+                        try:
+                            await self._send_api_message(
+                                api_websocket=api_websocket,
+                                state=state,
+                                message=failed_event.model_dump_json(),
+                                event_type="playback.failed",
+                            )
+                        except ConnectionClosed as exc:
+                            self._log_api_websocket_closed(
+                                state=state,
+                                exc=exc,
+                                action="playback worker stop because api websocket closed",
+                            )
+                            return
         except asyncio.CancelledError:
             raise
         finally:
@@ -930,7 +973,12 @@ class OpenXiaoAIGateway:
                         error_code="playback_failed",
                     )
                     if failed_event is not None:
-                        await api_websocket.send(failed_event.model_dump_json())
+                        await self._send_api_message(
+                            api_websocket=api_websocket,
+                            state=state,
+                            message=failed_event.model_dump_json(),
+                            event_type="playback.failed",
+                        )
                     return
                 continue
 
@@ -939,13 +987,20 @@ class OpenXiaoAIGateway:
         if command.type == "play.start":
             started_event = build_playback_started_event(context)
             if started_event is not None:
-                await api_websocket.send(started_event.model_dump_json())
+                await self._send_api_message(
+                    api_websocket=api_websocket,
+                    state=state,
+                    message=started_event.model_dump_json(),
+                    event_type="playback.started",
+                )
             return
 
         if command.type == "play.stop":
             if context.active_playback_id and context.active_playback_session_id and context.terminal_id:
-                await api_websocket.send(
-                    json.dumps(
+                await self._send_api_message(
+                    api_websocket=api_websocket,
+                    state=state,
+                    message=json.dumps(
                         {
                             "type": "playback.receipt",
                             "terminal_id": context.terminal_id,
@@ -960,7 +1015,8 @@ class OpenXiaoAIGateway:
                             "ts": command.ts,
                         },
                         ensure_ascii=False,
-                    )
+                    ),
+                    event_type="playback.receipt",
                 )
                 context.clear_playback()
             return
@@ -972,7 +1028,12 @@ class OpenXiaoAIGateway:
                 ts=command.ts,
             )
             if interrupted_event is not None:
-                await api_websocket.send(interrupted_event)
+                await self._send_api_message(
+                    api_websocket=api_websocket,
+                    state=state,
+                    message=interrupted_event,
+                    event_type="playback.interrupted",
+                )
             return
 
         _ = last_response
@@ -991,7 +1052,12 @@ class OpenXiaoAIGateway:
         playback_session_id_before_dispatch = context.active_playback_session_id
         started_event = build_playback_started_event(context)
         if started_event is not None:
-            await api_websocket.send(started_event.model_dump_json())
+            await self._send_api_message(
+                api_websocket=api_websocket,
+                state=state,
+                message=started_event.model_dump_json(),
+                event_type="playback.started",
+            )
 
         timeout_seconds = _estimate_tts_timeout_seconds(command.payload.get("text"))
         logger.info(
@@ -1014,7 +1080,12 @@ class OpenXiaoAIGateway:
                 error_code="playback_failed",
             )
             if failed_event is not None:
-                await api_websocket.send(failed_event.model_dump_json())
+                await self._send_api_message(
+                    api_websocket=api_websocket,
+                    state=state,
+                    message=failed_event.model_dump_json(),
+                    event_type="playback.failed",
+                )
             return
 
         await self._wait_terminal_playback_idle(state)
@@ -1028,7 +1099,12 @@ class OpenXiaoAIGateway:
             ts=command_ts_now(),
         )
         if completed_event is not None:
-            await api_websocket.send(completed_event)
+            await self._send_api_message(
+                api_websocket=api_websocket,
+                state=state,
+                message=completed_event,
+                event_type="playback.completed",
+            )
 
     async def _wait_terminal_playback_idle(self, state: GatewayRuntimeState) -> None:
         for attempt in range(4):

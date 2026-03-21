@@ -1123,6 +1123,46 @@ class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
         ensure_worker_mock.assert_called_once()
         self.assertTrue(state.playback_queue_event.is_set())
 
+    async def test_run_playback_worker_stops_when_api_websocket_closes_during_dispatch(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        close_exc = ConnectionClosedError(
+            Close(code=1012, reason="service restart"),
+            Close(code=1012, reason="service restart"),
+            True,
+        )
+        state = GatewayRuntimeState(
+            context=TerminalBridgeContext(
+                fingerprint="open_xiaoai:LX06:SN001",
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                name="瀹㈠巺灏忕埍",
+            ),
+            terminal_rpc=SimpleNamespace(),
+            remote_addr="192.168.1.22",
+        )
+        state.pending_playback_commands.append(
+            GatewayCommand.model_validate(
+                {
+                    "type": "play.start",
+                    "terminal_id": "terminal-1",
+                    "session_id": "session-1",
+                    "seq": 5,
+                    "payload": {
+                        "playback_id": "playback-1",
+                        "mode": "tts_text",
+                        "text": "hello",
+                    },
+                    "ts": "2026-03-15T00:00:00+08:00",
+                }
+            )
+        )
+
+        with patch.object(OpenXiaoAIGateway, "_dispatch_api_command", new=AsyncMock(side_effect=close_exc)):
+            await gateway._run_playback_worker(_ClosedApiWebSocket(close_exc), state)
+
+        self.assertEqual(0, len(state.pending_playback_commands))
+
     async def test_dispatch_blocking_tts_request_releases_queue(self) -> None:
         gateway = OpenXiaoAIGateway()
         api_websocket = SimpleNamespace(send=AsyncMock())
@@ -1183,6 +1223,52 @@ class GatewayBridgeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(api_websocket.send.await_count, 2)
         self.assertIsNone(state.context.active_playback_id)
+
+    async def test_dispatch_blocking_tts_request_propagates_api_close_on_failed_event(self) -> None:
+        gateway = OpenXiaoAIGateway()
+        close_exc = ConnectionClosedError(
+            Close(code=1012, reason="service restart"),
+            Close(code=1012, reason="service restart"),
+            True,
+        )
+        state = GatewayRuntimeState(
+            context=TerminalBridgeContext(
+                fingerprint="open_xiaoai:LX06:SN001",
+                household_id="household-1",
+                terminal_id="terminal-1",
+                room_id="room-1",
+                name="瀹㈠巺灏忕埍",
+            ),
+            terminal_rpc=SimpleNamespace(
+                call=AsyncMock(return_value=SimpleNamespace(code=1, msg="failed", data={"stdout": "", "stderr": "boom", "exit_code": 1})),
+            ),
+            remote_addr="192.168.1.22",
+        )
+        state.context.track_playback(playback_id="playback-1", session_id="session-1")
+
+        with self.assertRaises(ConnectionClosedError):
+            await gateway._dispatch_blocking_tts_request(
+                api_websocket=_ClosedApiWebSocket(close_exc),
+                state=state,
+                command=GatewayCommand.model_validate(
+                    {
+                        "type": "play.start",
+                        "terminal_id": "terminal-1",
+                        "session_id": "session-1",
+                        "seq": 5,
+                        "payload": {
+                            "playback_id": "playback-1",
+                            "mode": "tts_text",
+                            "text": "hello",
+                        },
+                        "ts": "2026-03-15T00:00:00+08:00",
+                    }
+                ),
+                outgoing=TerminalRpcRequest(
+                    command="run_shell",
+                    payload="/usr/sbin/tts_play.sh 'hello' >/tmp/familyclaw-tts.log 2>&1",
+                ),
+            )
 
     async def test_handle_terminal_message_interrupts_local_playback_on_stop_phrase(self) -> None:
         gateway = OpenXiaoAIGateway()
