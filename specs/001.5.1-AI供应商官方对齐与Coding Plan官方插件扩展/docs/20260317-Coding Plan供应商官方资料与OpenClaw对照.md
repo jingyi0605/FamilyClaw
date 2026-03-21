@@ -85,7 +85,8 @@
 - 插件 ID：建议 `ai-provider-kimi-coding-plan`
 - `adapter_code`：建议 `kimi-coding-plan`
 - 协议族：`anthropic-messages`
-- 默认 `base_url`：`https://api.kimi.com/coding/`
+- 默认 `base_url`：`https://api.kimi.com/coding`
+- 兼容备选地址：`https://api.moonshot.cn/anthropic`
 - 表单至少要有：
   - `api_key`
   - `base_url`
@@ -139,6 +140,19 @@
 2. 通过 `plugin_mounts` 挂到家庭上，`source_type=official`。
 3. `provider_config_service.py` 继续通过插件快照生成 `AiProviderAdapterRead`。
 4. 创建、更新和执行前统一走家庭插件可用性校验。
+
+### 6.1 2026-03-21 实施补充
+
+这次把 3 个 `plugins-dev` Coding Plan 插件重新收口时，额外加了两条硬规则：
+
+1. `plugins-dev` 插件自己的 `manifest.json` 和 `driver.py` 必须自包含，不能再把入口指回 `app.plugins.builtin.*`。
+2. 加快回复速度的策略也必须留在插件里做，不准回到核心补分支。
+
+具体做法：
+
+- 百炼 Coding Plan：对 Qwen3 / QwQ 族模型在插件里下发 `enable_thinking=false`，并对快任务缩短历史消息和输出上限。
+- GLM Coding Plan：对 `glm-4.5+ / glm-5` 在插件里下发 `thinking={"type":"disabled"}`，并对快任务缩短历史消息和输出上限。
+- Kimi Coding Plan：官方文档没有给出统一的“关 think”请求字段，所以不瞎编参数，只把默认模型收口到 `kimi-for-coding`，并在插件里裁剪快任务上下文与输出长度。
 
 ## 7. 最终建议
 
