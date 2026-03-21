@@ -428,6 +428,29 @@ class ConversationProposalPipelineTests(unittest.TestCase):
         self.assertEqual([context.turn_messages[0].message_id], drafts[0].evidence_message_ids)
         self.assertEqual(["user"], drafts[0].evidence_roles)
 
+    def test_memory_proposal_analyzer_accepts_bare_user_message_alias(self) -> None:
+        context = self._build_context(user_text="我很喜欢吃芒果", assistant_text="好，我记下来了。")
+        extraction = ProposalBatchExtractionOutput(
+            memory_items=[
+                ProposalExtractionItemOutput(
+                    title=None,
+                    summary=None,
+                    confidence=0.92,
+                    evidence_message_ids=["user_message"],
+                    payload={"memory_type": "preference", "note": "很喜欢吃芒果"},
+                )
+            ]
+        )
+
+        drafts = MemoryProposalAnalyzer().analyze(context, extraction)
+
+        self.assertEqual(1, len(drafts))
+        self.assertEqual("memory_write", drafts[0].proposal_kind)
+        self.assertEqual([context.turn_messages[0].message_id], drafts[0].evidence_message_ids)
+        self.assertEqual(["user"], drafts[0].evidence_roles)
+        self.assertIn("芒果", drafts[0].summary or "")
+        self.assertEqual("preference", drafts[0].payload["memory_type"])
+
     @patch("app.modules.conversation.proposal_pipeline.invoke_llm")
     def test_extract_proposal_batch_redacts_assistant_reply_before_llm(self, invoke_llm_mock) -> None:
         context = self._build_context(

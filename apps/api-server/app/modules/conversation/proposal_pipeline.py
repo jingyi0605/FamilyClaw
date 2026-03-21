@@ -309,12 +309,27 @@ def _normalize_turn_message_id_alias(message_id: str, evidence_by_id: dict[str, 
         return None
     if normalized_message_id in evidence_by_id:
         return normalized_message_id
+    if normalized_message_id == "user_message":
+        return _find_latest_turn_evidence_id(evidence_by_id, kind="user_message")
+    if normalized_message_id == "assistant_message":
+        return _find_latest_turn_evidence_id(evidence_by_id, kind="assistant_message")
     for prefix in ("user_", "assistant_", "message_", "user_message:", "assistant_message:"):
         if not normalized_message_id.startswith(prefix):
             continue
         candidate_id = normalized_message_id[len(prefix) :].strip()
         if candidate_id in evidence_by_id:
             return candidate_id
+    return None
+
+
+def _find_latest_turn_evidence_id(
+    evidence_by_id: dict[str, TurnProposalEvidence],
+    *,
+    kind: str,
+) -> str | None:
+    for evidence in reversed(list(evidence_by_id.values())):
+        if evidence.kind == kind:
+            return evidence.message_id
     return None
 
 
