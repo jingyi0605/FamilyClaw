@@ -20,7 +20,7 @@ from app.modules.integration.models import IntegrationDiscovery, IntegrationInst
 from app.modules.plugin import repository as plugin_repository
 from app.modules.plugin_marketplace.models import PluginMarketplaceInstance
 from app.modules.plugin.models import PluginConfigInstance, PluginStateOverride
-from app.modules.plugin.schemas import PluginMountCreate, PluginMountUpdate
+from app.modules.plugin.schemas import PluginMountCreate, PluginMountUpdate, PluginStateUpdateRequest
 from app.modules.plugin.service import (
     PluginServiceError,
     delete_household_plugin_installation,
@@ -30,6 +30,7 @@ from app.modules.plugin.service import (
     list_plugin_mounts,
     list_registered_plugins_for_household,
     register_plugin_mount,
+    set_household_plugin_enabled,
     update_plugin_mount,
 )
 
@@ -174,7 +175,7 @@ class PluginMountTests(unittest.TestCase):
         self.assertIn("家庭插件 manifest 无效", message)
         self.assertIn("third-party-sync-plugin", message)
 
-    def test_plugins_dev_overrides_installed_third_party_plugin_and_survives_installation_delete(self) -> None:
+    def test_plugins_dev_and_installed_variants_register_together_and_only_one_can_be_enabled(self) -> None:
         household = create_household(
             self.db,
             HouseholdCreate(name="Dev Override Home", city="Shenzhen", timezone="Asia/Shanghai", locale="zh-CN"),
@@ -203,8 +204,25 @@ class PluginMountTests(unittest.TestCase):
             name="Dev Shadow Plugin",
         )
 
+        full_snapshot = list_registered_plugins_for_household(
+            self.db,
+            household_id=household.id,
+            include_conflicting_variants=True,
+        )
+        variants = [item for item in full_snapshot.items if item.id == "dev-shadow-plugin"]
+        self.assertEqual(2, len(variants))
+        dev_variant = next(item for item in variants if item.runtime_source == "plugins_dev")
+        installed_variant = next(item for item in variants if item.runtime_source == "installed")
+        self.assertEqual("9.9.9", dev_variant.version)
+        self.assertTrue(dev_variant.enabled)
+        self.assertTrue(dev_variant.is_dev_active)
+        self.assertEqual("1.0.0", installed_variant.version)
+        self.assertFalse(installed_variant.enabled)
+        self.assertFalse(installed_variant.is_dev_active)
+
         plugin = get_household_plugin(self.db, household_id=household.id, plugin_id="dev-shadow-plugin")
         self.assertEqual("9.9.9", plugin.version)
+        self.assertEqual("plugins_dev", plugin.runtime_source)
         self.assertEqual("third_party", plugin.source_type)
         self.assertEqual("local", plugin.install_method)
         self.assertTrue(plugin.is_dev_active)
@@ -212,13 +230,49 @@ class PluginMountTests(unittest.TestCase):
         self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
         self.assertEqual(str((dev_root / "manifest.json").resolve()), str(Path(plugin.manifest_path).resolve()))
 
-        delete_household_plugin_installation(self.db, household_id=household.id, plugin_id="dev-shadow-plugin")
+        switched = set_household_plugin_enabled(
+            self.db,
+            household_id=household.id,
+            plugin_id="dev-shadow-plugin",
+            payload=PluginStateUpdateRequest(enabled=True, runtime_source="installed"),
+            updated_by="test-suite",
+        )
+        self.assertEqual("installed", switched.runtime_source)
+        self.assertTrue(switched.enabled)
+        self.assertFalse(switched.is_dev_active)
+
+        switched_snapshot = list_registered_plugins_for_household(
+            self.db,
+            household_id=household.id,
+            include_conflicting_variants=True,
+        )
+        switched_dev = next(
+            item
+            for item in switched_snapshot.items
+            if item.id == "dev-shadow-plugin" and item.runtime_source == "plugins_dev"
+        )
+        switched_installed = next(
+            item
+            for item in switched_snapshot.items
+            if item.id == "dev-shadow-plugin" and item.runtime_source == "installed"
+        )
+        self.assertFalse(switched_dev.enabled)
+        self.assertFalse(switched_dev.is_dev_active)
+        self.assertTrue(switched_installed.enabled)
+
+        delete_household_plugin_installation(
+            self.db,
+            household_id=household.id,
+            plugin_id="dev-shadow-plugin",
+            runtime_source="installed",
+        )
         self.db.commit()
 
         self.assertEqual([], list_plugin_mounts(self.db, household_id=household.id))
         plugin_after_delete = get_household_plugin(self.db, household_id=household.id, plugin_id="dev-shadow-plugin")
         assert plugin_after_delete.runner_config is not None
         self.assertEqual("9.9.9", plugin_after_delete.version)
+        self.assertEqual("plugins_dev", plugin_after_delete.runtime_source)
         self.assertTrue(plugin_after_delete.is_dev_active)
         self.assertEqual(str(dev_root.resolve()), str(Path(plugin_after_delete.runner_config.plugin_root).resolve()))
         self.assertTrue(dev_root.exists())

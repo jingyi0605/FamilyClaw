@@ -24,7 +24,9 @@ class PluginPackageApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self._previous_plugin_storage_root = settings.plugin_storage_root
+        self._previous_plugin_dev_root = settings.plugin_dev_root
         settings.plugin_storage_root = self._tempdir.name
+        settings.plugin_dev_root = str((Path(self._tempdir.name) / "plugins-dev").resolve())
 
         from tests.test_db_support import PostgresTestDatabase
 
@@ -69,6 +71,7 @@ class PluginPackageApiTests(unittest.TestCase):
         self.client.close()
         self._db_helper.close()
         settings.plugin_storage_root = self._previous_plugin_storage_root
+        settings.plugin_dev_root = self._previous_plugin_dev_root
         self._tempdir.cleanup()
 
     def test_install_plugin_package_endpoint_accepts_zip_and_creates_release_mount(self) -> None:
@@ -162,6 +165,95 @@ class PluginPackageApiTests(unittest.TestCase):
                 get_household_plugin(db, household_id=self.household_id, plugin_id="demo-plugin")
             self.assertEqual("plugin_not_visible_in_household", ctx.exception.error_code)
 
+    def test_plugin_registry_api_lists_conflicting_variants_and_only_enables_one(self) -> None:
+        install_response = self.client.post(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugin-packages",
+            data={"overwrite": "false"},
+            files={"file": ("demo-plugin.zip", self._build_plugin_archive(plugin_id="demo-plugin", version="1.0.0"), "application/zip")},
+        )
+        self.assertEqual(201, install_response.status_code)
+        mount_update_response = self.client.put(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugin-mounts/demo-plugin",
+            json={"enabled": True},
+        )
+        self.assertEqual(200, mount_update_response.status_code)
+
+        dev_root = self._create_dev_plugin(plugin_id="demo-plugin", version="9.9.9", name="Demo Plugin Dev")
+
+        collapsed_response = self.client.get(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugins",
+        )
+        self.assertEqual(200, collapsed_response.status_code)
+        collapsed_items = [item for item in collapsed_response.json()["items"] if item["id"] == "demo-plugin"]
+        self.assertEqual(1, len(collapsed_items))
+        self.assertEqual("plugins_dev", collapsed_items[0]["runtime_source"])
+        self.assertTrue(collapsed_items[0]["enabled"])
+        self.assertTrue(collapsed_items[0]["is_dev_active"])
+
+        full_response = self.client.get(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugins",
+            params={"include_conflicting_variants": "true"},
+        )
+        self.assertEqual(200, full_response.status_code)
+        variants = [item for item in full_response.json()["items"] if item["id"] == "demo-plugin"]
+        self.assertEqual(2, len(variants))
+        dev_variant = next(item for item in variants if item["runtime_source"] == "plugins_dev")
+        installed_variant = next(item for item in variants if item["runtime_source"] == "installed")
+        self.assertEqual("9.9.9", dev_variant["version"])
+        self.assertTrue(dev_variant["enabled"])
+        self.assertTrue(dev_variant["is_dev_active"])
+        self.assertEqual("1.0.0", installed_variant["version"])
+        self.assertFalse(installed_variant["enabled"])
+        self.assertFalse(installed_variant["is_dev_active"])
+
+        switch_response = self.client.put(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugins/demo-plugin/state",
+            json={"enabled": True, "runtime_source": "installed"},
+        )
+        self.assertEqual(200, switch_response.status_code)
+        switched_payload = switch_response.json()
+        self.assertEqual("installed", switched_payload["runtime_source"])
+        self.assertTrue(switched_payload["enabled"])
+        self.assertFalse(switched_payload["is_dev_active"])
+
+        switched_list_response = self.client.get(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugins",
+            params={"include_conflicting_variants": "true"},
+        )
+        self.assertEqual(200, switched_list_response.status_code)
+        switched_variants = [item for item in switched_list_response.json()["items"] if item["id"] == "demo-plugin"]
+        switched_dev_variant = next(item for item in switched_variants if item["runtime_source"] == "plugins_dev")
+        switched_installed_variant = next(item for item in switched_variants if item["runtime_source"] == "installed")
+        self.assertFalse(switched_dev_variant["enabled"])
+        self.assertFalse(switched_dev_variant["is_dev_active"])
+        self.assertTrue(switched_installed_variant["enabled"])
+
+        delete_response = self.client.delete(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugins/demo-plugin",
+            params={"runtime_source": "installed"},
+        )
+        self.assertEqual(204, delete_response.status_code)
+
+        remaining_response = self.client.get(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/plugins",
+            params={"include_conflicting_variants": "true"},
+        )
+        self.assertEqual(200, remaining_response.status_code)
+        remaining_variants = [item for item in remaining_response.json()["items"] if item["id"] == "demo-plugin"]
+        self.assertEqual(1, len(remaining_variants))
+        self.assertEqual("plugins_dev", remaining_variants[0]["runtime_source"])
+        self.assertTrue(remaining_variants[0]["enabled"])
+        self.assertTrue(remaining_variants[0]["is_dev_active"])
+
+        with self.SessionLocal() as db:
+            self.assertEqual([], list_plugin_mounts(db, household_id=self.household_id))
+            plugin = get_household_plugin(db, household_id=self.household_id, plugin_id="demo-plugin")
+            self.assertEqual("9.9.9", plugin.version)
+            self.assertEqual("plugins_dev", plugin.runtime_source)
+            self.assertTrue(plugin.is_dev_active)
+            assert plugin.runner_config is not None
+            self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
+
     @staticmethod
     def _build_plugin_archive(*, plugin_id: str, version: str) -> bytes:
         payload = {
@@ -186,3 +278,26 @@ class PluginPackageApiTests(unittest.TestCase):
                 "def sync(payload=None):\n    return {'records': []}\n",
             )
         return buffer.getvalue()
+
+    def _create_dev_plugin(self, *, plugin_id: str, version: str, name: str) -> Path:
+        plugin_root = Path(settings.plugin_dev_root) / plugin_id
+        (plugin_root / "plugin").mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "id": plugin_id,
+            "name": name,
+            "version": version,
+            "types": ["integration"],
+            "permissions": ["health.read", "memory.write.observation"],
+            "risk_level": "low",
+            "triggers": ["manual"],
+            "entrypoints": {
+                "integration": "plugin.integration.sync",
+            },
+        }
+        (plugin_root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        (plugin_root / "plugin" / "__init__.py").write_text("", encoding="utf-8")
+        (plugin_root / "plugin" / "integration.py").write_text(
+            "def sync(payload=None):\n    return {'records': []}\n",
+            encoding="utf-8",
+        )
+        return plugin_root

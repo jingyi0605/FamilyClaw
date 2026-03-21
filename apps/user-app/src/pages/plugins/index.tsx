@@ -136,6 +136,20 @@ function formatSourceType(sourceType: PluginRegistryItem['source_type'], locale:
   }
 }
 
+function formatRuntimeSource(
+  runtimeSource: PluginRegistryItem['runtime_source'],
+  locale: string | undefined,
+): { label: string; tone: 'info' | 'secondary' | 'warning' } | null {
+  switch (runtimeSource) {
+    case 'plugins_dev':
+      return { label: getPageMessage(locale, 'settings.plugin.runtime.dev'), tone: 'warning' };
+    case 'installed':
+      return { label: getPageMessage(locale, 'settings.plugin.runtime.installed'), tone: 'secondary' };
+    default:
+      return null;
+  }
+}
+
 function formatRiskLevel(riskLevel: PluginRegistryItem['risk_level'], locale: string | undefined): { label: string; tone: 'success' | 'warning' | 'danger' } {
   switch (riskLevel) {
     case 'low':
@@ -154,6 +168,20 @@ function formatDevActiveBadge(locale: string | undefined): { label: string; tone
     label: getPageMessage(locale, 'settings.plugin.devActive'),
     tone: 'warning',
   };
+}
+
+function getPluginRegistryKey(plugin: Pick<PluginRegistryItem, 'id' | 'runtime_source'>): string {
+  return `${plugin.runtime_source}:${plugin.id}`;
+}
+
+function isSamePluginVariant(
+  left: Pick<PluginRegistryItem, 'id' | 'runtime_source'> | null | undefined,
+  right: Pick<PluginRegistryItem, 'id' | 'runtime_source'> | null | undefined,
+) {
+  if (!left || !right) {
+    return false;
+  }
+  return left.id === right.id && left.runtime_source === right.runtime_source;
 }
 
 function formatJobStatus(status: string, locale: string | undefined): { label: string; tone: 'success' | 'warning' | 'danger' | 'secondary' } {
@@ -416,13 +444,13 @@ function PluginsPageContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
-  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
+  const [selectedPluginKey, setSelectedPluginKey] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Awaited<ReturnType<typeof settingsApi.listPluginJobs>> | null>(null);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [detailPlugin, setDetailPlugin] = useState<PluginRegistryItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [togglingPluginId, setTogglingPluginId] = useState<string | null>(null);
-  const [deletingPluginId, setDeletingPluginId] = useState<string | null>(null);
+  const [togglingPluginKey, setTogglingPluginKey] = useState<string | null>(null);
+  const [deletingPluginKey, setDeletingPluginKey] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
   const [showBuiltinPlugins, setShowBuiltinPlugins] = useState(getInitialShowBuiltinPlugins);
   const [selectedType, setSelectedType] = useState<PluginManifestType | null>(null);
@@ -516,10 +544,13 @@ function PluginsPageContent() {
   const reloadInstalledPlugins = useCallback(async () => {
     if (!currentHouseholdId) {
       setPlugins([]);
-      return;
+      return [] as PluginRegistryItem[];
     }
-    const registryResult = await settingsApi.listRegisteredPlugins(currentHouseholdId);
+    const registryResult = await settingsApi.listRegisteredPlugins(currentHouseholdId, {
+      includeConflictingVariants: true,
+    });
     setPlugins(registryResult.items);
+    return registryResult.items;
   }, [currentHouseholdId]);
 
   const reloadMarketplace = useCallback(async () => {
@@ -624,7 +655,9 @@ function PluginsPageContent() {
       setSourceError('');
       try {
         const [registryResult, sourcesResult, catalogResult] = await Promise.all([
-          settingsApi.listRegisteredPlugins(currentHouseholdId),
+          settingsApi.listRegisteredPlugins(currentHouseholdId, {
+            includeConflictingVariants: true,
+          }),
           settingsApi.listMarketplaceSources(),
           settingsApi.listMarketplaceCatalog(currentHouseholdId),
         ]);
@@ -705,13 +738,13 @@ function PluginsPageContent() {
   }, [marketplaceDetailOpen, marketplaceDetailTarget, page, reloadMarketplaceDetail]);
 
   useEffect(() => {
-    if (!currentHouseholdId || !selectedPluginId) {
+    if (!currentHouseholdId || !selectedPluginKey) {
       setJobs(null);
       return;
     }
 
     const householdId = currentHouseholdId;
-    const pluginId = selectedPluginId;
+    const pluginId = selectedPluginKey.split(':').slice(1).join(':');
     let cancelled = false;
 
     async function loadJobs() {
@@ -736,7 +769,7 @@ function PluginsPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [currentHouseholdId, selectedPluginId]);
+  }, [currentHouseholdId, selectedPluginKey]);
 
   function openPluginDetail(plugin: PluginRegistryItem) {
     setDetailPlugin(plugin);
@@ -906,21 +939,26 @@ function PluginsPageContent() {
       return;
     }
 
-    setTogglingPluginId(plugin.id);
+    const pluginKey = getPluginRegistryKey(plugin);
+    setTogglingPluginKey(pluginKey);
 
     try {
-      const updated = await settingsApi.updatePluginState(currentHouseholdId, plugin.id, { enabled: !plugin.enabled });
-      setPlugins(current => current.map(item => (item.id === updated.id ? updated : item)));
-      setDetailPlugin(current => (current && current.id === updated.id ? updated : current));
+      const updated = await settingsApi.updatePluginState(currentHouseholdId, plugin.id, {
+        enabled: !plugin.enabled,
+        runtime_source: plugin.runtime_source,
+      });
+      const latestPlugins = await reloadInstalledPlugins();
+      const latestUpdated = latestPlugins.find(item => isSamePluginVariant(item, updated)) ?? updated;
+      setDetailPlugin(current => (isSamePluginVariant(current, latestUpdated) ? latestUpdated : current));
       await reloadMarketplace();
-      if (updated.types.includes('locale-pack')) {
+      if (latestUpdated.types.includes('locale-pack')) {
         await refreshPluginLocales();
       }
-      setStatus(page(updated.enabled ? 'plugins.status.enabled' : 'plugins.status.disabled'));
+      setStatus(page(latestUpdated.enabled ? 'plugins.status.enabled' : 'plugins.status.disabled'));
     } catch (toggleError) {
       setError(toggleError instanceof ApiError ? toggleError.message : page('plugins.operationFailed'));
     } finally {
-      setTogglingPluginId(null);
+      setTogglingPluginKey(null);
     }
   }
 
@@ -938,12 +976,15 @@ function PluginsPageContent() {
       throw new Error(message);
     }
 
-    setDeletingPluginId(plugin.id);
+    const pluginKey = getPluginRegistryKey(plugin);
+    setDeletingPluginKey(pluginKey);
 
     try {
-      await settingsApi.deletePlugin(currentHouseholdId, plugin.id);
-      if (selectedPluginId === plugin.id) {
-        setSelectedPluginId(null);
+      await settingsApi.deletePlugin(currentHouseholdId, plugin.id, {
+        runtimeSource: plugin.runtime_source,
+      });
+      if (selectedPluginKey === pluginKey) {
+        setSelectedPluginKey(null);
       }
       await Promise.all([reloadInstalledPlugins(), reloadMarketplace()]);
       await refreshPluginLocales();
@@ -958,7 +999,7 @@ function PluginsPageContent() {
       setError(message);
       throw deleteError instanceof Error ? deleteError : new Error(message);
     } finally {
-      setDeletingPluginId(null);
+      setDeletingPluginKey(null);
     }
   }
 
@@ -1154,7 +1195,11 @@ function PluginsPageContent() {
   }, [filteredPlugins]);
 
   const installedPluginMap = useMemo(() => {
-    return new Map(plugins.map(plugin => [plugin.id, plugin]));
+    return new Map(
+      plugins
+        .filter(plugin => plugin.runtime_source === 'installed')
+        .map(plugin => [plugin.id, plugin]),
+    );
   }, [plugins]);
 
   const marketplaceListDetailItem = useMemo(() => {
@@ -1221,7 +1266,7 @@ function PluginsPageContent() {
     if (!detailPlugin) {
       return;
     }
-    const latestPlugin = plugins.find(item => item.id === detailPlugin.id);
+    const latestPlugin = plugins.find(item => isSamePluginVariant(item, detailPlugin));
     if (latestPlugin && latestPlugin !== detailPlugin) {
       setDetailPlugin(latestPlugin);
     }
@@ -1917,15 +1962,17 @@ function PluginsPageContent() {
             <div className="plugin-list">
               {filteredPlugins.map(plugin => {
                 const sourceInfo = formatSourceType(plugin.source_type, locale);
+                const runtimeInfo = formatRuntimeSource(plugin.runtime_source, locale);
                 const riskInfo = formatRiskLevel(plugin.risk_level, locale);
                 const devActiveInfo = formatDevActiveBadge(locale);
                 const isEnabled = plugin.enabled;
-                const isToggling = togglingPluginId === plugin.id;
-                const isSelected = selectedPluginId === plugin.id;
+                const pluginKey = getPluginRegistryKey(plugin);
+                const isToggling = togglingPluginKey === pluginKey;
+                const isSelected = selectedPluginKey === pluginKey;
                 const iconClass = `plugin-card__icon plugin-card__icon--${plugin.source_type}`;
 
                 return (
-                  <Card key={plugin.id} className={`plugin-card ${isSelected ? 'plugin-card--expanded' : ''}`}>
+                  <Card key={pluginKey} className={`plugin-card ${isSelected ? 'plugin-card--expanded' : ''}`}>
                     <div className="plugin-card__header">
                       <div className={iconClass}>{renderPluginIcon(plugin.source_type)}</div>
                       <div className="plugin-card__info">
@@ -1951,7 +1998,8 @@ function PluginsPageContent() {
 
                     <div className="plugin-card__tags">
                       <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
-                      {plugin.is_dev_active ? (
+                      {runtimeInfo ? <span className={`badge badge--${runtimeInfo.tone}`}>{runtimeInfo.label}</span> : null}
+                      {plugin.runtime_source === 'plugins_dev' && plugin.is_dev_active ? (
                         <span className={`badge badge--${devActiveInfo.tone}`}>{devActiveInfo.label}</span>
                       ) : null}
                       <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>
@@ -1967,7 +2015,7 @@ function PluginsPageContent() {
                       </button>
                       <button
                         className="btn btn--outline btn--sm"
-                        onClick={() => setSelectedPluginId(isSelected ? null : plugin.id)}
+                        onClick={() => setSelectedPluginKey(isSelected ? null : pluginKey)}
                         disabled={jobsLoading}
                       >
                         {page('plugins.action.jobs')}
@@ -2037,13 +2085,15 @@ function PluginsPageContent() {
                 <tbody>
                   {filteredPlugins.map(plugin => {
                     const sourceInfo = formatSourceType(plugin.source_type, locale);
+                    const runtimeInfo = formatRuntimeSource(plugin.runtime_source, locale);
                     const riskInfo = formatRiskLevel(plugin.risk_level, locale);
                     const devActiveInfo = formatDevActiveBadge(locale);
                     const isEnabled = plugin.enabled;
-                    const isToggling = togglingPluginId === plugin.id;
+                    const pluginKey = getPluginRegistryKey(plugin);
+                    const isToggling = togglingPluginKey === pluginKey;
 
                     return (
-                      <tr key={plugin.id} className="plugin-table__row">
+                      <tr key={pluginKey} className="plugin-table__row">
                         <td className="plugin-table__td plugin-table__td--name">
                           <div className="plugin-table__name-cell">
                             <span className="plugin-table__name">{plugin.name}</span>
@@ -2055,7 +2105,10 @@ function PluginsPageContent() {
                         </td>
                         <td className="plugin-table__td plugin-table__td--source">
                           <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
-                          {plugin.is_dev_active ? (
+                          {runtimeInfo ? (
+                            <span className={`badge badge--${runtimeInfo.tone}`} style={{ marginLeft: 6 }}>{runtimeInfo.label}</span>
+                          ) : null}
+                          {plugin.runtime_source === 'plugins_dev' && plugin.is_dev_active ? (
                             <span className={`badge badge--${devActiveInfo.tone}`} style={{ marginLeft: 6 }}>{devActiveInfo.label}</span>
                           ) : null}
                         </td>
@@ -2378,10 +2431,10 @@ function PluginsPageContent() {
             closePluginDetail();
           }}
           onOpenMarketplaceDetail={openMarketplaceDetail}
-          isToggling={togglingPluginId === detailPlugin?.id}
+          isToggling={detailPlugin ? togglingPluginKey === getPluginRegistryKey(detailPlugin) : false}
           onDelete={handleDeletePlugin}
-          isDeleting={deletingPluginId === detailPlugin?.id}
-          canDelete={detailPlugin?.source_type !== 'builtin'}
+          isDeleting={detailPlugin ? deletingPluginKey === getPluginRegistryKey(detailPlugin) : false}
+          canDelete={detailPlugin?.runtime_source === 'installed'}
         />
       </div>
     </SettingsPageShell>

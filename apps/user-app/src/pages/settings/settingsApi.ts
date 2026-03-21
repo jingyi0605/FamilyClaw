@@ -590,8 +590,19 @@ export const settingsApi = {
       },
     );
   },
-  listRegisteredPlugins(householdId: string) {
-    return request<PluginRegistrySnapshot>(`/ai-config/${encodeURIComponent(householdId)}/plugins`);
+  listRegisteredPlugins(
+    householdId: string,
+    options?: {
+      includeConflictingVariants?: boolean;
+    },
+  ) {
+    const query = new URLSearchParams();
+    if (options?.includeConflictingVariants) {
+      query.set('include_conflicting_variants', 'true');
+    }
+    return request<PluginRegistrySnapshot>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins${query.toString() ? `?${query.toString()}` : ''}`,
+    );
   },
   updatePluginState(householdId: string, pluginId: string, payload: PluginStateUpdateRequest) {
     return request<PluginRegistryItem>(
@@ -602,10 +613,23 @@ export const settingsApi = {
       },
     );
   },
-  deletePlugin(householdId: string, pluginId: string) {
-    return request<void>(`/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}`, {
+  deletePlugin(
+    householdId: string,
+    pluginId: string,
+    options?: {
+      runtimeSource?: PluginStateUpdateRequest['runtime_source'];
+    },
+  ) {
+    const query = new URLSearchParams();
+    if (options?.runtimeSource) {
+      query.set('runtime_source', options.runtimeSource);
+    }
+    return request<void>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}${query.toString() ? `?${query.toString()}` : ''}`,
+      {
       method: 'DELETE',
-    });
+      },
+    );
   },
   async installPluginPackage(householdId: string, file: File, options?: { overwrite?: boolean }) {
     const formData = new FormData();

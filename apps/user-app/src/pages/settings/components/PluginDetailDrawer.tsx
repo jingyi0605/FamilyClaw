@@ -30,6 +30,17 @@ function formatSourceType(sourceType: PluginSourceType, locale: string | undefin
   }
 }
 
+function formatRuntimeSource(runtimeSource: PluginRegistryItem['runtime_source'], locale: string | undefined) {
+  switch (runtimeSource) {
+    case 'plugins_dev':
+      return { label: getPageMessage(locale, 'settings.plugin.runtime.dev'), tone: 'warning' as const };
+    case 'installed':
+      return { label: getPageMessage(locale, 'settings.plugin.runtime.installed'), tone: 'secondary' as const };
+    default:
+      return null;
+  }
+}
+
 function formatRiskLevel(riskLevel: PluginRiskLevel, locale: string | undefined) {
   switch (riskLevel) {
     case 'low':
@@ -317,6 +328,7 @@ export function PluginDetailDrawer(props: {
   }
 
   const sourceInfo = formatSourceType(plugin.source_type, locale);
+  const runtimeInfo = formatRuntimeSource(plugin.runtime_source, locale);
   const riskInfo = formatRiskLevel(plugin.risk_level, locale);
   const devActiveInfo = formatDevActiveBadge(locale);
   const latestFailedJob = jobs.find((item) => item.job.status === 'failed');
@@ -363,7 +375,8 @@ export function PluginDetailDrawer(props: {
             <h2>{plugin.name}</h2>
             <div className="plugin-detail-drawer__badges">
               <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
-              {plugin.is_dev_active ? (
+              {runtimeInfo ? <span className={`badge badge--${runtimeInfo.tone}`}>{runtimeInfo.label}</span> : null}
+              {plugin.runtime_source === 'plugins_dev' && plugin.is_dev_active ? (
                 <span className={`badge badge--${devActiveInfo.tone}`}>{copy.devActive}</span>
               ) : null}
               <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>

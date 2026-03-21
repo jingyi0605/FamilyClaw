@@ -764,6 +764,8 @@
   'settings.plugin.source.builtin': '内置',
   'settings.plugin.source.official': '官方',
   'settings.plugin.source.thirdParty': '第三方',
+  'settings.plugin.runtime.dev': '开发版',
+  'settings.plugin.runtime.installed': '已安装版',
   'settings.plugin.risk.low': '低风险',
   'settings.plugin.risk.lowDesc': '权限和行为都比较克制，风险相对低。',
   'settings.plugin.risk.medium': '中风险',

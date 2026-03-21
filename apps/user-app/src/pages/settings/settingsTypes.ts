@@ -517,6 +517,7 @@ export type ChannelAccountStatusRead = {
 };
 
 export type PluginSourceType = 'builtin' | 'third_party';
+export type PluginRuntimeSource = 'builtin' | 'plugins_dev' | 'installed';
 export type PluginRiskLevel = 'low' | 'medium' | 'high';
 export type PluginInstallMethod = 'local' | 'marketplace';
 export type PluginVersionGovernanceSourceType = 'builtin' | 'marketplace' | 'local';
@@ -767,6 +768,7 @@ export type PluginRegistryItem = {
     enabled_by_default: boolean;
   }>;
   source_type: PluginSourceType;
+  runtime_source: PluginRuntimeSource;
   is_dev_active?: boolean;
   install_method?: PluginInstallMethod | null;
   install_status?: string | null;
@@ -781,6 +783,7 @@ export type PluginRegistrySnapshot = {
 
 export type PluginStateUpdateRequest = {
   enabled: boolean;
+  runtime_source?: PluginRuntimeSource | null;
 };
 
 export type PluginPackageInstallAction = 'installed' | 'upgraded' | 'reinstalled';
@@ -853,11 +856,11 @@ export type IntegrationCatalogItem = {
   plugin_id: string;
   name: string;
   description?: string | null;
+  instance_display_name_placeholder?: string | null;
+  instance_display_name_placeholder_key?: string | null;
   icon_url?: string | null;
   source_type: PluginSourceType;
   risk_level: PluginRiskLevel;
-  instance_display_name_placeholder?: string | null;
-  instance_display_name_placeholder_key?: string | null;
   resource_support: IntegrationResourceSupport;
   config_schema_available: boolean;
   config_spec?: PluginManifestConfigSpec | null;

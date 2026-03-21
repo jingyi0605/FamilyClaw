@@ -595,11 +595,16 @@ def upsert_ai_config_agent_runtime_policy_endpoint(
 @router.get("/{household_id}/plugins", response_model=PluginRegistrySnapshot)
 def list_household_plugins_endpoint(
     household_id: str,
+    include_conflicting_variants: bool = Query(default=False),
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> PluginRegistrySnapshot:
     ensure_actor_can_access_household(actor, household_id)
-    return list_registered_plugins_for_household(db, household_id=household_id)
+    return list_registered_plugins_for_household(
+        db,
+        household_id=household_id,
+        include_conflicting_variants=include_conflicting_variants,
+    )
 
 
 @router.get("/{household_id}/themes", response_model=PluginThemeRegistrySnapshotRead)
@@ -906,12 +911,18 @@ def update_household_plugin_mount_endpoint(
 def delete_household_plugin_mount_endpoint(
     household_id: str,
     plugin_id: str,
+    runtime_source: str | None = Query(default=None),
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> None:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        delete_household_plugin_installation(db, household_id=household_id, plugin_id=plugin_id)
+        delete_household_plugin_installation(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            runtime_source=runtime_source,
+        )
         write_audit_log(
             db,
             household_id=household_id,
@@ -920,7 +931,7 @@ def delete_household_plugin_mount_endpoint(
             target_type="plugin",
             target_id=plugin_id,
             result="success",
-            details={"plugin_id": plugin_id},
+            details={"plugin_id": plugin_id, "runtime_source": runtime_source},
         )
         db.commit()
     except PluginServiceError as exc:
@@ -938,12 +949,18 @@ def delete_household_plugin_mount_endpoint(
 def delete_household_plugin_endpoint(
     household_id: str,
     plugin_id: str,
+    runtime_source: str | None = Query(default=None),
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> None:
     ensure_actor_can_access_household(actor, household_id)
     try:
-        delete_household_plugin_installation(db, household_id=household_id, plugin_id=plugin_id)
+        delete_household_plugin_installation(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            runtime_source=runtime_source,
+        )
         write_audit_log(
             db,
             household_id=household_id,
@@ -952,7 +969,7 @@ def delete_household_plugin_endpoint(
             target_type="plugin",
             target_id=plugin_id,
             result="success",
-            details={"plugin_id": plugin_id},
+            details={"plugin_id": plugin_id, "runtime_source": runtime_source},
         )
         db.commit()
     except PluginServiceError as exc:

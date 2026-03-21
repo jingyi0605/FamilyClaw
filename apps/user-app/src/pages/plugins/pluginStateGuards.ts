@@ -1,7 +1,7 @@
 import type { PluginRegistryItem } from '../settings/settingsTypes';
 
 type ToggleGuardPlugin = Pick<PluginRegistryItem, 'id' | 'enabled' | 'types'>;
-type DeleteGuardPlugin = Pick<PluginRegistryItem, 'id' | 'types'>;
+type DeleteGuardPlugin = Pick<PluginRegistryItem, 'id' | 'enabled' | 'types'>;
 
 function isActiveThemePlugin(
   plugin: Pick<PluginRegistryItem, 'id' | 'types'>,
@@ -34,5 +34,8 @@ export function shouldBlockDeleteCurrentThemePlugin(
   plugin: DeleteGuardPlugin,
   activeThemePluginId: string | null | undefined,
 ): boolean {
+  if (!plugin.enabled) {
+    return false;
+  }
   return isActiveThemePlugin(plugin, activeThemePluginId);
 }

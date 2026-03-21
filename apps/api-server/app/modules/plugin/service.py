@@ -59,6 +59,7 @@ from app.modules.plugin.schemas import (
     PluginStateUpdateRequest,
     PluginRawRecordCreate,
     PluginRawRecordRead,
+    PluginRuntimeSource,
     PluginRunnerConfig,
     PluginRunRead,
     PluginSourceType,
@@ -86,6 +87,8 @@ PLUGIN_THEME_RESOURCE_INVALID_ERROR_CODE = "plugin_theme_resource_invalid"
 PLUGIN_THEME_RESOURCE_UNAVAILABLE_ERROR_CODE = "plugin_theme_resource_unavailable"
 PLUGIN_STATE_OVERRIDE_INVALID_ERROR_CODE = "plugin_state_override_invalid"
 PLUGIN_EFFECTIVE_STATE_UNRESOLVED_ERROR_CODE = "plugin_effective_state_unresolved"
+PLUGIN_OVERRIDE_SOURCE_TYPE_PLUGINS_DEV = "plugins_dev"
+PLUGIN_OVERRIDE_SOURCE_TYPE_INSTALLED = "installed"
 logger = logging.getLogger(__name__)
 _REPORTED_PLUGIN_REGISTRY_ISSUES: set[str] = set()
 
@@ -409,6 +412,7 @@ def _build_registry_item_from_manifest(
     *,
     base_enabled: bool,
     source_type: PluginSourceType = "builtin",
+    runtime_source: PluginRuntimeSource = "builtin",
     is_dev_active: bool = False,
     install_method: PluginInstallMethod | None = None,
     execution_backend: PluginExecutionBackend | None = None,
@@ -444,6 +448,7 @@ def _build_registry_item_from_manifest(
             "locales": [item.model_dump(mode="json") for item in manifest.locales],
             "schedule_templates": [item.model_dump(mode="json") for item in manifest.schedule_templates],
             "source_type": source_type,
+            "runtime_source": runtime_source,
             "is_dev_active": is_dev_active,
             "install_method": install_method,
             "execution_backend": execution_backend,
@@ -494,6 +499,7 @@ def _build_registry_item_from_mount(mount: PluginMount, manifest: PluginManifest
         manifest,
         base_enabled=mount.enabled,
         source_type=_normalize_plugin_source_type(mount.source_type),
+        runtime_source="installed",
         install_method=_resolve_mount_install_method(mount),
         execution_backend=cast(PluginExecutionBackend, mount.execution_backend),
         runner_config=_build_runner_config_from_mount(mount),
@@ -531,20 +537,22 @@ def _apply_marketplace_registry_state(
 
 def _merge_effective_plugin_state(
     item: PluginRegistryItem,
-    override: PluginStateOverride | None,
+    *,
+    household_enabled: bool | None,
+    is_dev_active: bool | None = None,
 ) -> PluginRegistryItem:
     base_enabled = item.base_enabled
-    household_enabled = override.enabled if override is not None else None
     enabled = base_enabled and (household_enabled if household_enabled is not None else True)
     disabled_reason = _build_disabled_reason(base_enabled=base_enabled, household_enabled=household_enabled)
-    return item.model_copy(
-        update={
-            "base_enabled": base_enabled,
-            "household_enabled": household_enabled,
-            "enabled": enabled,
-            "disabled_reason": disabled_reason,
-        }
-    )
+    updates: dict[str, Any] = {
+        "base_enabled": base_enabled,
+        "household_enabled": household_enabled,
+        "enabled": enabled,
+        "disabled_reason": disabled_reason,
+    }
+    if is_dev_active is not None:
+        updates["is_dev_active"] = is_dev_active
+    return item.model_copy(update=updates)
 
 
 def _list_plugin_state_override_map(db: Session, *, household_id: str) -> dict[str, PluginStateOverride]:
@@ -554,8 +562,151 @@ def _list_plugin_state_override_map(db: Session, *, household_id: str) -> dict[s
     }
 
 
-def _resolve_plugin_from_snapshot(snapshot: PluginRegistrySnapshot, *, plugin_id: str) -> PluginRegistryItem | None:
-    return next((item for item in snapshot.items if item.id == plugin_id), None)
+def _normalize_plugin_runtime_source(value: str | None) -> PluginRuntimeSource | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized not in {"builtin", "plugins_dev", "installed"}:
+        raise PluginServiceError(
+            f"不支持的插件运行来源: {value}",
+            error_code="plugin_runtime_source_invalid",
+            field="runtime_source",
+            status_code=400,
+        )
+    return cast(PluginRuntimeSource, normalized)
+
+
+def _resolve_override_runtime_source(
+    override: PluginStateOverride | None,
+    *,
+    has_builtin: bool,
+    has_dev: bool,
+    has_installed: bool,
+) -> PluginRuntimeSource | None:
+    if has_builtin:
+        return "builtin"
+    if override is None:
+        if has_dev:
+            return "plugins_dev"
+        if has_installed:
+            return "installed"
+        return None
+
+    normalized = override.source_type.strip()
+    if normalized == "builtin":
+        return "builtin"
+    if normalized == PLUGIN_OVERRIDE_SOURCE_TYPE_PLUGINS_DEV:
+        return "plugins_dev"
+    if normalized == PLUGIN_OVERRIDE_SOURCE_TYPE_INSTALLED:
+        return "installed"
+    if normalized == "third_party":
+        if has_dev:
+            return "plugins_dev"
+        if has_installed:
+            return "installed"
+    if has_dev:
+        return "plugins_dev"
+    if has_installed:
+        return "installed"
+    return None
+
+
+def _resolve_household_enabled_for_variant(
+    *,
+    runtime_source: PluginRuntimeSource,
+    override: PluginStateOverride | None,
+    selected_runtime_source: PluginRuntimeSource | None,
+    has_conflict: bool,
+) -> bool | None:
+    if not has_conflict:
+        return override.enabled if override is not None else None
+    if override is None:
+        return None if runtime_source == "plugins_dev" else False
+    if not override.enabled:
+        return False
+    return runtime_source == selected_runtime_source
+
+
+def _build_conflicting_variant_items(
+    *,
+    dev_item: PluginRegistryItem | None,
+    installed_item: PluginRegistryItem | None,
+    override: PluginStateOverride | None,
+) -> list[PluginRegistryItem]:
+    has_dev = dev_item is not None
+    has_installed = installed_item is not None
+    selected_runtime_source = _resolve_override_runtime_source(
+        override,
+        has_builtin=False,
+        has_dev=has_dev,
+        has_installed=has_installed,
+    )
+    variants: list[PluginRegistryItem] = []
+    if dev_item is not None:
+        merged_dev = _merge_effective_plugin_state(
+            dev_item,
+            household_enabled=_resolve_household_enabled_for_variant(
+                runtime_source="plugins_dev",
+                override=override,
+                selected_runtime_source=selected_runtime_source,
+                has_conflict=has_dev and has_installed,
+            ),
+        )
+        variants.append(
+            merged_dev.model_copy(
+                update={"is_dev_active": merged_dev.runtime_source == "plugins_dev" and merged_dev.enabled}
+            )
+        )
+    if installed_item is not None:
+        variants.append(
+            _merge_effective_plugin_state(
+                installed_item,
+                household_enabled=_resolve_household_enabled_for_variant(
+                    runtime_source="installed",
+                    override=override,
+                    selected_runtime_source=selected_runtime_source,
+                    has_conflict=has_dev and has_installed,
+                ),
+                is_dev_active=False,
+            )
+        )
+    return variants
+
+
+def _collapse_effective_plugin_variants(items: list[PluginRegistryItem]) -> list[PluginRegistryItem]:
+    grouped: dict[str, list[PluginRegistryItem]] = {}
+    for item in items:
+        grouped.setdefault(item.id, []).append(item)
+
+    collapsed: list[PluginRegistryItem] = []
+    for plugin_id in sorted(grouped):
+        variants = grouped[plugin_id]
+        enabled_variant = next((item for item in variants if item.enabled), None)
+        if enabled_variant is not None:
+            collapsed.append(enabled_variant)
+            continue
+        preferred_variant = next((item for item in variants if item.runtime_source == "plugins_dev"), None)
+        if preferred_variant is None:
+            preferred_variant = variants[0]
+        collapsed.append(preferred_variant)
+    return collapsed
+
+
+def _resolve_plugin_from_snapshot(
+    snapshot: PluginRegistrySnapshot,
+    *,
+    plugin_id: str,
+    runtime_source: PluginRuntimeSource | None = None,
+) -> PluginRegistryItem | None:
+    for item in snapshot.items:
+        if item.id != plugin_id:
+            continue
+        if runtime_source is not None and item.runtime_source != runtime_source:
+            continue
+        return item
+    return None
 
 
 def _apply_execution_overrides(
@@ -656,7 +807,8 @@ def _build_dev_registry_item(manifest_path: Path, manifest: PluginManifest) -> P
         manifest,
         base_enabled=True,
         source_type="third_party",
-        is_dev_active=True,
+        runtime_source="plugins_dev",
+        is_dev_active=False,
         install_method="local",
         execution_backend="subprocess_runner",
         runner_config=_build_runner_config_from_plugin_root(plugin_root),
@@ -678,33 +830,6 @@ def _discover_plugin_dev_registry_items() -> list[PluginRegistryItem]:
         _build_dev_registry_item(manifest_path, manifest)
         for manifest_path, manifest in _discover_manifest_entries(dev_root)
     ]
-
-
-def _overlay_dev_registry_item(
-    *,
-    dev_item: PluginRegistryItem,
-    installed_item: PluginRegistryItem,
-) -> PluginRegistryItem:
-    updates: dict[str, Any] = {
-        "base_enabled": installed_item.base_enabled,
-        "household_enabled": installed_item.household_enabled,
-        "enabled": installed_item.enabled,
-        "disabled_reason": installed_item.disabled_reason,
-    }
-    if installed_item.marketplace_instance_id is not None:
-        updates.update(
-            {
-                "install_method": installed_item.install_method,
-                "installed_version": installed_item.installed_version,
-                "update_state": installed_item.update_state,
-                "install_status": installed_item.install_status,
-                "config_status": installed_item.config_status,
-                "marketplace_instance_id": installed_item.marketplace_instance_id,
-                "version_governance": installed_item.version_governance,
-            }
-        )
-    updates["is_dev_active"] = True
-    return dev_item.model_copy(update=updates)
 
 
 def _copy_plugin_tree(*, source_root: Path, target_root: Path) -> None:
@@ -922,6 +1047,7 @@ def list_registered_plugins_for_household(
     household_id: str,
     root_dir: str | Path | None = None,
     state_file: str | Path | None = None,
+    include_conflicting_variants: bool = False,
 ) -> PluginRegistrySnapshot:
     from app.modules.plugin_marketplace.service import (
         get_marketplace_instance_for_household_plugin,
@@ -988,10 +1114,11 @@ def list_registered_plugins_for_household(
             continue
         mounted_items_by_id[manifest.id] = _merge_effective_plugin_state(
             mounted_item,
-            override_map.get(manifest.id),
+            household_enabled=override_map.get(manifest.id).enabled if override_map.get(manifest.id) is not None else None,
+            is_dev_active=False,
         )
 
-    dev_items: list[PluginRegistryItem] = []
+    dev_items_by_id: dict[str, PluginRegistryItem] = {}
     for dev_item in _discover_plugin_dev_registry_items():
         if dev_item.id in builtin_by_id:
             _log_plugin_registry_issue_once(
@@ -1003,22 +1130,32 @@ def list_registered_plugins_for_household(
                 ),
             )
             continue
-        installed_item = mounted_items_by_id.pop(dev_item.id, None)
-        if installed_item is not None:
-            dev_items.append(_overlay_dev_registry_item(dev_item=dev_item, installed_item=installed_item))
-            continue
-        dev_items.append(
-            _merge_effective_plugin_state(
-                dev_item,
-                override_map.get(dev_item.id),
+        dev_items_by_id[dev_item.id] = _merge_effective_plugin_state(
+            dev_item,
+            household_enabled=override_map.get(dev_item.id).enabled if override_map.get(dev_item.id) is not None else None,
+        )
+
+    merged_items: list[PluginRegistryItem] = [
+        _merge_effective_plugin_state(
+            item,
+            household_enabled=override_map.get(item.id).enabled if override_map.get(item.id) is not None else None,
+            is_dev_active=False,
+        )
+        for item in builtin_snapshot.items
+    ]
+
+    for plugin_id in sorted(set(dev_items_by_id) | set(mounted_items_by_id)):
+        merged_items.extend(
+            _build_conflicting_variant_items(
+                dev_item=dev_items_by_id.get(plugin_id),
+                installed_item=mounted_items_by_id.get(plugin_id),
+                override=override_map.get(plugin_id),
             )
         )
 
-    builtin_items = [
-        _merge_effective_plugin_state(item, override_map.get(item.id))
-        for item in builtin_snapshot.items
-    ]
-    return PluginRegistrySnapshot(items=[*builtin_items, *dev_items, *mounted_items_by_id.values()])
+    if include_conflicting_variants:
+        return PluginRegistrySnapshot(items=merged_items)
+    return PluginRegistrySnapshot(items=_collapse_effective_plugin_variants(merged_items))
 
 
 def get_household_plugin(
@@ -1026,6 +1163,7 @@ def get_household_plugin(
     *,
     household_id: str,
     plugin_id: str,
+    runtime_source: PluginRuntimeSource | None = None,
     root_dir: str | Path | None = None,
     state_file: str | Path | None = None,
 ) -> PluginRegistryItem:
@@ -1034,8 +1172,13 @@ def get_household_plugin(
         household_id=household_id,
         root_dir=root_dir,
         state_file=state_file,
+        include_conflicting_variants=runtime_source is not None,
     )
-    plugin = _resolve_plugin_from_snapshot(snapshot, plugin_id=plugin_id)
+    plugin = _resolve_plugin_from_snapshot(
+        snapshot,
+        plugin_id=plugin_id,
+        runtime_source=runtime_source,
+    )
     if plugin is None:
         raise PluginServiceError(
             f"当前家庭看不到插件 {plugin_id}。",
@@ -1106,6 +1249,8 @@ def _apply_post_enable_side_effects(
     household_id: str,
     plugin: PluginRegistryItem,
     updated_by: str | None,
+    root_dir: str | Path | None = None,
+    state_file: str | Path | None = None,
 ) -> None:
     integration_capability = plugin.capabilities.integration
     if integration_capability is None or not integration_capability.auto_create_default_instance:
@@ -1144,53 +1289,58 @@ def set_household_plugin_enabled(
     from app.modules.household.service import get_household_or_404
     from app.modules.plugin_marketplace.service import set_marketplace_instance_enabled
 
+    target_runtime_source = _normalize_plugin_runtime_source(payload.runtime_source)
     get_household_or_404(db, household_id)
     current = get_household_plugin(
         db,
         household_id=household_id,
         plugin_id=plugin_id,
+        runtime_source=target_runtime_source,
         root_dir=root_dir,
         state_file=state_file,
     )
-    if current.marketplace_instance_id is not None:
+
+    if current.runtime_source == "installed" and current.marketplace_instance_id is not None:
         set_marketplace_instance_enabled(
             db,
             household_id=household_id,
             plugin_id=plugin_id,
             payload=payload,
         )
-        sync_household_plugin_region_providers(db, household_id)
-        current = get_household_plugin(
-            db,
-            household_id=household_id,
-            plugin_id=plugin_id,
-            root_dir=root_dir,
-            state_file=state_file,
-        )
-        if payload.enabled:
-            _apply_post_enable_side_effects(
-                db,
-                household_id=household_id,
-                plugin=current,
-                updated_by=updated_by,
-            )
-            current = get_household_plugin(
+    elif current.runtime_source == "plugins_dev" and payload.enabled:
+        try:
+            installed_variant = get_household_plugin(
                 db,
                 household_id=household_id,
                 plugin_id=plugin_id,
+                runtime_source="installed",
                 root_dir=root_dir,
                 state_file=state_file,
             )
-        return current
+        except PluginServiceError:
+            installed_variant = None
+        if installed_variant is not None and installed_variant.marketplace_instance_id is not None:
+            set_marketplace_instance_enabled(
+                db,
+                household_id=household_id,
+                plugin_id=plugin_id,
+                payload=PluginStateUpdateRequest(enabled=False),
+            )
+
     now = utc_now_iso()
     row = repository.get_plugin_state_override(db, household_id=household_id, plugin_id=plugin_id)
+    override_source_type = {
+        "builtin": "builtin",
+        "plugins_dev": PLUGIN_OVERRIDE_SOURCE_TYPE_PLUGINS_DEV,
+        "installed": PLUGIN_OVERRIDE_SOURCE_TYPE_INSTALLED,
+    }[current.runtime_source]
     if row is None:
         row = PluginStateOverride(
             id=new_uuid(),
             household_id=household_id,
             plugin_id=plugin_id,
             enabled=payload.enabled,
-            source_type=current.source_type,
+            source_type=override_source_type,
             updated_by=updated_by,
             created_at=now,
             updated_at=now,
@@ -1198,32 +1348,36 @@ def set_household_plugin_enabled(
         repository.add_plugin_state_override(db, row)
     else:
         row.enabled = payload.enabled
-        row.source_type = current.source_type
+        row.source_type = override_source_type
         row.updated_by = updated_by
         row.updated_at = now
     db.flush()
     sync_household_plugin_region_providers(db, household_id)
+
+    current = get_household_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+        runtime_source=current.runtime_source,
+        root_dir=root_dir,
+        state_file=state_file,
+    )
     if payload.enabled:
-        current = get_household_plugin(
-            db,
-            household_id=household_id,
-            plugin_id=plugin_id,
-            root_dir=root_dir,
-            state_file=state_file,
-        )
         _apply_post_enable_side_effects(
             db,
             household_id=household_id,
             plugin=current,
             updated_by=updated_by,
         )
-    return get_household_plugin(
-        db,
-        household_id=household_id,
-        plugin_id=plugin_id,
-        root_dir=root_dir,
-        state_file=state_file,
-    )
+        current = get_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            runtime_source=current.runtime_source,
+            root_dir=root_dir,
+            state_file=state_file,
+        )
+    return current
 
 
 def list_plugin_mounts(db: Session, *, household_id: str) -> list[PluginMountRead]:
@@ -1907,17 +2061,50 @@ def delete_household_plugin_installation(
     *,
     household_id: str,
     plugin_id: str,
+    runtime_source: PluginRuntimeSource | None = None,
 ) -> None:
     from app.modules.household.service import get_household_or_404
     from app.modules.plugin_marketplace import repository as marketplace_repository
 
+    target_runtime_source = _normalize_plugin_runtime_source(runtime_source)
     get_household_or_404(db, household_id)
 
-    plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
-    if plugin.source_type == "builtin":
+    if target_runtime_source is None:
+        conflict_snapshot = list_registered_plugins_for_household(
+            db,
+            household_id=household_id,
+            include_conflicting_variants=True,
+        )
+        installed_variant = _resolve_plugin_from_snapshot(
+            conflict_snapshot,
+            plugin_id=plugin_id,
+            runtime_source="installed",
+        )
+        if installed_variant is not None:
+            plugin = installed_variant
+            target_runtime_source = "installed"
+        else:
+            plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
+            target_runtime_source = plugin.runtime_source
+    else:
+        plugin = get_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+            runtime_source=target_runtime_source,
+        )
+
+    if plugin.runtime_source == "builtin":
         raise PluginServiceError(
             f"内置插件不能删除: {plugin_id}",
             error_code="plugin_builtin_delete_forbidden",
+            field="plugin_id",
+            status_code=409,
+        )
+    if plugin.runtime_source == "plugins_dev":
+        raise PluginServiceError(
+            f"开发源码插件不能通过安装删除接口移除: {plugin_id}",
+            error_code="plugin_dev_delete_forbidden",
             field="plugin_id",
             status_code=409,
         )
@@ -1948,20 +2135,36 @@ def delete_household_plugin_installation(
         mount=mount,
         marketplace_instance=marketplace_instance,
     )
+    has_dev_variant = False
+    if target_runtime_source == "installed":
+        snapshot = list_registered_plugins_for_household(
+            db,
+            household_id=household_id,
+            include_conflicting_variants=True,
+        )
+        has_dev_variant = (
+            _resolve_plugin_from_snapshot(snapshot, plugin_id=plugin_id, runtime_source="plugins_dev") is not None
+        )
 
-    for row in repository.list_plugin_config_instances(db, household_id=household_id, plugin_id=plugin_id):
-        repository.delete_plugin_config_instance(db, row)
+    if not has_dev_variant:
+        for row in repository.list_plugin_config_instances(db, household_id=household_id, plugin_id=plugin_id):
+            repository.delete_plugin_config_instance(db, row)
 
     override = repository.get_plugin_state_override(db, household_id=household_id, plugin_id=plugin_id)
     if override is not None:
-        repository.delete_plugin_state_override(db, override)
+        if has_dev_variant:
+            override.source_type = PLUGIN_OVERRIDE_SOURCE_TYPE_PLUGINS_DEV
+            override.updated_at = utc_now_iso()
+        else:
+            repository.delete_plugin_state_override(db, override)
 
-    for row in repository.list_plugin_dashboard_card_snapshots(
-        db,
-        household_id=household_id,
-        plugin_id=plugin_id,
-    ):
-        repository.delete_plugin_dashboard_card_snapshot(db, row)
+    if not has_dev_variant:
+        for row in repository.list_plugin_dashboard_card_snapshots(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+        ):
+            repository.delete_plugin_dashboard_card_snapshot(db, row)
 
     if marketplace_instance is not None:
         marketplace_repository.delete_marketplace_instance(db, marketplace_instance)

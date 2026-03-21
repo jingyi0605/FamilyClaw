@@ -796,6 +796,8 @@
   'settings.plugin.source.builtin': 'Built-in',
   'settings.plugin.source.official': 'Official',
   'settings.plugin.source.thirdParty': 'Third-party',
+  'settings.plugin.runtime.dev': 'Dev variant',
+  'settings.plugin.runtime.installed': 'Installed variant',
   'settings.plugin.risk.low': 'Low risk',
   'settings.plugin.risk.lowDesc': 'Permissions and behavior are relatively constrained.',
   'settings.plugin.risk.medium': 'Medium risk',

@@ -32,6 +32,7 @@ PluginManifestType = Literal[
 ]
 RiskLevel = Literal["low", "medium", "high"]
 PluginSourceType = Literal["builtin", "third_party"]
+PluginRuntimeSource = Literal["builtin", "plugins_dev", "installed"]
 PluginInstallMethod = Literal["local", "marketplace"]
 PluginVersionGovernanceSourceType = Literal["builtin", "marketplace", "local"]
 PluginVersionCompatibilityStatus = Literal["compatible", "host_too_old", "unknown"]
@@ -500,9 +501,9 @@ class PluginManifestIntegrationSpec(BaseModel):
     supports_live_state: bool = False
     auto_create_default_instance: bool = False
     default_instance_display_name: str | None = Field(default=None, max_length=100)
-    default_instance_config: dict[str, Any] = Field(default_factory=dict)
     instance_display_name_placeholder: str | None = Field(default=None, max_length=100)
     instance_display_name_placeholder_key: str | None = Field(default=None, max_length=255)
+    default_instance_config: dict[str, Any] = Field(default_factory=dict)
     entity_types: list[str] = Field(default_factory=list)
     default_cache_ttl_seconds: int = Field(default=300, ge=0, le=86400)
     max_stale_seconds: int = Field(default=3600, ge=0, le=604800)
@@ -530,12 +531,12 @@ class PluginManifestIntegrationSpec(BaseModel):
             raise ValueError("default_instance_display_name 不能为空")
         return normalized
 
-    @model_validator(mode="after")
     @field_validator("instance_display_name_placeholder_key")
     @classmethod
     def validate_instance_display_name_placeholder_key(cls, value: str | None) -> str | None:
         return _normalize_i18n_key(value)
 
+    @model_validator(mode="after")
     def validate_stale_window(self) -> "PluginManifestIntegrationSpec":
         if self.max_stale_seconds < self.default_cache_ttl_seconds:
             raise ValueError("max_stale_seconds 不能小于 default_cache_ttl_seconds")
@@ -1515,6 +1516,7 @@ class PluginStateOverrideRead(BaseModel):
 
 class PluginStateUpdateRequest(BaseModel):
     enabled: bool
+    runtime_source: PluginRuntimeSource | None = None
 
 
 PluginConfigState = Literal["unconfigured", "configured", "invalid"]
@@ -1640,6 +1642,7 @@ class PluginRegistryItem(BaseModel):
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
     schedule_templates: list[PluginManifestScheduleTemplate] = Field(default_factory=list)
     source_type: PluginSourceType = "builtin"
+    runtime_source: PluginRuntimeSource = "builtin"
     is_dev_active: bool = False
     install_method: PluginInstallMethod | None = None
     execution_backend: PluginExecutionBackend | None = None
