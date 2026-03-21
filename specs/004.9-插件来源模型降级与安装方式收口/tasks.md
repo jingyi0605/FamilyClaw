@@ -50,6 +50,14 @@
   - 这一步明确不做什么：不让开发覆盖直接改数据库实例状态
   - 怎么验证：marketplace 覆盖测试通过
 
+- [x] 2.4 给开发覆盖态增加前端可见标识
+  - 这一步到底做什么：在家庭插件注册表里增加开发生效标记，并让插件列表、表格、详情都显示“开发插件生效中”
+  - 做完以后能看到什么结果：用户能一眼看出当前跑的是 `plugins-dev` 版本，而不是安装态版本
+  - 这一步依赖什么：2.2、2.3
+  - 主要改哪些文件：`app/modules/plugin/schemas.py`、`app/modules/plugin/service.py`、`apps/user-app/src/pages/plugins/index.tsx`、`apps/user-app/src/pages/settings/components/PluginDetailDrawer.tsx`
+  - 这一步明确不做什么：不新增新的插件来源类型
+  - 怎么验证：`plugins-dev` 覆盖 third_party 和 dev-only 插件场景都显示标签，普通安装态不显示
+
 ---
 
 ## 阶段 3：守住边界，不把 plugins-dev 变成安装目录
@@ -97,6 +105,7 @@
   - 主要改哪些文件：`docs/开发设计规范/*`、`specs/004.9-*`
   - 这一步明确不做什么：不重写与本次需求无关的历史方案
   - 怎么验证：人工走查，确认关键规则一致
+  - 当前补充：当前家庭如果实际加载的是 `plugins-dev` 版本，前端插件列表和插件详情会显示“开发插件生效中”标签。
 
 - [x] 4.3 给历史 spec 补“已废弃”提示
   - 这一步到底做什么：保留历史背景，但明确旧路径和旧术语不再是当前实现
@@ -135,5 +144,6 @@ cd apps/api-server
 - [x] 第三方安装方式只剩 `local`、`marketplace`
 - [x] `plugins-dev` 已成为开发覆盖源
 - [x] 同名优先级固定为 `builtin > plugins-dev > installed third_party`
+- [x] 前端能明确标出当前是否是 `plugins-dev` 开发版在生效
 - [x] `plugins-dev` 不写 mount、不参与安装落盘、不参与卸载清理
 - [x] 官方开发文档、规范和 004.9 spec 已同步

@@ -49,6 +49,7 @@
 3. `plugins-dev` 可以覆盖已安装 third_party 的 manifest、runner 配置和执行入口
 4. `plugins-dev` 不能覆盖 `builtin`
 5. `plugins-dev` 中的开发插件即使没有安装态挂载，也可以作为开发态第三方插件进入家庭注册表
+6. 当前家庭实际生效的是 `plugins-dev` 版本时，前端必须明确显示开发插件生效标识，不能让用户靠来源字段猜运行态
 
 ## 需求 4：plugins-dev 不能被误当成安装目录
 

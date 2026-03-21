@@ -770,6 +770,7 @@
   'settings.plugin.risk.mediumDesc': '能做的事情更多，启用前最好确认权限范围。',
   'settings.plugin.risk.high': '高风险',
   'settings.plugin.risk.highDesc': '这类插件能力很强，先确认来源、权限和维护状态，再决定要不要开。',
+  'settings.plugin.devActive': '开发插件生效中',
   'settings.plugin.job.succeeded': '成功',
   'settings.plugin.job.queued': '排队中',
   'settings.plugin.job.running': '执行中',

@@ -409,6 +409,7 @@ def _build_registry_item_from_manifest(
     *,
     base_enabled: bool,
     source_type: PluginSourceType = "builtin",
+    is_dev_active: bool = False,
     install_method: PluginInstallMethod | None = None,
     execution_backend: PluginExecutionBackend | None = None,
     runner_config: PluginRunnerConfig | None = None,
@@ -443,6 +444,7 @@ def _build_registry_item_from_manifest(
             "locales": [item.model_dump(mode="json") for item in manifest.locales],
             "schedule_templates": [item.model_dump(mode="json") for item in manifest.schedule_templates],
             "source_type": source_type,
+            "is_dev_active": is_dev_active,
             "install_method": install_method,
             "execution_backend": execution_backend,
             "runner_config": runner_config.model_dump(mode="json") if runner_config is not None else None,
@@ -654,6 +656,7 @@ def _build_dev_registry_item(manifest_path: Path, manifest: PluginManifest) -> P
         manifest,
         base_enabled=True,
         source_type="third_party",
+        is_dev_active=True,
         install_method="local",
         execution_backend="subprocess_runner",
         runner_config=_build_runner_config_from_plugin_root(plugin_root),
@@ -700,6 +703,7 @@ def _overlay_dev_registry_item(
                 "version_governance": installed_item.version_governance,
             }
         )
+    updates["is_dev_active"] = True
     return dev_item.model_copy(update=updates)
 
 

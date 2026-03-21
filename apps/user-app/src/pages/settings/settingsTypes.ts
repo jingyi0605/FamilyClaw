@@ -767,6 +767,7 @@ export type PluginRegistryItem = {
     enabled_by_default: boolean;
   }>;
   source_type: PluginSourceType;
+  is_dev_active?: boolean;
   install_method?: PluginInstallMethod | null;
   install_status?: string | null;
   config_status?: PluginConfigState | null;

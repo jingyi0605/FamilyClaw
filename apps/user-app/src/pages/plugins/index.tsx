@@ -125,12 +125,10 @@ function formatPluginType(type: PluginManifestType, locale: string | undefined) 
   }
 }
 
-function formatSourceType(sourceType: PluginRegistryItem['source_type'], locale: string | undefined): { label: string; tone: 'info' | 'success' | 'warning' } {
+function formatSourceType(sourceType: PluginRegistryItem['source_type'], locale: string | undefined): { label: string; tone: 'info' | 'warning' } {
   switch (sourceType) {
     case 'builtin':
       return { label: getPageMessage(locale, 'settings.plugin.source.builtin'), tone: 'info' };
-    case 'official':
-      return { label: getPageMessage(locale, 'settings.plugin.source.official'), tone: 'success' };
     case 'third_party':
       return { label: getPageMessage(locale, 'settings.plugin.source.thirdParty'), tone: 'warning' };
     default:
@@ -149,6 +147,13 @@ function formatRiskLevel(riskLevel: PluginRegistryItem['risk_level'], locale: st
     default:
       return { label: riskLevel, tone: 'warning' };
   }
+}
+
+function formatDevActiveBadge(locale: string | undefined): { label: string; tone: 'warning' } {
+  return {
+    label: getPageMessage(locale, 'settings.plugin.devActive'),
+    tone: 'warning',
+  };
 }
 
 function formatJobStatus(status: string, locale: string | undefined): { label: string; tone: 'success' | 'warning' | 'danger' | 'secondary' } {
@@ -187,8 +192,6 @@ function renderPluginIcon(sourceType: PluginRegistryItem['source_type']) {
   switch (sourceType) {
     case 'builtin':
       return <Package aria-hidden="true" />;
-    case 'official':
-      return <BadgeCheck aria-hidden="true" />;
     case 'third_party':
       return <Zap aria-hidden="true" />;
     default:
@@ -197,10 +200,10 @@ function renderPluginIcon(sourceType: PluginRegistryItem['source_type']) {
 }
 
 function formatMarketplaceTrustedLevel(
-  trustedLevel: MarketplaceSourceRead['trusted_level'],
+  isSystem: boolean,
   locale: string | undefined,
 ): { label: string; tone: 'success' | 'warning' } {
-  if (trustedLevel === 'official') {
+  if (isSystem) {
     return { label: getPageMessage(locale, 'plugins.marketplace.source.official'), tone: 'success' };
   }
   return { label: getPageMessage(locale, 'plugins.marketplace.source.thirdParty'), tone: 'warning' };
@@ -1248,10 +1251,7 @@ function PluginsPageContent() {
         {marketCatalog.length > 0 ? (
           <div className="marketplace-grid">
             {marketCatalog.map(item => {
-              const trustedInfo = formatMarketplaceTrustedLevel(
-                item.trusted_level === 'official' ? 'official' : 'third_party',
-                locale,
-              );
+              const trustedInfo = formatMarketplaceTrustedLevel(item.is_system, locale);
               const installInfo = formatMarketplaceInstallState(item.install_state, locale);
               const governance = item.version_governance;
               const updateInfo = formatVersionUpdateState(governance?.update_state, locale, {
@@ -1336,10 +1336,7 @@ function PluginsPageContent() {
     }
 
     const item = marketplaceDetailItem;
-    const trustedInfo = formatMarketplaceTrustedLevel(
-      item.trusted_level === 'official' ? 'official' : 'third_party',
-      locale,
-    );
+    const trustedInfo = formatMarketplaceTrustedLevel(item.is_system, locale);
     const installInfo = formatMarketplaceInstallState(item.install_state, locale);
     const governance = item.version_governance;
     const updateInfo = formatVersionUpdateState(governance?.update_state, locale, {
@@ -1706,7 +1703,7 @@ function PluginsPageContent() {
 
           <div className="marketplace-sources">
             {marketSources.map(source => {
-              const trustedInfo = formatMarketplaceTrustedLevel(source.trusted_level, locale);
+              const trustedInfo = formatMarketplaceTrustedLevel(source.is_system, locale);
               const syncInfo = formatMarketplaceSyncStatus(source.last_sync_status, locale);
               const isSyncing = syncingSourceId === source.source_id;
               const repoProviderLabel = formatMarketplaceRepoProvider(source.repo_provider, locale);
@@ -1921,6 +1918,7 @@ function PluginsPageContent() {
               {filteredPlugins.map(plugin => {
                 const sourceInfo = formatSourceType(plugin.source_type, locale);
                 const riskInfo = formatRiskLevel(plugin.risk_level, locale);
+                const devActiveInfo = formatDevActiveBadge(locale);
                 const isEnabled = plugin.enabled;
                 const isToggling = togglingPluginId === plugin.id;
                 const isSelected = selectedPluginId === plugin.id;
@@ -1953,6 +1951,9 @@ function PluginsPageContent() {
 
                     <div className="plugin-card__tags">
                       <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
+                      {plugin.is_dev_active ? (
+                        <span className={`badge badge--${devActiveInfo.tone}`}>{devActiveInfo.label}</span>
+                      ) : null}
                       <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>
                       {plugin.types.slice(0, 2).map(type => (
                         <span key={type} className="badge badge--secondary">{formatPluginType(type, locale)}</span>
@@ -2037,6 +2038,7 @@ function PluginsPageContent() {
                   {filteredPlugins.map(plugin => {
                     const sourceInfo = formatSourceType(plugin.source_type, locale);
                     const riskInfo = formatRiskLevel(plugin.risk_level, locale);
+                    const devActiveInfo = formatDevActiveBadge(locale);
                     const isEnabled = plugin.enabled;
                     const isToggling = togglingPluginId === plugin.id;
 
@@ -2053,6 +2055,9 @@ function PluginsPageContent() {
                         </td>
                         <td className="plugin-table__td plugin-table__td--source">
                           <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
+                          {plugin.is_dev_active ? (
+                            <span className={`badge badge--${devActiveInfo.tone}`} style={{ marginLeft: 6 }}>{devActiveInfo.label}</span>
+                          ) : null}
                         </td>
                         <td className="plugin-table__td plugin-table__td--risk">
                           <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>

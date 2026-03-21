@@ -10,14 +10,19 @@ from app.db.utils import dump_json, load_json, new_uuid
 from app.modules.device.models import DeviceBinding, DeviceEntity
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.integration.models import IntegrationInstance
 from app.modules.integration.schemas import IntegrationInstanceActionRequest, IntegrationInstanceCreateRequest
-from app.modules.integration.service import create_integration_instance, execute_integration_instance_action
+from app.modules.integration.service import (
+    create_integration_instance,
+    execute_integration_instance_action,
+    sync_plugin_managed_integration_instance,
+)
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
 from app.modules.plugin.dashboard_service import get_home_dashboard, save_member_dashboard_layout
 from app.modules.plugin.schemas import MemberDashboardLayoutItem, MemberDashboardLayoutUpdateRequest, PluginStateUpdateRequest
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
-from app.modules.plugin.service import set_household_plugin_enabled
+from app.modules.plugin.service import get_household_plugin, set_household_plugin_enabled
 from app.modules.region.models import RegionNode
 from official_weather.providers import WeatherProviderError
 from official_weather.repository import get_weather_device_binding_for_integration_instance
@@ -124,6 +129,29 @@ class WeatherMultiDeviceTests(unittest.TestCase):
                 plugin_id="official-weather",
                 payload=PluginStateUpdateRequest(enabled=True),
                 updated_by="test-suite",
+            )
+            created_default = create_integration_instance(
+                self.db,
+                payload=IntegrationInstanceCreateRequest(
+                    household_id=self.household_id,
+                    plugin_id="official-weather",
+                    display_name="家庭天气",
+                    config={"binding_type": "default_household"},
+                ),
+                updated_by="test-suite",
+            )
+            default_instance = self.db.get(IntegrationInstance, created_default.id)
+            assert default_instance is not None
+            plugin = get_household_plugin(
+                self.db,
+                household_id=self.household_id,
+                plugin_id="official-weather",
+            )
+            sync_plugin_managed_integration_instance(
+                self.db,
+                plugin=plugin,
+                instance=default_instance,
+                sync_scope="device_sync",
             )
 
         self.suzhou_instance = create_integration_instance(

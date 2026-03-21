@@ -6,8 +6,11 @@ from sqlalchemy.orm import Session
 
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.integration.models import IntegrationInstance
+from app.modules.integration.schemas import IntegrationInstanceCreateRequest
+from app.modules.integration.service import create_integration_instance, sync_plugin_managed_integration_instance
 from app.modules.plugin.schemas import PluginStateUpdateRequest
-from app.modules.plugin.service import set_household_plugin_enabled
+from app.modules.plugin.service import get_household_plugin, set_household_plugin_enabled
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from official_weather.models import WeatherDeviceBinding
 from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
@@ -94,6 +97,29 @@ class WeatherPluginPrivateMigrationTests(unittest.TestCase):
                 plugin_id="official-weather",
                 payload=PluginStateUpdateRequest(enabled=True),
                 updated_by="test-suite",
+            )
+            created = create_integration_instance(
+                self.db,
+                payload=IntegrationInstanceCreateRequest(
+                    household_id=household.id,
+                    plugin_id="official-weather",
+                    display_name="家庭天气",
+                    config={"binding_type": "default_household"},
+                ),
+                updated_by="test-suite",
+            )
+            instance = self.db.get(IntegrationInstance, created.id)
+            assert instance is not None
+            plugin = get_household_plugin(
+                self.db,
+                household_id=household.id,
+                plugin_id="official-weather",
+            )
+            sync_plugin_managed_integration_instance(
+                self.db,
+                plugin=plugin,
+                instance=instance,
+                sync_scope="device_sync",
             )
 
         self.assertTrue(self._has_weather_binding_table())

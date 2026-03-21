@@ -103,6 +103,7 @@ class PluginMountTests(unittest.TestCase):
             self.assertEqual("third_party", mounted_plugin.source_type)
             self.assertEqual("local", mounted_plugin.install_method)
             self.assertEqual("subprocess_runner", mounted_plugin.execution_backend)
+            self.assertFalse(mounted_plugin.is_dev_active)
 
             updated = update_plugin_mount(
                 self.db,
@@ -206,6 +207,7 @@ class PluginMountTests(unittest.TestCase):
         self.assertEqual("9.9.9", plugin.version)
         self.assertEqual("third_party", plugin.source_type)
         self.assertEqual("local", plugin.install_method)
+        self.assertTrue(plugin.is_dev_active)
         assert plugin.runner_config is not None
         self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
         self.assertEqual(str((dev_root / "manifest.json").resolve()), str(Path(plugin.manifest_path).resolve()))
@@ -217,6 +219,7 @@ class PluginMountTests(unittest.TestCase):
         plugin_after_delete = get_household_plugin(self.db, household_id=household.id, plugin_id="dev-shadow-plugin")
         assert plugin_after_delete.runner_config is not None
         self.assertEqual("9.9.9", plugin_after_delete.version)
+        self.assertTrue(plugin_after_delete.is_dev_active)
         self.assertEqual(str(dev_root.resolve()), str(Path(plugin_after_delete.runner_config.plugin_root).resolve()))
         self.assertTrue(dev_root.exists())
 
@@ -238,6 +241,7 @@ class PluginMountTests(unittest.TestCase):
 
         current = get_household_plugin(self.db, household_id=household.id, plugin_id=builtin_plugin.id)
         self.assertEqual("builtin", current.source_type)
+        self.assertFalse(current.is_dev_active)
         self.assertEqual(str(Path(builtin_plugin.manifest_path).resolve()), str(Path(current.manifest_path).resolve()))
         self.assertFalse(str(Path(current.manifest_path).resolve()).startswith(str(Path(settings.plugin_dev_root).resolve())))
 

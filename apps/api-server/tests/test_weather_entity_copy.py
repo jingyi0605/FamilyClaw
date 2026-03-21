@@ -9,8 +9,11 @@ from app.modules.device.models import Device, DeviceBinding, DeviceEntity
 from app.modules.device.service import list_device_entities
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.integration.models import IntegrationInstance
+from app.modules.integration.schemas import IntegrationInstanceCreateRequest
+from app.modules.integration.service import create_integration_instance, sync_plugin_managed_integration_instance
 from app.modules.plugin.schemas import PluginStateUpdateRequest
-from app.modules.plugin.service import set_household_plugin_enabled
+from app.modules.plugin.service import get_household_plugin, set_household_plugin_enabled
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
 from official_weather.service import get_weather_device_binding_for_device, normalize_weather_capabilities_payload
@@ -68,6 +71,42 @@ class WeatherEntityCopyTests(unittest.TestCase):
         sync_persisted_plugins_on_startup(self.db)
         self.db.flush()
 
+    def _enable_weather_plugin(self, *, household_id: str) -> None:
+        set_household_plugin_enabled(
+            self.db,
+            household_id=household_id,
+            plugin_id="official-weather",
+            payload=PluginStateUpdateRequest(enabled=True),
+            updated_by="test-suite",
+        )
+        self.db.flush()
+
+    def _create_and_sync_default_weather_instance(self, *, household_id: str) -> None:
+        created = create_integration_instance(
+            self.db,
+            payload=IntegrationInstanceCreateRequest(
+                household_id=household_id,
+                plugin_id="official-weather",
+                display_name="家庭天气",
+                config={"binding_type": "default_household"},
+            ),
+            updated_by="test-suite",
+        )
+        instance = self.db.get(IntegrationInstance, created.id)
+        assert instance is not None
+        plugin = get_household_plugin(
+            self.db,
+            household_id=household_id,
+            plugin_id="official-weather",
+        )
+        sync_plugin_managed_integration_instance(
+            self.db,
+            plugin=plugin,
+            instance=instance,
+            sync_scope="device_sync",
+        )
+        self.db.flush()
+
     def test_weather_plugin_refresh_writes_canonical_entities(self) -> None:
         household = create_household(
             self.db,
@@ -81,18 +120,13 @@ class WeatherEntityCopyTests(unittest.TestCase):
         self.db.add(household)
         self.db.flush()
         self._sync_official_plugins()
+        self._enable_weather_plugin(household_id=household.id)
 
         with patch(
             "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(_build_snapshot()),
         ):
-            set_household_plugin_enabled(
-                self.db,
-                household_id=household.id,
-                plugin_id="official-weather",
-                payload=PluginStateUpdateRequest(enabled=True),
-                updated_by="test-suite",
-            )
+            self._create_and_sync_default_weather_instance(household_id=household.id)
 
         device = self.db.scalar(
             select(Device)

@@ -6,12 +6,15 @@ from sqlalchemy.orm import Session
 
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.integration.models import IntegrationInstance
+from app.modules.integration.schemas import IntegrationInstanceCreateRequest
+from app.modules.integration.service import create_integration_instance, sync_plugin_managed_integration_instance
 from app.modules.member.schemas import MemberCreate
 from app.modules.member.service import create_member
 from app.modules.plugin.dashboard_service import get_home_dashboard
 from app.modules.plugin.schemas import PluginStateUpdateRequest
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
-from app.modules.plugin.service import load_plugin_manifest, set_household_plugin_enabled
+from app.modules.plugin.service import get_household_plugin, load_plugin_manifest, set_household_plugin_enabled
 from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
 
 
@@ -62,6 +65,46 @@ class DashboardEncodingTests(unittest.TestCase):
         sync_persisted_plugins_on_startup(self.db)
         self.db.flush()
 
+    def _enable_weather_plugin(self, *, household_id: str) -> None:
+        set_household_plugin_enabled(
+            self.db,
+            household_id=household_id,
+            plugin_id="official-weather",
+            payload=PluginStateUpdateRequest(enabled=True),
+            updated_by="test-suite",
+        )
+        self.db.flush()
+
+    def _create_default_weather_instance(self, *, household_id: str) -> IntegrationInstance:
+        created = create_integration_instance(
+            self.db,
+            payload=IntegrationInstanceCreateRequest(
+                household_id=household_id,
+                plugin_id="official-weather",
+                display_name="家庭天气",
+                config={"binding_type": "default_household"},
+            ),
+            updated_by="test-suite",
+        )
+        instance = self.db.get(IntegrationInstance, created.id)
+        assert instance is not None
+        self.db.flush()
+        return instance
+
+    def _sync_default_weather_instance(self, *, household_id: str, instance: IntegrationInstance) -> None:
+        plugin = get_household_plugin(
+            self.db,
+            household_id=household_id,
+            plugin_id="official-weather",
+        )
+        sync_plugin_managed_integration_instance(
+            self.db,
+            plugin=plugin,
+            instance=instance,
+            sync_scope="device_sync",
+        )
+        self.db.flush()
+
     def test_home_dashboard_weather_card_uses_plugin_locale_when_snapshot_missing(self) -> None:
         household = create_household(
             self.db,
@@ -69,6 +112,9 @@ class DashboardEncodingTests(unittest.TestCase):
         )
         self.db.flush()
         self._sync_official_plugins()
+        self._enable_weather_plugin(household_id=household.id)
+        instance = self._create_default_weather_instance(household_id=household.id)
+        self._sync_default_weather_instance(household_id=household.id, instance=instance)
 
         member = create_member(
             self.db,
@@ -104,6 +150,8 @@ class DashboardEncodingTests(unittest.TestCase):
         self.db.add(household)
         self.db.flush()
         self._sync_official_plugins()
+        self._enable_weather_plugin(household_id=household.id)
+        instance = self._create_default_weather_instance(household_id=household.id)
 
         member = create_member(
             self.db,
@@ -115,13 +163,7 @@ class DashboardEncodingTests(unittest.TestCase):
             "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(_build_snapshot()),
         ):
-            set_household_plugin_enabled(
-                self.db,
-                household_id=household.id,
-                plugin_id="official-weather",
-                payload=PluginStateUpdateRequest(enabled=True),
-                updated_by="test-suite",
-            )
+            self._sync_default_weather_instance(household_id=household.id, instance=instance)
 
         dashboard = get_home_dashboard(
             self.db,
@@ -154,13 +196,13 @@ class DashboardEncodingTests(unittest.TestCase):
             self._official_root() / "official_weather" / "manifest.json"
         )
 
-        self.assertEqual("官方天气插件", manifest.name)
+        self.assertEqual("天气插件", manifest.name)
         assert manifest.capabilities.integration is not None
         self.assertEqual("家庭天气", manifest.capabilities.integration.default_instance_display_name)
         self.assertEqual(["zh-CN", "en-US"], [item.id for item in manifest.locales])
         self.assertEqual("official_weather.config.provider.title", manifest.config_specs[0].title_key)
         self.assertEqual(
-            "official_weather.config.binding.fields.provider_selector.label",
+            "official_weather.config.binding.fields.provider_code.label",
             manifest.config_specs[1].config_schema.fields[1].label_key,
         )
 

@@ -8,10 +8,12 @@ from app.db.utils import load_json
 from app.modules.device.models import Device, DeviceBinding, DeviceEntity
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
+from app.modules.integration.schemas import IntegrationInstanceCreateRequest
+from app.modules.integration.service import create_integration_instance, sync_plugin_managed_integration_instance
 from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin.config_service import save_plugin_config_form
 from app.modules.plugin.schemas import PluginConfigUpdateRequest, PluginStateUpdateRequest
-from app.modules.plugin.service import set_household_plugin_enabled
+from app.modules.plugin.service import get_household_plugin, set_household_plugin_enabled
 from app.modules.plugin.startup_sync_service import sync_persisted_plugins_on_startup
 from official_weather.models import WeatherDeviceBinding
 from official_weather.schemas import WeatherForecastSummary, WeatherSnapshot
@@ -79,7 +81,47 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         sync_persisted_plugins_on_startup(self.db)
         self.db.flush()
 
-    def test_enable_plugin_creates_default_instance_and_weather_device(self) -> None:
+    def _enable_weather_plugin(self, *, household_id: str) -> None:
+        set_household_plugin_enabled(
+            self.db,
+            household_id=household_id,
+            plugin_id="official-weather",
+            payload=PluginStateUpdateRequest(enabled=True),
+            updated_by="test-suite",
+        )
+        self.db.flush()
+
+    def _create_default_weather_instance(self, *, household_id: str) -> IntegrationInstance:
+        created = create_integration_instance(
+            self.db,
+            payload=IntegrationInstanceCreateRequest(
+                household_id=household_id,
+                plugin_id="official-weather",
+                display_name="家庭天气",
+                config={"binding_type": "default_household"},
+            ),
+            updated_by="test-suite",
+        )
+        instance = self.db.scalar(select(IntegrationInstance).where(IntegrationInstance.id == created.id))
+        assert instance is not None
+        self.db.flush()
+        return instance
+
+    def _sync_weather_instance(self, *, household_id: str, instance: IntegrationInstance) -> None:
+        plugin = get_household_plugin(
+            self.db,
+            household_id=household_id,
+            plugin_id="official-weather",
+        )
+        sync_plugin_managed_integration_instance(
+            self.db,
+            plugin=plugin,
+            instance=instance,
+            sync_scope="device_sync",
+        )
+        self.db.flush()
+
+    def test_enable_plugin_does_not_create_default_instance_or_weather_device(self) -> None:
         household = create_household(
             self.db,
             HouseholdCreate(name="Weather Home", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
@@ -93,6 +135,37 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.db.flush()
         self._sync_official_plugins()
 
+        self._enable_weather_plugin(household_id=household.id)
+
+        instance = self.db.scalar(
+            select(IntegrationInstance).where(
+                IntegrationInstance.household_id == household.id,
+                IntegrationInstance.plugin_id == "official-weather",
+            )
+        )
+        self.assertIsNone(instance)
+
+        row = self.db.scalar(
+            select(WeatherDeviceBinding).where(WeatherDeviceBinding.household_id == household.id)
+        )
+        self.assertIsNone(row)
+
+    def test_create_default_instance_and_sync_weather_device(self) -> None:
+        household = create_household(
+            self.db,
+            HouseholdCreate(name="Weather Home", city="Shanghai", timezone="Asia/Shanghai", locale="zh-CN"),
+        )
+        household.latitude = 31.2304
+        household.longitude = 121.4737
+        household.coordinate_source = "manual_admin"
+        household.coordinate_precision = "point"
+        household.coordinate_updated_at = "2026-03-18T03:00:00Z"
+        self.db.add(household)
+        self.db.flush()
+        self._sync_official_plugins()
+        self._enable_weather_plugin(household_id=household.id)
+
+        instance = self._create_default_weather_instance(household_id=household.id)
         snapshot = _build_snapshot(
             source_type="met_norway",
             updated_at="2026-03-18T03:05:00Z",
@@ -104,21 +177,8 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
             "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(snapshot),
         ):
-            set_household_plugin_enabled(
-                self.db,
-                household_id=household.id,
-                plugin_id="official-weather",
-                payload=PluginStateUpdateRequest(enabled=True),
-                updated_by="test-suite",
-            )
+            self._sync_weather_instance(household_id=household.id, instance=instance)
 
-        instance = self.db.scalar(
-            select(IntegrationInstance).where(
-                IntegrationInstance.household_id == household.id,
-                IntegrationInstance.plugin_id == "official-weather",
-            )
-        )
-        assert instance is not None
         self.assertEqual("active", instance.status)
 
         row = self.db.scalar(
@@ -157,29 +217,17 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.assertIn("weather.condition", entity_ids)
         self.assertIn("weather.updated_at", entity_ids)
 
-    def test_enable_plugin_without_coordinate_marks_instance_degraded(self) -> None:
+    def test_sync_default_instance_without_coordinate_marks_instance_degraded(self) -> None:
         household = create_household(
             self.db,
             HouseholdCreate(name="Pending Weather Home", city="Suzhou", timezone="Asia/Shanghai", locale="zh-CN"),
         )
         self.db.flush()
         self._sync_official_plugins()
+        self._enable_weather_plugin(household_id=household.id)
+        instance = self._create_default_weather_instance(household_id=household.id)
+        self._sync_weather_instance(household_id=household.id, instance=instance)
 
-        set_household_plugin_enabled(
-            self.db,
-            household_id=household.id,
-            plugin_id="official-weather",
-            payload=PluginStateUpdateRequest(enabled=True),
-            updated_by="test-suite",
-        )
-
-        instance = self.db.scalar(
-            select(IntegrationInstance).where(
-                IntegrationInstance.household_id == household.id,
-                IntegrationInstance.plugin_id == "official-weather",
-            )
-        )
-        assert instance is not None
         self.assertEqual("degraded", instance.status)
         self.assertEqual("weather_coordinate_missing", instance.last_error_code)
 
@@ -203,6 +251,8 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.db.add(household)
         self.db.flush()
         self._sync_official_plugins()
+        self._enable_weather_plugin(household_id=household.id)
+        instance = self._create_default_weather_instance(household_id=household.id)
 
         snapshot = _build_snapshot(
             source_type="met_norway",
@@ -215,13 +265,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
             "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(snapshot),
         ):
-            set_household_plugin_enabled(
-                self.db,
-                household_id=household.id,
-                plugin_id="official-weather",
-                payload=PluginStateUpdateRequest(enabled=True),
-                updated_by="test-suite",
-            )
+            self._sync_weather_instance(household_id=household.id, instance=instance)
 
         device = self.db.scalar(
             select(Device)
@@ -274,6 +318,8 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
         self.db.add(household)
         self.db.flush()
         self._sync_official_plugins()
+        self._enable_weather_plugin(household_id=household.id)
+        instance = self._create_default_weather_instance(household_id=household.id)
 
         initial_snapshot = _build_snapshot(
             source_type="met_norway",
@@ -306,13 +352,7 @@ class WeatherDefaultDeviceTests(unittest.TestCase):
             "official_weather.service.get_weather_provider",
             return_value=_FakeWeatherProvider(initial_snapshot),
         ):
-            set_household_plugin_enabled(
-                self.db,
-                household_id=household.id,
-                plugin_id="official-weather",
-                payload=PluginStateUpdateRequest(enabled=True),
-                updated_by="test-suite",
-            )
+            self._sync_weather_instance(household_id=household.id, instance=instance)
 
         weather_binding = self.db.scalar(
             select(WeatherDeviceBinding).where(WeatherDeviceBinding.household_id == household.id)

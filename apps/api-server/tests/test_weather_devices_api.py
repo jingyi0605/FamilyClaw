@@ -146,8 +146,7 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
         )
         self.assertEqual(200, list_response.status_code)
         initial_items = list_response.json()["items"]
-        self.assertEqual(1, len(initial_items))
-        self.assertEqual("official-weather", initial_items[0]["plugin_id"])
+        self.assertEqual(0, len(initial_items))
 
         create_response = self.client.post(
             f"{settings.api_v1_prefix}/integrations/instances",
@@ -197,7 +196,7 @@ class WeatherIntegrationsApiTests(unittest.TestCase):
         )
         self.assertEqual(200, resources_response.status_code)
         resources = resources_response.json()["items"]
-        self.assertEqual(2, len(resources))
+        self.assertEqual(1, len(resources))
 
     def test_sync_region_instance_without_coordinate_is_rejected(self) -> None:
         create_response = self.client.post(

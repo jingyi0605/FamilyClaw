@@ -88,6 +88,7 @@ class AiProviderOfficialPluginTests(unittest.TestCase):
         kimi = next(item for item in snapshot.items if item.id == "ai-provider-kimi-coding-plan")
         self.assertEqual("third_party", kimi.source_type)
         self.assertEqual("local", kimi.install_method)
+        self.assertTrue(kimi.is_dev_active)
         self.assertEqual(str((Path(settings.plugin_dev_root) / "ai_provider_kimi_coding_plan").resolve()), str(Path(kimi.runner_config.plugin_root).resolve()))
         self.assertEqual([], list_plugin_mounts(self.db, household_id=household.id))
 

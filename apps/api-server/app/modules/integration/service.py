@@ -758,12 +758,11 @@ def _execute_plugin_managed_sync_action(
             plugin_id=plugin.id,
         ).values,
     }
-    if _should_inject_db_session(plugin):
+    runtime_context = _build_integration_runtime_context(db, plugin=plugin)
+    if runtime_context is not None:
         system_context = request_payload.setdefault("_system_context", {})
         if isinstance(system_context, dict):
-            integration_runtime = system_context.setdefault("integration_runtime", {})
-            if isinstance(integration_runtime, dict):
-                integration_runtime["db_session"] = db
+            system_context["integration_runtime"] = runtime_context
 
     pipeline = run_plugin_sync_pipeline(
         db,
@@ -1098,6 +1097,38 @@ def _should_inject_db_session(plugin: PluginRegistryItem) -> bool:
     if plugin.execution_backend is not None:
         return False
     return plugin.source_type == "builtin"
+
+
+def _build_integration_runtime_context(
+    db: Session,
+    *,
+    plugin: PluginRegistryItem,
+) -> dict[str, Any] | None:
+    runtime_context: dict[str, Any] = {}
+    database_url = _resolve_database_url(db)
+    if database_url:
+        runtime_context["database_url"] = database_url
+    if _should_inject_db_session(plugin):
+        runtime_context["db_session"] = db
+    if not runtime_context:
+        return None
+    return runtime_context
+
+
+def _resolve_database_url(db: Session) -> str | None:
+    bind = db.get_bind()
+    if hasattr(bind, "url"):
+        return _render_database_url(bind.url)
+    engine = getattr(bind, "engine", None)
+    if engine is not None and hasattr(engine, "url"):
+        return _render_database_url(engine.url)
+    return None
+
+
+def _render_database_url(url: Any) -> str:
+    if hasattr(url, "render_as_string"):
+        return url.render_as_string(hide_password=False)
+    return str(url)
 
 
 def _load_binding_capabilities(raw_value: str | None) -> dict[str, Any]:

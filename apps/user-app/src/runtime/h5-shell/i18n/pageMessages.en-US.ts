@@ -802,6 +802,7 @@
   'settings.plugin.risk.mediumDesc': 'It can do more, so review the permission scope before enabling it.',
   'settings.plugin.risk.high': 'High risk',
   'settings.plugin.risk.highDesc': 'This plugin is powerful. Verify source, permissions, and maintenance status before enabling it.',
+  'settings.plugin.devActive': 'Dev plugin active',
   'settings.plugin.job.succeeded': 'Succeeded',
   'settings.plugin.job.queued': 'Queued',
   'settings.plugin.job.running': 'Running',

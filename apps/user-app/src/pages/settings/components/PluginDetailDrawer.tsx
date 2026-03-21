@@ -55,6 +55,13 @@ function formatRiskLevel(riskLevel: PluginRiskLevel, locale: string | undefined)
   }
 }
 
+function formatDevActiveBadge(locale: string | undefined) {
+  return {
+    label: getPageMessage(locale, 'settings.plugin.devActive'),
+    tone: 'warning' as const,
+  };
+}
+
 function formatJobStatus(status: string, locale: string | undefined) {
   switch (status) {
     case 'succeeded':
@@ -206,6 +213,7 @@ export function PluginDetailDrawer(props: {
     jobsLoadFailed: getPageMessage(locale, 'settings.plugin.jobs.loadFailed'),
     enabled: getPageMessage(locale, 'settings.plugin.enabled'),
     disabled: getPageMessage(locale, 'settings.plugin.disabled'),
+    devActive: getPageMessage(locale, 'settings.plugin.devActive'),
     thirdPartyTitle: getPageMessage(locale, 'settings.plugin.thirdPartyTitle'),
     thirdPartyDesc: getPageMessage(locale, 'settings.plugin.thirdPartyDesc'),
     highRiskTitle: getPageMessage(locale, 'settings.plugin.highRiskTitle'),
@@ -310,6 +318,7 @@ export function PluginDetailDrawer(props: {
 
   const sourceInfo = formatSourceType(plugin.source_type, locale);
   const riskInfo = formatRiskLevel(plugin.risk_level, locale);
+  const devActiveInfo = formatDevActiveBadge(locale);
   const latestFailedJob = jobs.find((item) => item.job.status === 'failed');
   const latestWaitingJob = jobs.find((item) => item.job.status === 'waiting_response');
   const compatibilityEntries = buildCompatibilityEntries(plugin.compatibility);
@@ -354,6 +363,9 @@ export function PluginDetailDrawer(props: {
             <h2>{plugin.name}</h2>
             <div className="plugin-detail-drawer__badges">
               <span className={`badge badge--${sourceInfo.tone}`}>{sourceInfo.label}</span>
+              {plugin.is_dev_active ? (
+                <span className={`badge badge--${devActiveInfo.tone}`}>{copy.devActive}</span>
+              ) : null}
               <span className={`badge badge--${riskInfo.tone}`}>{riskInfo.label}</span>
               <span className={`badge badge--${isEnabled ? 'success' : 'secondary'}`}>
                 {isEnabled ? copy.enabled : copy.disabled}

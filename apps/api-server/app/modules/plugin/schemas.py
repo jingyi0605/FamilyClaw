@@ -1633,6 +1633,7 @@ class PluginRegistryItem(BaseModel):
     locales: list[PluginManifestLocaleSpec] = Field(default_factory=list)
     schedule_templates: list[PluginManifestScheduleTemplate] = Field(default_factory=list)
     source_type: PluginSourceType = "builtin"
+    is_dev_active: bool = False
     install_method: PluginInstallMethod | None = None
     execution_backend: PluginExecutionBackend | None = None
     runner_config: PluginRunnerConfig | None = None
