@@ -58,3 +58,9 @@
   border-radius: 12px;
   background: var(--fc-accent-soft);
 }
+
+.VPNavBarTranslations,
+.VPNavBarExtra .translations,
+.VPNavScreenTranslations {
+  display: none !important;
+}
