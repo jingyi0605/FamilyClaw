@@ -69,3 +69,4 @@ Those local providers are handled as local-only by default and are not automatic
 
 - A user can switch theme, language, and time zone, then enter AI Settings to finish model and route configuration.
 - When a theme is unavailable or a family is not initialized, the user can follow the page warning and take the right next step.
+- If the user wants to add a Xiaomi speaker, they can continue with [Xiaomi Speaker Integration](./xiaomi-speaker-integration.md).
