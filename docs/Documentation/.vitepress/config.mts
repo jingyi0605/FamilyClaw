@@ -80,6 +80,7 @@ const zhThemeConfig = createThemeConfig({
         text: '快速开始',
         items: [
           { text: '文档总览', link: '/快速开始/文档总览' },
+          { text: '路线图', link: '/快速开始/路线图' },
           { text: '产品概览', link: '/快速开始/产品概览' },
           { text: '快速启动', link: '/快速开始/快速启动' },
           { text: '核心功能', link: '/快速开始/核心功能' }
@@ -185,6 +186,7 @@ const enThemeConfig = createThemeConfig({
         text: 'Getting Started',
         items: [
           { text: 'Docs Overview', link: '/en/getting-started/docs-overview' },
+          { text: 'Roadmap', link: '/en/getting-started/roadmap' },
           { text: 'Product Overview', link: '/en/getting-started/product-overview' },
           { text: 'Quick Start', link: '/en/getting-started/quick-start' },
           { text: 'Core Features', link: '/en/getting-started/core-features' }
@@ -215,6 +217,12 @@ const enThemeConfig = createThemeConfig({
           { text: 'Memory', link: '/en/user-guide/memory' },
           { text: 'Settings', link: '/en/user-guide/settings' },
           { text: 'Plugins', link: '/en/user-guide/plugins' }
+        ]
+      },
+      {
+        text: 'Device Integration',
+        items: [
+          { text: 'Xiaomi Speaker Integration', link: '/en/user-guide/xiaomi-speaker-integration' }
         ]
       }
     ],

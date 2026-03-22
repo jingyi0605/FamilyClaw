@@ -13,6 +13,7 @@ outline: deep
 
 - It tells a first-time reader which pages to open within 30 seconds.
 - It keeps the whole site locked to five top-level sections so new content does not sprawl into random buckets.
+- It points to the [Roadmap](./roadmap.md) when someone first wants the plain status of the project.
 
 ## Current top-level sections
 
@@ -27,10 +28,11 @@ outline: deep
 ### I am touching FamilyClaw for the first time
 
 1. Read [Product Overview](./product-overview.md) to understand what FamilyClaw actually does.
-2. Then read [Quick Start](./quick-start.md) to choose the fastest path.
-3. If you need it running, jump to [Installation](../installation-deployment/overview.md).
-4. If you want to learn the pages, go to the [User Guide](../user-guide/first-login-and-setup.md).
-5. If you need to develop or customize it, go to the [Developer Docs](../developer-docs/environment-setup.md).
+2. Read the [Roadmap](./roadmap.md) to see what is already usable, what is in progress, and what is only planned.
+3. Then read [Quick Start](./quick-start.md) to choose the fastest path.
+4. If you need it running, jump to [Installation](../installation-deployment/overview.md).
+5. If you want to learn the pages, go to the [User Guide](../user-guide/first-login-and-setup.md).
+6. If you need to develop or customize it, go to the [Developer Docs](../developer-docs/environment-setup.md).
 
 ### I need installation docs for a user
 
@@ -48,3 +50,4 @@ outline: deep
 
 - A new reader can find the right entry point within 30 seconds.
 - New content must land in one of the five top-level sections instead of creating new parallel structures.
+- A reader who only wants the current project status can stop at the [Roadmap](./roadmap.md) first.

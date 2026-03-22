@@ -17,6 +17,7 @@ type SectionFallback = {
 const TRANSLATION_PAIRS: TranslationPair[] = [
   { zh: 'index.md', en: 'en/index.md' },
   { zh: '快速开始/文档总览.md', en: 'en/getting-started/docs-overview.md' },
+  { zh: '快速开始/路线图.md', en: 'en/getting-started/roadmap.md' },
   { zh: '快速开始/产品概览.md', en: 'en/getting-started/product-overview.md' },
   { zh: '快速开始/快速启动.md', en: 'en/getting-started/quick-start.md' },
   { zh: '快速开始/核心功能.md', en: 'en/getting-started/core-features.md' },
@@ -33,6 +34,7 @@ const TRANSLATION_PAIRS: TranslationPair[] = [
   { zh: '使用指南/记忆.md', en: 'en/user-guide/memory.md' },
   { zh: '使用指南/设置.md', en: 'en/user-guide/settings.md' },
   { zh: '使用指南/插件.md', en: 'en/user-guide/plugins.md' },
+  { zh: '使用指南/小米音箱对接.md', en: 'en/user-guide/xiaomi-speaker-integration.md' },
   { zh: '开发文档/环境准备.md', en: 'en/developer-docs/environment-setup.md' },
   { zh: '开发文档/后端开发.md', en: 'en/developer-docs/backend-development.md' },
   { zh: '开发文档/插件开发.md', en: 'en/developer-docs/plugin-development.md' },
