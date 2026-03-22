@@ -111,6 +111,12 @@ const zhThemeConfig = createThemeConfig({
           { text: '设置', link: '/使用指南/设置' },
           { text: '插件', link: '/使用指南/插件' }
         ]
+      },
+      {
+        text: '设备集成',
+        items: [
+          { text: '小米音箱对接', link: '/使用指南/小米音箱对接' }
+        ]
       }
     ],
     '/开发文档/': [
