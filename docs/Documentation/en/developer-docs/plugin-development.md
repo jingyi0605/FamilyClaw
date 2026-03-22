@@ -123,6 +123,13 @@ Examples:
 
 The code path must match the `manifest.json` declaration exactly.
 
+Also keep one distinction clear:
+
+- `apps/api-server/plugins-dev/<plugin>/` is the in-repo development location rule
+- an external plugin repository may still use the `official_weather` style layout, where repository-level files stay at the root and the actual plugin package lives in a subdirectory
+
+Do not force those two standards into one fake universal template.
+
 ### 4. Then connect configuration
 
 If the plugin needs user-provided values, add:

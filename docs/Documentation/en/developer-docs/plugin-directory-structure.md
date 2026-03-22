@@ -142,7 +142,45 @@ apps/api-server/app/plugins/builtin/theme_chun_he_jing_ming_pack/
 └── themes/
 ```
 
-## Minimal directory template for a new plugin
+## Do not mix two different standards
+
+This is the part that was easy to misunderstand before.
+
+### 1. In-repo development directory standard
+
+This rule only answers where plugin source should live inside the FamilyClaw repository:
+
+```text
+apps/api-server/plugins-dev/<plugin>/
+```
+
+That is the development location rule.
+
+### 2. External plugin repository / marketplace submission standard
+
+This rule answers how an independently maintained plugin repository can organize its own files.
+
+The layout used by `official_weather` is valid and has already passed marketplace update and installation verification:
+
+```text
+your_plugin_repo/
+  README.md
+  requirements.txt
+  <plugin_package>/
+    __init__.py
+    manifest.json
+    integration.py / driver.py / channel.py
+    resources/
+```
+
+In short:
+
+- `plugins-dev/<plugin>/` defines where development source lives in the host repo
+- the `official_weather` style defines how an external plugin repo may organize itself internally
+
+If you mount an independently maintained plugin repository under `plugins-dev/`, it is acceptable to keep that repository's own internal structure.
+
+## Minimal in-repo development template
 
 ```text
 your_plugin/
@@ -156,6 +194,29 @@ your_plugin/
 ├── locales/                  # only if the plugin adds text resources
 └── tests/                    # strongly recommended
 ```
+
+This template is good for quick in-repo development and small local experiments.
+
+## Recommended external plugin repository / marketplace template
+
+```text
+your_plugin_repo/
+  README.md
+  requirements.txt
+  your_plugin/
+    __init__.py
+    manifest.json
+    integration.py / driver.py / channel.py
+    resources/
+```
+
+This template is good for:
+
+- independently maintained plugin repositories
+- plugins that will later be submitted to the marketplace
+- repositories that need root-level README and dependency files
+
+`official_weather` is the real working example of this layout.
 
 ## Bad smells in directory design
 
