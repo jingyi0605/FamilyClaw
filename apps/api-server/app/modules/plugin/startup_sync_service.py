@@ -33,7 +33,7 @@ from app.modules.plugin_marketplace.models import (
     PluginMarketplaceSource,
 )
 from app.modules.plugin_marketplace.service import (
-    BUILTIN_MARKETPLACE_SOURCE_ID,
+    _normalize_builtin_marketplace_source,
     resolve_marketplace_plugin_config_status,
 )
 from app.modules.region.plugin_runtime import sync_household_plugin_region_providers
@@ -370,35 +370,10 @@ def _sync_marketplace_plugins(
 
 
 def _ensure_builtin_marketplace_source_row(db: Session) -> PluginMarketplaceSource:
-    existing = marketplace_repository.get_marketplace_source(db, BUILTIN_MARKETPLACE_SOURCE_ID)
-    if existing is not None:
-        return existing
-
-    now = utc_now_iso()
-    row = PluginMarketplaceSource(
-        source_id=BUILTIN_MARKETPLACE_SOURCE_ID,
-        market_id=None,
-        name="内置插件市场",
-        owner=None,
-        repo_url=SYSTEM_PLUGIN_MARKETPLACE_REPO_URL.strip(),
+    return _normalize_builtin_marketplace_source(
+        db,
         repo_provider=_infer_repo_provider(SYSTEM_PLUGIN_MARKETPLACE_REPO_URL),
-        api_base_url=None,
-        mirror_repo_url=None,
-        mirror_repo_provider=None,
-        mirror_api_base_url=None,
-        branch=SYSTEM_PLUGIN_MARKETPLACE_BRANCH.strip() or "main",
-        entry_root=SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins",
-        is_system=True,
-        enabled=True,
-        last_sync_status="idle",
-        last_sync_error_json=None,
-        last_synced_at=None,
-        created_at=now,
-        updated_at=now,
     )
-    marketplace_repository.add_marketplace_source(db, row)
-    db.flush()
-    return row
 
 
 def _infer_repo_provider(repo_url: str) -> str:

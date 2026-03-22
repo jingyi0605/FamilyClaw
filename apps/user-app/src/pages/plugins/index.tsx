@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import Taro from '@tarojs/taro';
 import { BadgeCheck, ChevronRight, Download, ExternalLink, Package, RefreshCw, Settings2, X, Zap } from 'lucide-react';
 import { GuardedPage, useHouseholdContext } from '../../runtime';
@@ -18,6 +18,12 @@ import {
   isMarketplaceVersionActionable,
   resolveMarketplaceVersionOptionByVersion,
 } from './marketplaceVersionOptions';
+import {
+  MARKETPLACE_CONFIRM_CLICK_GUARD_MS,
+  isMarketplaceConfirmClickGuardActive,
+  isMarketplaceInstallActionBusy,
+  isMarketplaceInstanceActionBusy,
+} from './marketplaceConfirmGuard';
 import type {
   MarketplaceCatalogItemRead,
   MarketplaceEntryDetailRead,
@@ -481,6 +487,8 @@ function PluginsPageContent() {
     item: MarketplaceCatalogItemRead;
     option: MarketplaceVersionOptionRead;
   } | null>(null);
+  const [marketplaceConfirmOpenedAt, setMarketplaceConfirmOpenedAt] = useState<number | null>(null);
+  const marketplaceConfirmOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [marketplaceForm, setMarketplaceForm] = useState<MarketplaceSourceFormState>(createEmptyMarketplaceForm);
   const [zipInstallOpen, setZipInstallOpen] = useState(false);
   const [zipOverwriteConfirmOpen, setZipOverwriteConfirmOpen] = useState(false);
@@ -1159,18 +1167,33 @@ function PluginsPageContent() {
     if (!isMarketplaceVersionActionable(option.action)) {
       return;
     }
-    setMarketplaceConfirmAction({ item, option });
+    if (marketplaceConfirmOpenTimerRef.current !== null) {
+      clearTimeout(marketplaceConfirmOpenTimerRef.current);
+      marketplaceConfirmOpenTimerRef.current = null;
+    }
+    setMarketplaceConfirmAction(null);
+    setMarketplaceConfirmOpenedAt(null);
+    marketplaceConfirmOpenTimerRef.current = setTimeout(() => {
+      setMarketplaceConfirmAction({ item, option });
+      setMarketplaceConfirmOpenedAt(Date.now());
+      marketplaceConfirmOpenTimerRef.current = null;
+    }, 0);
   }
 
   function closeMarketplaceVersionConfirm() {
     if (marketplaceBusyInstanceId || installingKey) {
       return;
     }
+    if (marketplaceConfirmOpenTimerRef.current !== null) {
+      clearTimeout(marketplaceConfirmOpenTimerRef.current);
+      marketplaceConfirmOpenTimerRef.current = null;
+    }
     setMarketplaceConfirmAction(null);
+    setMarketplaceConfirmOpenedAt(null);
   }
 
   async function handleConfirmMarketplaceVersionAction() {
-    if (!marketplaceConfirmAction) {
+    if (!marketplaceConfirmAction || isMarketplaceConfirmClickGuardActive(marketplaceConfirmOpenedAt)) {
       return;
     }
     const { item, option } = marketplaceConfirmAction;
@@ -1238,11 +1261,19 @@ function PluginsPageContent() {
 
   const marketplaceConfirmItem = marketplaceConfirmAction?.item ?? null;
   const marketplaceConfirmOption = marketplaceConfirmAction?.option ?? null;
+  const marketplaceConfirmGuardActive = isMarketplaceConfirmClickGuardActive(marketplaceConfirmOpenedAt);
   const marketplaceConfirmBusy = Boolean(
     marketplaceConfirmItem
     && (
-      installingKey === `${marketplaceConfirmItem.source_id}:${marketplaceConfirmItem.plugin_id}`
-      || marketplaceBusyInstanceId === marketplaceConfirmItem.install_state.instance_id
+      isMarketplaceInstallActionBusy(
+        marketplaceConfirmItem.source_id,
+        marketplaceConfirmItem.plugin_id,
+        installingKey,
+      )
+      || isMarketplaceInstanceActionBusy(
+        marketplaceConfirmItem.install_state.instance_id,
+        marketplaceBusyInstanceId,
+      )
     ),
   );
   const marketplaceConfirmCurrentVersion = marketplaceConfirmItem?.install_state.installed_version ?? null;
@@ -1261,6 +1292,24 @@ function PluginsPageContent() {
     : marketplaceConfirmOption?.action === 'rollback'
       ? page('plugins.marketplace.confirm.action.rollback')
       : page('plugins.marketplace.confirm.action.install');
+
+  useEffect(() => {
+    if (!marketplaceConfirmOpenedAt) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setMarketplaceConfirmOpenedAt(current => (current === marketplaceConfirmOpenedAt ? null : current));
+    }, MARKETPLACE_CONFIRM_CLICK_GUARD_MS);
+    return () => window.clearTimeout(timer);
+  }, [marketplaceConfirmOpenedAt]);
+
+  useEffect(() => {
+    return () => {
+      if (marketplaceConfirmOpenTimerRef.current !== null) {
+        clearTimeout(marketplaceConfirmOpenTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!detailPlugin) {
@@ -1390,8 +1439,8 @@ function PluginsPageContent() {
     });
     const compatibilityInfo = formatVersionCompatibilityStatus(governance?.compatibility_status, locale);
     const installKey = `${item.source_id}:${item.plugin_id}`;
-    const isInstalling = installingKey === installKey;
-    const isBusyInstance = marketplaceBusyInstanceId === item.install_state.instance_id;
+    const isInstalling = isMarketplaceInstallActionBusy(item.source_id, item.plugin_id, installingKey);
+    const isBusyInstance = isMarketplaceInstanceActionBusy(item.install_state.instance_id, marketplaceBusyInstanceId);
     const versionOptions = marketplaceVersionOptions;
     const selectedVersionOption = resolveMarketplaceVersionOptionByVersion(versionOptions, selectedMarketplaceVersion)
       ?? resolveMarketplaceVersionOptionByVersion(versionOptions, getDefaultMarketplaceVersionSelection(versionOptions));
@@ -2409,7 +2458,7 @@ function PluginsPageContent() {
                 type="button"
                 className="btn btn--primary"
                 onClick={() => void handleConfirmMarketplaceVersionAction()}
-                disabled={marketplaceConfirmBusy || !marketplaceConfirmOption}
+                disabled={marketplaceConfirmBusy || marketplaceConfirmGuardActive || !marketplaceConfirmOption}
               >
                 {marketplaceConfirmBusy
                   ? page(marketplaceConfirmOption?.action === 'install' ? 'plugins.marketplace.action.installing' : 'plugins.marketplace.action.updating')

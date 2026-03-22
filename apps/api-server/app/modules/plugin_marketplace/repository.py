@@ -24,11 +24,18 @@ def get_marketplace_source_by_repo(
     repo_url: str,
     branch: str,
     entry_root: str,
+    is_system: bool | None = None,
 ) -> PluginMarketplaceSource | None:
     stmt: Select[tuple[PluginMarketplaceSource]] = select(PluginMarketplaceSource).where(
         PluginMarketplaceSource.repo_url == repo_url,
         PluginMarketplaceSource.branch == branch,
         PluginMarketplaceSource.entry_root == entry_root,
+    )
+    if is_system is not None:
+        stmt = stmt.where(PluginMarketplaceSource.is_system.is_(is_system))
+    stmt = stmt.order_by(
+        PluginMarketplaceSource.created_at.asc(),
+        PluginMarketplaceSource.source_id.asc(),
     )
     return db.scalar(stmt)
 
@@ -41,6 +48,31 @@ def list_marketplace_sources(db: Session, *, enabled_only: bool = False) -> list
     if enabled_only:
         stmt = stmt.where(PluginMarketplaceSource.enabled.is_(True))
     return list(db.scalars(stmt).all())
+
+
+def list_marketplace_sources_by_repo(
+    db: Session,
+    *,
+    repo_url: str,
+    branch: str,
+    entry_root: str,
+    is_system: bool | None = None,
+) -> list[PluginMarketplaceSource]:
+    stmt: Select[tuple[PluginMarketplaceSource]] = select(PluginMarketplaceSource).where(
+        PluginMarketplaceSource.repo_url == repo_url,
+        PluginMarketplaceSource.branch == branch,
+        PluginMarketplaceSource.entry_root == entry_root,
+    ).order_by(
+        PluginMarketplaceSource.created_at.asc(),
+        PluginMarketplaceSource.source_id.asc(),
+    )
+    if is_system is not None:
+        stmt = stmt.where(PluginMarketplaceSource.is_system.is_(is_system))
+    return list(db.scalars(stmt).all())
+
+
+def delete_marketplace_source(db: Session, row: PluginMarketplaceSource) -> None:
+    db.delete(row)
 
 
 def list_marketplace_entry_snapshots(
@@ -150,3 +182,31 @@ def list_marketplace_instances(db: Session, *, household_id: str) -> list[Plugin
 
 def delete_marketplace_instance(db: Session, row: PluginMarketplaceInstance) -> None:
     db.delete(row)
+
+
+def list_marketplace_install_tasks_by_source(
+    db: Session,
+    *,
+    source_id: str,
+) -> list[PluginMarketplaceInstallTask]:
+    stmt: Select[tuple[PluginMarketplaceInstallTask]] = select(PluginMarketplaceInstallTask).where(
+        PluginMarketplaceInstallTask.source_id == source_id,
+    ).order_by(
+        PluginMarketplaceInstallTask.created_at.desc(),
+        PluginMarketplaceInstallTask.id.desc(),
+    )
+    return list(db.scalars(stmt).all())
+
+
+def list_marketplace_instances_by_source(
+    db: Session,
+    *,
+    source_id: str,
+) -> list[PluginMarketplaceInstance]:
+    stmt: Select[tuple[PluginMarketplaceInstance]] = select(PluginMarketplaceInstance).where(
+        PluginMarketplaceInstance.source_id == source_id,
+    ).order_by(
+        PluginMarketplaceInstance.created_at.desc(),
+        PluginMarketplaceInstance.id.desc(),
+    )
+    return list(db.scalars(stmt).all())

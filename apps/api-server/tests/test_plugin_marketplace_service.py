@@ -7,6 +7,7 @@ import zipfile
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 from sqlalchemy import select
@@ -15,10 +16,12 @@ from sqlalchemy.orm import Session
 import app.db.models  # noqa: F401
 import app.modules.plugin_marketplace.service as marketplace_service
 from app.core.config import settings
+from app.db.utils import new_uuid, utc_now_iso
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin.config_service import save_plugin_config_form
+from app.modules.plugin.models import PluginMount
 from app.modules.plugin.schemas import PluginConfigUpdateRequest, PluginStateUpdateRequest
 from app.modules.plugin.service import (
     delete_household_plugin_installation,
@@ -27,6 +30,12 @@ from app.modules.plugin.service import (
     set_household_plugin_enabled,
 )
 from app.modules.plugin_marketplace.github_client import GitHubMarketplaceClientError
+from app.modules.plugin_marketplace.models import (
+    PluginMarketplaceEntrySnapshot,
+    PluginMarketplaceInstance,
+    PluginMarketplaceInstallTask,
+    PluginMarketplaceSource,
+)
 from app.modules.plugin_marketplace.repository import list_marketplace_entry_snapshots, list_marketplace_install_tasks
 from app.modules.plugin_marketplace.schemas import (
     MarketplaceInstallTaskCreateRequest,
@@ -263,6 +272,191 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         third_party_source = next(item for item in refreshed_sources if item.repo_url == MARKET_REPO_URL)
         self.assertFalse(third_party_source.is_system)
 
+    def test_ensure_builtin_marketplace_source_merges_legacy_official_duplicate_rows(self) -> None:
+        client = self._build_client_for_official_version_switch()
+        previous_repo = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL
+        previous_branch = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH
+        previous_entry_root = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = OFFICIAL_MARKET_REPO_URL
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = "main"
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
+
+        try:
+            now = utc_now_iso()
+            legacy_source = PluginMarketplaceSource(
+                source_id="builtin-official-marketplace",
+                market_id="legacy-market",
+                name="旧官方市场",
+                owner="legacy-owner",
+                repo_url=OFFICIAL_MARKET_REPO_URL,
+                repo_provider="github",
+                api_base_url=None,
+                mirror_repo_url=None,
+                mirror_repo_provider=None,
+                mirror_api_base_url=None,
+                branch="main",
+                entry_root="plugins",
+                is_system=True,
+                enabled=True,
+                last_sync_status="success",
+                last_sync_error_json=None,
+                last_synced_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            builtin_source = PluginMarketplaceSource(
+                source_id=marketplace_service.BUILTIN_MARKETPLACE_SOURCE_ID,
+                market_id=None,
+                name="内置插件市场",
+                owner=None,
+                repo_url=OFFICIAL_MARKET_REPO_URL,
+                repo_provider="github",
+                api_base_url=None,
+                mirror_repo_url=None,
+                mirror_repo_provider=None,
+                mirror_api_base_url=None,
+                branch="main",
+                entry_root="plugins",
+                is_system=True,
+                enabled=True,
+                last_sync_status="idle",
+                last_sync_error_json=None,
+                last_synced_at=None,
+                created_at=now,
+                updated_at=now,
+            )
+            legacy_snapshot = PluginMarketplaceEntrySnapshot(
+                id=new_uuid(),
+                source_id=legacy_source.source_id,
+                plugin_id="demo-plugin",
+                name="Demo Plugin",
+                summary="legacy ready",
+                source_repo=PLUGIN_REPO_URL,
+                manifest_path="manifest.json",
+                readme_url=f"{PLUGIN_REPO_URL}#readme",
+                publisher_json="{}",
+                categories_json="[]",
+                permissions_json='["device.read"]',
+                maintainers_json="[]",
+                versions_json="[]",
+                install_json="{}",
+                repository_metrics_json=None,
+                raw_entry_json="{}",
+                risk_level="low",
+                latest_version="1.1.0",
+                manifest_digest="legacy-digest",
+                sync_status="ready",
+                sync_error_json=None,
+                synced_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            builtin_snapshot = PluginMarketplaceEntrySnapshot(
+                id=new_uuid(),
+                source_id=builtin_source.source_id,
+                plugin_id="demo-plugin",
+                name="Demo Plugin",
+                summary="builtin invalid",
+                source_repo=PLUGIN_REPO_URL,
+                manifest_path="manifest.json",
+                readme_url=f"{PLUGIN_REPO_URL}#readme",
+                publisher_json="{}",
+                categories_json="[]",
+                permissions_json="[]",
+                maintainers_json="[]",
+                versions_json="[]",
+                install_json="{}",
+                repository_metrics_json=None,
+                raw_entry_json="{}",
+                risk_level="low",
+                latest_version="1.0.0",
+                manifest_digest="builtin-digest",
+                sync_status="invalid",
+                sync_error_json='{"detail":"broken"}',
+                synced_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            task = PluginMarketplaceInstallTask(
+                id=new_uuid(),
+                household_id=self.household_id,
+                source_id=legacy_source.source_id,
+                plugin_id="demo-plugin",
+                requested_version="1.0.0",
+                installed_version="1.0.0",
+                install_status="installed",
+                failure_stage=None,
+                error_code=None,
+                error_message=None,
+                source_repo=PLUGIN_REPO_URL,
+                market_repo=OFFICIAL_MARKET_REPO_URL,
+                artifact_url="https://example.com/demo-plugin-1.0.0.zip",
+                plugin_root="/tmp/demo-plugin",
+                manifest_path="/tmp/demo-plugin/manifest.json",
+                created_at=now,
+                updated_at=now,
+                started_at=now,
+                finished_at=now,
+            )
+            instance = PluginMarketplaceInstance(
+                id=new_uuid(),
+                household_id=self.household_id,
+                source_id=legacy_source.source_id,
+                plugin_id="demo-plugin",
+                installed_version="1.0.0",
+                install_status="installed",
+                enabled=False,
+                config_status="unconfigured",
+                source_repo=PLUGIN_REPO_URL,
+                market_repo=OFFICIAL_MARKET_REPO_URL,
+                plugin_root="/tmp/demo-plugin",
+                manifest_path="/tmp/demo-plugin/manifest.json",
+                python_path="python",
+                working_dir="/tmp/demo-plugin",
+                installed_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            self.db.add(legacy_source)
+            self.db.add(builtin_source)
+            self.db.add(legacy_snapshot)
+            self.db.add(builtin_snapshot)
+            self.db.add(task)
+            self.db.add(instance)
+            self.db.commit()
+
+            source = ensure_builtin_marketplace_source(self.db, client=client)
+            self.db.commit()
+
+            self.assertEqual(marketplace_service.BUILTIN_MARKETPLACE_SOURCE_ID, source.source_id)
+            system_sources = [
+                item
+                for item in list_marketplace_sources(self.db, client=client)
+                if item.repo_url == OFFICIAL_MARKET_REPO_URL and item.is_system
+            ]
+            self.assertEqual(1, len(system_sources))
+
+            snapshots = list_marketplace_entry_snapshots(self.db, source_id=source.source_id)
+            self.assertEqual(1, len(snapshots))
+            self.assertEqual("ready", snapshots[0].sync_status)
+            self.assertEqual("legacy-digest", snapshots[0].manifest_digest)
+
+            tasks = list_marketplace_install_tasks(self.db, household_id=self.household_id, plugin_id="demo-plugin")
+            self.assertEqual(1, len(tasks))
+            self.assertEqual(source.source_id, tasks[0].source_id)
+
+            instance = get_marketplace_instance_for_household_plugin(
+                self.db,
+                household_id=self.household_id,
+                plugin_id="demo-plugin",
+            )
+            assert instance is not None
+            self.assertEqual(source.source_id, instance.source_id)
+        finally:
+            marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = previous_repo
+            marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = previous_branch
+            marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = previous_entry_root
+
     def test_sync_marketplace_source_can_run_twice_without_duplicate_snapshot_conflict(self) -> None:
         client = self._build_client_for_install()
 
@@ -432,6 +626,90 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         assert plugin.runner_config is not None
         self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
         self.assertEqual(str((dev_root / "manifest.json").resolve()), str(Path(plugin.manifest_path).resolve()))
+
+    def test_enabling_plugins_dev_disables_marketplace_variant_for_same_plugin(self) -> None:
+        client = self._build_client_for_default_enabled_integration_install()
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        create_marketplace_install_task(
+            self.db,
+            payload=MarketplaceInstallTaskCreateRequest(
+                household_id=self.household_id,
+                source_id=source.source_id,
+                plugin_id="demo-plugin",
+                version="1.0.0",
+            ),
+            client=client,
+        )
+        self.db.commit()
+
+        self._create_dev_plugin_fixture(plugin_id="demo-plugin", version="9.9.9", name="Dev Demo Plugin")
+
+        installed_plugin = set_household_plugin_enabled(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+            payload=PluginStateUpdateRequest(enabled=True, runtime_source="installed"),
+            updated_by="test-suite",
+        )
+        self.db.commit()
+
+        self.assertTrue(installed_plugin.enabled)
+        self.assertEqual("installed", installed_plugin.runtime_source)
+        self.assertEqual(
+            "installed",
+            get_household_plugin(
+                self.db,
+                household_id=self.household_id,
+                plugin_id="demo-plugin",
+            ).runtime_source,
+        )
+
+        dev_plugin = set_household_plugin_enabled(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+            payload=PluginStateUpdateRequest(enabled=True, runtime_source="plugins_dev"),
+            updated_by="test-suite",
+        )
+        self.db.commit()
+
+        self.assertTrue(dev_plugin.enabled)
+        self.assertEqual("plugins_dev", dev_plugin.runtime_source)
+
+        active_plugin = get_household_plugin(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+        )
+        installed_variant = get_household_plugin(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+            runtime_source="installed",
+        )
+        dev_variant = get_household_plugin(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+            runtime_source="plugins_dev",
+        )
+        marketplace_instance = get_marketplace_instance_for_household_plugin(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+        )
+
+        self.assertEqual("plugins_dev", active_plugin.runtime_source)
+        self.assertTrue(dev_variant.enabled)
+        self.assertFalse(installed_variant.enabled)
+        assert marketplace_instance is not None
+        self.assertFalse(marketplace_instance.enabled)
 
     def test_marketplace_plugin_with_defaults_can_enable_and_create_default_instance(self) -> None:
         client = self._build_client_for_default_enabled_integration_install()
@@ -632,6 +910,102 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
 
         self.assertEqual("unavailable", action_map["1.2.0"].action)
         self.assertEqual("unknown", action_map["1.2.0"].compatibility_status)
+
+    def test_version_options_mark_compatible_versions_unavailable_when_local_plugin_exists(self) -> None:
+        client = self._build_client_for_version_options()
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        self.db.add(
+            PluginMount(
+                id=new_uuid(),
+                household_id=self.household_id,
+                plugin_id="demo-plugin",
+                source_type="third_party",
+                install_method="local",
+                execution_backend="subprocess_runner",
+                manifest_path="C:/temp/demo-plugin/manifest.json",
+                plugin_root="C:/temp/demo-plugin",
+                python_path="python",
+                working_dir="C:/temp/demo-plugin",
+                enabled=False,
+                created_at=utc_now_iso(),
+                updated_at=utc_now_iso(),
+            )
+        )
+        self.db.commit()
+
+        result = get_marketplace_version_options(
+            self.db,
+            source_id=source.source_id,
+            plugin_id="demo-plugin",
+            household_id=self.household_id,
+        )
+
+        action_map = {item.version: item for item in result.items}
+        self.assertEqual("unavailable", action_map["1.1.0"].action)
+        self.assertFalse(action_map["1.1.0"].can_install)
+        self.assertIn("本地安装方式", action_map["1.1.0"].blocked_reason or "")
+
+    def test_version_options_mark_compatible_versions_unavailable_when_builtin_conflicts(self) -> None:
+        client = self._build_client_for_version_options()
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        self.db.commit()
+
+        with patch(
+            "app.modules.plugin_marketplace.service.list_registered_plugins",
+            return_value=SimpleNamespace(items=[SimpleNamespace(id="demo-plugin")]),
+        ):
+            result = get_marketplace_version_options(
+                self.db,
+                source_id=source.source_id,
+                plugin_id="demo-plugin",
+                household_id=self.household_id,
+            )
+
+        action_map = {item.version: item for item in result.items}
+        self.assertEqual("unavailable", action_map["1.1.0"].action)
+        self.assertFalse(action_map["1.1.0"].can_install)
+        self.assertIn("内置插件冲突", action_map["1.1.0"].blocked_reason or "")
+
+    def test_create_marketplace_install_task_rejects_builtin_conflict_before_installing(self) -> None:
+        client = self._build_client_for_install()
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        self.db.commit()
+
+        with patch(
+            "app.modules.plugin_marketplace.service.list_registered_plugins",
+            return_value=SimpleNamespace(items=[SimpleNamespace(id="demo-plugin")]),
+        ):
+            with self.assertRaises(PluginMarketplaceServiceError) as ctx:
+                create_marketplace_install_task(
+                    self.db,
+                    payload=MarketplaceInstallTaskCreateRequest(
+                        household_id=self.household_id,
+                        source_id=source.source_id,
+                        plugin_id="demo-plugin",
+                        version="1.0.0",
+                    ),
+                    client=client,
+                )
+
+        self.assertEqual("plugin_id_conflict", ctx.exception.error_code)
 
     def test_delete_household_plugin_installation_clears_marketplace_install_state(self) -> None:
         client = self._build_client_for_install()

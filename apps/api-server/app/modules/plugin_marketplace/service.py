@@ -6,6 +6,7 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from functools import cmp_to_key
@@ -39,6 +40,7 @@ from app.modules.region.plugin_runtime import sync_household_plugin_region_provi
 from app.modules.plugin.service import (
     PluginManifestValidationError,
     PluginServiceError,
+    list_registered_plugins,
     load_plugin_manifest,
     register_plugin_mount,
 )
@@ -402,11 +404,12 @@ def _resolve_marketplace_version_action(
     installed_version: str | None,
     target_version: str,
     compatibility_status: str,
+    install_blocked_reason: str | None = None,
 ) -> tuple[str, bool, bool, str | None]:
     if installed_version is None:
-        if compatibility_status == "compatible":
+        if compatibility_status == "compatible" and install_blocked_reason is None:
             return "install", True, False, None
-        return "unavailable", False, False, None
+        return "unavailable", False, False, install_blocked_reason
 
     if target_version == installed_version:
         return "current", False, False, None
@@ -424,6 +427,40 @@ def _resolve_marketplace_version_action(
     if compare_result < 0:
         return "rollback", False, True, None
     return "current", False, False, None
+
+
+def _resolve_marketplace_install_conflict(
+    db: Session,
+    *,
+    household_id: str,
+    source_id: str,
+    plugin_id: str,
+) -> tuple[str, str] | None:
+    existing_instance = repository.get_marketplace_instance_for_plugin(
+        db,
+        household_id=household_id,
+        plugin_id=plugin_id,
+    )
+    existing_mount = _get_plugin_mount_row(db, household_id=household_id, plugin_id=plugin_id)
+    if existing_instance is not None and existing_instance.install_status == "installed":
+        if existing_instance.source_id != source_id:
+            return (
+                "plugin_already_installed_from_other_source",
+                "同一个插件 ID 已经从另一个市场源安装过了，不能直接覆盖来源。",
+            )
+        return ("plugin_already_installed", "这个插件已经安装过了。")
+    if existing_mount is not None and existing_mount.install_method not in {None, "marketplace"}:
+        return (
+            "plugin_source_mismatch",
+            "这个插件当前已经通过本地安装方式存在，不能直接切到市场安装。",
+        )
+    builtin_ids = {item.id for item in list_registered_plugins().items}
+    if plugin_id in builtin_ids:
+        return (
+            "plugin_id_conflict",
+            f"插件 id 与内置插件冲突，不能继续安装: {plugin_id}",
+        )
+    return None
 
 
 def get_marketplace_version_options(
@@ -444,6 +481,7 @@ def get_marketplace_version_options(
 
     entry = _load_marketplace_entry_from_snapshot(snapshot)
     instance = None
+    install_conflict: tuple[str, str] | None = None
     if household_id is not None:
         instance = repository.get_marketplace_instance_for_plugin(db, household_id=household_id, plugin_id=plugin_id)
         if instance is not None and instance.source_id != source_id:
@@ -452,6 +490,13 @@ def get_marketplace_version_options(
                 error_code="plugin_source_mismatch",
                 field="source_id",
                 status_code=409,
+            )
+        if instance is None:
+            install_conflict = _resolve_marketplace_install_conflict(
+                db,
+                household_id=household_id,
+                source_id=source_id,
+                plugin_id=plugin_id,
             )
 
     governance = _resolve_marketplace_version_governance_from_rows(snapshot=snapshot, instance=instance)
@@ -469,8 +514,9 @@ def get_marketplace_version_options(
             installed_version=installed_version,
             target_version=version_entry.version,
             compatibility_status=compatibility.status,
+            install_blocked_reason=install_conflict[1] if install_conflict is not None else None,
         )
-        blocked_reason = compare_error or compatibility.blocked_reason
+        blocked_reason = compatibility.blocked_reason or compare_error
         if action in {"install", "upgrade", "rollback"}:
             blocked_reason = None
         elif action == "current" and compatibility.status == "compatible" and compare_error is None:
@@ -834,26 +880,9 @@ def _load_marketplace_manifest(
         ) from exc
 
 
-def ensure_builtin_marketplace_source(
-    db: Session,
-    *,
-    client: GitHubMarketplaceClient | None = None,
-) -> PluginMarketplaceSource:
-    existing = repository.get_marketplace_source(db, BUILTIN_MARKETPLACE_SOURCE_ID)
-    if existing is not None:
-        return existing
-
-    branch = SYSTEM_PLUGIN_MARKETPLACE_BRANCH.strip() or "main"
-    entry_root = SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins"
-    marketplace_client = _get_client(client)
-    repo_provider = _resolve_repo_provider(
-        repo_url=SYSTEM_PLUGIN_MARKETPLACE_REPO_URL.strip(),
-        explicit_provider=None,
-        client=marketplace_client,
-        field_name="repo_provider",
-    )
+def _new_builtin_marketplace_source(*, repo_provider: str) -> PluginMarketplaceSource:
     now = utc_now_iso()
-    row = PluginMarketplaceSource(
+    return PluginMarketplaceSource(
         source_id=BUILTIN_MARKETPLACE_SOURCE_ID,
         market_id=None,
         name="内置插件市场",
@@ -864,8 +893,8 @@ def ensure_builtin_marketplace_source(
         mirror_repo_url=None,
         mirror_repo_provider=None,
         mirror_api_base_url=None,
-        branch=branch,
-        entry_root=entry_root,
+        branch=SYSTEM_PLUGIN_MARKETPLACE_BRANCH.strip() or "main",
+        entry_root=SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins",
         is_system=True,
         enabled=True,
         last_sync_status="idle",
@@ -874,7 +903,160 @@ def ensure_builtin_marketplace_source(
         created_at=now,
         updated_at=now,
     )
-    repository.add_marketplace_source(db, row)
+
+
+def _apply_builtin_marketplace_source_defaults(
+    row: PluginMarketplaceSource,
+    *,
+    repo_provider: str,
+) -> PluginMarketplaceSource:
+    row.repo_url = SYSTEM_PLUGIN_MARKETPLACE_REPO_URL.strip()
+    row.repo_provider = repo_provider
+    row.api_base_url = None
+    row.mirror_repo_url = None
+    row.mirror_repo_provider = None
+    row.mirror_api_base_url = None
+    row.branch = SYSTEM_PLUGIN_MARKETPLACE_BRANCH.strip() or "main"
+    row.entry_root = SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins"
+    row.is_system = True
+    row.enabled = True
+    if not row.name.strip():
+        row.name = "内置插件市场"
+    if not row.last_sync_status:
+        row.last_sync_status = "idle"
+    row.updated_at = utc_now_iso()
+    return row
+
+
+def _source_state_priority(row: PluginMarketplaceSource) -> tuple[int, str, str, str]:
+    return (
+        1 if row.last_sync_status == "success" else 0,
+        row.last_synced_at or "",
+        row.updated_at or "",
+        row.created_at or "",
+    )
+
+
+def _snapshot_state_priority(snapshot: PluginMarketplaceEntrySnapshot) -> tuple[int, str, str, str]:
+    return (
+        1 if snapshot.sync_status == "ready" else 0,
+        snapshot.synced_at or "",
+        snapshot.updated_at or "",
+        snapshot.created_at or "",
+    )
+
+
+def _merge_marketplace_snapshot_payload(
+    target: PluginMarketplaceEntrySnapshot,
+    source: PluginMarketplaceEntrySnapshot,
+) -> None:
+    target.name = source.name
+    target.summary = source.summary
+    target.source_repo = source.source_repo
+    target.manifest_path = source.manifest_path
+    target.readme_url = source.readme_url
+    target.publisher_json = source.publisher_json
+    target.categories_json = source.categories_json
+    target.permissions_json = source.permissions_json
+    target.maintainers_json = source.maintainers_json
+    target.versions_json = source.versions_json
+    target.install_json = source.install_json
+    target.repository_metrics_json = source.repository_metrics_json
+    target.raw_entry_json = source.raw_entry_json
+    target.risk_level = source.risk_level
+    target.latest_version = source.latest_version
+    target.manifest_digest = source.manifest_digest
+    target.sync_status = source.sync_status
+    target.sync_error_json = source.sync_error_json
+    target.synced_at = source.synced_at
+    target.updated_at = utc_now_iso()
+
+
+def _merge_builtin_source_row(
+    db: Session,
+    *,
+    canonical: PluginMarketplaceSource,
+    duplicate: PluginMarketplaceSource,
+) -> None:
+    if duplicate.source_id == canonical.source_id:
+        return
+
+    if canonical.market_id is None or _source_state_priority(duplicate) > _source_state_priority(canonical):
+        canonical.market_id = duplicate.market_id
+        canonical.name = duplicate.name
+        canonical.owner = duplicate.owner
+        canonical.last_sync_status = duplicate.last_sync_status
+        canonical.last_sync_error_json = duplicate.last_sync_error_json
+        canonical.last_synced_at = duplicate.last_synced_at
+
+    for snapshot in repository.list_marketplace_entry_snapshots(db, source_id=duplicate.source_id):
+        existing_snapshot = repository.get_marketplace_entry_snapshot(
+            db,
+            source_id=canonical.source_id,
+            plugin_id=snapshot.plugin_id,
+        )
+        if existing_snapshot is None:
+            snapshot.source_id = canonical.source_id
+            snapshot.updated_at = utc_now_iso()
+            continue
+        if _snapshot_state_priority(snapshot) > _snapshot_state_priority(existing_snapshot):
+            _merge_marketplace_snapshot_payload(existing_snapshot, snapshot)
+        db.delete(snapshot)
+
+    for task in repository.list_marketplace_install_tasks_by_source(db, source_id=duplicate.source_id):
+        task.source_id = canonical.source_id
+        task.updated_at = utc_now_iso()
+
+    for instance in repository.list_marketplace_instances_by_source(db, source_id=duplicate.source_id):
+        instance.source_id = canonical.source_id
+        instance.market_repo = canonical.repo_url
+        instance.updated_at = utc_now_iso()
+
+    repository.delete_marketplace_source(db, duplicate)
+
+
+def _normalize_builtin_marketplace_source(
+    db: Session,
+    *,
+    repo_provider: str,
+) -> PluginMarketplaceSource:
+    canonical = repository.get_marketplace_source(db, BUILTIN_MARKETPLACE_SOURCE_ID)
+    if canonical is None:
+        canonical = _new_builtin_marketplace_source(repo_provider=repo_provider)
+        repository.add_marketplace_source(db, canonical)
+        db.flush()
+
+    _apply_builtin_marketplace_source_defaults(canonical, repo_provider=repo_provider)
+
+    duplicates = repository.list_marketplace_sources_by_repo(
+        db,
+        repo_url=SYSTEM_PLUGIN_MARKETPLACE_REPO_URL.strip(),
+        branch=SYSTEM_PLUGIN_MARKETPLACE_BRANCH.strip() or "main",
+        entry_root=SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT.strip() or "plugins",
+        is_system=True,
+    )
+    for duplicate in duplicates:
+        if duplicate.source_id == canonical.source_id:
+            continue
+        _merge_builtin_source_row(db, canonical=canonical, duplicate=duplicate)
+
+    db.flush()
+    return canonical
+
+
+def ensure_builtin_marketplace_source(
+    db: Session,
+    *,
+    client: GitHubMarketplaceClient | None = None,
+) -> PluginMarketplaceSource:
+    marketplace_client = _get_client(client)
+    repo_provider = _resolve_repo_provider(
+        repo_url=SYSTEM_PLUGIN_MARKETPLACE_REPO_URL.strip(),
+        explicit_provider=None,
+        client=marketplace_client,
+        field_name="repo_provider",
+    )
+    row = _normalize_builtin_marketplace_source(db, repo_provider=repo_provider)
 
     try:
         manifest = _load_marketplace_manifest(
@@ -1508,6 +1690,38 @@ def _get_marketplace_install_target_root(
     return (_get_install_root() / household_id / plugin_id / version).resolve()
 
 
+def _log_install_debug(
+    message: str,
+    *,
+    task_id: str | None = None,
+    household_id: str | None = None,
+    source_id: str | None = None,
+    plugin_id: str | None = None,
+    version: str | None = None,
+    stage: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    payload: dict[str, Any] = {}
+    if task_id is not None:
+        payload["task_id"] = task_id
+    if household_id is not None:
+        payload["household_id"] = household_id
+    if source_id is not None:
+        payload["source_id"] = source_id
+    if plugin_id is not None:
+        payload["plugin_id"] = plugin_id
+    if version is not None:
+        payload["version"] = version
+    if stage is not None:
+        payload["stage"] = stage
+    if extra:
+        payload.update(extra)
+    if payload:
+        logger.warning("%s | %s", message, json.dumps(payload, ensure_ascii=False, default=str))
+        return
+    logger.warning("%s", message)
+
+
 def create_marketplace_install_task(
     db: Session,
     *,
@@ -1526,28 +1740,51 @@ def create_marketplace_install_task(
             status_code=409,
         )
 
+    install_conflict = _resolve_marketplace_install_conflict(
+        db,
+        household_id=payload.household_id,
+        source_id=payload.source_id,
+        plugin_id=payload.plugin_id,
+    )
     existing_instance = repository.get_marketplace_instance_for_plugin(
         db,
         household_id=payload.household_id,
         plugin_id=payload.plugin_id,
     )
     existing_mount = _get_plugin_mount_row(db, household_id=payload.household_id, plugin_id=payload.plugin_id)
-    if existing_instance is not None and existing_instance.install_status == "installed":
-        if existing_instance.source_id != payload.source_id:
-            raise PluginMarketplaceServiceError(
-                "同一个插件 ID 已经从另一个市场源安装过了，不能直接覆盖来源。",
-                error_code="plugin_already_installed_from_other_source",
-                status_code=409,
-            )
-        raise PluginMarketplaceServiceError(
-            "这个插件已经安装过了。",
-            error_code="plugin_already_installed",
-            status_code=409,
+    request_started_at = time.perf_counter()
+    _log_install_debug(
+        "插件市场安装请求开始",
+        household_id=payload.household_id,
+        source_id=payload.source_id,
+        plugin_id=payload.plugin_id,
+        version=payload.version,
+        stage="request_started",
+        extra={
+            "existing_instance_id": existing_instance.id if existing_instance is not None else None,
+            "existing_instance_status": existing_instance.install_status if existing_instance is not None else None,
+            "existing_mount_id": existing_mount.id if existing_mount is not None else None,
+            "existing_mount_install_method": existing_mount.install_method if existing_mount is not None else None,
+            "existing_mount_source_type": existing_mount.source_type if existing_mount is not None else None,
+            "plugin_dev_root": str(Path(settings.plugin_dev_root).resolve()),
+        },
+    )
+    if install_conflict is not None:
+        _log_install_debug(
+            "插件市场安装请求命中前置冲突",
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=payload.version,
+            stage="request_rejected",
+            extra={
+                "error_code": install_conflict[0],
+                "reason": install_conflict[1],
+            },
         )
-    if existing_mount is not None and existing_mount.install_method not in {None, "marketplace"}:
         raise PluginMarketplaceServiceError(
-            "这个插件当前已经通过本地安装方式存在，不能直接切到市场安装。",
-            error_code="plugin_source_mismatch",
+            install_conflict[1],
+            error_code=install_conflict[0],
             status_code=409,
         )
 
@@ -1596,6 +1833,20 @@ def create_marketplace_install_task(
     )
     repository.add_marketplace_install_task(db, task)
     db.flush()
+    _log_install_debug(
+        "插件市场安装任务已创建",
+        task_id=task.id,
+        household_id=payload.household_id,
+        source_id=payload.source_id,
+        plugin_id=payload.plugin_id,
+        version=version_entry.version,
+        stage=task.install_status,
+        extra={
+            "artifact_url": artifact_url,
+            "source_repo": entry.source_repo,
+            "market_repo": source.repo_url,
+        },
+    )
 
     target_root: Path | None = None
     try:
@@ -1608,14 +1859,57 @@ def create_marketplace_install_task(
             artifact_url=artifact_url,
         )
         db.flush()
+        _log_install_debug(
+            "插件市场安装进入解析阶段",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+        )
 
         _set_install_task_stage(task, stage="downloading")
         db.flush()
+        download_started_at = time.perf_counter()
+        _log_install_debug(
+            "插件市场安装开始下载产物",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+            extra={"artifact_url": artifact_url},
+        )
         content = marketplace_client.download_binary(artifact_url)
+        _log_install_debug(
+            "插件市场安装下载完成",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+            extra={
+                "artifact_size_bytes": len(content),
+                "elapsed_ms": round((time.perf_counter() - download_started_at) * 1000, 2),
+            },
+        )
         _validate_artifact_checksum(content=content, checksum=version_entry.checksum)
 
         _set_install_task_stage(task, stage="validating")
         db.flush()
+        validation_started_at = time.perf_counter()
+        _log_install_debug(
+            "插件市场安装开始校验产物",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+        )
         with tempfile.TemporaryDirectory(prefix="plugin-marketplace-") as temp_dir:
             extracted_root = Path(temp_dir).resolve()
             _extract_archive_bytes(content=content, destination=extracted_root)
@@ -1629,6 +1923,22 @@ def create_marketplace_install_task(
                 entry=entry,
                 installed_version=version_entry.version,
             )
+            _log_install_debug(
+                "插件市场安装产物校验完成",
+                task_id=task.id,
+                household_id=payload.household_id,
+                source_id=payload.source_id,
+                plugin_id=payload.plugin_id,
+                version=version_entry.version,
+                stage=task.install_status,
+                extra={
+                    "elapsed_ms": round((time.perf_counter() - validation_started_at) * 1000, 2),
+                    "temp_root": str(extracted_root),
+                    "source_root": str(source_root),
+                    "package_root": str(package_root),
+                    "manifest_path": str(manifest_path),
+                },
+            )
 
             _set_install_task_stage(task, stage="installing")
             db.flush()
@@ -1637,6 +1947,19 @@ def create_marketplace_install_task(
                 plugin_id=payload.plugin_id,
                 version=version_entry.version,
             )
+            _log_install_debug(
+                "插件市场安装开始写入目标目录",
+                task_id=task.id,
+                household_id=payload.household_id,
+                source_id=payload.source_id,
+                plugin_id=payload.plugin_id,
+                version=version_entry.version,
+                stage=task.install_status,
+                extra={
+                    "target_root": str(target_root),
+                    "target_exists_before_copy": target_root.exists(),
+                },
+            )
             if target_root.exists():
                 shutil.rmtree(target_root)
             target_root.parent.mkdir(parents=True, exist_ok=True)
@@ -1644,6 +1967,20 @@ def create_marketplace_install_task(
 
         relative_manifest_path = manifest_path.resolve().relative_to(package_root.resolve())
         target_manifest_path = (target_root / relative_manifest_path).resolve()
+        _log_install_debug(
+            "插件市场安装开始处理挂载记录",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+            extra={
+                "target_root": str(target_root),
+                "target_manifest_path": str(target_manifest_path),
+                "reusing_existing_mount": existing_mount is not None,
+            },
+        )
         mount_row = existing_mount or _get_plugin_mount_row(
             db,
             household_id=payload.household_id,
@@ -1674,6 +2011,20 @@ def create_marketplace_install_task(
             mount_row.enabled = False
             mount_row.updated_at = utc_now_iso()
             db.flush()
+        _log_install_debug(
+            "插件市场安装挂载记录处理完成",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+            extra={
+                "mount_id": mount_row.id if mount_row is not None else None,
+                "mount_install_method": mount_row.install_method if mount_row is not None else None,
+                "mount_enabled": mount_row.enabled if mount_row is not None else None,
+            },
+        )
 
         instance = existing_instance or repository.get_marketplace_instance_for_plugin(
             db,
@@ -1714,6 +2065,21 @@ def create_marketplace_install_task(
             instance.working_dir = str(target_root)
             instance.installed_at = utc_now_iso()
             instance.updated_at = utc_now_iso()
+        _log_install_debug(
+            "插件市场安装实例状态已写回",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+            extra={
+                "instance_id": instance.id,
+                "instance_status": instance.install_status,
+                "instance_enabled": instance.enabled,
+                "instance_config_status": instance.config_status,
+            },
+        )
 
         task.install_status = "installed"
         task.plugin_root = str(target_root)
@@ -1724,13 +2090,45 @@ def create_marketplace_install_task(
         task.error_message = None
         task.finished_at = utc_now_iso()
         task.updated_at = task.finished_at
+        _log_install_debug(
+            "插件市场安装开始刷新配置状态",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+        )
         refresh_marketplace_plugin_instance_config_status(
             db,
             household_id=payload.household_id,
             plugin_id=payload.plugin_id,
         )
+        _log_install_debug(
+            "插件市场安装开始同步地区 provider",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+        )
         sync_household_plugin_region_providers(db, payload.household_id)
         db.flush()
+        _log_install_debug(
+            "插件市场安装请求完成",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.install_status,
+            extra={
+                "instance_id": instance.id,
+                "config_status": instance.config_status,
+                "elapsed_ms": round((time.perf_counter() - request_started_at) * 1000, 2),
+            },
+        )
         return _to_install_task_read(task)
     except (GitHubMarketplaceClientError, PluginMarketplaceServiceError, PluginManifestValidationError, PluginServiceError) as exc:
         if target_root is not None and target_root.exists():
@@ -1740,6 +2138,20 @@ def create_marketplace_install_task(
             existing_instance.install_status = "install_failed"
             existing_instance.updated_at = utc_now_iso()
         db.flush()
+        _log_install_debug(
+            "插件市场安装请求失败",
+            task_id=task.id,
+            household_id=payload.household_id,
+            source_id=payload.source_id,
+            plugin_id=payload.plugin_id,
+            version=version_entry.version,
+            stage=task.failure_stage or task.install_status,
+            extra={
+                "error_code": task.error_code,
+                "error_message": task.error_message,
+                "elapsed_ms": round((time.perf_counter() - request_started_at) * 1000, 2),
+            },
+        )
         raise PluginMarketplaceServiceError(
             task.error_message or "插件安装失败。",
             error_code=task.error_code or "plugin_marketplace_install_failed",
@@ -2063,9 +2475,26 @@ def refresh_marketplace_plugin_instance_config_status(
     household_id: str,
     plugin_id: str,
 ) -> PluginMarketplaceInstance | None:
+    started_at = time.perf_counter()
     instance = repository.get_marketplace_instance_for_plugin(db, household_id=household_id, plugin_id=plugin_id)
     if instance is None:
+        _log_install_debug(
+            "刷新插件市场配置状态时未找到实例",
+            household_id=household_id,
+            plugin_id=plugin_id,
+            stage="refresh_config_status",
+        )
         return None
+    _log_install_debug(
+        "开始刷新插件市场配置状态",
+        task_id=instance.id,
+        household_id=household_id,
+        source_id=instance.source_id,
+        plugin_id=plugin_id,
+        version=instance.installed_version,
+        stage="refresh_config_status",
+        extra={"current_config_status": instance.config_status},
+    )
     instance.config_status = resolve_marketplace_plugin_config_status(
         db,
         household_id=household_id,
@@ -2073,6 +2502,19 @@ def refresh_marketplace_plugin_instance_config_status(
     )
     instance.updated_at = utc_now_iso()
     db.flush()
+    _log_install_debug(
+        "完成刷新插件市场配置状态",
+        task_id=instance.id,
+        household_id=household_id,
+        source_id=instance.source_id,
+        plugin_id=plugin_id,
+        version=instance.installed_version,
+        stage="refresh_config_status",
+        extra={
+            "config_status": instance.config_status,
+            "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 2),
+        },
+    )
     return instance
 
 

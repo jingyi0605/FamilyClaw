@@ -1130,6 +1130,21 @@ def list_registered_plugins_for_household(
                 ),
             )
             continue
+        installed_item = mounted_items_by_id.get(dev_item.id)
+        if (
+            installed_item is not None
+            and installed_item.marketplace_instance_id is not None
+            and installed_item.install_status is not None
+            and installed_item.config_status is not None
+            and installed_item.version_governance is not None
+        ):
+            dev_item = _apply_marketplace_registry_state(
+                dev_item,
+                instance_id=installed_item.marketplace_instance_id,
+                install_status=installed_item.install_status,
+                config_status=installed_item.config_status,
+                governance=installed_item.version_governance,
+            )
         dev_items_by_id[dev_item.id] = _merge_effective_plugin_state(
             dev_item,
             household_enabled=override_map.get(dev_item.id).enabled if override_map.get(dev_item.id) is not None else None,

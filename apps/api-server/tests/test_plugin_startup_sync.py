@@ -7,6 +7,8 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 import app.db.models  # noqa: F401
+import app.modules.plugin.startup_sync_service as startup_sync_service
+import app.modules.plugin_marketplace.service as marketplace_service
 from app.core.config import settings
 from app.db.utils import new_uuid, utc_now_iso
 from app.modules.household.schemas import HouseholdCreate
@@ -19,6 +21,7 @@ from app.modules.plugin_marketplace.models import PluginMarketplaceEntrySnapshot
 from app.modules.plugin_marketplace.repository import (
     get_marketplace_instance_for_plugin,
     list_marketplace_install_tasks,
+    list_marketplace_sources,
 )
 
 
@@ -317,6 +320,139 @@ class PluginStartupSyncTests(unittest.TestCase):
         self.assertEqual("https://github.com/demo/marketplace", restored_instance.market_repo)
         self.assertEqual(str(plugin_root.resolve()), str(Path(restored_instance.plugin_root).resolve()))
         self.assertTrue(restored_instance.enabled)
+
+    def test_startup_sync_normalizes_legacy_builtin_marketplace_source_id(self) -> None:
+        household = self._create_household("官方市场恢复家庭")
+        plugin_root = self._create_plugin_dir(
+            Path(settings.plugin_marketplace_install_root) / household.id / "demo-plugin" / "1.0.0",
+            plugin_id="demo-plugin",
+            name="Demo Plugin",
+            version="1.0.0",
+        )
+        previous_market_repo = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL
+        previous_market_branch = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH
+        previous_market_entry_root = marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT
+        previous_startup_repo = startup_sync_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL
+        previous_startup_branch = startup_sync_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH
+        previous_startup_entry_root = startup_sync_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = "https://github.com/demo/official-marketplace"
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = "main"
+        marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
+        startup_sync_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = "https://github.com/demo/official-marketplace"
+        startup_sync_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = "main"
+        startup_sync_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = "plugins"
+
+        try:
+            timestamp = utc_now_iso()
+            legacy_source = PluginMarketplaceSource(
+                source_id="builtin-official-marketplace",
+                market_id="official-market",
+                name="旧官方市场",
+                owner="demo",
+                repo_url="https://github.com/demo/official-marketplace",
+                repo_provider="github",
+                api_base_url=None,
+                mirror_repo_url=None,
+                mirror_repo_provider=None,
+                mirror_api_base_url=None,
+                branch="main",
+                entry_root="plugins",
+                is_system=True,
+                enabled=True,
+                last_sync_status="success",
+                last_sync_error_json=None,
+                last_synced_at=timestamp,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            snapshot = PluginMarketplaceEntrySnapshot(
+                id=new_uuid(),
+                source_id=legacy_source.source_id,
+                plugin_id="demo-plugin",
+                name="Demo Plugin",
+                summary="demo",
+                source_repo="https://github.com/demo/demo-plugin",
+                manifest_path="manifest.json",
+                readme_url="https://github.com/demo/demo-plugin#readme",
+                publisher_json="{}",
+                categories_json="[]",
+                permissions_json="[]",
+                maintainers_json="[]",
+                versions_json="[]",
+                install_json="{}",
+                repository_metrics_json=None,
+                raw_entry_json=json.dumps(
+                    {
+                        "plugin_id": "demo-plugin",
+                        "name": "Demo Plugin",
+                        "summary": "demo",
+                        "source_repo": "https://github.com/demo/demo-plugin",
+                        "manifest_path": "manifest.json",
+                        "readme_url": "https://github.com/demo/demo-plugin#readme",
+                        "publisher": {"name": "Demo Publisher"},
+                        "categories": ["demo"],
+                        "risk_level": "low",
+                        "permissions": ["device.read"],
+                        "latest_version": "1.0.0",
+                        "versions": [
+                            {
+                                "version": "1.0.0",
+                                "git_ref": "refs/tags/v1.0.0",
+                                "artifact_type": "source_archive",
+                                "artifact_url": "https://example.com/demo-plugin-1.0.0.zip",
+                                "min_app_version": "0.1.0",
+                            }
+                        ],
+                        "install": {
+                            "requirements_path": "requirements.txt",
+                            "readme_path": "README.md",
+                        },
+                        "maintainers": [{"name": "Maintainer"}],
+                    },
+                    ensure_ascii=False,
+                ),
+                risk_level="low",
+                latest_version="1.0.0",
+                manifest_digest="legacy-official",
+                sync_status="ready",
+                sync_error_json=None,
+                synced_at=timestamp,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            self.db.add(legacy_source)
+            self.db.add(snapshot)
+            self.db.commit()
+
+            result = sync_persisted_plugins_on_startup(self.db)
+            self.db.commit()
+
+            self.assertEqual(1, result.marketplace_mount_created)
+            self.assertEqual(1, result.marketplace_instance_created)
+
+            sources = [
+                item
+                for item in list_marketplace_sources(self.db, enabled_only=False)
+                if item.repo_url == "https://github.com/demo/official-marketplace" and item.is_system
+            ]
+            self.assertEqual(1, len(sources))
+            self.assertEqual("builtin-system-marketplace", sources[0].source_id)
+
+            restored_instance = get_marketplace_instance_for_plugin(
+                self.db,
+                household_id=household.id,
+                plugin_id="demo-plugin",
+            )
+            assert restored_instance is not None
+            self.assertEqual("builtin-system-marketplace", restored_instance.source_id)
+            self.assertEqual(str(plugin_root.resolve()), str(Path(restored_instance.plugin_root).resolve()))
+        finally:
+            marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = previous_market_repo
+            marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = previous_market_branch
+            marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = previous_market_entry_root
+            startup_sync_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = previous_startup_repo
+            startup_sync_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = previous_startup_branch
+            startup_sync_service.SYSTEM_PLUGIN_MARKETPLACE_ENTRY_ROOT = previous_startup_entry_root
 
     def test_startup_sync_marks_theme_pack_registry_refresh_when_theme_pack_mount_changes(self) -> None:
         household = self._create_household("主题插件家庭")
