@@ -695,35 +695,6 @@ function PluginsPageContent() {
   }, [currentHouseholdId, page]);
 
   useEffect(() => {
-    if (!marketplaceOpen) {
-      return;
-    }
-    let cancelled = false;
-
-    async function syncMarketplaceOnOpen() {
-      setMarketRefreshing(true);
-      setMarketError('');
-      setMarketStatus('');
-      try {
-        await refreshMarketplaceFromSources({ silent: true });
-      } catch (refreshError) {
-        if (!cancelled) {
-          setMarketError(refreshError instanceof ApiError ? refreshError.message : page('plugins.operationFailed'));
-        }
-      } finally {
-        if (!cancelled) {
-          setMarketRefreshing(false);
-        }
-      }
-    }
-
-    void syncMarketplaceOnOpen();
-    return () => {
-      cancelled = true;
-    };
-  }, [marketplaceOpen, page, refreshMarketplaceFromSources]);
-
-  useEffect(() => {
     if (!marketplaceDetailOpen || !marketplaceDetailTarget) {
       return;
     }

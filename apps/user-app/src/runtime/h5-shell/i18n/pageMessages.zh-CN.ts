@@ -1143,7 +1143,7 @@
   'plugins.zip.status.upgraded': '插件 {plugin} 已覆盖升级到 {version}。',
   'plugins.zip.status.reinstalled': '插件 {plugin} 已重新安装到 {version}。',
   'plugins.marketplace.panelTitle': '插件市场',
-  'plugins.marketplace.panelDesc': '市场目录来自兼容 Git API 的仓库。官方源内置，第三方源可以手动添加，也可以给指定仓库配置镜像；安装成功后默认禁用，配置完成后再手动启用。',
+  'plugins.marketplace.panelDesc': '市场目录来自兼容 Git API 的仓库。官方源内置，第三方源可以手动添加，也可以给指定仓库配置镜像；目录不会在打开页面时自动联网刷新，需要时请手动点“刷新”。安装成功后默认禁用，配置完成后再手动启用。',
   'plugins.marketplace.openButton': '插件市场',
   'plugins.marketplace.sourcesSection': '市场源管理',
   'plugins.marketplace.catalogSection': '插件目录',

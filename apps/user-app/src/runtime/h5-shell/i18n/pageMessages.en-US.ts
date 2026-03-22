@@ -1198,7 +1198,7 @@
   'plugins.zip.status.upgraded': 'Plugin {plugin} upgraded to {version} by overwrite install.',
   'plugins.zip.status.reinstalled': 'Plugin {plugin} reinstalled to {version}.',
   'plugins.marketplace.panelTitle': 'Plugin Marketplace',
-  'plugins.marketplace.panelDesc': 'The catalog comes from Git repositories with compatible APIs. The official source is built in, third-party sources can be added manually, and specific repositories can use mirrors for sync acceleration. Installed plugins stay disabled until configuration is complete.',
+  'plugins.marketplace.panelDesc': 'The catalog comes from Git repositories with compatible APIs. The official source is built in, third-party sources can be added manually, and specific repositories can use mirrors for sync acceleration. Opening this page no longer auto-syncs remote catalogs, so use Refresh when you actually need a live update. Installed plugins stay disabled until configuration is complete.',
   'plugins.marketplace.openButton': 'Marketplace',
   'plugins.marketplace.sourcesSection': 'Marketplace Sources',
   'plugins.marketplace.catalogSection': 'Plugin Catalog',
