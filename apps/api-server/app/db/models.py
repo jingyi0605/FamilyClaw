@@ -75,7 +75,7 @@ from app.modules.scene.models import SceneExecution, SceneExecutionStep, SceneTe
 from app.modules.room.models import Room
 from app.modules.scheduler.models import ScheduledTaskDefinition, ScheduledTaskDelivery, ScheduledTaskRun
 from app.modules.voiceprint.models import MemberVoiceprintProfile, MemberVoiceprintSample, VoiceprintEnrollment
-from app.modules.voice.models import SpeakerRuntimeState, VoiceTerminalConversationBinding
+from app.modules.voice.models import VoiceTerminalConversationBinding
 
 __all__ = [
     "Account",
@@ -162,6 +162,5 @@ __all__ = [
     "VoiceprintEnrollment",
     "MemberVoiceprintProfile",
     "MemberVoiceprintSample",
-    "SpeakerRuntimeState",
     "VoiceTerminalConversationBinding",
 ]

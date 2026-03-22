@@ -46,38 +46,3 @@ class VoiceTerminalConversationBinding(Base):
     last_message_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
-
-
-class SpeakerRuntimeState(Base):
-    __tablename__ = "speaker_runtime_states"
-    __table_args__ = (
-        UniqueConstraint(
-            "integration_instance_id",
-            name="uq_speaker_runtime_states_integration_instance",
-        ),
-        Index("idx_speaker_runtime_states_household_id", "household_id"),
-        Index("idx_speaker_runtime_states_plugin_id", "plugin_id"),
-        Index("idx_speaker_runtime_states_runtime_state", "runtime_state"),
-    )
-
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
-    household_id: Mapped[str] = mapped_column(
-        Text,
-        ForeignKey("households.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    plugin_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    integration_instance_id: Mapped[str] = mapped_column(
-        Text,
-        ForeignKey("integration_instances.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    adapter_code: Mapped[str] = mapped_column(String(64), nullable=False)
-    runtime_state: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")
-    consecutive_failures: Mapped[int] = mapped_column(nullable=False, default=0)
-    last_succeeded_at: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_failed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_heartbeat_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)

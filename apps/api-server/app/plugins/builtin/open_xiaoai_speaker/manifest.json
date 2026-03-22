@@ -9,8 +9,7 @@
   "triggers": ["manual"],
   "entrypoints": {
     "integration": "app.plugins.builtin.open_xiaoai_speaker.integration.sync",
-    "action": "app.plugins.builtin.open_xiaoai_speaker.executor.run",
-    "speaker_adapter": "app.plugins.builtin.open_xiaoai_speaker.runtime.run_speaker_adapter"
+    "action": "app.plugins.builtin.open_xiaoai_speaker.executor.run"
   },
   "capabilities": {
     "integration": {
@@ -24,14 +23,6 @@
       "entity_types": ["device.speaker"],
       "default_cache_ttl_seconds": 60,
       "max_stale_seconds": 600
-    },
-    "speaker_adapter": {
-      "adapter_code": "open_xiaoai",
-      "supported_modes": ["audio_session"],
-      "supported_domains": ["speaker", "voice_terminal"],
-      "requires_runtime_worker": true,
-      "supports_discovery": true,
-      "supports_commands": true
     },
     "device_detail_tabs": [
       {
@@ -130,3 +121,4 @@
     }
   ]
 }
+
