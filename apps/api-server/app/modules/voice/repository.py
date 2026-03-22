@@ -1,7 +1,7 @@
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
-from app.modules.voice.models import VoiceTerminalConversationBinding
+from app.modules.voice.models import SpeakerRuntimeState, VoiceTerminalConversationBinding
 
 
 def add_voice_terminal_conversation_binding(
@@ -38,3 +38,22 @@ def list_voice_terminal_conversation_bindings(
         .order_by(VoiceTerminalConversationBinding.created_at.asc(), VoiceTerminalConversationBinding.id.asc())
     )
     return list(db.scalars(stmt).all())
+
+
+def add_speaker_runtime_state(
+    db: Session,
+    row: SpeakerRuntimeState,
+) -> SpeakerRuntimeState:
+    db.add(row)
+    return row
+
+
+def get_speaker_runtime_state_by_integration_instance(
+    db: Session,
+    *,
+    integration_instance_id: str,
+) -> SpeakerRuntimeState | None:
+    stmt: Select[tuple[SpeakerRuntimeState]] = select(SpeakerRuntimeState).where(
+        SpeakerRuntimeState.integration_instance_id == integration_instance_id,
+    )
+    return db.scalar(stmt)

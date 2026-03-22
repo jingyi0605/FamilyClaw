@@ -70,3 +70,19 @@ def error_result(*, plugin_id: str, action: str, error_code: str, error_message:
         "error_code": error_code,
         "error_message": error_message,
     }
+
+
+def run_speaker_adapter(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """正式 speaker_adapter 入口。
+
+    这一层先只作为契约占位，明确 open_xiaoai_speaker 属于 audio_session 车道。
+    具体厂商 runtime 细节仍留在插件内部，不回灌宿主核心。
+    """
+
+    raw_payload = payload or {}
+    return {
+        "accepted": True,
+        "plugin_id": str(raw_payload.get("plugin_id") or "open-xiaoai-speaker"),
+        "mode": "audio_session",
+        "payload_kind": str(raw_payload.get("kind") or "speaker_adapter"),
+    }

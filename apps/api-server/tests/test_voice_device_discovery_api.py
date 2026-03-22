@@ -17,11 +17,13 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.modules.device.models import DeviceBinding
 from app.modules.device_control.schemas import DeviceControlRequest
-from app.modules.device_control.service import execute_device_control
+from app.modules.device_control.service import DeviceControlServiceError, execute_device_control
 from app.modules.device_integration import service as device_integration_service_module
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
 from app.modules.integration.models import IntegrationDiscovery, IntegrationInstance
+from app.modules.plugin.schemas import PluginStateUpdateRequest
+from app.modules.plugin.service import set_household_plugin_enabled
 
 
 def _build_alembic_config(database_url: str) -> Config:
@@ -313,6 +315,34 @@ class VoiceDeviceDiscoveryApiTests(unittest.TestCase):
         self.assertEqual("speaker.set_volume", event.type)
         self.assertEqual(35, event.payload.volume_pct)
         self.assertEqual("device_control", event.payload.reason)
+
+    def test_open_xiaoai_device_control_rejects_disabled_plugin(self) -> None:
+        device_id = self._sync_single_speaker(gateway_id="gateway-disabled", sn="SN007")
+        with self.SessionLocal() as db:
+            set_household_plugin_enabled(
+                db,
+                household_id=self.household_id,
+                plugin_id="open-xiaoai-speaker",
+                payload=PluginStateUpdateRequest(enabled=False),
+                updated_by="test-suite",
+            )
+            db.commit()
+
+        with self.SessionLocal() as db:
+            with self.assertRaises(DeviceControlServiceError) as context:
+                execute_device_control(
+                    db,
+                    request=DeviceControlRequest(
+                        household_id=self.household_id,
+                        device_id=device_id,
+                        action="play_pause",
+                        params={},
+                        reason="test.open_xiaoai.disabled",
+                    ),
+                )
+
+        self.assertEqual("plugin_disabled", context.exception.error_code)
+        self.assertEqual(409, context.exception.status_code)
 
     def _create_instance(self, *, gateway_id: str | None):
         config = {"gateway_id": gateway_id} if gateway_id is not None else {}

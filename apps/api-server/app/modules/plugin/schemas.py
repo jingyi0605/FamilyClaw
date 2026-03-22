@@ -75,6 +75,7 @@ PluginDashboardCardSnapshotState = Literal["ready", "stale", "invalid", "error"]
 HomeDashboardCardState = Literal["ready", "empty", "stale", "error"]
 HomeDashboardCardTone = Literal["neutral", "info", "success", "warning", "danger"]
 HomeDashboardCardTrendDirection = Literal["up", "down", "flat"]
+SpeakerAdapterMode = Literal["text_turn", "audio_session"]
 
 DASHBOARD_CARD_LIST_TEMPLATE_TYPES = {"status_list", "timeline", "action_group"}
 DASHBOARD_CARD_KEY_ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789-_")
@@ -141,6 +142,7 @@ def _normalize_i18n_key(value: str | None) -> str | None:
 class PluginManifestEntrypoints(BaseModel):
     integration: str | None = None
     action: str | None = None
+    speaker_adapter: str | None = None
     agent_skill: str | None = None
     channel: str | None = None
     region_provider: str | None = None
@@ -152,6 +154,7 @@ class PluginManifestEntrypoints(BaseModel):
     @field_validator(
         "integration",
         "action",
+        "speaker_adapter",
         "agent_skill",
         "channel",
         "region_provider",
@@ -543,6 +546,45 @@ class PluginManifestIntegrationSpec(BaseModel):
         return self
 
 
+class PluginManifestSpeakerAdapterSpec(BaseModel):
+    adapter_code: str = Field(min_length=1, max_length=64)
+    supported_modes: list[SpeakerAdapterMode] = Field(default_factory=list)
+    supported_domains: list[str] = Field(default_factory=list)
+    requires_runtime_worker: bool = False
+    supports_discovery: bool = False
+    supports_commands: bool = False
+
+    @field_validator("adapter_code")
+    @classmethod
+    def validate_adapter_code(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("adapter_code 不能为空")
+        return normalized
+
+    @field_validator("supported_modes")
+    @classmethod
+    def validate_supported_modes(cls, value: list[SpeakerAdapterMode]) -> list[SpeakerAdapterMode]:
+        normalized = _normalize_text_list(value, field_name="supported_modes")
+        return [cast(SpeakerAdapterMode, item) for item in normalized]
+
+    @field_validator("supported_domains")
+    @classmethod
+    def validate_supported_domains(cls, value: list[str]) -> list[str]:
+        normalized = _normalize_text_list(value, field_name="supported_domains")
+        if "speaker" not in normalized:
+            raise ValueError("supported_domains 至少要包含 speaker")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_runtime_contract(self) -> "PluginManifestSpeakerAdapterSpec":
+        if not self.supported_modes:
+            raise ValueError("speaker_adapter 至少要声明一个 supported_mode")
+        if "text_turn" in self.supported_modes and not self.requires_runtime_worker:
+            raise ValueError("speaker_adapter.supported_modes 包含 text_turn 时，requires_runtime_worker 必须为 true")
+        return self
+
+
 class PluginManifestSlotSpec(BaseModel):
     slot_name: Literal["memory_engine", "memory_provider", "context_engine"]
     exclusive: bool = True
@@ -651,6 +693,7 @@ class PluginManifestChannelSpec(BaseModel):
 class PluginManifestCapabilities(BaseModel):
     context_reads: PluginManifestContextReads = Field(default_factory=PluginManifestContextReads)
     integration: PluginManifestIntegrationSpec | None = None
+    speaker_adapter: PluginManifestSpeakerAdapterSpec | None = None
     channel: PluginManifestChannelSpec | None = None
     region_provider: PluginManifestRegionProviderSpec | None = None
     theme_pack: PluginManifestThemePackSpec | None = None
@@ -1358,6 +1401,7 @@ class PluginManifest(BaseModel):
         if self.schedule_templates and "schedule" not in self.triggers:
             raise ValueError("声明计划任务模板前，triggers 必须包含 schedule")
         self._validate_integration_capability()
+        self._validate_speaker_adapter_capability()
         self._validate_channel_capability()
         self._validate_config_specs()
         self._validate_region_provider_capability()
@@ -1378,6 +1422,25 @@ class PluginManifest(BaseModel):
             raise ValueError("integration 插件必须声明 entrypoints.integration")
         if not spec.domains:
             raise ValueError("integration 插件至少要声明一个 domain")
+
+    def _validate_speaker_adapter_capability(self) -> None:
+        spec = self.capabilities.speaker_adapter
+        if spec is None:
+            return
+
+        if "integration" not in self.types:
+            raise ValueError("声明 capabilities.speaker_adapter 时，types 必须包含 integration")
+        if self.entrypoints.speaker_adapter is None:
+            raise ValueError("speaker_adapter 插件必须声明 entrypoints.speaker_adapter")
+        if self.capabilities.integration is None:
+            raise ValueError("speaker_adapter 插件必须同时声明 capabilities.integration")
+        if spec.supports_discovery and not self.capabilities.integration.supports_discovery:
+            raise ValueError("speaker_adapter.supports_discovery=true 时，capabilities.integration.supports_discovery 也必须为 true")
+        if spec.supports_commands:
+            if "action" not in self.types:
+                raise ValueError("speaker_adapter.supports_commands=true 时，types 必须包含 action")
+            if self.entrypoints.action is None:
+                raise ValueError("speaker_adapter.supports_commands=true 时，必须声明 entrypoints.action")
 
     def _validate_channel_capability(self) -> None:
         spec = self.capabilities.channel
