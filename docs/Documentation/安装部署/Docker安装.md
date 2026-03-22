@@ -46,6 +46,7 @@ docker run -d \
 - `/data/runtime/secrets/voice-gateway-token`
 
 如果你明确要接管这两个值，仍然可以手工传 `FAMILYCLAW_DB_PASSWORD` 和 `FAMILYCLAW_VOICE_GATEWAY_TOKEN`；容器会优先使用你传入的值并同步回上面的 secrets 文件。
+如果你还额外传了 `FAMILYCLAW_DATABASE_URL`，容器也会把里面的数据库密码同步成同一个值；不要再让 `FAMILYCLAW_DB_PASSWORD` 和连接串密码写成两个不同值，否则旧版本会直接把自己搞挂。
 
 ## 启动后验证
 
@@ -59,7 +60,8 @@ docker run -d \
 
 - 访问不到 8080：检查防火墙或端口是否被占用。
 - 无法启动容器：确认 Docker 拉镜像成功，或清理旧同名容器 `docker rm -f familyclaw`。
-- 登录后提示数据库错误：先确认 `/data/runtime/secrets/db-password` 已生成，再确认数据卷可写。
+- 登录后提示数据库错误：先确认 `/data/runtime/secrets/db-password` 已生成，再确认数据卷可写；如果你自定义过数据库连接，检查 `FAMILYCLAW_DB_PASSWORD` 和 `FAMILYCLAW_DATABASE_URL` 里的密码是否一致。
+- Unraid / NAS 上全新部署仍然报 `password authentication failed for user "familyclaw"`：这通常不是旧数据没删干净，而是旧镜像在首次启动时撞上了数据库密码初始化竞态。更新到包含修复的镜像；如果暂时只能用旧镜像，先显式传同一个 `FAMILYCLAW_DB_PASSWORD` 与 `FAMILYCLAW_DATABASE_URL` 规避。
 - 语音相关报错但不用语音：可不映射 4399 端口，忽略语音网关日志。
 
 ## 需要卸载

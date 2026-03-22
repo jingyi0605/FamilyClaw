@@ -243,10 +243,7 @@ bash start-open-xiaoai-gateway.sh
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `FAMILYCLAW_DATABASE_URL` | PostgreSQL 数据库地址 | Docker 首次启动自动生成随机密码，并持久化到 `/data/runtime/secrets/db-password` |
-| `FAMILYCLAW_HOME_ASSISTANT_BASE_URL` | Home Assistant 地址 | `http://127.0.0.1:8123` |
-| `FAMILYCLAW_HOME_ASSISTANT_TOKEN` | Home Assistant 长期访问令牌 | 需要手动填写 |
-| `FAMILYCLAW_AI_DEFAULT_PROVIDER_CODE` | 默认 AI 供应商 | `local-ollama` |
+| `FAMILYCLAW_DATABASE_URL` | PostgreSQL 数据库地址 | Docker 默认会把最终使用的数据库密码同步到 `/data/runtime/secrets/db-password`；如需自定义，优先传 `FAMILYCLAW_DB_PASSWORD`，不要让它和连接串里的密码打架 |
 | `FAMILYCLAW_VOICE_RUNTIME_MODE` | 语音模式 | `embedded`（本地处理） |
 
 ## 插件开发指南
@@ -603,10 +600,7 @@ bash start-open-xiaoai-gateway.sh
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `FAMILYCLAW_DATABASE_URL` | PostgreSQL connection string | Docker auto-generates a random password on first start and stores it in `/data/runtime/secrets/db-password` |
-| `FAMILYCLAW_HOME_ASSISTANT_BASE_URL` | Home Assistant URL | `http://127.0.0.1:8123` |
-| `FAMILYCLAW_HOME_ASSISTANT_TOKEN` | Home Assistant long-lived access token | Must be set manually |
-| `FAMILYCLAW_AI_DEFAULT_PROVIDER_CODE` | Default AI provider | `local-ollama` |
+| `FAMILYCLAW_DATABASE_URL` | PostgreSQL connection string | Docker syncs the effective database password to `/data/runtime/secrets/db-password`; if you customize it, prefer `FAMILYCLAW_DB_PASSWORD` and keep it consistent with the password inside the URL |
 | `FAMILYCLAW_VOICE_RUNTIME_MODE` | Voice processing mode | `embedded` (local) |
 
 ## Plugin Development Guide

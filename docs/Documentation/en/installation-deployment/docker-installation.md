@@ -46,6 +46,7 @@ On first start, the container auto-generates a random database password and a ra
 - `/data/runtime/secrets/voice-gateway-token`
 
 If you want to take over either value yourself, you can still pass `FAMILYCLAW_DB_PASSWORD` or `FAMILYCLAW_VOICE_GATEWAY_TOKEN`. The container will use your value and sync it back into the same secrets files.
+If you also pass `FAMILYCLAW_DATABASE_URL`, the container now syncs the password inside that URL to the same canonical secret. Do not keep different passwords in `FAMILYCLAW_DB_PASSWORD` and the URL, because older images can fail to start that way.
 
 ## Verify after startup
 
@@ -59,7 +60,8 @@ If you want to take over either value yourself, you can still pass `FAMILYCLAW_D
 
 - Cannot reach port 8080: check your firewall or whether another service already uses the port.
 - The container does not start: make sure the image pulled successfully, or remove the old container first with `docker rm -f familyclaw`.
-- Login shows database errors: confirm `/data/runtime/secrets/db-password` was created and the mounted data volume is writable.
+- Login shows database errors: confirm `/data/runtime/secrets/db-password` was created and the mounted data volume is writable. If you customized the database connection, verify that `FAMILYCLAW_DB_PASSWORD` matches the password embedded in `FAMILYCLAW_DATABASE_URL`.
+- Fresh Unraid or NAS deployment still shows `password authentication failed for user "familyclaw"`: this is usually not stale data. Older images can hit a first-start race while generating the database password. Update to an image with the fix; if you must stay on the older image for now, explicitly pass the same value in both `FAMILYCLAW_DB_PASSWORD` and `FAMILYCLAW_DATABASE_URL`.
 - Voice-related errors while you do not use voice: you can skip the `4399` port mapping and ignore voice gateway logs.
 
 ## Uninstall

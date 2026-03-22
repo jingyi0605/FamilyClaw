@@ -28,6 +28,65 @@ log() {
   printf '[%s] %s\n' "${FAMILYCLAW_LOG_PREFIX}" "$1"
 }
 
+read_password_from_database_url() {
+  python - <<'PY'
+from __future__ import annotations
+
+import os
+from urllib.parse import urlsplit, unquote
+
+database_url = os.environ.get("FAMILYCLAW_DATABASE_URL", "").strip()
+if not database_url:
+    raise SystemExit(0)
+
+password = urlsplit(database_url).password
+if password:
+    print(unquote(password))
+PY
+}
+
+canonicalize_database_url() {
+  python - <<'PY'
+from __future__ import annotations
+
+import os
+from urllib.parse import quote, urlsplit, urlunsplit
+
+database_url = os.environ.get("FAMILYCLAW_DATABASE_URL", "").strip()
+password = os.environ["FAMILYCLAW_DB_PASSWORD"]
+
+if not database_url:
+    user = quote(os.environ.get("FAMILYCLAW_DB_USER", "familyclaw"), safe="")
+    host = os.environ.get("FAMILYCLAW_DB_HOST", "127.0.0.1")
+    port = os.environ.get("FAMILYCLAW_DB_PORT", "5432")
+    database_name = quote(os.environ.get("FAMILYCLAW_DB_NAME", "familyclaw"), safe="/")
+    encoded_password = quote(password, safe="")
+    print(f"postgresql+psycopg://{user}:{encoded_password}@{host}:{port}/{database_name}")
+    raise SystemExit(0)
+
+parts = urlsplit(database_url)
+scheme = parts.scheme or "postgresql+psycopg"
+username = parts.username or os.environ.get("FAMILYCLAW_DB_USER", "familyclaw")
+hostname = parts.hostname or os.environ.get("FAMILYCLAW_DB_HOST", "127.0.0.1")
+port = parts.port
+path = parts.path or f"/{quote(os.environ.get('FAMILYCLAW_DB_NAME', 'familyclaw'), safe='')}"
+
+userinfo = quote(username, safe="")
+if password:
+    userinfo = f"{userinfo}:{quote(password, safe='')}"
+
+hostpart = hostname
+if ":" in hostname and not hostname.startswith("["):
+    hostpart = f"[{hostname}]"
+
+netloc = f"{userinfo}@{hostpart}"
+if port is not None:
+    netloc = f"{netloc}:{port}"
+
+print(urlunsplit((scheme, netloc, path, parts.query, parts.fragment)))
+PY
+}
+
 generate_secret() {
   local token_bytes="${1:-32}"
   python - "${token_bytes}" <<'PY'
@@ -56,12 +115,40 @@ write_secret_file() {
   chmod 600 "${secret_file}"
 }
 
+acquire_secret_lock() {
+  local lock_dir="$1"
+  local max_attempts="${2:-300}"
+  local attempt=0
+  local lock_parent
+
+  lock_parent="$(dirname "${lock_dir}")"
+  mkdir -p "${lock_parent}"
+
+  while ! mkdir "${lock_dir}" 2>/dev/null; do
+    attempt=$((attempt + 1))
+    if [[ "${attempt}" -ge "${max_attempts}" ]]; then
+      log "Timed out waiting for secret lock ${lock_dir}"
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+release_secret_lock() {
+  local lock_dir="$1"
+  rmdir "${lock_dir}" 2>/dev/null || true
+}
+
 load_or_create_secret() {
   local var_name="$1"
   local secret_file="$2"
   local secret_label="$3"
   local token_bytes="${4:-32}"
   local current_value="${!var_name:-}"
+  local lock_dir="${secret_file}.lock"
+
+  # 首次启动时多个服务会并发 source 本脚本，这里必须串行化 secret 初始化。
+  acquire_secret_lock "${lock_dir}"
 
   if [[ -n "${current_value}" ]]; then
     write_secret_file "${secret_file}" "${current_value}"
@@ -74,6 +161,8 @@ load_or_create_secret() {
     log "Generated and persisted ${secret_label} at ${secret_file}"
   fi
 
+  release_secret_lock "${lock_dir}"
+
   printf -v "${var_name}" '%s' "${current_value}"
   export "${var_name}"
 }
@@ -85,10 +174,18 @@ is_truthy() {
   esac
 }
 
+if [[ -z "${FAMILYCLAW_DB_PASSWORD:-}" && -n "${FAMILYCLAW_DATABASE_URL:-}" ]]; then
+  parsed_db_password="$(read_password_from_database_url || true)"
+  if [[ -n "${parsed_db_password}" ]]; then
+    export FAMILYCLAW_DB_PASSWORD="${parsed_db_password}"
+    log "Using database password parsed from FAMILYCLAW_DATABASE_URL"
+  fi
+fi
+
 load_or_create_secret FAMILYCLAW_DB_PASSWORD "${FAMILYCLAW_DB_PASSWORD_FILE}" "database password" 24
 load_or_create_secret FAMILYCLAW_VOICE_GATEWAY_TOKEN "${FAMILYCLAW_VOICE_GATEWAY_TOKEN_FILE}" "voice gateway token" 32
 
-export FAMILYCLAW_DATABASE_URL="${FAMILYCLAW_DATABASE_URL:-postgresql+psycopg://${FAMILYCLAW_DB_USER}:${FAMILYCLAW_DB_PASSWORD}@${FAMILYCLAW_DB_HOST}:${FAMILYCLAW_DB_PORT}/${FAMILYCLAW_DB_NAME}}"
+export FAMILYCLAW_DATABASE_URL="$(canonicalize_database_url)"
 export FAMILYCLAW_PLUGIN_STORAGE_ROOT="${FAMILYCLAW_PLUGIN_STORAGE_ROOT:-${FAMILYCLAW_PLUGIN_DATA_DIR}}"
 export FAMILYCLAW_PLUGIN_MARKETPLACE_INSTALL_ROOT="${FAMILYCLAW_PLUGIN_MARKETPLACE_INSTALL_ROOT:-${FAMILYCLAW_PLUGIN_DATA_DIR}}"
 export FAMILYCLAW_VOICE_RUNTIME_ARTIFACTS_ROOT="${FAMILYCLAW_VOICE_RUNTIME_ARTIFACTS_ROOT:-${FAMILYCLAW_VOICE_ARTIFACTS_DIR}}"
