@@ -53,7 +53,7 @@ class SystemVersionApiTests(unittest.TestCase):
         self.assertEqual("development", version_info.build_channel)
         self.assertIsNone(version_info.build_time)
         self.assertEqual(
-            "https://github.com/familyclaw/FamilyClaw/releases/tag/v0.1.0",
+            "https://github.com/jingyi0605/FamilyClaw/releases/tag/v0.1.0",
             version_info.release_notes_url,
         )
         self.assertEqual("check_unavailable", version_info.update_status)
@@ -72,14 +72,14 @@ class SystemVersionApiTests(unittest.TestCase):
                 "tag_name": "v0.4.0",
                 "name": "春季体验优化",
                 "body": "家庭首页更清楚了，升级后的关键变化会直接告诉你。\n\n- 修复若干问题",
-                "html_url": "https://github.com/familyclaw/FamilyClaw/releases/tag/v0.4.0",
+                "html_url": "https://github.com/jingyi0605/FamilyClaw/releases/tag/v0.4.0",
                 "published_at": "2026-03-18T18:30:00Z",
                 "draft": False,
                 "prerelease": False,
             },
             {
                 "tag_name": "v0.3.0",
-                "html_url": "https://github.com/familyclaw/FamilyClaw/releases/tag/v0.3.0",
+                "html_url": "https://github.com/jingyi0605/FamilyClaw/releases/tag/v0.3.0",
                 "draft": False,
                 "prerelease": False,
             },
@@ -118,10 +118,10 @@ class SystemVersionApiTests(unittest.TestCase):
                 "current_version": "0.3.0",
                 "build_channel": "stable",
                 "build_time": "2026-03-18T12:00:00Z",
-                "release_notes_url": "https://github.com/familyclaw/FamilyClaw/releases/tag/v0.3.0",
+                "release_notes_url": "https://github.com/jingyi0605/FamilyClaw/releases/tag/v0.3.0",
                 "update_status": "update_available",
                 "latest_version": "0.4.0",
-                "latest_release_notes_url": "https://github.com/familyclaw/FamilyClaw/releases/tag/v0.4.0",
+                "latest_release_notes_url": "https://github.com/jingyi0605/FamilyClaw/releases/tag/v0.4.0",
                 "latest_release_title": "春季体验优化",
                 "latest_release_summary": "家庭首页更清楚了，升级后的关键变化会直接告诉你。",
                 "latest_release_published_at": "2026-03-18T18:30:00Z",

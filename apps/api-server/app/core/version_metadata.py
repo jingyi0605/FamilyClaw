@@ -16,7 +16,7 @@ BuildChannel = Literal["stable", "preview", "development"]
 UpdateStatus = Literal["up_to_date", "update_available", "check_unavailable"]
 
 # GitHub Release 仓库地址集中收口在这里，后续切仓只改这一处。
-BUILTIN_RELEASE_REPOSITORY_URL = "https://github.com/familyclaw/FamilyClaw"
+BUILTIN_RELEASE_REPOSITORY_URL = "https://github.com/jingyi0605/FamilyClaw"
 GITHUB_RELEASE_API_BASE_URL = "https://api.github.com"
 GITHUB_RELEASE_CHECK_TIMEOUT_SECONDS = 5.0
 
