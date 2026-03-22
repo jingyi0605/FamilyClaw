@@ -28,6 +28,7 @@ from app.modules.memory.service import (
     upsert_knowledge_document_from_observation,
     upsert_plugin_observation_memory,
 )
+from app.modules.plugin.import_path import collect_plugin_import_roots, plugin_runtime_import_path
 from app.modules.region.plugin_runtime import get_runtime_region_provider_spec, sync_household_plugin_region_providers
 from app.modules.region.service import resolve_household_region_context
 from app.modules.plugin.executors import get_executor, load_entrypoint_callable, resolve_execution_backend
@@ -519,7 +520,6 @@ def _apply_marketplace_registry_state(
     *,
     instance_id: str,
     install_status: str,
-    config_status: str,
     governance: PluginVersionGovernanceRead,
 ) -> PluginRegistryItem:
     return item.model_copy(
@@ -528,7 +528,6 @@ def _apply_marketplace_registry_state(
             "installed_version": governance.installed_version,
             "update_state": governance.update_state,
             "install_status": install_status,
-            "config_status": config_status,
             "marketplace_instance_id": instance_id,
             "version_governance": governance,
         }
@@ -1107,7 +1106,6 @@ def list_registered_plugins_for_household(
                     ),
                     instance_id=marketplace_instance.id,
                     install_status=marketplace_instance.install_status,
-                    config_status=marketplace_instance.config_status,
                     governance=governance,
                 )
             )
@@ -1135,14 +1133,12 @@ def list_registered_plugins_for_household(
             installed_item is not None
             and installed_item.marketplace_instance_id is not None
             and installed_item.install_status is not None
-            and installed_item.config_status is not None
             and installed_item.version_governance is not None
         ):
             dev_item = _apply_marketplace_registry_state(
                 dev_item,
                 instance_id=installed_item.marketplace_instance_id,
                 install_status=installed_item.install_status,
-                config_status=installed_item.config_status,
                 governance=installed_item.version_governance,
             )
         dev_items_by_id[dev_item.id] = _merge_effective_plugin_state(
@@ -1233,13 +1229,6 @@ def require_available_household_plugin(
             raise PluginExecutionError(
                 f"插件 {plugin_id} 还没有安装完成，不能执行。",
                 error_code="plugin_marketplace_not_installed",
-                field="plugin_id",
-                status_code=409,
-            )
-        if plugin.config_status != "configured":
-            raise PluginExecutionError(
-                f"插件 {plugin_id} 还没配置完成，不能执行。",
-                error_code="plugin_marketplace_not_configured",
                 field="plugin_id",
                 status_code=409,
             )
@@ -2852,34 +2841,13 @@ def _load_plugin_observation_transform(plugin: PluginRegistryItem):
     if not package_separator or not package_path:
         return None
     try:
-        with _plugin_runtime_import_path(plugin):
+        with plugin_runtime_import_path(
+            plugin.runner_config.plugin_root if plugin.runner_config is not None else None,
+            package_names=collect_plugin_import_roots(plugin),
+        ):
             return load_entrypoint_callable(f"{package_path}.ingestor.transform")
     except (ModuleNotFoundError, AttributeError, TypeError, ValueError):
         return None
-
-
-@contextmanager
-def _plugin_runtime_import_path(plugin: PluginRegistryItem):
-    plugin_root = plugin.runner_config.plugin_root if plugin.runner_config is not None else None
-    if not plugin_root:
-        yield
-        return
-
-    resolved_root = Path(plugin_root).resolve()
-    candidate_paths = [str(resolved_root.parent), str(resolved_root)]
-    inserted_paths: list[str] = []
-    for candidate in candidate_paths:
-        if candidate not in sys.path:
-            sys.path.insert(0, candidate)
-            inserted_paths.append(candidate)
-    try:
-        yield
-    finally:
-        for candidate in reversed(inserted_paths):
-            try:
-                sys.path.remove(candidate)
-            except ValueError:
-                continue
 
 
 def _sync_plugin_dashboard_cards(

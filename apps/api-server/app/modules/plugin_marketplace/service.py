@@ -25,7 +25,6 @@ from app.core.config import (
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.plugin.models import PluginMount
 from app.modules.plugin.schemas import (
-    PluginConfigState,
     PluginMountCreate,
     PluginStateUpdateRequest,
     PluginVersionGovernanceRead,
@@ -87,7 +86,6 @@ BUILTIN_MARKETPLACE_SOURCE_ID = "builtin-system-marketplace"
 MARKETPLACE_ENTRY_FILE_NAME = "entry.json"
 MARKETPLACE_MANIFEST_FILE_NAME = "market.json"
 MARKETPLACE_INVALID_SUMMARY = "插件市场条目校验失败"
-PLUGIN_MARKETPLACE_UNCONFIGURED_ERROR_CODE = "plugin_marketplace_not_configured"
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +279,6 @@ def _to_instance_read(row: PluginMarketplaceInstance) -> MarketplaceInstanceRead
         installed_version=row.installed_version,
         install_status=row.install_status,
         enabled=row.enabled,
-        config_status=row.config_status,
         source_repo=row.source_repo,
         market_repo=row.market_repo,
         plugin_root=row.plugin_root,
@@ -805,7 +802,6 @@ def _resolve_install_state(db: Session, *, household_id: str | None, plugin_id: 
             instance_id=instance.id,
             install_status=instance.install_status,
             enabled=instance.enabled,
-            config_status=instance.config_status,
             installed_version=instance.installed_version,
         )
     latest_task = next(
@@ -817,7 +813,6 @@ def _resolve_install_state(db: Session, *, household_id: str | None, plugin_id: 
     return MarketplaceInstallStateRead(
         install_status=latest_task.install_status,
         enabled=False,
-        config_status=None,
         installed_version=latest_task.installed_version,
     )
 
@@ -2040,7 +2035,7 @@ def create_marketplace_install_task(
                 installed_version=version_entry.version,
                 install_status="installed",
                 enabled=False,
-                config_status="unconfigured",
+                config_status="configured",
                 source_repo=entry.source_repo,
                 market_repo=source.repo_url,
                 plugin_root=str(target_root),
@@ -2057,6 +2052,7 @@ def create_marketplace_install_task(
             instance.installed_version = version_entry.version
             instance.install_status = "installed"
             instance.enabled = False
+            instance.config_status = "configured"
             instance.source_repo = entry.source_repo
             instance.market_repo = source.repo_url
             instance.plugin_root = str(target_root)
@@ -2077,7 +2073,6 @@ def create_marketplace_install_task(
                 "instance_id": instance.id,
                 "instance_status": instance.install_status,
                 "instance_enabled": instance.enabled,
-                "instance_config_status": instance.config_status,
             },
         )
 
@@ -2090,20 +2085,6 @@ def create_marketplace_install_task(
         task.error_message = None
         task.finished_at = utc_now_iso()
         task.updated_at = task.finished_at
-        _log_install_debug(
-            "插件市场安装开始刷新配置状态",
-            task_id=task.id,
-            household_id=payload.household_id,
-            source_id=payload.source_id,
-            plugin_id=payload.plugin_id,
-            version=version_entry.version,
-            stage=task.install_status,
-        )
-        refresh_marketplace_plugin_instance_config_status(
-            db,
-            household_id=payload.household_id,
-            plugin_id=payload.plugin_id,
-        )
         _log_install_debug(
             "插件市场安装开始同步地区 provider",
             task_id=task.id,
@@ -2125,7 +2106,6 @@ def create_marketplace_install_task(
             stage=task.install_status,
             extra={
                 "instance_id": instance.id,
-                "config_status": instance.config_status,
                 "elapsed_ms": round((time.perf_counter() - request_started_at) * 1000, 2),
             },
         )
@@ -2171,7 +2151,6 @@ def _snapshot_instance_runtime_state(instance: PluginMarketplaceInstance) -> dic
         "installed_version": instance.installed_version,
         "install_status": instance.install_status,
         "enabled": instance.enabled,
-        "config_status": instance.config_status,
         "source_repo": instance.source_repo,
         "market_repo": instance.market_repo,
         "plugin_root": instance.plugin_root,
@@ -2238,7 +2217,6 @@ def _switch_marketplace_instance_version(
     previous_instance_state = _snapshot_instance_runtime_state(instance)
     previous_mount_state = _snapshot_mount_runtime_state(mount)
     previous_enabled = instance.enabled
-    previous_config_status = instance.config_status
     target_root: Path | None = None
     target_manifest_path: Path | None = None
     marketplace_client = _get_client(client)
@@ -2281,6 +2259,7 @@ def _switch_marketplace_instance_version(
         instance.installed_version = target_version_entry.version
         instance.install_status = "installed"
         instance.enabled = previous_enabled
+        instance.config_status = "configured"
         instance.source_repo = entry.source_repo
         instance.market_repo = source.repo_url
         instance.plugin_root = str(target_root)
@@ -2300,24 +2279,7 @@ def _switch_marketplace_instance_version(
         mount.enabled = previous_enabled
         mount.updated_at = utc_now_iso()
 
-        refresh_marketplace_plugin_instance_config_status(
-            db,
-            household_id=instance.household_id,
-            plugin_id=instance.plugin_id,
-        )
         sync_household_plugin_region_providers(db, instance.household_id)
-
-        state_changed = instance.config_status != previous_config_status
-        state_change_reason = None
-        if instance.config_status != "configured":
-            if previous_enabled:
-                instance.enabled = False
-                mount.enabled = False
-                state_changed = True
-            state_change_reason = (
-                f"{'升级' if operation == 'upgrade' else '回滚'}后配置状态变为 {instance.config_status}，"
-                "当前已阻止继续执行，请先重新确认配置。"
-            )
 
         governance = resolve_marketplace_instance_version_governance(
             db,
@@ -2331,8 +2293,8 @@ def _switch_marketplace_instance_version(
             governance=governance,
             previous_version=previous_version,
             target_version=target_version_entry.version,
-            state_changed=state_changed,
-            state_change_reason=state_change_reason,
+            state_changed=False,
+            state_change_reason=None,
         )
     except (GitHubMarketplaceClientError, PluginMarketplaceServiceError, PluginManifestValidationError, PluginServiceError) as exc:
         if target_root is not None and target_root.exists():
@@ -2436,88 +2398,6 @@ def operate_marketplace_instance_version(
     )
 
 
-def resolve_marketplace_plugin_config_status(
-    db: Session,
-    *,
-    household_id: str,
-    plugin_id: str,
-) -> PluginConfigState:
-    from app.modules.plugin.config_service import get_plugin_config_form, list_plugin_config_scopes
-
-    scope_list = list_plugin_config_scopes(db, household_id=household_id, plugin_id=plugin_id)
-    if not scope_list.items:
-        return "configured"
-
-    has_unconfigured = False
-    for scope in scope_list.items:
-        if not scope.instances:
-            if scope.scope_type == "plugin":
-                has_unconfigured = True
-            continue
-        for instance in scope.instances:
-            form = get_plugin_config_form(
-                db,
-                household_id=household_id,
-                plugin_id=plugin_id,
-                scope_type=scope.scope_type,
-                scope_key=instance.scope_key,
-            )
-            if form.view.state == "invalid":
-                return "invalid"
-            if form.view.state != "configured":
-                has_unconfigured = True
-    return "unconfigured" if has_unconfigured else "configured"
-
-
-def refresh_marketplace_plugin_instance_config_status(
-    db: Session,
-    *,
-    household_id: str,
-    plugin_id: str,
-) -> PluginMarketplaceInstance | None:
-    started_at = time.perf_counter()
-    instance = repository.get_marketplace_instance_for_plugin(db, household_id=household_id, plugin_id=plugin_id)
-    if instance is None:
-        _log_install_debug(
-            "刷新插件市场配置状态时未找到实例",
-            household_id=household_id,
-            plugin_id=plugin_id,
-            stage="refresh_config_status",
-        )
-        return None
-    _log_install_debug(
-        "开始刷新插件市场配置状态",
-        task_id=instance.id,
-        household_id=household_id,
-        source_id=instance.source_id,
-        plugin_id=plugin_id,
-        version=instance.installed_version,
-        stage="refresh_config_status",
-        extra={"current_config_status": instance.config_status},
-    )
-    instance.config_status = resolve_marketplace_plugin_config_status(
-        db,
-        household_id=household_id,
-        plugin_id=plugin_id,
-    )
-    instance.updated_at = utc_now_iso()
-    db.flush()
-    _log_install_debug(
-        "完成刷新插件市场配置状态",
-        task_id=instance.id,
-        household_id=household_id,
-        source_id=instance.source_id,
-        plugin_id=plugin_id,
-        version=instance.installed_version,
-        stage="refresh_config_status",
-        extra={
-            "config_status": instance.config_status,
-            "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 2),
-        },
-    )
-    return instance
-
-
 def set_marketplace_instance_enabled(
     db: Session,
     *,
@@ -2534,18 +2414,11 @@ def set_marketplace_instance_enabled(
             status_code=404,
         )
 
-    refresh_marketplace_plugin_instance_config_status(db, household_id=household_id, plugin_id=plugin_id)
     if payload.enabled:
         if instance.install_status != "installed":
             raise PluginMarketplaceServiceError(
                 "插件还没有安装完成，不能启用。",
                 error_code="plugin_marketplace_not_installed",
-                status_code=409,
-            )
-        if instance.config_status != "configured":
-            raise PluginMarketplaceServiceError(
-                "插件配置还没完成，不能启用。",
-                error_code=PLUGIN_MARKETPLACE_UNCONFIGURED_ERROR_CODE,
                 status_code=409,
             )
 

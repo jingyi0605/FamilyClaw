@@ -1234,7 +1234,6 @@
   'plugins.marketplace.installState.installing': 'Installing',
   'plugins.marketplace.installState.failed': 'Install failed',
   'plugins.marketplace.installState.installedDisabled': 'Installed, disabled',
-  'plugins.marketplace.installState.needsConfig': 'Installed, needs config',
   'plugins.marketplace.installState.enabled': 'Enabled',
   'plugins.marketplace.form.primarySection': 'Primary repository',
   'plugins.marketplace.form.primarySectionHint': 'This is the canonical marketplace repository. You can pick the provider manually or let the backend detect it from the URL.',

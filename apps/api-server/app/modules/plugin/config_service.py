@@ -309,13 +309,6 @@ def save_plugin_config_form(
         secret_data=next_secret_data,
     )
     db.flush()
-    from app.modules.plugin_marketplace.service import refresh_marketplace_plugin_instance_config_status
-
-    refresh_marketplace_plugin_instance_config_status(
-        db,
-        household_id=household_id,
-        plugin_id=plugin.id,
-    )
 
     return PluginConfigFormRead(
         plugin_id=plugin.id,
@@ -564,13 +557,6 @@ def save_integration_instance_plugin_config_form(
         existing_instance.updated_at = now
 
     db.flush()
-    from app.modules.plugin_marketplace.service import refresh_marketplace_plugin_instance_config_status
-
-    refresh_marketplace_plugin_instance_config_status(
-        db,
-        household_id=household_id,
-        plugin_id=plugin.id,
-    )
     return PluginConfigFormRead(
         plugin_id=plugin.id,
         config_spec=resolved_spec,

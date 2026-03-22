@@ -1179,7 +1179,6 @@
   'plugins.marketplace.installState.installing': '安装中',
   'plugins.marketplace.installState.failed': '安装失败',
   'plugins.marketplace.installState.installedDisabled': '已安装未启用',
-  'plugins.marketplace.installState.needsConfig': '已安装，待配置',
   'plugins.marketplace.installState.enabled': '已启用',
   'plugins.marketplace.form.primarySection': '主仓库',
   'plugins.marketplace.form.primarySectionHint': '这里填市场真正声明的仓库地址。仓库类型可以手动指定，也可以让后端按 URL 自动识别。',

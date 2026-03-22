@@ -52,7 +52,6 @@ from app.modules.plugin_marketplace.service import (
     list_marketplace_catalog,
     list_marketplace_sources,
     operate_marketplace_instance_version,
-    resolve_marketplace_plugin_config_status,
     set_marketplace_instance_enabled,
     sync_marketplace_source,
 )
@@ -406,7 +405,7 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
                 installed_version="1.0.0",
                 install_status="installed",
                 enabled=False,
-                config_status="unconfigured",
+                config_status="configured",
                 source_repo=PLUGIN_REPO_URL,
                 market_repo=OFFICIAL_MARKET_REPO_URL,
                 plugin_root="/tmp/demo-plugin",
@@ -536,25 +535,22 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         assert instance is not None
         self.assertEqual("installed", instance.install_status)
         self.assertFalse(instance.enabled)
-        self.assertEqual("unconfigured", instance.config_status)
         expected_marketplace_root = Path(settings.plugin_marketplace_install_root).resolve()
         self.assertTrue(Path(task.plugin_root).resolve().is_relative_to(expected_marketplace_root))
         self.assertTrue(Path(instance.plugin_root).resolve().is_relative_to(expected_marketplace_root))
 
         plugin = get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin")
         self.assertEqual("installed", plugin.install_status)
-        self.assertEqual("unconfigured", plugin.config_status)
         self.assertIsNotNone(plugin.marketplace_instance_id)
         self.assertEqual("subprocess_runner", plugin.execution_backend)
 
-        with self.assertRaises(PluginMarketplaceServiceError) as ctx:
-            set_marketplace_instance_enabled(
-                self.db,
-                household_id=self.household_id,
-                plugin_id="demo-plugin",
-                payload=PluginStateUpdateRequest(enabled=True),
-            )
-        self.assertEqual("plugin_marketplace_not_configured", ctx.exception.error_code)
+        enabled_instance = set_marketplace_instance_enabled(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+            payload=PluginStateUpdateRequest(enabled=True),
+        )
+        self.db.commit()
 
         save_plugin_config_form(
             self.db,
@@ -572,26 +568,9 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         )
         self.db.commit()
 
-        self.assertEqual(
-            "configured",
-            resolve_marketplace_plugin_config_status(
-                self.db,
-                household_id=self.household_id,
-                plugin_id="demo-plugin",
-            ),
-        )
-        enabled_instance = set_marketplace_instance_enabled(
-            self.db,
-            household_id=self.household_id,
-            plugin_id="demo-plugin",
-            payload=PluginStateUpdateRequest(enabled=True),
-        )
-        self.db.commit()
-
         self.assertTrue(enabled_instance.enabled)
         plugin = get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin")
         self.assertTrue(plugin.enabled)
-        self.assertEqual("configured", plugin.config_status)
         self.assertEqual("subprocess_runner", plugin.execution_backend)
 
     def test_plugins_dev_overrides_marketplace_runtime_but_preserves_marketplace_state(self) -> None:
@@ -621,7 +600,6 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertEqual("9.9.9", plugin.version)
         self.assertEqual("marketplace", plugin.install_method)
         self.assertEqual("installed", plugin.install_status)
-        self.assertEqual("unconfigured", plugin.config_status)
         self.assertIsNotNone(plugin.marketplace_instance_id)
         assert plugin.runner_config is not None
         self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
@@ -732,15 +710,6 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         )
         self.db.commit()
 
-        self.assertEqual(
-            "configured",
-            resolve_marketplace_plugin_config_status(
-                self.db,
-                household_id=self.household_id,
-                plugin_id="demo-plugin",
-            ),
-        )
-
         plugin = set_household_plugin_enabled(
             self.db,
             household_id=self.household_id,
@@ -751,7 +720,6 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.db.commit()
 
         self.assertTrue(plugin.enabled)
-        self.assertEqual("configured", plugin.config_status)
 
         marketplace_instance = get_marketplace_instance_for_household_plugin(
             self.db,
@@ -760,7 +728,6 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         )
         assert marketplace_instance is not None
         self.assertTrue(marketplace_instance.enabled)
-        self.assertEqual("configured", marketplace_instance.config_status)
 
         integration_instance = self.db.scalar(
             select(IntegrationInstance).where(
@@ -1378,7 +1345,7 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin").execution_backend,
         )
 
-    def test_upgrade_disables_plugin_when_new_config_schema_breaks_old_config(self) -> None:
+    def test_upgrade_keeps_plugin_enabled_even_when_new_config_schema_breaks_old_config(self) -> None:
         client = self._build_client_for_config_breaking_upgrade()
         source = add_marketplace_source(
             self.db,
@@ -1439,10 +1406,9 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.db.commit()
 
         self.assertEqual("2.0.0", result.instance.installed_version)
-        self.assertFalse(result.instance.enabled)
-        self.assertEqual("invalid", result.instance.config_status)
-        self.assertTrue(result.state_changed)
-        self.assertIsNotNone(result.state_change_reason)
+        self.assertTrue(result.instance.enabled)
+        self.assertFalse(result.state_changed)
+        self.assertIsNone(result.state_change_reason)
 
     def test_version_switch_failure_keeps_previous_instance_state(self) -> None:
         client = self._build_client_for_switch_failure()
@@ -1513,7 +1479,6 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         assert current is not None
         self.assertEqual("1.0.0", current.installed_version)
         self.assertTrue(current.enabled)
-        self.assertEqual("configured", current.config_status)
 
     def _build_client_with_valid_and_invalid_entries(self) -> FakeGitHubMarketplaceClient:
         files = {

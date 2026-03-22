@@ -34,7 +34,6 @@ from app.modules.plugin_marketplace.models import (
 )
 from app.modules.plugin_marketplace.service import (
     _normalize_builtin_marketplace_source,
-    resolve_marketplace_plugin_config_status,
 )
 from app.modules.region.plugin_runtime import sync_household_plugin_region_providers
 
@@ -640,11 +639,6 @@ def _upsert_marketplace_instance_from_disk(
 ) -> str:
     mount = plugin_repository.get_plugin_mount(db, household_id=household_id, plugin_id=plugin_id)
     enabled_on_create = mount.enabled if mount is not None else False
-    config_status = resolve_marketplace_plugin_config_status(
-        db,
-        household_id=household_id,
-        plugin_id=plugin_id,
-    )
     plugin_root_value = str(plugin_root.resolve())
     manifest_path_value = str(manifest_path.resolve())
     working_dir_value = plugin_root_value
@@ -665,7 +659,7 @@ def _upsert_marketplace_instance_from_disk(
             installed_version=manifest_version,
             install_status="installed",
             enabled=enabled_on_create,
-            config_status=config_status,
+            config_status="configured",
             source_repo=restore_context.source_repo,
             market_repo=restore_context.market_repo,
             plugin_root=plugin_root_value,
@@ -708,8 +702,8 @@ def _upsert_marketplace_instance_from_disk(
     if existing.working_dir != working_dir_value:
         existing.working_dir = working_dir_value
         changed = True
-    if existing.config_status != config_status:
-        existing.config_status = config_status
+    if existing.config_status != "configured":
+        existing.config_status = "configured"
         changed = True
     if existing.installed_at is None:
         existing.installed_at = now

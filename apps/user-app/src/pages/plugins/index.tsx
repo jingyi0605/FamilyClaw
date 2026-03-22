@@ -267,9 +267,6 @@ function formatMarketplaceInstallState(
   if (state.install_status === 'installed' && state.enabled) {
     return { label: getPageMessage(locale, 'plugins.marketplace.installState.enabled'), tone: 'success' };
   }
-  if (state.install_status === 'installed' && state.config_status !== 'configured') {
-    return { label: getPageMessage(locale, 'plugins.marketplace.installState.needsConfig'), tone: 'warning' };
-  }
   if (state.install_status === 'installed') {
     return { label: getPageMessage(locale, 'plugins.marketplace.installState.installedDisabled'), tone: 'secondary' };
   }
@@ -1415,10 +1412,7 @@ function PluginsPageContent() {
     const versionOptions = marketplaceVersionOptions;
     const selectedVersionOption = resolveMarketplaceVersionOptionByVersion(versionOptions, selectedMarketplaceVersion)
       ?? resolveMarketplaceVersionOptionByVersion(versionOptions, getDefaultMarketplaceVersionSelection(versionOptions));
-    const canEnable = Boolean(
-      item.install_state.instance_id
-      && (item.install_state.enabled || item.install_state.config_status === 'configured'),
-    );
+    const canEnable = Boolean(item.install_state.instance_id && item.install_state.install_status === 'installed');
     const toggleLabel = item.install_state.enabled
       ? page('plugins.marketplace.action.disable')
       : page('plugins.marketplace.action.enable');

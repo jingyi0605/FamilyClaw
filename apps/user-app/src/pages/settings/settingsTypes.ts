@@ -772,7 +772,6 @@ export type PluginRegistryItem = {
   is_dev_active?: boolean;
   install_method?: PluginInstallMethod | null;
   install_status?: string | null;
-  config_status?: PluginConfigState | null;
   marketplace_instance_id?: string | null;
   version_governance?: PluginVersionGovernanceRead | null;
 };
@@ -1223,7 +1222,6 @@ export type MarketplaceInstallStateRead = {
   instance_id: string | null;
   install_status: MarketplaceInstallStatus;
   enabled: boolean;
-  config_status: PluginConfigState | null;
   installed_version: string | null;
 };
 
@@ -1362,7 +1360,6 @@ export type MarketplaceInstanceRead = {
   installed_version: string;
   install_status: MarketplaceInstallStatus;
   enabled: boolean;
-  config_status: PluginConfigState;
   source_repo: string;
   market_repo: string;
   plugin_root: string;

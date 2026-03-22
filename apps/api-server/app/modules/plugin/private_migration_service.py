@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import hashlib
 from pathlib import Path
-import sys
 from threading import Lock
 
 from alembic import command
@@ -11,6 +9,7 @@ from alembic.config import Config
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from .import_path import collect_plugin_import_roots, plugin_runtime_import_path
 from .schemas import PluginRegistryItem
 
 
@@ -89,23 +88,8 @@ def _run_plugin_private_migrations(
     alembic_config.attributes["plugin_root"] = str(_resolve_plugin_root(plugin))
     alembic_config.attributes["version_table"] = _build_plugin_version_table_name(plugin.id)
 
-    with _plugin_runtime_import_path(_resolve_plugin_root(plugin)):
+    with plugin_runtime_import_path(
+        _resolve_plugin_root(plugin),
+        package_names=collect_plugin_import_roots(plugin),
+    ):
         command.upgrade(alembic_config, "head")
-
-
-@contextmanager
-def _plugin_runtime_import_path(plugin_root: Path):
-    candidate_paths = [str(plugin_root.parent), str(plugin_root)]
-    inserted_paths: list[str] = []
-    for candidate in candidate_paths:
-        if candidate not in sys.path:
-            sys.path.insert(0, candidate)
-            inserted_paths.append(candidate)
-    try:
-        yield
-    finally:
-        for candidate in reversed(inserted_paths):
-            try:
-                sys.path.remove(candidate)
-            except ValueError:
-                pass

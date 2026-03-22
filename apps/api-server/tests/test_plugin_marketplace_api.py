@@ -259,11 +259,8 @@ class PluginMarketplaceApiTests(unittest.TestCase):
             f"{settings.api_v1_prefix}/plugin-marketplace/instances/{instance_id}/enable",
             json={"enabled": True},
         )
-        self.assertEqual(409, enable_response.status_code)
-        self.assertEqual(
-            "plugin_marketplace_not_configured",
-            enable_response.json()["detail"]["error_code"],
-        )
+        self.assertEqual(200, enable_response.status_code)
+        self.assertTrue(enable_response.json()["enabled"])
 
     def test_list_sources_exposes_is_system_flag(self) -> None:
         list_response = self.client.get(f"{settings.api_v1_prefix}/plugin-marketplace/sources")

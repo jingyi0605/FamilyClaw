@@ -108,7 +108,7 @@ class PluginMarketplaceInstance(Base):
     installed_version: Mapped[str] = mapped_column(String(50), nullable=False)
     install_status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    config_status: Mapped[str] = mapped_column(String(20), nullable=False, default="unconfigured")
+    config_status: Mapped[str] = mapped_column(String(20), nullable=False, default="configured")
     source_repo: Mapped[str] = mapped_column(Text, nullable=False)
     market_repo: Mapped[str] = mapped_column(Text, nullable=False)
     plugin_root: Mapped[str] = mapped_column(Text, nullable=False)

@@ -1648,7 +1648,6 @@ class PluginRegistryItem(BaseModel):
     execution_backend: PluginExecutionBackend | None = None
     runner_config: PluginRunnerConfig | None = None
     install_status: str | None = None
-    config_status: PluginConfigState | None = None
     marketplace_instance_id: str | None = None
     version_governance: PluginVersionGovernanceRead | None = None
 

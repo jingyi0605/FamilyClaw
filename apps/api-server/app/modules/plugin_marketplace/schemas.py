@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.plugin.schemas import (
-    PluginConfigState,
     PluginVersionCompatibilityStatus,
     PluginVersionGovernanceRead,
 )
@@ -347,7 +346,6 @@ class MarketplaceInstallStateRead(BaseModel):
     instance_id: str | None = None
     install_status: MarketplaceInstallStatus = "not_installed"
     enabled: bool = False
-    config_status: PluginConfigState | None = None
     installed_version: str | None = None
 
 
@@ -479,7 +477,6 @@ class MarketplaceInstanceRead(BaseModel):
     installed_version: str
     install_status: MarketplaceInstallStatus
     enabled: bool
-    config_status: PluginConfigState
     source_repo: str
     market_repo: str
     plugin_root: str

@@ -4,13 +4,16 @@ import json
 import os
 import subprocess
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
 from importlib import import_module
 from pathlib import Path
-import sys
 from typing import cast
 
 from app.core.config import BASE_DIR
+from app.modules.plugin.import_path import (
+    collect_plugin_import_roots,
+    plugin_runtime_import_path,
+    plugin_runtime_paths,
+)
 from app.modules.plugin.runner_errors import (
     PLUGIN_RUNNER_DEPENDENCY_MISSING,
     PLUGIN_RUNNER_INVALID_OUTPUT,
@@ -40,7 +43,10 @@ class InProcessPluginExecutor(PluginExecutor):
 
     def execute(self, plugin: PluginRegistryItem, request: PluginExecutionRequest):
         entrypoint_path = get_entrypoint_path(plugin, request.plugin_type)
-        with _plugin_runtime_import_path(plugin):
+        with plugin_runtime_import_path(
+            plugin.runner_config.plugin_root if plugin.runner_config is not None else None,
+            package_names=collect_plugin_import_roots(plugin),
+        ):
             handler = load_entrypoint_callable(entrypoint_path)
             return handler(request.payload)
 
@@ -68,21 +74,25 @@ class SubprocessRunnerPluginExecutor(PluginExecutor):
         )
 
         env = os.environ.copy()
-        env["PYTHONPATH"] = _build_pythonpath(runner_config.plugin_root)
         command = [runner_config.python_path, "-m", RUNNER_MODULE]
         cwd = runner_config.working_dir or runner_config.plugin_root
 
         try:
-            completed = subprocess.run(
-                command,
-                input=runner_request.model_dump_json(),
-                text=True,
-                capture_output=True,
-                timeout=runner_config.timeout_seconds,
-                cwd=cwd,
-                env=env,
-                check=False,
-            )
+            with plugin_runtime_paths(
+                runner_config.plugin_root,
+                package_names=collect_plugin_import_roots(plugin),
+            ) as runtime_paths:
+                env["PYTHONPATH"] = _build_pythonpath(runtime_paths)
+                completed = subprocess.run(
+                    command,
+                    input=runner_request.model_dump_json(),
+                    text=True,
+                    capture_output=True,
+                    timeout=runner_config.timeout_seconds,
+                    cwd=cwd,
+                    env=env,
+                    check=False,
+                )
         except FileNotFoundError as exc:
             raise PluginRunnerError(PLUGIN_RUNNER_START_FAILED, f"runner 启动失败: {exc}") from exc
         except subprocess.TimeoutExpired as exc:
@@ -141,13 +151,8 @@ def load_entrypoint_callable(entrypoint_path: str):
     return handler
 
 
-def _build_pythonpath(plugin_root: str) -> str:
-    resolved_root = Path(plugin_root).resolve()
-    path_items = [
-        str(BASE_DIR),
-        str(resolved_root.parent),
-        str(resolved_root),
-    ]
+def _build_pythonpath(runtime_paths: list[str]) -> str:
+    path_items = [str(BASE_DIR), *runtime_paths]
     existing = os.environ.get("PYTHONPATH")
     if existing:
         path_items.append(existing)
@@ -159,27 +164,3 @@ def _trim_output(content: str, byte_limit: int) -> str:
     if len(encoded) <= byte_limit:
         return content
     return encoded[:byte_limit].decode("utf-8", errors="ignore")
-
-
-@contextmanager
-def _plugin_runtime_import_path(plugin: PluginRegistryItem):
-    plugin_root = plugin.runner_config.plugin_root if plugin.runner_config is not None else None
-    if not plugin_root:
-        yield
-        return
-
-    resolved_root = Path(plugin_root).resolve()
-    candidate_paths = [str(resolved_root.parent), str(resolved_root)]
-    inserted_paths: list[str] = []
-    for candidate in candidate_paths:
-        if candidate not in sys.path:
-            sys.path.insert(0, candidate)
-            inserted_paths.append(candidate)
-    try:
-        yield
-    finally:
-        for candidate in reversed(inserted_paths):
-            try:
-                sys.path.remove(candidate)
-            except ValueError:
-                pass

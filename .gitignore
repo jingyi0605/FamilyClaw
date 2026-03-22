@@ -22,9 +22,6 @@ apps/api-server/scripts/20260314-语义路由评估.py
 .codex-tmp/*
 .worktrees/
 apps/user-app/.tmp/*
-!apps/api-server/tests/test_integration_plugin_state.py
-!apps/api-server/tests/test_scheduler_plugin_state.py
-
 # TypeScript compiled JS files (keep source ts/tsx)
 apps/user-app/**/*.js
 apps/user-app/config/**/*.js
@@ -35,3 +32,6 @@ apps/familyclaw-www/
 apps/familyclaw-marketplace/
 tmp/*
 apps/api-server/tests/*
+!apps/api-server/tests/test_integration_plugin_state.py
+!apps/api-server/tests/test_plugin_import_path.py
+!apps/api-server/tests/test_scheduler_plugin_state.py
