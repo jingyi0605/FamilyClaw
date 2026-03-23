@@ -317,6 +317,7 @@
   - 本次回写补充：`channel-access` 已补齐通用 `ui_schema.actions + runtime_sections + preview_artifacts` 渲染；微信扫码登录现在通过插件声明的账号级动作、状态区和二维码预览正式接入
   - 本次回写补充：宿主通用 artifact schema 已补齐 `data:image/...` 图片 data URL 支持；正式页面之前看不到二维码，不是前端不渲染，而是正式 schema 还把图片 URL 长度卡死在 2048
   - 本次回写补充：宿主通用 `plugin-config-auth` 回调基址解析已补齐 `Settings.base_url`；即使未配置 `FAMILYCLAW_BASE_URL`，也会安全退回当前请求 `base_url`，不再因为缺字段导致 `config/preview` 直接 500
+  - 本次回写补充：Spec 和正式文档已补齐两项宿主后端通用能力的正式说明：一是 `plugin-config-auth` 配置认证会话，二是 `channel.send` 的统一媒体 delivery 契约；文档里已经写清什么场景该用、走哪些接口、请求体和返回体最小长什么样
   - 先依赖什么：4.3
   - 开始前先看：
     - `requirements.md` 需求 2、需求 6

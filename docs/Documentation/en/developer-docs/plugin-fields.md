@@ -149,7 +149,37 @@ The plugin side should treat it as a generic contract:
 - consume `auth_session.callback_payload` on the next preview run and continue the flow
 - mark the session `completed` or `failed` when the staged setup is done
 
+The host part of `auth_session.callback_url` should be treated as the current public app/site address.
+In split frontend/backend deployments, the host prefers the current frontend origin instead of exposing the backend process origin directly.
+
 That keeps the saved config schema clean while still allowing staged setup flows with real login, verification links, and live device lists.
+
+Do not miss these two formal fields:
+
+- `PluginConfigPreviewRequest.auth_session_id`
+  Use this when a staged action enters its second or later preview round and needs to continue the same auth session.
+- `PluginConfigPreviewHookResult.auth_session`
+  Use this when the plugin needs to update auth-session status, write resume payload, or mark the flow completed or failed.
+
+Minimal examples:
+
+```json
+{
+  "action_key": "start-login",
+  "auth_session_id": "session-123"
+}
+```
+
+```json
+{
+  "auth_session": {
+    "status": "completed",
+    "payload": {
+      "vendor_state": "ok"
+    }
+  }
+}
+```
 
 ## How `ui_schema.actions` and `runtime_sections` work now
 
@@ -239,6 +269,29 @@ Rules:
 - Attachments are a host-wide generic capability, not a platform-specific escape hatch.
 - The host does not perform vendor upload, transcoding, or auth for the plugin.
 - Text-only plugins may ignore `attachments`. Media-capable plugins must explicitly handle the kinds they support.
+- `text` and `attachments` cannot both be empty.
+- Every attachment must provide at least `source_path` or `source_url`.
+
+Minimal example:
+
+```json
+{
+  "delivery": {
+    "text": "See attachment",
+    "attachments": [
+      {
+        "kind": "file",
+        "file_name": "report.pdf",
+        "content_type": "application/pdf",
+        "source_url": "https://example.com/report.pdf",
+        "size_bytes": 12345,
+        "metadata": {}
+      }
+    ],
+    "metadata": {}
+  }
+}
+```
 
 ### `ai-provider`
 

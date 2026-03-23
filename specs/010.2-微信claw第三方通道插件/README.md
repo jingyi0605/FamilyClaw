@@ -47,6 +47,54 @@
 - 一份可以直接排期执行的任务拆分
 - 一份把 POC 结论和合规风险写清楚的补充文档
 
+## 当前已补齐的两个宿主通用能力
+
+### 1. `plugin-config-auth` 通用配置认证会话
+
+这个能力是给“配置表单里的真实登录/扫码/第三方回调”用的，不是微信专属。
+只要插件的 `config_preview` 会触发真实外部认证，比如扫码登录、OAuth 跳转、二次验证，就应该走它。
+
+正式调用方式：
+
+1. 前端调用 `POST /api/v1/ai-config/{household_id}/plugins/{plugin_id}/config/preview`
+2. 请求体照常带 `scope_type`、`scope_key`、`values`、`secret_values`，如果这是某个 staged action，再额外带 `action_key`
+3. 宿主创建或复用认证会话，在 `view.runtime_state.auth_session` 里返回 `id`、`status`、`callback_url`、`expires_at`
+4. 插件用 `auth_session.callback_url` 生成真正的第三方认证链接或二维码，并把后续恢复登录所需的私有上下文放进 `auth_session.payload`
+5. 前端轮询 `GET /api/v1/ai-config/{household_id}/plugins/{plugin_id}/config/auth-sessions/{session_id}`
+6. 第三方平台回调宿主 `GET/POST /api/v1/ai-config/plugin-config-auth-sessions/{session_id}/callback?token=...`
+7. 插件下一次继续跑 `config_preview` 时，带回 `auth_session_id`，再从 `auth_session.callback_payload` 继续后半段流程
+
+这条链路的边界必须守住：
+
+- 宿主管会话 ID、回调地址、回调落库和统一轮询
+- 插件只管生成认证链接、消费回调结果、继续自己的平台登录流程
+- 不能再让用户手工复制回调 URL 当正式主流程
+
+### 2. 通用媒体 delivery 契约
+
+这个能力是给 `channel.send` 的正式出站链路用的，也不是微信专属。
+只要插件要发图片、音频、视频或文件，就必须走宿主统一的媒体 delivery 结构，不能再塞平台私有字段。
+
+正式调用方式：
+
+1. 宿主创建 delivery 时，统一写入 `text`、`attachments`、`metadata`
+2. `attachments` 是平台无关列表，每项至少包含：
+   - `kind`
+   - `file_name`
+   - `content_type`
+   - `source_path` 或 `source_url`
+   - `size_bytes`
+   - `metadata`
+3. 插件收到 `channel.send` 请求后，只从 `payload.delivery.attachments` 读取媒体输入
+4. 插件自己处理厂商上传、下载、鉴权、转发，不把这些脏活倒灌回宿主
+5. 如果插件支持入站媒体，也应该把标准化附件放进自己的归一化消息载荷里，而不是发平台私有 DTO 给宿主
+
+这条链路的边界也必须守住：
+
+- 宿主只提供统一附件结构和投递记录
+- 插件自己处理平台上传协议
+- 不支持的媒体类型就明确报错，不能静默吞掉
+
 ## 这次明确不做什么？
 
 - 不在核心代码库里实现任何微信专属逻辑

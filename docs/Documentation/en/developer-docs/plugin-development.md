@@ -185,6 +185,9 @@ The host creates this session only for explicit preview actions, exposes a callb
 - after the host callback is received, consume `auth_session.callback_payload` and continue the login flow
 - when the flow finishes, return an `auth_session` mutation with `completed`, `failed`, `expired`, or another terminal state
 
+Treat `auth_session.callback_url` as a public app callback URL under the current user-facing site origin.
+Do not assume it will always use the backend process origin directly; in split frontend/backend deployments the host prefers the current frontend origin when building this URL.
+
 Do not make users manually paste a callback URL back into the form as the primary flow. That can exist only as a temporary debug fallback.
 
 `preview_artifacts` is the host-rendered list for temporary setup output. The current kinds are:
@@ -224,6 +227,59 @@ Keep the boundary clean:
 - `image_url` must point to an actual image resource; if an upstream service only gives you a landing page or H5 URL, the plugin must turn it into a real image before handing it to the host
 - do not send platform-private fields such as `qr_code_url` or `weixin_login_status` to host pages
 - persisted config still belongs to the normal save flow; preview artifacts are temporary only
+
+#### How to call `plugin-config-auth` now
+
+If your `config_preview` flow triggers a real third-party verification step, use the formal host contract instead of inventing a plugin-private callback flow.
+
+The formal endpoints are:
+
+- `POST /api/v1/ai-config/{household_id}/plugins/{plugin_id}/config/preview`
+- `GET /api/v1/ai-config/{household_id}/plugins/{plugin_id}/config/auth-sessions/{session_id}`
+- `GET/POST /api/v1/ai-config/plugin-config-auth-sessions/{session_id}/callback?token=...`
+
+Minimal sequence:
+
+1. the user clicks a button declared in `ui_schema.actions`
+2. the frontend calls `config/preview` with `action_key`
+3. the host returns `view.runtime_state.auth_session`
+4. the plugin uses `auth_session.callback_url` to build the real provider auth URL or QR code
+5. the frontend polls `config/auth-sessions/{session_id}`
+6. the provider calls the host callback endpoint
+7. the plugin continues the flow on the next `config_preview` run by sending `auth_session_id`
+
+Minimal request:
+
+```json
+{
+  "scope_type": "channel_account",
+  "scope_key": "draft",
+  "values": {
+    "account_label": "My account"
+  },
+  "action_key": "start-login"
+}
+```
+
+Resume request:
+
+```json
+{
+  "scope_type": "channel_account",
+  "scope_key": "draft",
+  "values": {
+    "account_label": "My account"
+  },
+  "action_key": "start-login",
+  "auth_session_id": "session-123"
+}
+```
+
+Boundary reminder:
+
+- the host owns `session_id`, `callback_url`, callback recording, and session polling
+- the plugin owns provider URL generation, provider callback consumption, and the rest of the vendor login flow
+- manual copy-paste callback handling can only remain as a debug fallback
 
 ### Read-only display widgets
 

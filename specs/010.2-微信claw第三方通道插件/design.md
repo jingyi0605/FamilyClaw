@@ -83,6 +83,10 @@
    调 `channel` 的 `poll`、`probe`，不增加微信专属 worker 类型。
 5. 通用结构化错误返回  
    宿主只认 `error_code`、`detail`、`field`、`timestamp`，不认微信协议细节。
+6. 通用配置认证会话能力  
+   用在 `config_preview` 里的真实登录、扫码、OAuth 回调和二次验证。宿主管会话生命周期、回调入口和轮询接口，插件只消费会话上下文。
+7. 通用媒体 delivery 能力  
+   用统一 `attachments` 契约把图片、音频、视频、文件投递给 `channel.send`。宿主只传标准附件结构，不理解厂商上传协议。
 
 如果某个所谓“通用能力”必须知道二维码、微信 token、微信扫码阶段，那它就根本不通用，不准进宿主。
 
@@ -280,6 +284,103 @@ apps/api-server/plugins-dev/weixin_claw_channel/
   - `login_timeout`
   - `account_disabled`
   - `runtime_state_not_found`
+
+#### 3.3.3 宿主通用 `plugin-config-auth` 契约
+
+这个契约只解决一件事：插件配置预览过程中，如果真的要跳第三方认证，不要再各写一套私有回调协议。
+
+适用场景：
+
+- 扫码登录
+- OAuth 跳转
+- 二次认证
+- 任何“先点按钮，再等第三方回调，最后继续配置”的 staged form
+
+宿主正式接口：
+
+- `POST /api/v1/ai-config/{household_id}/plugins/{plugin_id}/config/preview`
+- `GET /api/v1/ai-config/{household_id}/plugins/{plugin_id}/config/auth-sessions/{session_id}`
+- `GET/POST /api/v1/ai-config/plugin-config-auth-sessions/{session_id}/callback?token=...`
+
+插件正式接法：
+
+1. 第一次点预览动作时，前端调用 `config/preview`，并带 `action_key`
+2. 宿主创建认证会话，把会话信息放进 `view.runtime_state.auth_session`
+3. 插件从 `auth_session.callback_url` 生成真正的第三方认证地址，并把恢复流程需要的私有上下文写进 `auth_session.payload`
+4. 前端轮询 `config/auth-sessions/{session_id}`
+5. 第三方平台回调宿主统一 callback 入口
+6. 插件下一次继续调用 `config/preview` 时，带上 `auth_session_id`
+7. 插件从 `auth_session.callback_payload` 继续后半段流程，并在结束时返回 `auth_session.status = completed/failed/expired`
+
+最小请求示例：
+
+```json
+{
+  "scope_type": "channel_account",
+  "scope_key": "draft",
+  "values": {
+    "account_label": "我的微信"
+  },
+  "action_key": "start-login"
+}
+```
+
+继续执行时的请求示例：
+
+```json
+{
+  "scope_type": "channel_account",
+  "scope_key": "draft",
+  "values": {
+    "account_label": "我的微信"
+  },
+  "action_key": "start-login",
+  "auth_session_id": "session-123"
+}
+```
+
+#### 3.3.4 宿主通用媒体 delivery 契约
+
+这个契约只解决一件事：`channel.send` 不能再只有 `text + metadata`，必须能带标准化媒体附件。
+
+适用场景：
+
+- 渠道插件发送图片
+- 渠道插件发送音频、视频、文件
+- 渠道插件从宿主 delivery 里读取统一附件，再自己完成厂商上传
+
+宿主传给插件的正式结构：
+
+```json
+{
+  "delivery": {
+    "text": "请看附件",
+    "attachments": [
+      {
+        "kind": "image",
+        "file_name": "qr.png",
+        "content_type": "image/png",
+        "source_path": "C:/tmp/qr.png",
+        "size_bytes": 1024,
+        "metadata": {
+          "caption": "登录二维码"
+        }
+      }
+    ],
+    "metadata": {
+      "context_token": "xxx"
+    }
+  }
+}
+```
+
+约束规则：
+
+- `attachments` 每项必须至少有 `source_path` 或 `source_url`
+- `text` 和 `attachments` 至少要有一个，不能两个都空
+- 宿主只传标准附件结构，不做厂商上传
+- 插件自己决定支持哪些 `kind`
+- 插件不支持的附件类型必须明确报错
 
 ## 4. 数据与状态模型
 
