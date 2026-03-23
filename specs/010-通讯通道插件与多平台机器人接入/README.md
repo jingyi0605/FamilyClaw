@@ -21,8 +21,8 @@
 - 在管理员视图里提供平台配置、绑定管理、状态观测和失败排查入口
 - 按两批平台落地：
   - 第一批：`Telegram`、`Discord`、`飞书`
-  - 第二批：`钉钉`、`企业微信`
-- `企业微信` 优先支持自建应用模式，再补机器人模式
+  - 第二批：`钉钉`
+- `企业微信` 相关 builtin 已在 2026-03-23 从宿主移除；如果以后要继续做，必须重新立项，不再把没开发完的目录挂在内置插件里装样子
 
 ## 这次明确不做什么？
 
@@ -53,7 +53,7 @@
   - `C:\Code\openclaw\extensions\discord`
   - `C:\Code\openclaw\extensions\feishu`
 - OpenClaw 中国扩展参考实现：[https://github.com/BytePioneer-AI/openclaw-china](https://github.com/BytePioneer-AI/openclaw-china)
-  - `钉钉`、`企业微信`、`企业微信自建应用` 在这里有现成扩展思路
+  - `钉钉`、`企业微信` 在这里有现成扩展思路
 
 ## 这份 Spec 的核心判断
 
@@ -70,7 +70,7 @@
 
 ## 当前阶段边界
 
-到 `3.4` 为止，五个平台的落地边界已经明确：
+到 `3.4` 为止，当前保留在宿主内置范围内的平台边界已经明确：
 
 - `Telegram`
   - 已完成：webhook 文本入站、成员绑定、复用 `conversation` 主链、文本原路回发、基础 probe
@@ -85,9 +85,5 @@
   - 已完成：统一 HTTP gateway 可消费的文本事件、`sessionWebhook` 原路回发、配置级 probe
   - 明确没做：常驻 `stream/websocket` 运行时
 - `企业微信`
-  - `wecom-app`
-    - 已完成：回调握手、加密 XML 解包、文本入站、文本回发、凭证 probe
-    - 明确没做：复杂群聊、菜单、审批事件
-  - `wecom-bot`
-    - 已完成：出站推送兼容边界、配置级 probe
-    - 明确没做：双向用户消息入站
+  - 当前不在宿主内置交付范围内
+  - 说明：之前短暂放进过 builtin 目录的 `wecom-app`、`wecom-bot` 已在 2026-03-23 移除，因为它们没有继续开发，继续留着只会误导人

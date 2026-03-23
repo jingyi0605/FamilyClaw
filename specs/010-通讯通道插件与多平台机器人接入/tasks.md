@@ -313,10 +313,10 @@
     - 对应需求：`requirements.md` 需求 2、3、4、5、7
     - 对应设计：`design.md` 1.4、2.3、3.3、8.1
 
-- [x] 3.2 第二批平台：`钉钉`、`企业微信`
+- [x] 3.2 第二批平台收缩：保留 `钉钉`，移除未继续开发的 `企业微信` 内置插件
   - 状态：DONE
-  - 完成说明：已新增 builtin `channel_dingtalk`、`channel_wecom_app`、`channel_wecom_bot` 三个插件目录，并补齐各自 `manifest.json` 与 `channel` 入口。`钉钉` 第一版已能把原始回调标准化成现有入站事件，并复用消息里的 `sessionWebhook` 做文本原路回发；`企业微信自建应用` 已支持回调握手、加密 XML 解包、文本入站标准化和通过应用凭证发文本消息；`企业微信群机器人` 则明确收成“只支持出站推送、不支持用户消息直接入站”的兼容边界，没有再把一堆平台特例污染进核心主链。
-  - 这一步到底做什么：基于 `openclaw-china` 的实现思路，把中国常用企业通讯平台接上
+  - 完成说明：当前 builtin 第二批平台只保留 `channel_dingtalk`。之前短暂放进宿主的 `channel_wecom_app`、`channel_wecom_bot` 因为没有继续开发，已在 2026-03-23 从 builtin 目录移除，不再拿半成品冒充“已支持”。`钉钉` 仍然保留统一回调标准化、`sessionWebhook` 文本原路回发和配置级 `probe`。
+  - 这一步到底做什么：基于 `openclaw-china` 的实现思路，先把真正落地并继续维护的国内平台接上，同时把没开发完的企微占位插件撤掉
   - 做完你能看到什么：国内常用平台也能按同一协议进入系统
   - 先依赖什么：3.1
   - 开始前先看：
@@ -325,29 +325,25 @@
     - [openclaw-china](https://github.com/BytePioneer-AI/openclaw-china)
   - 主要改哪里：
     - `apps/api-server/app/plugins/builtin/channel_dingtalk/`
-    - `apps/api-server/app/plugins/builtin/channel_wecom_app/`
-    - `apps/api-server/app/plugins/builtin/channel_wecom_bot/`
     - `apps/api-server/tests/`
-  - 这一先不做什么：先不做所有企业平台高级审批、卡片和复杂组织目录
+  - 这一先不做什么：先不做企业微信，也不做所有企业平台高级审批、卡片和复杂组织目录
   - 怎么算完成：
     1. `钉钉` 能完成文本收发
-    2. `企业微信自建应用` 能完成文本收发
-    3. `企业微信机器人模式` 至少明确兼容边界和后补路线
+    2. 没继续开发的 `企业微信` builtin 插件被彻底移除，不再出现在宿主内置列表里
   - 怎么验证：
     - 平台适配测试
     - 联调清单
   - 已验证：
-    - `python -m unittest tests.test_builtin_channel_plugins tests.test_channel_gateway_wecom_handshake tests.test_channel_gateway_builtin_deferred tests.test_plugin_manifest tests.test_channel_gateway_api tests.test_channel_delivery_service`
+    - `python -m unittest tests.test_builtin_channel_plugins tests.test_channel_gateway_builtin_deferred tests.test_plugin_manifest tests.test_channel_gateway_api tests.test_channel_delivery_service`
   - 说明：
     - `钉钉` 当前落地的是统一 HTTP gateway 可消费的文本事件与 `sessionWebhook` 原路回发闭环；如果后面要补真正常驻的 `stream/websocket` 运行时，需要单独扩一层通道长连接运行时，不是本任务里顺手多写几行代码就能带过去
-    - `企业微信自建应用` 当前按 callback URL + `token / encodingAESKey / corp_id / corp_secret / agent_id` 跑文本主链，先保证文本往返闭环，不提前追复杂群聊与菜单事件
-    - `企业微信群机器人` 当前明确只做出站推送兼容边界，后续如果要把它做成完整双向对话，需要重新设计入站来源，不在这一步硬拼
+    - `企业微信` 现在不在宿主 builtin 交付范围里；如果以后要重启，应该重新立项，把目标、边界和验证写清楚再做，不要再往仓库里塞未完成目录
   - 对应需求：`requirements.md` 需求 2、3、4、5、7
   - 对应设计：`design.md` 1.4、2.3、8.2
 
 - [x] 3.3 建平台账号探测、状态汇总和失败摘要接口
   - 状态：DONE
-  - 完成说明：已新增正式 `channel_accounts` API，把平台账号列表、创建、更新、探测、单账号状态、最近投递和最近入站事件全部挂到 `ai-config/{household_id}` 下，并复用现有 `channel` 服务和 `delivery / inbound` 记录，不再让管理端自己拼数据。探测逻辑也统一收口到 `status_service`，由它调 `channel` 插件的 `probe` 动作并把结果回写到 `channel_plugin_accounts.last_probe_status / status / last_error_*`。目前 builtin 平台都已经补了 `probe`：`Telegram / Discord / 飞书 / 企业微信自建应用` 做真实凭证校验，`钉钉 / 企业微信群机器人` 先按当前接入模式做配置级探测，不硬凑不存在的主动探测协议。
+  - 完成说明：已新增正式 `channel_accounts` API，把平台账号列表、创建、更新、探测、单账号状态、最近投递和最近入站事件全部挂到 `ai-config/{household_id}` 下，并复用现有 `channel` 服务和 `delivery / inbound` 记录，不再让管理端自己拼数据。探测逻辑也统一收口到 `status_service`，由它调 `channel` 插件的 `probe` 动作并把结果回写到 `channel_plugin_accounts.last_probe_status / status / last_error_*`。当前保留在 builtin 里的通道平台里，`Telegram / Discord / 飞书` 做真实凭证校验，`钉钉` 先按当前接入模式做配置级探测，不硬凑不存在的主动探测协议。
   - 这一步到底做什么：把平台账号状态、最近失败、最近投递结果收口成管理端可直接消费的 API
   - 做完你能看到什么：管理员不需要翻数据库就能看出哪一平台在坏
   - 先依赖什么：3.2
@@ -368,7 +364,7 @@
     - API 测试
     - 管理端联调
   - 已验证：
-    - `python -m unittest tests.test_channel_accounts_api tests.test_builtin_channel_plugins tests.test_channel_gateway_wecom_handshake tests.test_channel_gateway_builtin_deferred tests.test_plugin_manifest tests.test_channel_gateway_api tests.test_channel_delivery_service`
+    - `python -m unittest tests.test_channel_accounts_api tests.test_builtin_channel_plugins tests.test_channel_gateway_builtin_deferred tests.test_plugin_manifest tests.test_channel_gateway_api tests.test_channel_delivery_service`
   - 说明：
     - 已落地接口包括：账号列表、创建、更新、`probe`、单账号状态、投递列表、入站事件列表
     - 接口路径全部挂在 `ai-config/{household_id}` 风格下，没有再开一套孤立管理路径
@@ -376,10 +372,10 @@
   - 对应需求：`requirements.md` 需求 2、6
   - 对应设计：`design.md` 2.3.5、3.3.1、5.3
 
-- [x] 3.4 阶段检查：五个平台的落地边界是不是清楚了
+- [x] 3.4 阶段检查：当前保留的平台边界是不是清楚了
   - 状态：DONE
-  - 完成说明：已把五个平台当前的已落地边界、明确延期项和主要风险统一收口到 Spec 文档里，不再靠口头默认。`README.md` 现在直接说明当前阶段边界，`design.md` 已把平台落地边界和延期风险写成正式章节，`docs/20260314-五个平台落地边界与延期项.md` 则单独用人话把五个平台“现在做到哪、故意没做什么、后面怎么补”写清楚。这样后面继续做管理端或继续深挖平台能力时，不会再把“暂未实现”误当成“默认已经支持”。
-  - 这一步到底做什么：检查第一批和第二批平台的主链、差异点和延期项是不是已经写清楚
+  - 完成说明：已把当前仍保留在宿主内置范围内的平台边界、明确延期项和主要风险统一收口到 Spec 文档里，不再靠口头默认。`README.md` 现在直接说明当前阶段边界，`design.md` 已把平台落地边界和延期风险写成正式章节，`docs/20260314-五个平台落地边界与延期项.md` 则单独用人话把当前平台“现在做到哪、故意没做什么、后面怎么补”写清楚。这样后面继续做管理端或继续深挖平台能力时，不会再把“暂未实现”误当成“默认已经支持”。
+  - 这一步到底做什么：检查当前保留的平台主链、差异点和延期项是不是已经写清楚
   - 做完你能看到什么：不会再出现“先把钉钉临时糊一下，后面再说”的脏路子
   - 先依赖什么：3.1、3.2、3.3
   - 开始前先看：
@@ -389,16 +385,17 @@
   - 主要改哪里：本阶段相关全部文件
   - 这一先不做什么：不扩大平台范围
   - 怎么算完成：
-    1. 五个平台边界清楚
+    1. 当前保留的平台边界清楚
     2. 延期项明确写出，不藏雷
   - 怎么验证：
     - 人工走查
     - 分平台联调记录
   - 已验证：
-    - 已人工走查五个平台插件目录、`tasks.md`、`README.md`、`design.md` 和边界说明文档
-    - 已确认五个平台都能对照出“已落地 / 明确没做 / 后续怎么补”
+    - 已人工走查当前保留的平台插件目录、`tasks.md`、`README.md`、`design.md` 和边界说明文档
+    - 已确认当前保留的平台都能对照出“已落地 / 明确没做 / 后续怎么补”
   - 说明：
-    - `Discord` 普通频道消息直连主链、`钉钉` 常驻流式接入、`wecom-bot` 双向入站 都被明确收成延期项，不再模糊处理
+    - `Discord` 普通频道消息直连主链、`钉钉` 常驻流式接入 都被明确收成延期项，不再模糊处理
+    - `企业微信` 当前不在宿主 builtin 交付范围里，已经不是“延期项”，而是明确移除
     - 富媒体、卡片、审批和复杂群事件统一列为后续扩展，不继续污染当前文本主链交付范围
   - 对应需求：`requirements.md` 需求 7
   - 对应设计：`design.md` 1.4、2.3、8.1、8.2
@@ -408,13 +405,11 @@
 - [x] 4.1 `user-web` 设置页新增”通讯平台接入”页面
   - 状态：DONE
   - 完成说明：已新增 `SettingsChannelAccessPage` 页面组件，包含顶部说明卡、平台账号列表区、新增/编辑账号弹窗、账号详情展开区。路由 `/settings/channel-access` 已配置，导航项”通讯平台接入”已添加到”设备与集成”下方。后端接口已补齐，包括平台账号的 CRUD、探测、状态查询以及成员绑定的 CRUD。所有字段映射已按 Spec 定位完成，样式沿用现有设置页主题。
-  - 增强说明（2026-03-14）：已补充平台专属配置字段渲染。现在根据选择的平台类型（Telegram、Discord、飞书、钉钉、企业微信应用、企业微信机器人）动态渲染对应的表单字段，包括：
+  - 增强说明（2026-03-14，2026-03-23 已同步收缩范围）：已补充平台专属配置字段渲染。当前根据选择的平台类型（Telegram、Discord、飞书、钉钉）动态渲染对应的表单字段，包括：
     - Telegram: bot_token（必填）、webhook_secret（可选）
     - Discord: application_public_key（必填）、bot_token（可选）
     - 飞书: app_id（必填）、app_secret（必填）、encrypt_key（可选）、base_url（可选）
     - 钉钉: app_key（必填）、app_secret（可选）
-    - 企业微信应用: corp_id、corp_secret、agent_id、callback_token、encoding_aes_key（均为必填）
-    - 企业微信机器人: webhook_url 或 key（二选一）
   - 这一步到底做什么：在 `user-web` 设置界面里给管理员一个正式页面，沿用当前主题样式，把”通讯平台接入”挂到”设备与集成”下方，用来配置平台账号、查看状态、看最近错误
   - 做完你能看到什么：平台接入不再只能靠手动调接口，入口也不再挂在即将移除的 `admin-web`
   - 先依赖什么：3.4
@@ -493,7 +488,7 @@
     - 列出绑定（空列表、返回绑定列表）
     - 入站消息绑定解析（已绑定用户、未绑定私聊、未绑定群聊、禁用绑定、空 external_user_id）
   - 这一步到底做什么：在每个平台账号的详情区直接维护”家庭成员 <-> 外部通讯平台 ID”绑定，让系统能按来源消息准确识别是谁在说话
-  - 做完你能看到什么：管理员能在 Telegram、Discord、飞书、钉钉、企业微信等账号配置里，直接把外部 ID 绑给对应家庭成员
+  - 做完你能看到什么：管理员能在 Telegram、Discord、飞书、钉钉等账号配置里，直接把外部 ID 绑给对应家庭成员
   - 先依赖什么：4.1
   - 开始前先看：
     - `requirements.md` 需求 3、6
