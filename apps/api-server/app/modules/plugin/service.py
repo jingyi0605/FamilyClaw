@@ -717,10 +717,20 @@ def _apply_execution_overrides(
 ) -> PluginRegistryItem:
     if source_type == "builtin" and execution_backend is None and runner_config is None:
         return plugin
+    next_install_method = plugin.install_method
+    next_execution_backend = execution_backend
+    if source_type == "builtin":
+        next_install_method = None
+    else:
+        if next_install_method is None:
+            next_install_method = "local"
+        if next_execution_backend is None:
+            next_execution_backend = plugin.execution_backend or "subprocess_runner"
     return plugin.model_copy(
         update={
             "source_type": source_type,
-            "execution_backend": execution_backend,
+            "install_method": next_install_method,
+            "execution_backend": next_execution_backend,
             "runner_config": runner_config,
         }
     )
@@ -2609,29 +2619,28 @@ def execute_plugin(
 ) -> PluginExecutionResult:
     started_at = utc_now_iso()
     run_id = new_uuid()
+    resolved_execution_backend: PluginExecutionBackend | None = None
     try:
         registry = list_registered_plugins(root_dir=root_dir, state_file=state_file)
         plugin = next((item for item in registry.items if item.id == request.plugin_id), None)
         if plugin is None:
             raise PluginExecutionError(f"插件不存在: {request.plugin_id}")
-        plugin = PluginRegistryItem.model_validate(
-            {
-                **plugin.model_dump(mode="json"),
-                "source_type": source_type,
-                "execution_backend": execution_backend,
-                "runner_config": runner_config.model_dump(mode="json") if runner_config is not None else None,
-            }
+        plugin = _apply_execution_overrides(
+            plugin,
+            source_type=source_type,
+            execution_backend=execution_backend,
+            runner_config=runner_config,
         )
         if not plugin.enabled:
             raise PluginExecutionError(f"插件已禁用: {request.plugin_id}")
 
-        execution_backend = resolve_execution_backend(plugin, request)
-        executor = get_executor(execution_backend)
+        resolved_execution_backend = resolve_execution_backend(plugin, request)
+        executor = get_executor(resolved_execution_backend)
         runtime_request = PluginExecutionRequest.model_validate(
             {
                 **request.model_dump(mode="json"),
                 "payload": _merge_plugin_payload_with_runtime_context(request.payload, runtime_context),
-                "execution_backend": execution_backend,
+                "execution_backend": resolved_execution_backend,
             }
         )
         output = executor.execute(plugin, runtime_request)
@@ -2639,7 +2648,7 @@ def execute_plugin(
             run_id=run_id,
             plugin_id=request.plugin_id,
             plugin_type=request.plugin_type,
-            execution_backend=execution_backend,
+            execution_backend=resolved_execution_backend,
             success=True,
             trigger=request.trigger,
             started_at=started_at,
@@ -2647,12 +2656,11 @@ def execute_plugin(
             output=output,
         )
     except PluginRunnerError as exc:
-        execution_backend = request.execution_backend or "subprocess_runner"
         return PluginExecutionResult(
             run_id=run_id,
             plugin_id=request.plugin_id,
             plugin_type=request.plugin_type,
-            execution_backend=execution_backend,
+            execution_backend=resolved_execution_backend or request.execution_backend or "subprocess_runner",
             success=False,
             trigger=request.trigger,
             started_at=started_at,
@@ -2665,7 +2673,7 @@ def execute_plugin(
             run_id=run_id,
             plugin_id=request.plugin_id,
             plugin_type=request.plugin_type,
-            execution_backend=request.execution_backend,
+            execution_backend=resolved_execution_backend or request.execution_backend,
             success=False,
             trigger=request.trigger,
             started_at=started_at,
@@ -2678,7 +2686,7 @@ def execute_plugin(
             run_id=run_id,
             plugin_id=request.plugin_id,
             plugin_type=request.plugin_type,
-            execution_backend=request.execution_backend,
+            execution_backend=resolved_execution_backend or request.execution_backend,
             success=False,
             trigger=request.trigger,
             started_at=started_at,

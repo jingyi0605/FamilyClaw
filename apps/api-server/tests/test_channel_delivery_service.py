@@ -115,6 +115,44 @@ class ChannelDeliveryServiceTests(unittest.TestCase):
         self.assertEqual(failed.delivery.id, summary.last_delivery_id)
         self.assertEqual(failed.delivery.last_error_code, summary.last_error_code)
 
+    def test_send_reply_supports_generic_attachments_without_text(self) -> None:
+        result = send_reply(
+            self.db,
+            household_id=self.household.id,
+            channel_account_id=self.account.id,
+            external_conversation_key="chat:media",
+            text=None,
+            attachments=[
+                {
+                    "kind": "image",
+                    "file_name": "photo.png",
+                    "content_type": "image/png",
+                    "source_path": "C:/tmp/photo.png",
+                    "size_bytes": 123,
+                }
+            ],
+            metadata={"thread_key": "9"},
+        )
+        self.db.flush()
+
+        self.assertTrue(result.sent)
+        self.assertEqual("sent", result.delivery.status)
+        self.assertEqual("provider-msg-media-1", result.provider_message_ref)
+        self.assertEqual(
+            [
+                {
+                    "kind": "image",
+                    "file_name": "photo.png",
+                    "content_type": "image/png",
+                    "source_path": "C:/tmp/photo.png",
+                    "source_url": None,
+                    "size_bytes": 123,
+                    "metadata": {},
+                }
+            ],
+            result.delivery.request_payload["attachments"],
+        )
+
     def _create_delivery_channel_plugin(self, root: Path, *, plugin_id: str) -> Path:
         plugin_root = root / plugin_id
         package_dir = plugin_root / "plugin"
@@ -150,9 +188,14 @@ class ChannelDeliveryServiceTests(unittest.TestCase):
             "    if data.get('action') != 'send':\n"
             "        return {}\n"
             "    delivery = data.get('delivery', {})\n"
-            "    text = delivery.get('text', '')\n"
+            "    text = delivery.get('text', '') or ''\n"
+            "    attachments = delivery.get('attachments', []) or []\n"
             "    if text == 'please-fail':\n"
             "        raise RuntimeError('mock send failed')\n"
+            "    if attachments:\n"
+            "        return {\n"
+            "            'provider_message_ref': f'provider-msg-media-{len(attachments)}',\n"
+            "        }\n"
             "    return {\n"
             "        'provider_message_ref': 'provider-msg-ok',\n"
             "    }\n",

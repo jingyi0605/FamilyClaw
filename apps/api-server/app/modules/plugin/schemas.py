@@ -545,7 +545,18 @@ class PluginManifestIntegrationSpec(BaseModel):
     @classmethod
     def validate_instance_display_name_placeholder_key(cls, value: str | None) -> str | None:
         return _normalize_i18n_key(value)
+    """
 
+            raise ValueError("url 涓嶈兘涓虹┖")
+                raise ValueError("data URL artifact 蹇呴』鏄浘鐗囩被鍨?")
+            if len(normalized) > 200_000:
+                raise ValueError("data URL artifact 杩囬暱")
+            return normalized
+        if len(normalized) > 4096:
+            raise ValueError("url 杩囬暱")
+        return normalized
+
+    """
     @model_validator(mode="after")
     def validate_stale_window(self) -> "PluginManifestIntegrationSpec":
         if self.max_stale_seconds < self.default_cache_ttl_seconds:
@@ -650,7 +661,27 @@ class PluginManifestChannelAccountActionSpec(BaseModel):
         if not normalized:
             raise ValueError("字段不能为空")
         return normalized
+    """
 
+    @field_validator("url")
+    @classmethod
+    def validate_artifact_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("url 涓嶈兘涓虹┖")
+        if normalized.startswith("data:"):
+            if not normalized.startswith("data:image/"):
+                raise ValueError("data URL artifact 蹇呴』鏄浘鐗囩被鍨?")
+            if len(normalized) > 200_000:
+                raise ValueError("data URL artifact 杩囬暱")
+            return normalized
+        if len(normalized) > 4096:
+            raise ValueError("url 杩囬暱")
+        return normalized
+
+    """
     @model_validator(mode="after")
     def validate_confirmation_fields(self) -> "PluginManifestChannelAccountActionSpec":
         if self.requires_confirmation and self.confirmation_text is None:
@@ -1873,6 +1904,7 @@ class PluginStateUpdateRequest(BaseModel):
 
 
 PluginConfigState = Literal["unconfigured", "configured", "invalid"]
+PluginConfigAuthSessionStatus = Literal["pending", "callback_received", "completed", "failed", "expired", "cancelled"]
 
 
 class PluginConfigScopeInstanceRead(BaseModel):
@@ -1899,14 +1931,65 @@ class PluginConfigSecretFieldRead(BaseModel):
     masked: str | None = None
 
 
+class PluginConfigAuthSessionMutation(BaseModel):
+    status: PluginConfigAuthSessionStatus | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    clear_payload: bool = False
+    clear_callback_payload: bool = False
+    expires_in_seconds: int | None = Field(default=None, ge=30, le=3600)
+    error_code: str | None = Field(default=None, max_length=100)
+    error_message: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("error_code", "error_message")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class PluginConfigAuthSessionRead(BaseModel):
+    id: str
+    plugin_id: str
+    scope_type: PluginConfigScopeType
+    scope_key: str
+    action_key: str
+    status: PluginConfigAuthSessionStatus
+    callback_url: str | None = None
+    expires_at: str
+    callback_received_at: str | None = None
+    finished_at: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 class PluginConfigPreviewArtifactRead(BaseModel):
     key: str = Field(min_length=1, max_length=100)
     kind: PluginConfigPreviewArtifactKind
     label: str | None = Field(default=None, max_length=100)
-    url: str | None = Field(default=None, max_length=2048)
+    url: str | None = None
     text: str | None = Field(default=None, max_length=4000)
 
-    @field_validator("key", "label", "url", "text")
+    @field_validator("url")
+    @classmethod
+    def validate_preview_artifact_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("url 涓嶈兘涓虹┖")
+        if normalized.startswith("data:"):
+            if not normalized.startswith("data:image/"):
+                raise ValueError("data URL artifact 蹇呴』鏄浘鐗囩被鍨?")
+            if len(normalized) > 200_000:
+                raise ValueError("data URL artifact 杩囬暱")
+            return normalized
+        if len(normalized) > 4096:
+            raise ValueError("url 杩囬暱")
+        return normalized
+
+    @field_validator("key", "label", "text")
     @classmethod
     def validate_optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -1920,6 +2003,8 @@ class PluginConfigPreviewArtifactRead(BaseModel):
     def validate_payload(self) -> "PluginConfigPreviewArtifactRead":
         if self.kind in {"image_url", "external_url"} and self.url is None:
             raise ValueError(f"{self.kind} artifact 必须提供 url")
+        if self.kind == "external_url" and self.url is not None and self.url.startswith("data:"):
+            raise ValueError("external_url artifact 涓嶆敮鎸?data URL")
         if self.kind == "text" and self.text is None:
             raise ValueError("text artifact 必须提供 text")
         return self
@@ -1987,6 +2072,7 @@ class PluginConfigPreviewRequest(BaseModel):
     secret_values: dict[str, str] = Field(default_factory=dict)
     clear_secret_fields: list[str] = Field(default_factory=list)
     action_key: str | None = Field(default=None, max_length=64)
+    auth_session_id: str | None = Field(default=None, max_length=100)
 
     @field_validator("scope_key")
     @classmethod
@@ -2009,10 +2095,22 @@ class PluginConfigPreviewRequest(BaseModel):
         return normalized
 
 
+    @field_validator("auth_session_id")
+    @classmethod
+    def validate_auth_session_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("auth_session_id 不能为空")
+        return normalized
+
+
 class PluginConfigPreviewHookResult(BaseModel):
     field_errors: dict[str, str] = Field(default_factory=dict)
     runtime_state: dict[str, Any] = Field(default_factory=dict)
     preview_artifacts: list[PluginConfigPreviewArtifactRead] = Field(default_factory=list)
+    auth_session: PluginConfigAuthSessionMutation | None = None
 
 
 class PluginRunnerConfig(BaseModel):

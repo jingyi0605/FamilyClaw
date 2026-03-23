@@ -85,6 +85,7 @@ The most important keys are:
 
 - `FAMILYCLAW_DATABASE_URL`
 - `FAMILYCLAW_TEST_DATABASE_URL`
+- `FAMILYCLAW_BASE_URL`: optional. When plugin config preview or auth flows need to generate a public callback URL, the host prefers this value; if it is unset, it falls back to the current request base URL
 - `FAMILYCLAW_BOOTSTRAP_ADMIN_USERNAME`
 - `FAMILYCLAW_BOOTSTRAP_ADMIN_PASSWORD`
 - `FAMILYCLAW_BOOTSTRAP_HOUSEHOLD_USERNAME`

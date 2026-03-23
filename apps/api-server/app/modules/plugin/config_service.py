@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
@@ -15,10 +15,23 @@ from app.modules.region.providers import region_provider_registry
 from app.modules.region.service import RegionServiceError, list_region_catalog
 
 from . import repository
+from .config_auth_service import (
+    apply_plugin_config_auth_session_mutation,
+    build_plugin_config_auth_session_context,
+    build_plugin_config_auth_session_read,
+    cleanup_unused_plugin_config_auth_session,
+    get_plugin_config_auth_session_read,
+    prepare_plugin_config_auth_session,
+)
 from .config_crypto import decrypt_plugin_config_secrets, encrypt_plugin_config_secrets
-from .models import PluginConfigInstance
+from .executors import load_entrypoint_callable
+from .import_path import collect_plugin_import_roots, plugin_runtime_import_path
+from .models import PluginConfigAuthSession, PluginConfigInstance
 from .schemas import (
+    PluginConfigAuthSessionRead,
     PluginConfigFormRead,
+    PluginConfigPreviewHookResult,
+    PluginConfigPreviewRequest,
     PluginConfigScopeInstanceRead,
     PluginConfigScopeListRead,
     PluginConfigScopeRead,
@@ -42,6 +55,7 @@ PLUGIN_CONFIG_SCOPE_INVALID = "plugin_config_scope_invalid"
 PLUGIN_CONFIG_INSTANCE_NOT_FOUND = "plugin_config_instance_not_found"
 PLUGIN_CONFIG_VALIDATION_FAILED = "plugin_config_validation_failed"
 PLUGIN_CONFIG_SECRET_INVALID = "plugin_config_secret_invalid"
+PLUGIN_CONFIG_PREVIEW_FAILED = "plugin_config_preview_failed"
 
 
 @dataclass(slots=True)
@@ -150,18 +164,185 @@ def resolve_plugin_config_form(
         stored_secret_data=stored_secret_data,
         has_persisted_record=has_persisted_record,
     )
-    return PluginConfigFormRead(
+    return _build_config_form_read(
         plugin_id=plugin.id,
         config_spec=resolved_spec,
-        view=PluginConfigView(
+        scope_type=config_spec.scope_type,
+        scope_key=normalized_scope_key or _draft_scope_key(config_spec.scope_type),
+        state=state,
+        values=view_values,
+        secret_fields=secret_fields,
+        field_errors=field_errors,
+    )
+
+
+def preview_plugin_config_form(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    payload: PluginConfigPreviewRequest,
+    callback_base_url: str,
+) -> PluginConfigFormRead:
+    plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
+    config_spec = _require_config_spec(plugin, scope_type=payload.scope_type)
+    normalized_scope_key = _normalize_optional_scope_key(scope_type=config_spec.scope_type, scope_key=payload.scope_key)
+    scope_context = _resolve_scope_context(
+        db,
+        household_id=household_id,
+        plugin=plugin,
+        config_spec=config_spec,
+        scope_key=normalized_scope_key,
+        allow_missing_scope=True,
+    )
+    stored_data, stored_secret_data, has_persisted_record = _load_config_payloads(
+        db,
+        household_id=household_id,
+        plugin=plugin,
+        config_spec=config_spec,
+        instance=(
+            repository.get_plugin_config_instance(
+                db,
+                household_id=household_id,
+                plugin_id=plugin.id,
+                scope_type=config_spec.scope_type,
+                scope_key=normalized_scope_key,
+            )
+            if normalized_scope_key is not None
+            else None
+        ),
+        scope_context=scope_context,
+    )
+    next_data = dict(stored_data)
+    next_secret_data = dict(stored_secret_data)
+    field_map = config_spec.config_schema.field_map()
+
+    for field_key, value in payload.values.items():
+        field = field_map.get(field_key)
+        if field is None:
+            raise PluginServiceError(
+                "提交了 schema 中不存在的字段。",
+                error_code=PLUGIN_CONFIG_VALIDATION_FAILED,
+                field_errors={field_key: "字段不存在"},
+                status_code=400,
+            )
+        if field.type == "secret":
+            raise PluginServiceError(
+                f"字段 {field_key} 是 secret 字段，请走 secret_values。",
+                error_code=PLUGIN_CONFIG_SECRET_INVALID,
+                field=field_key,
+                status_code=400,
+            )
+        next_data[field_key] = value
+
+    for field_key in payload.clear_secret_fields:
+        field = field_map.get(field_key)
+        if field is None or field.type != "secret":
+            raise PluginServiceError(
+                f"字段 {field_key} 不是可清空的 secret 字段。",
+                error_code=PLUGIN_CONFIG_SECRET_INVALID,
+                field=field_key,
+                status_code=400,
+            )
+        if field_key in payload.secret_values:
+            raise PluginServiceError(
+                f"字段 {field_key} 不能同时提交新值和清空请求。",
+                error_code=PLUGIN_CONFIG_SECRET_INVALID,
+                field=field_key,
+                status_code=400,
+            )
+        next_secret_data.pop(field_key, None)
+
+    for field_key, value in payload.secret_values.items():
+        field = field_map.get(field_key)
+        if field is None or field.type != "secret":
+            raise PluginServiceError(
+                f"字段 {field_key} 不是 secret 字段。",
+                error_code=PLUGIN_CONFIG_SECRET_INVALID,
+                field=field_key,
+                status_code=400,
+            )
+        next_secret_data[field_key] = value
+
+    resolved_spec, field_errors, view_values, secret_fields, state = _build_form_state(
+        db,
+        household_id=household_id,
+        config_spec=config_spec,
+        stored_data=next_data,
+        stored_secret_data=next_secret_data,
+        has_persisted_record=has_persisted_record,
+    )
+    runtime_state: dict[str, Any] = {}
+    preview_artifacts: list[dict[str, Any]] = []
+    auth_session_row: PluginConfigAuthSession | None = None
+    if not field_errors:
+        if payload.action_key:
+            auth_session_row = prepare_plugin_config_auth_session(
+                db,
+                household_id=household_id,
+                plugin_id=plugin.id,
+                scope_type=config_spec.scope_type,
+                scope_key=normalized_scope_key or _draft_scope_key(config_spec.scope_type),
+                action_key=payload.action_key,
+                callback_base_url=callback_base_url,
+                auth_session_id=payload.auth_session_id,
+            )
+        hook_result = _run_plugin_config_preview_hook(
+            plugin=plugin,
+            household_id=household_id,
             scope_type=config_spec.scope_type,
             scope_key=normalized_scope_key or _draft_scope_key(config_spec.scope_type),
-            schema_version=resolved_spec.schema_version,
-            state=state,
+            operation="preview",
+            action_key=payload.action_key,
+            config_spec=resolved_spec,
             values=view_values,
             secret_fields=secret_fields,
-            field_errors=field_errors,
-        ),
+            secret_data=next_secret_data,
+            auth_session=auth_session_row,
+            callback_base_url=callback_base_url,
+        )
+        if auth_session_row is not None:
+            apply_plugin_config_auth_session_mutation(auth_session_row, hook_result.auth_session)
+            cleanup_unused_plugin_config_auth_session(db, auth_session_row)
+        field_errors.update(hook_result.field_errors)
+        runtime_state = _merge_preview_runtime_auth_session(
+            hook_result.runtime_state,
+            auth_session=auth_session_row,
+            callback_base_url=callback_base_url,
+        )
+        preview_artifacts = [item.model_dump(mode="json") for item in hook_result.preview_artifacts]
+    if field_errors:
+        state = "invalid" if has_persisted_record else "unconfigured"
+
+    return _build_config_form_read(
+        plugin_id=plugin.id,
+        config_spec=resolved_spec,
+        scope_type=config_spec.scope_type,
+        scope_key=normalized_scope_key or _draft_scope_key(config_spec.scope_type),
+        state=state,
+        values=view_values,
+        secret_fields=secret_fields,
+        field_errors=field_errors,
+        runtime_state=runtime_state,
+        preview_artifacts=preview_artifacts,
+    )
+
+
+def get_plugin_config_auth_session(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+    session_id: str,
+    callback_base_url: str,
+) -> PluginConfigAuthSessionRead:
+    plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
+    return get_plugin_config_auth_session_read(
+        db,
+        household_id=household_id,
+        plugin_id=plugin.id,
+        session_id=session_id,
+        callback_base_url=callback_base_url,
     )
 
 
@@ -267,6 +448,16 @@ def save_plugin_config_form(
             field_errors=field_errors,
             status_code=400,
         )
+    _raise_for_plugin_config_runtime_validation(
+        plugin=plugin,
+        household_id=household_id,
+        scope_type=config_spec.scope_type,
+        scope_key=scope_key,
+        config_spec=resolved_spec,
+        values=values,
+        secret_fields=secret_fields,
+        secret_data=next_secret_data,
+    )
 
     data_json = dump_json(_extract_persisted_data(config_spec=config_spec, data=next_data)) or "{}"
     secret_data_encrypted = encrypt_plugin_config_secrets(
@@ -310,18 +501,15 @@ def save_plugin_config_form(
     )
     db.flush()
 
-    return PluginConfigFormRead(
+    return _build_config_form_read(
         plugin_id=plugin.id,
         config_spec=resolved_spec,
-        view=PluginConfigView(
-            scope_type=config_spec.scope_type,
-            scope_key=scope_key,
-            schema_version=resolved_spec.schema_version,
-            state=state,
-            values=values,
-            secret_fields=secret_fields,
-            field_errors=field_errors,
-        ),
+        scope_type=config_spec.scope_type,
+        scope_key=scope_key,
+        state=state,
+        values=values,
+        secret_fields=secret_fields,
+        field_errors=field_errors,
     )
 
 
@@ -356,18 +544,15 @@ def get_integration_instance_plugin_config_form(
         stored_secret_data=stored_secret_data,
         has_persisted_record=instance is not None,
     )
-    return PluginConfigFormRead(
+    return _build_config_form_read(
         plugin_id=plugin.id,
         config_spec=resolved_spec,
-        view=PluginConfigView(
-            scope_type=config_spec.scope_type,
-            scope_key=integration_instance_id,
-            schema_version=resolved_spec.schema_version,
-            state=state,
-            values=values,
-            secret_fields=secret_fields,
-            field_errors=field_errors,
-        ),
+        scope_type=config_spec.scope_type,
+        scope_key=integration_instance_id,
+        state=state,
+        values=values,
+        secret_fields=secret_fields,
+        field_errors=field_errors,
     )
 
 
@@ -523,6 +708,16 @@ def save_integration_instance_plugin_config_form(
             field_errors=field_errors,
             status_code=400,
         )
+    _raise_for_plugin_config_runtime_validation(
+        plugin=plugin,
+        household_id=household_id,
+        scope_type=config_spec.scope_type,
+        scope_key=integration_instance_id,
+        config_spec=resolved_spec,
+        values=view_values,
+        secret_fields=secret_fields,
+        secret_data=next_secret_data,
+    )
 
     data_json = dump_json(_extract_persisted_data(config_spec=config_spec, data=next_data)) or "{}"
     secret_data_encrypted = encrypt_plugin_config_secrets(
@@ -557,19 +752,169 @@ def save_integration_instance_plugin_config_form(
         existing_instance.updated_at = now
 
     db.flush()
-    return PluginConfigFormRead(
+    return _build_config_form_read(
         plugin_id=plugin.id,
         config_spec=resolved_spec,
+        scope_type=config_spec.scope_type,
+        scope_key=integration_instance_id,
+        state=state,
+        values=view_values,
+        secret_fields=secret_fields,
+        field_errors=field_errors,
+    )
+
+
+def _build_config_form_read(
+    *,
+    plugin_id: str,
+    config_spec: PluginManifestConfigSpec,
+    scope_type: str,
+    scope_key: str,
+    state: PluginConfigState,
+    values: dict[str, Any],
+    secret_fields: dict[str, Any],
+    field_errors: dict[str, str],
+    runtime_state: dict[str, Any] | None = None,
+    preview_artifacts: list[dict[str, Any]] | None = None,
+) -> PluginConfigFormRead:
+    return PluginConfigFormRead(
+        plugin_id=plugin_id,
+        config_spec=config_spec,
         view=PluginConfigView(
-            scope_type=config_spec.scope_type,
-            scope_key=integration_instance_id,
-            schema_version=resolved_spec.schema_version,
+            scope_type=scope_type,
+            scope_key=scope_key,
+            schema_version=config_spec.schema_version,
             state=state,
-            values=view_values,
+            values=values,
             secret_fields=secret_fields,
             field_errors=field_errors,
+            runtime_state=dict(runtime_state or {}),
+            preview_artifacts=list(preview_artifacts or []),
         ),
     )
+
+
+def _merge_preview_runtime_auth_session(
+    runtime_state: dict[str, Any] | None,
+    *,
+    auth_session: PluginConfigAuthSession | None,
+    callback_base_url: str,
+) -> dict[str, Any]:
+    next_runtime_state = dict(runtime_state or {})
+    if auth_session is None:
+        return next_runtime_state
+    session_read = build_plugin_config_auth_session_read(
+        auth_session,
+        callback_base_url=callback_base_url,
+    )
+    next_runtime_state["auth_session"] = session_read.model_dump(mode="json")
+    return next_runtime_state
+
+
+def _raise_for_plugin_config_runtime_validation(
+    *,
+    plugin: PluginRegistryItem,
+    household_id: str,
+    scope_type: str,
+    scope_key: str,
+    config_spec: PluginManifestConfigSpec,
+    values: dict[str, Any],
+    secret_fields: dict[str, Any],
+    secret_data: dict[str, Any],
+) -> None:
+    hook_result = _run_plugin_config_preview_hook(
+        plugin=plugin,
+        household_id=household_id,
+        scope_type=scope_type,
+        scope_key=scope_key,
+        operation="validate",
+        action_key=None,
+        config_spec=config_spec,
+        values=values,
+        secret_fields=secret_fields,
+        secret_data=secret_data,
+        auth_session=None,
+        callback_base_url="",
+    )
+    if not hook_result.field_errors:
+        return
+    raise PluginServiceError(
+        "插件配置校验失败。",
+        error_code=PLUGIN_CONFIG_VALIDATION_FAILED,
+        field_errors=hook_result.field_errors,
+        status_code=400,
+    )
+
+
+def _run_plugin_config_preview_hook(
+    *,
+    plugin: PluginRegistryItem,
+    household_id: str,
+    scope_type: str,
+    scope_key: str,
+    operation: Literal["preview", "validate"],
+    action_key: str | None,
+    config_spec: PluginManifestConfigSpec,
+    values: dict[str, Any],
+    secret_fields: dict[str, Any],
+    secret_data: dict[str, Any],
+    auth_session: PluginConfigAuthSession | None,
+    callback_base_url: str,
+) -> PluginConfigPreviewHookResult:
+    entrypoint_path = plugin.entrypoints.config_preview
+    if not entrypoint_path:
+        return PluginConfigPreviewHookResult()
+
+    runtime_secret_data = {
+        key: secret_data.get(key, field.default)
+        for key, field in config_spec.config_schema.field_map().items()
+        if field.type == "secret" and secret_fields.get(key, {}).get("has_value")
+    }
+    payload = {
+        "plugin_id": plugin.id,
+        "household_id": household_id,
+        "scope_type": scope_type,
+        "scope_key": scope_key,
+        "operation": operation,
+        "action_key": action_key,
+        "runtime_config": _build_runtime_payload(
+            config_spec=config_spec,
+            values=values,
+            secret_data=runtime_secret_data,
+        ),
+        "auth_session": (
+            build_plugin_config_auth_session_context(
+                auth_session,
+                callback_base_url=callback_base_url,
+            )
+            if auth_session is not None
+            else None
+        ),
+    }
+    try:
+        with plugin_runtime_import_path(
+            plugin.runner_config.plugin_root if plugin.runner_config is not None else None,
+            package_names=collect_plugin_import_roots(plugin),
+        ):
+            handler = load_entrypoint_callable(entrypoint_path)
+            result = handler(payload)
+    except PluginServiceError:
+        raise
+    except Exception as exc:
+        raise PluginServiceError(
+            f"插件配置预检失败: {exc}",
+            error_code=PLUGIN_CONFIG_PREVIEW_FAILED,
+            status_code=400,
+        ) from exc
+
+    try:
+        return PluginConfigPreviewHookResult.model_validate(result or {})
+    except Exception as exc:
+        raise PluginServiceError(
+            f"插件配置预检返回格式不合法: {exc}",
+            error_code=PLUGIN_CONFIG_PREVIEW_FAILED,
+            status_code=400,
+        ) from exc
 
 
 def _build_scope_read(
@@ -720,18 +1065,15 @@ def _build_plugin_config_form(
         stored_secret_data=stored_secret_data,
         has_persisted_record=has_persisted_record,
     )
-    return PluginConfigFormRead(
+    return _build_config_form_read(
         plugin_id=plugin.id,
         config_spec=resolved_spec,
-        view=PluginConfigView(
-            scope_type=config_spec.scope_type,
-            scope_key=scope_key,
-            schema_version=resolved_spec.schema_version,
-            state=state,
-            values=values,
-            secret_fields=secret_fields,
-            field_errors=field_errors,
-        ),
+        scope_type=config_spec.scope_type,
+        scope_key=scope_key,
+        state=state,
+        values=values,
+        secret_fields=secret_fields,
+        field_errors=field_errors,
     )
 
 

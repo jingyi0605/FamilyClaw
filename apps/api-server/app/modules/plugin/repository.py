@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.plugin.models import (
     MemberDashboardLayout,
+    PluginConfigAuthSession,
     PluginConfigInstance,
     PluginDashboardCardSnapshot,
     PluginJob,
@@ -128,6 +129,11 @@ def add_plugin_config_instance(db: Session, row: PluginConfigInstance) -> Plugin
     return row
 
 
+def add_plugin_config_auth_session(db: Session, row: PluginConfigAuthSession) -> PluginConfigAuthSession:
+    db.add(row)
+    return row
+
+
 def add_member_dashboard_layout(db: Session, row: MemberDashboardLayout) -> MemberDashboardLayout:
     db.add(row)
     return row
@@ -185,6 +191,44 @@ def get_plugin_config_instance(
 
 def get_plugin_config_instance_by_id(db: Session, instance_id: str) -> PluginConfigInstance | None:
     return db.get(PluginConfigInstance, instance_id)
+
+
+def get_plugin_config_auth_session(db: Session, session_id: str) -> PluginConfigAuthSession | None:
+    return db.get(PluginConfigAuthSession, session_id)
+
+
+def list_plugin_config_auth_sessions(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str | None = None,
+    scope_type: str | None = None,
+    scope_key: str | None = None,
+    action_key: str | None = None,
+    status: str | None = None,
+) -> list[PluginConfigAuthSession]:
+    filters = [PluginConfigAuthSession.household_id == household_id]
+    if plugin_id is not None:
+        filters.append(PluginConfigAuthSession.plugin_id == plugin_id)
+    if scope_type is not None:
+        filters.append(PluginConfigAuthSession.scope_type == scope_type)
+    if scope_key is not None:
+        filters.append(PluginConfigAuthSession.scope_key == scope_key)
+    if action_key is not None:
+        filters.append(PluginConfigAuthSession.action_key == action_key)
+    if status is not None:
+        filters.append(PluginConfigAuthSession.status == status)
+
+    stmt: Select[tuple[PluginConfigAuthSession]] = (
+        select(PluginConfigAuthSession)
+        .where(*filters)
+        .order_by(PluginConfigAuthSession.updated_at.desc(), PluginConfigAuthSession.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def delete_plugin_config_auth_session(db: Session, row: PluginConfigAuthSession) -> None:
+    db.delete(row)
 
 
 def get_plugin_config_instance_for_integration_instance(

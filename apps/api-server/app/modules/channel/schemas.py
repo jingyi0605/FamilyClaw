@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 ChannelAccountStatus = Literal["draft", "active", "degraded", "disabled"]
@@ -9,9 +9,13 @@ ChannelBindingStatus = Literal["active", "disabled"]
 ChannelInboundEventStatus = Literal["received", "matched", "dispatched", "ignored", "failed"]
 ChannelDeliveryStatus = Literal["pending", "sent", "failed", "skipped"]
 ChannelDeliveryType = Literal["reply", "notice", "error"]
+ChannelDeliveryAttachmentKind = Literal["image", "video", "audio", "file"]
 ChannelInboundChatType = Literal["direct", "group"]
 ChannelBindingResolveStrategy = Literal["bound", "direct_unbound_prompt", "group_unbound_ignore"]
 ChannelBridgeDisposition = Literal["dispatched", "ignored"]
+ChannelAccountPluginActionVariant = Literal["default", "primary", "danger"]
+ChannelAccountPluginStatusTone = Literal["neutral", "info", "success", "warning", "danger"]
+ChannelAccountPluginArtifactKind = Literal["image_url", "external_url", "text"]
 
 
 class ChannelAccountCreate(BaseModel):
@@ -146,6 +150,16 @@ class ChannelDeliveryCreate(BaseModel):
     last_error_message: str | None = None
 
 
+class ChannelDeliveryAttachment(BaseModel):
+    kind: ChannelDeliveryAttachmentKind
+    file_name: str | None = Field(default=None, max_length=255)
+    content_type: str | None = Field(default=None, max_length=255)
+    source_path: str | None = None
+    source_url: str | None = Field(default=None, max_length=2048)
+    size_bytes: int | None = Field(default=None, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChannelDeliveryRead(BaseModel):
     id: str
     household_id: str
@@ -276,6 +290,86 @@ class ChannelDeliveryFailureSummaryRead(BaseModel):
     last_failed_at: str | None = None
 
 
+class ChannelAccountPluginActionRead(BaseModel):
+    key: str
+    action_name: str
+    label: str
+    description: str | None = None
+    variant: ChannelAccountPluginActionVariant = "default"
+    requires_confirmation: bool = False
+    confirmation_text: str | None = None
+    disabled: bool = False
+    disabled_reason: str | None = None
+
+
+class ChannelAccountPluginStatusSummaryRead(BaseModel):
+    status: str
+    title: str | None = None
+    message: str | None = None
+    tone: ChannelAccountPluginStatusTone = "neutral"
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    updated_at: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChannelAccountPluginArtifactRead(BaseModel):
+    kind: ChannelAccountPluginArtifactKind
+    label: str | None = None
+    url: str | None = None
+    text: str | None = None
+
+    @field_validator("label", "text")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("artifact text cannot be empty")
+        return normalized
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("artifact url cannot be empty")
+        if normalized.startswith("data:"):
+            if not normalized.startswith("data:image/"):
+                raise ValueError("artifact data URL must be an image")
+            if len(normalized) > 200_000:
+                raise ValueError("artifact data URL is too long")
+            return normalized
+        if len(normalized) > 4096:
+            raise ValueError("artifact url is too long")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "ChannelAccountPluginArtifactRead":
+        if self.kind in {"image_url", "external_url"} and self.url is None:
+            raise ValueError("artifact url is required")
+        if self.kind == "external_url" and self.url is not None and self.url.startswith("data:"):
+            raise ValueError("external_url artifact does not allow data URLs")
+        if self.kind == "text" and self.text is None:
+            raise ValueError("artifact text is required")
+        return self
+
+
+class ChannelAccountPluginActionExecuteRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChannelAccountPluginActionExecuteRead(BaseModel):
+    action: ChannelAccountPluginActionRead
+    message: str | None = None
+    status_summary: ChannelAccountPluginStatusSummaryRead | None = None
+    artifacts: list[ChannelAccountPluginArtifactRead] = Field(default_factory=list)
+    output: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChannelAccountStatusRead(BaseModel):
     account: ChannelAccountRead
     recent_failure_summary: ChannelDeliveryFailureSummaryRead
@@ -284,6 +378,8 @@ class ChannelAccountStatusRead(BaseModel):
     latest_failed_inbound_event: ChannelInboundEventRead | None = None
     recent_delivery_count: int = Field(default=0, ge=0)
     recent_inbound_count: int = Field(default=0, ge=0)
+    plugin_status_summary: ChannelAccountPluginStatusSummaryRead | None = None
+    plugin_actions: list[ChannelAccountPluginActionRead] = Field(default_factory=list)
 
 
 class ChannelInboundProcessingRead(BaseModel):

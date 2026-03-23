@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     release_manifest_path: str = str((BASE_DIR / "release-manifest.json").resolve())
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
+    base_url: str | None = None
     log_level: str = "INFO"
     database_url: str = Field(default=DEFAULT_DATABASE_URL)
     db_pool_size: int = Field(default=10, ge=1, le=100)

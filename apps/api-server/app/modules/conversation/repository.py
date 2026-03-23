@@ -93,6 +93,22 @@ def get_turn_source_by_turn_id(db: Session, *, conversation_turn_id: str) -> Con
     return db.scalar(stmt)
 
 
+def get_latest_turn_source_by_external_conversation_key(
+    db: Session,
+    *,
+    external_conversation_key: str,
+    source_kind: str | None = None,
+) -> ConversationTurnSource | None:
+    stmt: Select[tuple[ConversationTurnSource]] = (
+        select(ConversationTurnSource)
+        .where(ConversationTurnSource.external_conversation_key == external_conversation_key)
+        .order_by(ConversationTurnSource.created_at.desc(), ConversationTurnSource.id.desc())
+    )
+    if source_kind is not None:
+        stmt = stmt.where(ConversationTurnSource.source_kind == source_kind)
+    return db.scalars(stmt).first()
+
+
 def list_turn_sources(db: Session, *, session_id: str) -> Sequence[ConversationTurnSource]:
     stmt: Select[tuple[ConversationTurnSource]] = (
         select(ConversationTurnSource)

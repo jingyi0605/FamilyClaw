@@ -9,6 +9,7 @@ from app.modules.channel import repository
 from app.modules.channel.account_service import get_channel_account_or_404
 from app.modules.channel.models import ChannelDelivery
 from app.modules.channel.schemas import (
+    ChannelDeliveryAttachment,
     ChannelDeliveryCreate,
     ChannelDeliveryDispatchRead,
     ChannelDeliveryFailureSummaryRead,
@@ -32,14 +33,19 @@ def send_reply(
     household_id: str,
     channel_account_id: str,
     external_conversation_key: str,
-    text: str,
+    text: str | None = None,
     delivery_type: str = "reply",
     conversation_session_id: str | None = None,
     assistant_message_id: str | None = None,
+    attachments: list[ChannelDeliveryAttachment | dict[str, Any]] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ChannelDeliveryDispatchRead:
     account = get_channel_account_or_404(db, household_id=household_id, account_id=channel_account_id)
     now = utc_now_iso()
+    normalized_text = _normalize_optional_text(text)
+    normalized_attachments = _normalize_delivery_attachments(attachments)
+    if normalized_text is None and not normalized_attachments:
+        raise ChannelDeliveryServiceError("channel delivery payload must contain text or attachments")
 
     delivery = ChannelDelivery(
         id=new_uuid(),
@@ -52,7 +58,8 @@ def send_reply(
         delivery_type=delivery_type,
         request_payload_json=dump_json(
             {
-                "text": text,
+                "text": normalized_text,
+                "attachments": normalized_attachments,
                 "metadata": metadata if isinstance(metadata, dict) else {},
             }
         )
@@ -65,7 +72,13 @@ def send_reply(
         created_at=now,
         updated_at=now,
     )
-    return _dispatch_delivery(db, delivery=delivery, text=text)
+    return _dispatch_delivery(
+        db,
+        delivery=delivery,
+        text=normalized_text,
+        attachments=normalized_attachments,
+        metadata=metadata if isinstance(metadata, dict) else {},
+    )
 
 
 def retry_delivery(
@@ -79,13 +92,17 @@ def retry_delivery(
         raise ChannelDeliveryServiceError("channel delivery not found")
     payload = load_json(delivery.request_payload_json)
     text = payload.get("text") if isinstance(payload, dict) else None
+    attachments = payload.get("attachments") if isinstance(payload, dict) else None
     metadata = payload.get("metadata") if isinstance(payload, dict) else None
-    if not isinstance(text, str) or not text.strip():
-        raise ChannelDeliveryServiceError("channel delivery payload does not contain text")
+    normalized_text = _normalize_optional_text(text)
+    normalized_attachments = _normalize_delivery_attachments(attachments)
+    if normalized_text is None and not normalized_attachments:
+        raise ChannelDeliveryServiceError("channel delivery payload must contain text or attachments")
     return _dispatch_delivery(
         db,
         delivery=delivery,
-        text=text,
+        text=normalized_text,
+        attachments=normalized_attachments,
         metadata=metadata if isinstance(metadata, dict) else {},
     )
 
@@ -94,7 +111,8 @@ def _dispatch_delivery(
     db: Session,
     *,
     delivery: ChannelDelivery,
-    text: str,
+    text: str | None,
+    attachments: list[dict[str, Any]] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ChannelDeliveryDispatchRead:
     account = get_channel_account_or_404(db, household_id=delivery.household_id, account_id=delivery.channel_account_id)
@@ -138,6 +156,7 @@ def _dispatch_delivery(
                         "conversation_session_id": delivery.conversation_session_id,
                         "assistant_message_id": delivery.assistant_message_id,
                         "text": text,
+                        "attachments": attachments if isinstance(attachments, list) else [],
                         "metadata": metadata if isinstance(metadata, dict) else {},
                     },
                 },
@@ -199,3 +218,31 @@ def _to_channel_delivery_read(row: ChannelDelivery) -> ChannelDeliveryRead:
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    return None
+
+
+def _normalize_delivery_attachments(
+    attachments: Any,
+) -> list[dict[str, Any]]:
+    if attachments is None:
+        return []
+    if not isinstance(attachments, list):
+        raise ChannelDeliveryServiceError("channel delivery attachments must be a list")
+    normalized: list[dict[str, Any]] = []
+    for item in attachments:
+        if isinstance(item, ChannelDeliveryAttachment):
+            attachment = item
+        elif isinstance(item, dict):
+            attachment = ChannelDeliveryAttachment.model_validate(item)
+        else:
+            raise ChannelDeliveryServiceError("channel delivery attachment item is invalid")
+        if not attachment.source_path and not attachment.source_url:
+            raise ChannelDeliveryServiceError("channel delivery attachment requires source_path or source_url")
+        normalized.append(attachment.model_dump(mode="json"))
+    return normalized
