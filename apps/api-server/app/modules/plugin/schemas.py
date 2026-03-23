@@ -61,9 +61,14 @@ PluginJobResponseAction = Literal["retry", "confirm", "cancel", "provide_input"]
 PluginJobActorType = Literal["member", "admin", "system"]
 PluginConfigScopeType = Literal["plugin", "integration_instance", "channel_account", "device"]
 PluginConfigFieldType = Literal["string", "text", "integer", "number", "boolean", "enum", "multi_enum", "secret", "json"]
-PluginConfigWidgetType = Literal["input", "password", "textarea", "switch", "select", "multi_select", "json_editor"]
+PluginConfigWidgetType = Literal["input", "password", "textarea", "switch", "select", "multi_select", "json_editor", "display"]
+PluginConfigPreviewArtifactKind = Literal["image_url", "external_url", "text"]
 PluginConfigVisibilityOperator = Literal["equals", "not_equals", "in", "truthy"]
 PluginConfigDynamicOptionSourceType = Literal["region_provider_list", "region_catalog_children"]
+PluginConfigUiActionKind = Literal["config_preview"]
+PluginConfigRuntimeItemKind = Literal["status_badge", "text", "link", "candidate_select"]
+PluginConfigRuntimeBadgeTone = Literal["neutral", "info", "success", "warning", "danger"]
+PluginConfigRuntimeSelectionMode = Literal["field", "object"]
 RegionCatalogAdminLevel = Literal["province", "city", "district"]
 PluginDashboardCardPlacement = Literal["home"]
 PluginDashboardCardTemplateType = Literal["metric", "status_list", "timeline", "insight", "action_group"]
@@ -75,6 +80,7 @@ PluginDashboardCardSnapshotState = Literal["ready", "stale", "invalid", "error"]
 HomeDashboardCardState = Literal["ready", "empty", "stale", "error"]
 HomeDashboardCardTone = Literal["neutral", "info", "success", "warning", "danger"]
 HomeDashboardCardTrendDirection = Literal["up", "down", "flat"]
+SpeakerAdapterMode = Literal["text_turn", "audio_session"]
 
 DASHBOARD_CARD_LIST_TEMPLATE_TYPES = {"status_list", "timeline", "action_group"}
 DASHBOARD_CARD_KEY_ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789-_")
@@ -141,6 +147,8 @@ def _normalize_i18n_key(value: str | None) -> str | None:
 class PluginManifestEntrypoints(BaseModel):
     integration: str | None = None
     action: str | None = None
+    config_preview: str | None = None
+    speaker_adapter: str | None = None
     agent_skill: str | None = None
     channel: str | None = None
     region_provider: str | None = None
@@ -152,6 +160,8 @@ class PluginManifestEntrypoints(BaseModel):
     @field_validator(
         "integration",
         "action",
+        "config_preview",
+        "speaker_adapter",
         "agent_skill",
         "channel",
         "region_provider",
@@ -543,6 +553,28 @@ class PluginManifestIntegrationSpec(BaseModel):
         return self
 
 
+class PluginManifestSpeakerAdapterSpec(BaseModel):
+    adapter_code: str = Field(min_length=1, max_length=64)
+    supported_modes: list[SpeakerAdapterMode] = Field(default_factory=list)
+    supported_domains: list[str] = Field(default_factory=list)
+    requires_runtime_worker: bool = False
+    supports_discovery: bool = False
+    supports_commands: bool = False
+
+    @field_validator("adapter_code")
+    @classmethod
+    def validate_adapter_code(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("adapter_code 不能为空")
+        return normalized
+
+    @field_validator("supported_domains")
+    @classmethod
+    def validate_supported_domains(cls, value: list[str]) -> list[str]:
+        return _normalize_text_list(value, field_name="speaker_adapter.supported_domains")
+
+
 class PluginManifestSlotSpec(BaseModel):
     slot_name: Literal["memory_engine", "memory_provider", "context_engine"]
     exclusive: bool = True
@@ -600,8 +632,60 @@ class PluginManifestChannelBindingUiSpec(BaseModel):
         return normalized
 
 
+class PluginManifestChannelAccountActionSpec(BaseModel):
+    key: str = Field(min_length=1, max_length=64)
+    action_name: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=255)
+    variant: Literal["default", "primary", "danger"] = "default"
+    requires_confirmation: bool = False
+    confirmation_text: str | None = Field(default=None, max_length=255)
+
+    @field_validator("key", "action_name", "label", "description", "confirmation_text")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_confirmation_fields(self) -> "PluginManifestChannelAccountActionSpec":
+        if self.requires_confirmation and self.confirmation_text is None:
+            raise ValueError("requires_confirmation=true 时必须提供 confirmation_text")
+        if not self.requires_confirmation:
+            self.confirmation_text = None
+        return self
+
+
 class PluginManifestChannelUiSpec(BaseModel):
     binding: PluginManifestChannelBindingUiSpec = Field(default_factory=PluginManifestChannelBindingUiSpec)
+    account_actions: list[PluginManifestChannelAccountActionSpec] = Field(default_factory=list)
+    status_action_key: str | None = Field(default=None, max_length=64)
+
+    @field_validator("status_action_key")
+    @classmethod
+    def validate_status_action_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("status_action_key 不能为空")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_account_actions(self) -> "PluginManifestChannelUiSpec":
+        seen_keys: set[str] = set()
+        action_keys = {item.key for item in self.account_actions}
+        for item in self.account_actions:
+            if item.key in seen_keys:
+                raise ValueError(f"account_actions 里不能有重复 key: {item.key}")
+            seen_keys.add(item.key)
+        if self.status_action_key is not None and self.status_action_key not in action_keys:
+            raise ValueError("status_action_key 必须引用 account_actions 里已声明的 key")
+        return self
 
 
 class PluginManifestChannelSpec(BaseModel):
@@ -651,6 +735,7 @@ class PluginManifestChannelSpec(BaseModel):
 class PluginManifestCapabilities(BaseModel):
     context_reads: PluginManifestContextReads = Field(default_factory=PluginManifestContextReads)
     integration: PluginManifestIntegrationSpec | None = None
+    speaker_adapter: PluginManifestSpeakerAdapterSpec | None = None
     channel: PluginManifestChannelSpec | None = None
     region_provider: PluginManifestRegionProviderSpec | None = None
     theme_pack: PluginManifestThemePackSpec | None = None
@@ -1020,6 +1105,7 @@ class PluginManifestUiSection(BaseModel):
     title_key: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=255)
     description_key: str | None = Field(default=None, max_length=255)
+    mode: Literal["default", "advanced"] = "default"
     fields: list[str] = Field(default_factory=list)
 
     @field_validator("id", "title", "description")
@@ -1043,12 +1129,202 @@ class PluginManifestUiSection(BaseModel):
         return _normalize_text_list(value, field_name="section.fields")
 
 
+class PluginManifestConfigPreviewAction(BaseModel):
+    key: str = Field(min_length=1, max_length=64)
+    kind: PluginConfigUiActionKind = "config_preview"
+    section_id: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=100)
+    label_key: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=255)
+    description_key: str | None = Field(default=None, max_length=255)
+    action_key: str | None = Field(default=None, max_length=64)
+    depends_on_fields: list[str] = Field(default_factory=list)
+    reset_on_change_fields: list[str] = Field(default_factory=list)
+    clear_fields_on_reset: list[str] = Field(default_factory=list)
+    modes: list[Literal["create", "edit"]] = Field(default_factory=lambda: ["create", "edit"])
+
+    @field_validator("key", "section_id", "label", "description", "action_key")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+    @field_validator("label_key", "description_key")
+    @classmethod
+    def validate_i18n_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
+
+    @field_validator("depends_on_fields", "reset_on_change_fields", "clear_fields_on_reset")
+    @classmethod
+    def validate_field_lists(cls, value: list[str], info: Any) -> list[str]:
+        return _normalize_text_list(value, field_name=str(info.field_name))
+
+    @field_validator("modes")
+    @classmethod
+    def validate_modes(cls, value: list[Literal["create", "edit"]]) -> list[Literal["create", "edit"]]:
+        if not value:
+            raise ValueError("actions.modes 不能为空")
+        deduped: list[Literal["create", "edit"]] = []
+        for item in value:
+            if item not in deduped:
+                deduped.append(item)
+        return deduped
+
+
+class PluginManifestRuntimeStatusOption(BaseModel):
+    value: str = Field(min_length=1, max_length=100)
+    label: str = Field(min_length=1, max_length=100)
+    label_key: str | None = Field(default=None, max_length=255)
+    tone: PluginConfigRuntimeBadgeTone = "neutral"
+
+    @field_validator("value", "label")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+    @field_validator("label_key")
+    @classmethod
+    def validate_i18n_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
+
+
+class PluginManifestRuntimeStateItem(BaseModel):
+    key: str = Field(min_length=1, max_length=64)
+    kind: PluginConfigRuntimeItemKind
+    source: str = Field(min_length=1, max_length=255)
+    label: str | None = Field(default=None, max_length=100)
+    label_key: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=255)
+    description_key: str | None = Field(default=None, max_length=255)
+    action_key: str | None = Field(default=None, max_length=64)
+    status_options: list[PluginManifestRuntimeStatusOption] = Field(default_factory=list)
+    link_text: str | None = Field(default=None, max_length=100)
+    link_text_key: str | None = Field(default=None, max_length=255)
+    link_text_source: str | None = Field(default=None, max_length=255)
+    option_label_fields: list[str] = Field(default_factory=list)
+    option_description_fields: list[str] = Field(default_factory=list)
+    target_field: str | None = Field(default=None, max_length=64)
+    selection_mode: PluginConfigRuntimeSelectionMode | None = None
+    selection_value_field: str | None = Field(default=None, max_length=255)
+    selection_object_fields: list[str] = Field(default_factory=list)
+    selected_match_field: str | None = Field(default=None, max_length=255)
+    empty_text: str | None = Field(default=None, max_length=255)
+    empty_text_key: str | None = Field(default=None, max_length=255)
+    required: bool = False
+    required_message: str | None = Field(default=None, max_length=255)
+    required_message_key: str | None = Field(default=None, max_length=255)
+
+    @field_validator(
+        "key",
+        "source",
+        "label",
+        "description",
+        "action_key",
+        "link_text",
+        "link_text_source",
+        "target_field",
+        "selection_value_field",
+        "selected_match_field",
+        "empty_text",
+        "required_message",
+    )
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+    @field_validator(
+        "label_key",
+        "description_key",
+        "link_text_key",
+        "empty_text_key",
+        "required_message_key",
+    )
+    @classmethod
+    def validate_i18n_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
+
+    @field_validator("option_label_fields", "option_description_fields", "selection_object_fields")
+    @classmethod
+    def validate_text_lists(cls, value: list[str], info: Any) -> list[str]:
+        return _normalize_text_list(value, field_name=str(info.field_name))
+
+    @model_validator(mode="after")
+    def validate_item(self) -> "PluginManifestRuntimeStateItem":
+        if self.kind == "status_badge" and not self.status_options:
+            raise ValueError("status_badge 必须提供 status_options")
+        if self.kind != "candidate_select":
+            return self
+        if self.target_field is None:
+            raise ValueError("candidate_select 必须提供 target_field")
+        if self.selection_mode is None:
+            raise ValueError("candidate_select 必须提供 selection_mode")
+        if self.selected_match_field is None:
+            raise ValueError("candidate_select 必须提供 selected_match_field")
+        if self.selection_mode == "field" and self.selection_value_field is None:
+            raise ValueError("selection_mode = field 时必须提供 selection_value_field")
+        if self.selection_mode == "object" and not self.selection_object_fields:
+            raise ValueError("selection_mode = object 时必须提供 selection_object_fields")
+        return self
+
+
+class PluginManifestRuntimeStateSection(BaseModel):
+    key: str = Field(min_length=1, max_length=64)
+    section_id: str = Field(min_length=1, max_length=64)
+    title: str | None = Field(default=None, max_length=100)
+    title_key: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=255)
+    description_key: str | None = Field(default=None, max_length=255)
+    action_key: str | None = Field(default=None, max_length=64)
+    items: list[PluginManifestRuntimeStateItem] = Field(default_factory=list)
+
+    @field_validator("key", "section_id", "title", "description", "action_key")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+    @field_validator("title_key", "description_key")
+    @classmethod
+    def validate_i18n_key(cls, value: str | None) -> str | None:
+        return _normalize_i18n_key(value)
+
+    @field_validator("items")
+    @classmethod
+    def validate_items(cls, value: list[PluginManifestRuntimeStateItem]) -> list[PluginManifestRuntimeStateItem]:
+        if not value:
+            raise ValueError("runtime_sections.items 不能为空")
+        seen: set[str] = set()
+        for item in value:
+            if item.key in seen:
+                raise ValueError(f"runtime_sections.items 里不能有重复 key: {item.key}")
+            seen.add(item.key)
+        return value
+
+
 class PluginManifestUiSchema(BaseModel):
     sections: list[PluginManifestUiSection] = Field(default_factory=list)
     field_order: list[str] = Field(default_factory=list)
     submit_text: str | None = Field(default=None, max_length=50)
     submit_text_key: str | None = Field(default=None, max_length=255)
     widgets: dict[str, PluginManifestFieldUiSchema] = Field(default_factory=dict)
+    actions: list[PluginManifestConfigPreviewAction] = Field(default_factory=list)
+    runtime_sections: list[PluginManifestRuntimeStateSection] = Field(default_factory=list)
 
     @field_validator("field_order")
     @classmethod
@@ -1083,6 +1359,26 @@ class PluginManifestUiSchema(BaseModel):
             seen.add(item.id)
         return value
 
+    @field_validator("actions")
+    @classmethod
+    def validate_actions(cls, value: list[PluginManifestConfigPreviewAction]) -> list[PluginManifestConfigPreviewAction]:
+        seen: set[str] = set()
+        for item in value:
+            if item.key in seen:
+                raise ValueError(f"ui_schema.actions 里不能有重复 key: {item.key}")
+            seen.add(item.key)
+        return value
+
+    @field_validator("runtime_sections")
+    @classmethod
+    def validate_runtime_sections(cls, value: list[PluginManifestRuntimeStateSection]) -> list[PluginManifestRuntimeStateSection]:
+        seen: set[str] = set()
+        for item in value:
+            if item.key in seen:
+                raise ValueError(f"ui_schema.runtime_sections 里不能有重复 key: {item.key}")
+            seen.add(item.key)
+        return value
+
 
 class PluginManifestConfigSpec(BaseModel):
     scope_type: PluginConfigScopeType
@@ -1113,6 +1409,8 @@ class PluginManifestConfigSpec(BaseModel):
     def validate_schema_references(self) -> "PluginManifestConfigSpec":
         field_map = self.config_schema.field_map()
         field_keys = set(field_map)
+        section_ids = {section.id for section in self.ui_schema.sections}
+        action_keys = {action.key for action in self.ui_schema.actions}
         seen_in_sections: set[str] = set()
 
         for section in self.ui_schema.sections:
@@ -1162,6 +1460,30 @@ class PluginManifestConfigSpec(BaseModel):
             for rule in widget.visible_when:
                 if rule.field not in field_keys:
                     raise ValueError(f"visible_when 引用了不存在的字段: {rule.field}")
+
+        for action in self.ui_schema.actions:
+            if action.section_id not in section_ids:
+                raise ValueError(f"ui_schema.actions.section_id 引用了不存在的 section: {action.section_id}")
+            for field_key in action.depends_on_fields:
+                if field_key not in field_keys:
+                    raise ValueError(f"ui_schema.actions.depends_on_fields 引用了不存在的字段: {field_key}")
+            for field_key in action.reset_on_change_fields:
+                if field_key not in field_keys:
+                    raise ValueError(f"ui_schema.actions.reset_on_change_fields 引用了不存在的字段: {field_key}")
+            for field_key in action.clear_fields_on_reset:
+                if field_key not in field_keys:
+                    raise ValueError(f"ui_schema.actions.clear_fields_on_reset 引用了不存在的字段: {field_key}")
+
+        for runtime_section in self.ui_schema.runtime_sections:
+            if runtime_section.section_id not in section_ids:
+                raise ValueError(f"ui_schema.runtime_sections.section_id 引用了不存在的 section: {runtime_section.section_id}")
+            if runtime_section.action_key is not None and runtime_section.action_key not in action_keys:
+                raise ValueError(f"ui_schema.runtime_sections.action_key 引用了不存在的 action: {runtime_section.action_key}")
+            for item in runtime_section.items:
+                if item.action_key is not None and item.action_key not in action_keys:
+                    raise ValueError(f"runtime_sections.items.action_key 引用了不存在的 action: {item.action_key}")
+                if item.kind == "candidate_select" and item.target_field not in field_keys:
+                    raise ValueError(f"runtime_sections.items.target_field 引用了不存在的字段: {item.target_field}")
         return self
 
     @staticmethod
@@ -1358,6 +1680,7 @@ class PluginManifest(BaseModel):
         if self.schedule_templates and "schedule" not in self.triggers:
             raise ValueError("声明计划任务模板前，triggers 必须包含 schedule")
         self._validate_integration_capability()
+        self._validate_speaker_adapter_capability()
         self._validate_channel_capability()
         self._validate_config_specs()
         self._validate_region_provider_capability()
@@ -1378,6 +1701,31 @@ class PluginManifest(BaseModel):
             raise ValueError("integration 插件必须声明 entrypoints.integration")
         if not spec.domains:
             raise ValueError("integration 插件至少要声明一个 domain")
+
+    def _validate_speaker_adapter_capability(self) -> None:
+        spec = self.capabilities.speaker_adapter
+        if spec is None:
+            if self.entrypoints.speaker_adapter is not None:
+                raise ValueError("声明 entrypoints.speaker_adapter 时必须同时声明 capabilities.speaker_adapter")
+            return
+
+        if "integration" not in self.types:
+            raise ValueError("speaker_adapter 插件必须同时声明 integration 类型")
+        if self.entrypoints.integration is None:
+            raise ValueError("speaker_adapter 插件必须声明 entrypoints.integration")
+        if self.entrypoints.speaker_adapter is None:
+            raise ValueError("speaker_adapter 插件必须声明 entrypoints.speaker_adapter")
+        if not spec.supported_modes:
+            raise ValueError("speaker_adapter 至少要声明一个 supported_mode")
+        if not spec.supported_domains:
+            raise ValueError("speaker_adapter 至少要声明一个 supported_domain")
+        if "speaker" not in spec.supported_domains:
+            raise ValueError("speaker_adapter.supported_domains 必须包含 speaker")
+        if spec.supports_commands:
+            if "action" not in self.types:
+                raise ValueError("speaker_adapter 声明 supports_commands 时必须同时声明 action 类型")
+            if self.entrypoints.action is None:
+                raise ValueError("speaker_adapter 声明 supports_commands 时必须声明 entrypoints.action")
 
     def _validate_channel_capability(self) -> None:
         spec = self.capabilities.channel
@@ -1401,6 +1749,11 @@ class PluginManifest(BaseModel):
             raise ValueError("通讯通道运行时至少要声明一个 delivery_mode")
         if self.entrypoints.channel is None:
             raise ValueError("通讯通道运行时必须声明 entrypoints.channel")
+        if spec.ui.account_actions or spec.ui.status_action_key is not None:
+            if "action" not in self.types:
+                raise ValueError("声明 channel.ui.account_actions 时必须同时声明 action 类型")
+            if self.entrypoints.action is None:
+                raise ValueError("声明 channel.ui.account_actions 时必须声明 entrypoints.action")
 
     def _validate_region_provider_capability(self) -> None:
         spec = self.capabilities.region_provider
@@ -1546,6 +1899,32 @@ class PluginConfigSecretFieldRead(BaseModel):
     masked: str | None = None
 
 
+class PluginConfigPreviewArtifactRead(BaseModel):
+    key: str = Field(min_length=1, max_length=100)
+    kind: PluginConfigPreviewArtifactKind
+    label: str | None = Field(default=None, max_length=100)
+    url: str | None = Field(default=None, max_length=2048)
+    text: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("key", "label", "url", "text")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "PluginConfigPreviewArtifactRead":
+        if self.kind in {"image_url", "external_url"} and self.url is None:
+            raise ValueError(f"{self.kind} artifact 必须提供 url")
+        if self.kind == "text" and self.text is None:
+            raise ValueError("text artifact 必须提供 text")
+        return self
+
+
 class PluginConfigView(BaseModel):
     scope_type: PluginConfigScopeType
     scope_key: str
@@ -1554,6 +1933,8 @@ class PluginConfigView(BaseModel):
     values: dict[str, Any] = Field(default_factory=dict)
     secret_fields: dict[str, PluginConfigSecretFieldRead] = Field(default_factory=dict)
     field_errors: dict[str, str] = Field(default_factory=dict)
+    runtime_state: dict[str, Any] = Field(default_factory=dict)
+    preview_artifacts: list[PluginConfigPreviewArtifactRead] = Field(default_factory=list)
 
 
 class PluginConfigFormRead(BaseModel):
@@ -1597,6 +1978,41 @@ class PluginConfigResolveRequest(BaseModel):
         if not normalized:
             raise ValueError("scope_key 不能为空")
         return normalized
+
+
+class PluginConfigPreviewRequest(BaseModel):
+    scope_type: PluginConfigScopeType
+    scope_key: str | None = Field(default=None, max_length=100)
+    values: dict[str, Any] = Field(default_factory=dict)
+    secret_values: dict[str, str] = Field(default_factory=dict)
+    clear_secret_fields: list[str] = Field(default_factory=list)
+    action_key: str | None = Field(default=None, max_length=64)
+
+    @field_validator("scope_key")
+    @classmethod
+    def validate_optional_scope_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("scope_key 不能为空")
+        return normalized
+
+    @field_validator("action_key")
+    @classmethod
+    def validate_action_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("action_key 不能为空")
+        return normalized
+
+
+class PluginConfigPreviewHookResult(BaseModel):
+    field_errors: dict[str, str] = Field(default_factory=dict)
+    runtime_state: dict[str, Any] = Field(default_factory=dict)
+    preview_artifacts: list[PluginConfigPreviewArtifactRead] = Field(default_factory=list)
 
 
 class PluginRunnerConfig(BaseModel):

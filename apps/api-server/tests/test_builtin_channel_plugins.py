@@ -42,8 +42,6 @@ class BuiltinChannelPluginTests(unittest.TestCase):
         self.assertIn("channel-discord", plugin_ids)
         self.assertIn("channel-feishu", plugin_ids)
         self.assertIn("channel-dingtalk", plugin_ids)
-        self.assertIn("channel-wecom-app", plugin_ids)
-        self.assertIn("channel-wecom-bot", plugin_ids)
 
     def _legacy_test_telegram_plugin_normalizes_webhook_and_sends_text(self) -> None:
         webhook_result = execute_plugin(
@@ -930,170 +928,6 @@ class BuiltinChannelPluginTests(unittest.TestCase):
             credential_mode_result.output["message"],
         )
 
-    def test_wecom_app_plugin_handles_handshake_message_and_send(self) -> None:
-        aes_key = self._build_wecom_aes_key()
-        timestamp = "1710500000"
-        nonce = "nonce-001"
-        token = "token-001"
-        corp_id = "wxcorp001"
-
-        echostr = self._encrypt_wecom_payload("hello-wecom", aes_key, corp_id)
-        handshake_signature = self._build_wecom_signature(token, timestamp, nonce, echostr)
-        handshake_result = execute_plugin(
-            PluginExecutionRequest(
-                plugin_id="channel-wecom-app",
-                plugin_type="channel",
-                payload={
-                    "action": "webhook",
-                    "account": {
-                        "config": json.dumps(
-                            {
-                                "callback_token": token,
-                                "encoding_aes_key": aes_key,
-                                "corp_id": corp_id,
-                            }
-                        )
-                    },
-                    "request": {
-                        "method": "GET",
-                        "query_params": {
-                            "msg_signature": handshake_signature,
-                            "timestamp": timestamp,
-                            "nonce": nonce,
-                            "echostr": echostr,
-                        },
-                    },
-                },
-            ),
-            root_dir=self.builtin_root,
-        )
-
-        self.assertTrue(handshake_result.success)
-        self.assertEqual("hello-wecom", handshake_result.output["http_response"]["body_text"])
-
-        message_xml = (
-            "<xml>"
-            "<ToUserName><![CDATA[wxcorp001]]></ToUserName>"
-            "<FromUserName><![CDATA[user_wecom_001]]></FromUserName>"
-            "<CreateTime>1710500000</CreateTime>"
-            "<MsgType><![CDATA[text]]></MsgType>"
-            "<Content><![CDATA[你好，企微]]></Content>"
-            "<MsgId>987654321</MsgId>"
-            "<AgentID>1000002</AgentID>"
-            "</xml>"
-        )
-        encrypted = self._encrypt_wecom_payload(message_xml, aes_key, corp_id)
-        message_signature = self._build_wecom_signature(token, timestamp, nonce, encrypted)
-        body_xml = (
-            "<xml>"
-            f"<Encrypt><![CDATA[{encrypted}]]></Encrypt>"
-            f"<MsgSignature><![CDATA[{message_signature}]]></MsgSignature>"
-            f"<TimeStamp>{timestamp}</TimeStamp>"
-            f"<Nonce><![CDATA[{nonce}]]></Nonce>"
-            "</xml>"
-        )
-        message_result = execute_plugin(
-            PluginExecutionRequest(
-                plugin_id="channel-wecom-app",
-                plugin_type="channel",
-                payload={
-                    "action": "webhook",
-                    "account": {
-                        "config": json.dumps(
-                            {
-                                "callback_token": token,
-                                "encoding_aes_key": aes_key,
-                                "corp_id": corp_id,
-                            }
-                        )
-                    },
-                    "request": {
-                        "method": "POST",
-                        "query_params": {
-                            "msg_signature": message_signature,
-                            "timestamp": timestamp,
-                            "nonce": nonce,
-                        },
-                        "body_text": body_xml,
-                    },
-                },
-            ),
-            root_dir=self.builtin_root,
-        )
-
-        self.assertTrue(message_result.success)
-        self.assertEqual("success", message_result.output["http_response"]["body_text"])
-        event = message_result.output["event"]
-        self.assertEqual("987654321", event["external_event_id"])
-        self.assertEqual("user_wecom_001", event["external_user_id"])
-        self.assertEqual("direct:user_wecom_001", event["external_conversation_key"])
-
-        with patch("app.plugins.builtin.channel_wecom_app.channel.httpx.get") as http_get:
-            with patch("app.plugins.builtin.channel_wecom_app.channel.httpx.post") as http_post:
-                http_get.return_value = _MockHttpResponse({"access_token": "wecom-token-001"})
-                http_post.return_value = _MockHttpResponse({"msgid": "wecom-msg-001"})
-                send_result = execute_plugin(
-                    PluginExecutionRequest(
-                        plugin_id="channel-wecom-app",
-                        plugin_type="channel",
-                        payload={
-                            "action": "send",
-                            "account": {
-                                "config": json.dumps(
-                                    {
-                                        "corp_id": corp_id,
-                                        "corp_secret": "secret-001",
-                                        "agent_id": "1000002",
-                                    }
-                                )
-                            },
-                            "delivery": {
-                                "external_conversation_key": "direct:user_wecom_001",
-                                "text": "回复 企微",
-                            },
-                        },
-                    ),
-                    root_dir=self.builtin_root,
-                )
-
-        self.assertTrue(send_result.success)
-        self.assertEqual("wecom-msg-001", send_result.output["provider_message_ref"])
-        self.assertIn("gettoken", http_get.call_args.args[0])
-        self.assertIn("message/send", http_post.call_args.args[0])
-
-    def test_wecom_bot_plugin_exposes_send_only_boundary(self) -> None:
-        webhook_result = execute_plugin(
-            PluginExecutionRequest(
-                plugin_id="channel-wecom-bot",
-                plugin_type="channel",
-                payload={"action": "webhook"},
-            ),
-            root_dir=self.builtin_root,
-        )
-
-        self.assertTrue(webhook_result.success)
-        self.assertEqual("success", webhook_result.output["http_response"]["body_text"])
-        self.assertIn("只支持出站推送", webhook_result.output["message"])
-
-        with patch("app.plugins.builtin.channel_wecom_bot.channel.httpx.post") as http_post:
-            http_post.return_value = _MockHttpResponse({"errmsg": "ok"})
-            send_result = execute_plugin(
-                PluginExecutionRequest(
-                    plugin_id="channel-wecom-bot",
-                    plugin_type="channel",
-                    payload={
-                        "action": "send",
-                        "account": {"config": json.dumps({"key": "bot-key-001"})},
-                        "delivery": {"text": "回复 企微机器人"},
-                    },
-                ),
-                root_dir=self.builtin_root,
-            )
-
-        self.assertTrue(send_result.success)
-        self.assertEqual("ok", send_result.output["provider_message_ref"])
-        self.assertIn("webhook/send?key=bot-key-001", http_post.call_args.args[0])
-
     def _build_discord_headers(self, private_key: Ed25519PrivateKey, body_text: str) -> dict[str, str]:
         timestamp = "1710400000"
         signature = private_key.sign((timestamp + body_text).encode("utf-8")).hex()
@@ -1111,26 +945,6 @@ class BuiltinChannelPluginTests(unittest.TestCase):
         encryptor = cipher.encryptor()
         ciphertext = encryptor.update(padded) + encryptor.finalize()
         return base64.b64encode(ciphertext).decode("ascii")
-
-    def _build_wecom_aes_key(self) -> str:
-        return base64.b64encode(b"0123456789abcdef0123456789abcdef").decode("ascii").rstrip("=")
-
-    def _encrypt_wecom_payload(self, plaintext: str, aes_key: str, corp_id: str) -> str:
-        key = base64.b64decode(aes_key + "=")
-        random_prefix = b"abcdefghijklmnop"
-        xml_bytes = plaintext.encode("utf-8")
-        msg_len = len(xml_bytes).to_bytes(4, byteorder="big")
-        raw = random_prefix + msg_len + xml_bytes + corp_id.encode("utf-8")
-        padder = padding.PKCS7(algorithms.AES.block_size).padder()
-        padded = padder.update(raw) + padder.finalize()
-        cipher = Cipher(algorithms.AES(key), modes.CBC(key[:16]))
-        encryptor = cipher.encryptor()
-        ciphertext = encryptor.update(padded) + encryptor.finalize()
-        return base64.b64encode(ciphertext).decode("ascii")
-
-    def _build_wecom_signature(self, token: str, timestamp: str, nonce: str, encrypted: str) -> str:
-        return hashlib.sha1("".join(sorted([token, timestamp, nonce, encrypted])).encode("utf-8")).hexdigest()
-
 
 if __name__ == "__main__":
     unittest.main()

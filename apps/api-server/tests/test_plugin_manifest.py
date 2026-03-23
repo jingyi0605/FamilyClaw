@@ -107,6 +107,182 @@ class PluginManifestTests(unittest.TestCase):
             manifest.capabilities.integration.instance_display_name_placeholder_key,
         )
 
+    def test_manifest_accepts_speaker_adapter_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "speaker-adapter-demo",
+                        "name": "Speaker Adapter Demo",
+                        "version": "0.1.0",
+                        "types": ["integration", "action"],
+                        "permissions": ["device.read", "device.control"],
+                        "risk_level": "medium",
+                        "triggers": ["manual"],
+                        "entrypoints": {
+                            "integration": "plugin.integration.sync",
+                            "action": "plugin.action.execute",
+                            "speaker_adapter": "plugin.speaker_adapter.create_adapter",
+                        },
+                        "capabilities": {
+                            "integration": {
+                                "domains": ["speaker"],
+                                "instance_model": "multi_instance",
+                                "refresh_mode": "manual",
+                                "supports_discovery": True,
+                                "supports_actions": True,
+                                "supports_cards": False,
+                                "entity_types": ["speaker.device"],
+                            },
+                            "speaker_adapter": {
+                                "adapter_code": "speaker-adapter-demo",
+                                "supported_modes": ["text_turn"],
+                                "supported_domains": ["speaker"],
+                                "requires_runtime_worker": True,
+                                "supports_discovery": True,
+                                "supports_commands": True,
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        self.assertEqual("plugin.speaker_adapter.create_adapter", manifest.entrypoints.speaker_adapter)
+        assert manifest.capabilities.speaker_adapter is not None
+        self.assertEqual(["text_turn"], manifest.capabilities.speaker_adapter.supported_modes)
+        self.assertTrue(manifest.capabilities.speaker_adapter.supports_commands)
+
+    def test_manifest_accepts_config_preview_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "config-preview-demo",
+                        "name": "Config Preview Demo",
+                        "version": "0.1.0",
+                        "types": ["integration"],
+                        "permissions": ["device.read"],
+                        "risk_level": "medium",
+                        "triggers": ["manual"],
+                        "entrypoints": {
+                            "integration": "plugin.integration.sync",
+                            "config_preview": "plugin.config_preview.preview_setup",
+                        },
+                        "capabilities": {
+                            "integration": {
+                                "domains": ["speaker"],
+                                "instance_model": "multi_instance",
+                                "refresh_mode": "manual",
+                                "supports_discovery": True,
+                                "supports_actions": True,
+                                "supports_cards": False,
+                                "entity_types": ["speaker.device"],
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        self.assertEqual("plugin.config_preview.preview_setup", manifest.entrypoints.config_preview)
+
+    def test_manifest_rejects_speaker_adapter_without_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "speaker-adapter-missing-entrypoint",
+                        "name": "Speaker Adapter Missing Entrypoint",
+                        "version": "0.1.0",
+                        "types": ["integration"],
+                        "permissions": ["device.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {
+                            "integration": "plugin.integration.sync",
+                        },
+                        "capabilities": {
+                            "integration": {
+                                "domains": ["speaker"],
+                                "instance_model": "multi_instance",
+                                "refresh_mode": "manual",
+                                "supports_discovery": True,
+                                "supports_actions": False,
+                                "supports_cards": False,
+                                "entity_types": ["speaker.device"],
+                            },
+                            "speaker_adapter": {
+                                "adapter_code": "speaker-adapter-missing-entrypoint",
+                                "supported_modes": ["text_turn"],
+                                "supported_domains": ["speaker"],
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("entrypoints.speaker_adapter", str(context.exception))
+
+    def test_manifest_rejects_speaker_adapter_commands_without_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "speaker-adapter-missing-action",
+                        "name": "Speaker Adapter Missing Action",
+                        "version": "0.1.0",
+                        "types": ["integration"],
+                        "permissions": ["device.read"],
+                        "risk_level": "low",
+                        "triggers": ["manual"],
+                        "entrypoints": {
+                            "integration": "plugin.integration.sync",
+                            "speaker_adapter": "plugin.speaker_adapter.create_adapter",
+                        },
+                        "capabilities": {
+                            "integration": {
+                                "domains": ["speaker"],
+                                "instance_model": "multi_instance",
+                                "refresh_mode": "manual",
+                                "supports_discovery": True,
+                                "supports_actions": False,
+                                "supports_cards": False,
+                                "entity_types": ["speaker.device"],
+                            },
+                            "speaker_adapter": {
+                                "adapter_code": "speaker-adapter-missing-action",
+                                "supported_modes": ["text_turn"],
+                                "supported_domains": ["speaker"],
+                                "supports_commands": True,
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PluginManifestValidationError) as context:
+                load_plugin_manifest(manifest_path)
+
+        self.assertIn("supports_commands", str(context.exception))
+
     def test_load_locale_pack_manifest_without_entrypoints(self) -> None:
         manifest = load_plugin_manifest(
             self.builtin_root / "locale_zh_tw_pack" / "manifest.json"
@@ -914,6 +1090,70 @@ class PluginManifestTests(unittest.TestCase):
             manifest.config_specs[0].ui_schema.submit_text_key,
         )
 
+    def test_manifest_accepts_advanced_config_section_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            manifest_path = Path(tempdir) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "advanced-section-plugin",
+                        "name": "Advanced Section Plugin",
+                        "version": "0.1.0",
+                        "types": ["integration"],
+                        "permissions": ["device.read"],
+                        "risk_level": "low",
+                        "description": "test plugin",
+                        "entrypoints": {
+                            "integration": "plugin.integration.sync",
+                        },
+                        "capabilities": {
+                            "integration": {
+                                "domains": ["speaker"],
+                                "instance_model": "multi_instance",
+                                "refresh_mode": "manual",
+                                "supports_discovery": False,
+                                "supports_actions": False,
+                                "supports_cards": False,
+                                "entity_types": ["speaker.device"],
+                            }
+                        },
+                        "config_specs": [
+                            {
+                                "scope_type": "plugin",
+                                "title": "Config",
+                                "schema_version": 1,
+                                "config_schema": {
+                                    "fields": [
+                                        {
+                                            "key": "token",
+                                            "label": "Token",
+                                            "type": "string",
+                                            "required": False,
+                                        }
+                                    ]
+                                },
+                                "ui_schema": {
+                                    "sections": [
+                                        {
+                                            "id": "advanced",
+                                            "title": "Advanced",
+                                            "mode": "advanced",
+                                            "fields": ["token"],
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(manifest_path)
+
+        self.assertEqual("advanced", manifest.config_specs[0].ui_schema.sections[0].mode)
+
     def test_manifest_rejects_blank_config_i18n_key(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             manifest_path = Path(tempdir) / "manifest.json"
@@ -1192,8 +1432,6 @@ class PluginManifestTests(unittest.TestCase):
         self.assertIn("channel-discord", manifest_ids)
         self.assertIn("channel-feishu", manifest_ids)
         self.assertIn("channel-dingtalk", manifest_ids)
-        self.assertIn("channel-wecom-app", manifest_ids)
-        self.assertIn("channel-wecom-bot", manifest_ids)
 
     def test_list_registered_plugins_defaults_to_enabled(self) -> None:
         snapshot = list_registered_plugins(self.builtin_root)

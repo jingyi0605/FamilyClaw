@@ -85,6 +85,12 @@ A typical structure:
 }
 ```
 
+One hard rule:
+
+- Channel account forms now rely only on the plugin's own `config_specs` and `ui_schema`.
+- Do not expect the host frontend to hardcode vendor-specific fields, placeholders, or help text for you.
+- If a channel plugin needs configuration but does not declare a proper `channel_account` config spec, that is a plugin bug.
+
 ## Common config field types
 
 Current common types:
@@ -108,6 +114,32 @@ Current common widgets:
 - `select`
 - `multi_select`
 - `json_editor`
+
+## Multi-step setup forms
+
+For multi-section forms in devices and integrations, the frontend now renders `ui_schema.sections` as staged steps:
+
+- section order becomes the step order
+- section title and description are reused as the step label and helper text
+- if `section.mode = "advanced"`, that section is hidden behind an optional advanced step so regular users can finish the basic flow first
+- if you keep everything in one section, the UI can only render one long form
+
+If your setup flow needs real side effects such as:
+
+- logging in to a third-party account
+- loading live device candidates
+- surfacing secondary verification or risk-control steps
+
+do not abuse `config/resolve`.
+
+The recommended pattern is:
+
+- declare `entrypoints.config_preview` in the manifest
+- let the UI explicitly call `POST /plugins/{plugin_id}/config/preview`
+- keep returning the standard `PluginConfigFormRead`
+- put temporary runtime output in `view.runtime_state`
+
+That keeps the saved config schema clean while still allowing staged setup flows with real login, verification links, and live device lists.
 
 ## Dynamic option fields
 
@@ -155,6 +187,27 @@ Pay special attention to:
 - `delivery_modes`
 - `supports_member_binding`
 - `config_specs.scope_type = channel_account`
+
+Also keep the unified outbound payload in mind:
+
+- `delivery.text`: optional plain text
+- `delivery.attachments`: optional platform-neutral attachment list
+- `delivery.metadata`: optional plugin-specific context
+
+Attachment items currently use these generic fields:
+
+- `kind`
+- `file_name`
+- `content_type`
+- `source_path` or `source_url`
+- `size_bytes`
+- `metadata`
+
+Rules:
+
+- Attachments are a host-wide generic capability, not a platform-specific escape hatch.
+- The host does not perform vendor upload, transcoding, or auth for the plugin.
+- Text-only plugins may ignore `attachments`. Media-capable plugins must explicitly handle the kinds they support.
 
 ### `ai-provider`
 

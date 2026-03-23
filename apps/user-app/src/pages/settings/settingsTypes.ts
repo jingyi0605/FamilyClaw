@@ -469,6 +469,52 @@ export type ChannelDeliveryFailureSummaryRead = {
   last_failed_at: string | null;
 };
 
+export type ChannelAccountPluginActionVariant = 'default' | 'primary' | 'danger';
+export type ChannelAccountPluginStatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+export type ChannelAccountPluginArtifactKind = 'image_url' | 'external_url' | 'text';
+
+export type ChannelAccountPluginActionRead = {
+  key: string;
+  action_name: string;
+  label: string;
+  description: string | null;
+  variant: ChannelAccountPluginActionVariant;
+  requires_confirmation: boolean;
+  confirmation_text: string | null;
+  disabled: boolean;
+  disabled_reason: string | null;
+};
+
+export type ChannelAccountPluginStatusSummaryRead = {
+  status: string;
+  title: string | null;
+  message: string | null;
+  tone: ChannelAccountPluginStatusTone;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  updated_at: string | null;
+  details: Record<string, unknown>;
+};
+
+export type ChannelAccountPluginArtifactRead = {
+  kind: ChannelAccountPluginArtifactKind;
+  label: string | null;
+  url: string | null;
+  text: string | null;
+};
+
+export type ChannelAccountPluginActionExecuteRequest = {
+  payload: Record<string, unknown>;
+};
+
+export type ChannelAccountPluginActionExecuteRead = {
+  action: ChannelAccountPluginActionRead;
+  message: string | null;
+  status_summary: ChannelAccountPluginStatusSummaryRead | null;
+  artifacts: ChannelAccountPluginArtifactRead[];
+  output: Record<string, unknown>;
+};
+
 export type ChannelDeliveryRead = {
   id: string;
   household_id: string;
@@ -514,6 +560,8 @@ export type ChannelAccountStatusRead = {
   latest_failed_inbound_event: ChannelInboundEventRead | null;
   recent_delivery_count: number;
   recent_inbound_count: number;
+  plugin_status_summary: ChannelAccountPluginStatusSummaryRead | null;
+  plugin_actions: ChannelAccountPluginActionRead[];
 };
 
 export type PluginSourceType = 'builtin' | 'third_party';
@@ -542,10 +590,24 @@ export type PluginManifestType =
   | 'ai-provider';
 export type PluginConfigScopeType = 'plugin' | 'channel_account' | 'device' | 'integration_instance';
 export type PluginConfigFieldType = 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'enum' | 'multi_enum' | 'secret' | 'json';
-export type PluginConfigWidgetType = 'input' | 'password' | 'textarea' | 'switch' | 'select' | 'multi_select' | 'json_editor';
+export type PluginConfigWidgetType = 'input' | 'password' | 'textarea' | 'switch' | 'select' | 'multi_select' | 'json_editor' | 'display';
 export type PluginConfigVisibleOperator = 'equals' | 'not_equals' | 'in' | 'truthy';
 export type PluginConfigDynamicOptionSourceType = 'region_provider_list' | 'region_catalog_children';
+export type PluginConfigUiActionKind = 'config_preview';
+export type PluginConfigRuntimeItemKind = 'status_badge' | 'text' | 'link' | 'candidate_select';
+export type PluginConfigRuntimeBadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+export type PluginConfigRuntimeSelectionMode = 'field' | 'object';
 export type RegionCatalogAdminLevel = 'province' | 'city' | 'district';
+export type ChannelLegacyAccountConfigFieldType = 'text' | 'password' | 'number';
+
+export type ChannelLegacyAccountConfigField = {
+  key: string;
+  label: string;
+  type: ChannelLegacyAccountConfigFieldType;
+  required: boolean;
+  placeholder?: string | null;
+  help_text?: string | null;
+};
 
 export type PluginConfigEnumOption = {
   label: string;
@@ -604,7 +666,68 @@ export type PluginManifestUiSection = {
   title_key?: string | null;
   description?: string | null;
   description_key?: string | null;
+  mode?: 'default' | 'advanced' | null;
   fields: string[];
+};
+
+export type PluginManifestConfigPreviewAction = {
+  key: string;
+  kind?: PluginConfigUiActionKind | null;
+  section_id: string;
+  label: string;
+  label_key?: string | null;
+  description?: string | null;
+  description_key?: string | null;
+  action_key?: string | null;
+  depends_on_fields?: string[];
+  reset_on_change_fields?: string[];
+  clear_fields_on_reset?: string[];
+  modes?: Array<'create' | 'edit'>;
+};
+
+export type PluginManifestRuntimeStatusOption = {
+  value: string;
+  label: string;
+  label_key?: string | null;
+  tone?: PluginConfigRuntimeBadgeTone | null;
+};
+
+export type PluginManifestRuntimeStateItem = {
+  key: string;
+  kind: PluginConfigRuntimeItemKind;
+  source: string;
+  label?: string | null;
+  label_key?: string | null;
+  description?: string | null;
+  description_key?: string | null;
+  action_key?: string | null;
+  status_options?: PluginManifestRuntimeStatusOption[];
+  link_text?: string | null;
+  link_text_key?: string | null;
+  link_text_source?: string | null;
+  option_label_fields?: string[];
+  option_description_fields?: string[];
+  target_field?: string | null;
+  selection_mode?: PluginConfigRuntimeSelectionMode | null;
+  selection_value_field?: string | null;
+  selection_object_fields?: string[];
+  selected_match_field?: string | null;
+  empty_text?: string | null;
+  empty_text_key?: string | null;
+  required?: boolean;
+  required_message?: string | null;
+  required_message_key?: string | null;
+};
+
+export type PluginManifestRuntimeStateSection = {
+  key: string;
+  section_id: string;
+  title?: string | null;
+  title_key?: string | null;
+  description?: string | null;
+  description_key?: string | null;
+  action_key?: string | null;
+  items: PluginManifestRuntimeStateItem[];
 };
 
 export type PluginManifestConfigSpec = {
@@ -623,10 +746,21 @@ export type PluginManifestConfigSpec = {
     submit_text?: string | null;
     submit_text_key?: string | null;
     widgets?: Record<string, PluginManifestFieldUiSchema>;
+    actions?: PluginManifestConfigPreviewAction[];
+    runtime_sections?: PluginManifestRuntimeStateSection[];
   };
 };
 
 export type PluginConfigState = 'unconfigured' | 'configured' | 'invalid';
+export type PluginConfigPreviewArtifactKind = 'image_url' | 'external_url' | 'text';
+
+export type PluginConfigPreviewArtifactRead = {
+  key: string;
+  kind: PluginConfigPreviewArtifactKind;
+  label: string | null;
+  url?: string | null;
+  text?: string | null;
+};
 
 export type PluginConfigSecretFieldRead = {
   has_value: boolean;
@@ -641,6 +775,8 @@ export type PluginConfigView = {
   values: Record<string, unknown>;
   secret_fields: Record<string, PluginConfigSecretFieldRead>;
   field_errors: Record<string, string>;
+  runtime_state: Record<string, unknown>;
+  preview_artifacts: PluginConfigPreviewArtifactRead[];
 };
 
 export type PluginConfigFormRead = {
@@ -653,6 +789,15 @@ export type PluginConfigResolveRequest = {
   scope_type: PluginConfigScopeType;
   scope_key?: string | null;
   values: Record<string, unknown>;
+};
+
+export type PluginConfigPreviewRequest = {
+  scope_type: PluginConfigScopeType;
+  scope_key?: string | null;
+  values: Record<string, unknown>;
+  secret_values: Record<string, string>;
+  clear_secret_fields: string[];
+  action_key?: string | null;
 };
 
 export type PluginVersionGovernanceRead = {
@@ -686,6 +831,7 @@ export type PluginRegistryItem = {
     connector?: string | null;
     memory_ingestor?: string | null;
     action?: string | null;
+    config_preview?: string | null;
     agent_skill?: string | null;
     channel?: string | null;
     region_provider?: string | null;
@@ -702,14 +848,6 @@ export type PluginRegistryItem = {
     }>;
     channel?: {
       ui?: {
-        account_config_fields?: Array<{
-          key: string;
-          label: string;
-          type: 'text' | 'password';
-          required: boolean;
-          placeholder?: string | null;
-          help_text?: string | null;
-        }>;
         binding?: {
           identity_label?: string | null;
           identity_placeholder?: string | null;
@@ -720,6 +858,17 @@ export type PluginRegistryItem = {
           candidate_title?: string | null;
           candidate_help_text?: string | null;
         } | null;
+        account_actions?: Array<{
+          key: string;
+          action_name: string;
+          label: string;
+          description?: string | null;
+          variant?: ChannelAccountPluginActionVariant;
+          requires_confirmation?: boolean;
+          confirmation_text?: string | null;
+        }>;
+        account_config_fields?: ChannelLegacyAccountConfigField[];
+        status_action_key?: string | null;
       } | null;
       platform_code?: string | null;
       inbound_modes?: string[];

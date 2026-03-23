@@ -6,9 +6,11 @@ import { getPageMessage } from '../../../runtime/h5-shell/i18n/pageMessageUtils'
 import { Card, EmptyState, Section } from '../../family/base';
 import { SettingsPageShell } from '../SettingsPageShell';
 import { ChannelAccountBindingsPanel } from '../components/ChannelAccountBindingsPanel';
+import { PluginArtifactList } from '../components/PluginArtifactList';
 import { SettingsDialog, SettingsNotice } from '../components/SettingsSharedBlocks';
 import {
   resolvePluginFieldLabel,
+  resolvePluginOptionLabel,
   resolvePluginWidgetHelpText,
   resolvePluginWidgetPlaceholder,
 } from '../pluginConfigI18n';
@@ -20,8 +22,10 @@ import {
   DingtalkLogo,
 } from './assets/PlatformLogos';
 import type {
-  ChannelAccountCreate,
+  ChannelLegacyAccountConfigField,
+  ChannelAccountPluginActionExecuteRead,
   ChannelAccountRead,
+  ChannelAccountPluginStatusSummaryRead,
   ChannelAccountStatus,
   ChannelAccountStatusRead,
   ChannelAccountUpdate,
@@ -29,33 +33,51 @@ import type {
   ChannelDeliveryRead,
   ChannelInboundEventRead,
   Member,
+  PluginConfigFormRead,
+  PluginManifestConfigField,
+  PluginManifestFieldUiSchema,
   PluginRegistryItem,
 } from '../settingsTypes';
 
 type MessageKey = Parameters<typeof getPageMessage>[1];
 type PlatformInfo = {
   code: string;
-  nameKey: MessageKey;
-  description: string; // 平台描述（直接使用字符串）
-  Logo: typeof TelegramLogo;
-  Icon: typeof MessageSquare; // 用于卡片的lucide图标作为备选
+  nameKey?: MessageKey;
+  descriptionKey?: MessageKey;
+  Logo?: typeof TelegramLogo;
+  Icon: typeof MessageSquare;
 };
-type ConfigFieldDef = {
-  key: string;
-  label: string;
-  type: 'text' | 'password';
-  required: boolean;
-  placeholder: string;
-  helpText?: string;
+type AvailableChannelPlugin = {
+  pluginId: string;
+  platformCode: string;
+  displayName: string;
+  description: string;
+  Logo?: typeof TelegramLogo;
+  Icon: typeof MessageSquare;
 };
-type ConfigFieldMessageDef = {
+type LegacyFallbackConfigField = {
   key: string;
   labelKey: MessageKey;
-  type: 'text' | 'password';
+  type: ChannelLegacyAccountConfigField['type'];
   required: boolean;
   placeholderKey: MessageKey;
   helpTextKey?: MessageKey;
 };
+type PluginConfigFieldDef = {
+  mode: 'plugin_field';
+  field: PluginManifestConfigField;
+  widget?: PluginManifestFieldUiSchema;
+};
+type LegacyConfigFieldDef = {
+  mode: 'legacy_field';
+  key: string;
+  label: string;
+  type: ChannelLegacyAccountConfigField['type'];
+  required: boolean;
+  placeholder: string;
+  helpText?: string;
+};
+type ConfigFieldDef = PluginConfigFieldDef | LegacyConfigFieldDef;
 type AccountFormState = {
   plugin_id: string;
   display_name: string;
@@ -64,169 +86,38 @@ type AccountFormState = {
   status: ChannelAccountStatus;
 };
 
-const PLATFORM_CONFIG_FIELDS: Record<string, ConfigFieldMessageDef[]> = {
-  discord: [
-    {
-      key: 'application_public_key',
-      labelKey: 'settings.channelAccess.configField.discord.applicationPublicKey.label',
-      type: 'text',
-      required: true,
-      placeholderKey: 'settings.channelAccess.configField.discord.applicationPublicKey.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.discord.applicationPublicKey.help',
-    },
-    {
-      key: 'bot_token',
-      labelKey: 'settings.channelAccess.configField.discord.botToken.label',
-      type: 'password',
-      required: false,
-      placeholderKey: 'settings.channelAccess.configField.discord.botToken.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.discord.botToken.help',
-    },
-  ],
-  feishu: [
-    {
-      key: 'app_id',
-      labelKey: 'settings.channelAccess.configField.feishu.appId.label',
-      type: 'text',
-      required: true,
-      placeholderKey: 'settings.channelAccess.configField.feishu.appId.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.feishu.appId.help',
-    },
-    {
-      key: 'app_secret',
-      labelKey: 'settings.channelAccess.configField.feishu.appSecret.label',
-      type: 'password',
-      required: true,
-      placeholderKey: 'settings.channelAccess.configField.feishu.appSecret.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.feishu.appSecret.help',
-    },
-    {
-      key: 'encrypt_key',
-      labelKey: 'settings.channelAccess.configField.feishu.encryptKey.label',
-      type: 'password',
-      required: false,
-      placeholderKey: 'settings.channelAccess.configField.feishu.encryptKey.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.feishu.encryptKey.help',
-    },
-    {
-      key: 'base_url',
-      labelKey: 'settings.channelAccess.configField.feishu.baseUrl.label',
-      type: 'text',
-      required: false,
-      placeholderKey: 'settings.channelAccess.configField.feishu.baseUrl.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.feishu.baseUrl.help',
-    },
-  ],
-  dingtalk: [
-    {
-      key: 'app_key',
-      labelKey: 'settings.channelAccess.configField.dingtalk.appKey.label',
-      type: 'text',
-      required: true,
-      placeholderKey: 'settings.channelAccess.configField.dingtalk.appKey.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.dingtalk.appKey.help',
-    },
-    {
-      key: 'app_secret',
-      labelKey: 'settings.channelAccess.configField.dingtalk.appSecret.label',
-      type: 'password',
-      required: false,
-      placeholderKey: 'settings.channelAccess.configField.dingtalk.appSecret.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.dingtalk.appSecret.help',
-    },
-  ],
-  wecom_app: [
-    {
-      key: 'corp_id',
-      labelKey: 'settings.channelAccess.configField.wecomApp.corpId.label',
-      type: 'text',
-      required: true,
-      placeholderKey: 'settings.channelAccess.configField.wecomApp.corpId.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.wecomApp.corpId.help',
-    },
-    {
-      key: 'corp_secret',
-      labelKey: 'settings.channelAccess.configField.wecomApp.corpSecret.label',
-      type: 'password',
-      required: true,
-      placeholderKey: 'settings.channelAccess.configField.wecomApp.corpSecret.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.wecomApp.corpSecret.help',
-    },
-    {
-      key: 'agent_id',
-      labelKey: 'settings.channelAccess.configField.wecomApp.agentId.label',
-      type: 'text',
-      required: true,
-      placeholderKey: 'settings.channelAccess.configField.wecomApp.agentId.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.wecomApp.agentId.help',
-    },
-    {
-      key: 'callback_token',
-      labelKey: 'settings.channelAccess.configField.wecomApp.callbackToken.label',
-      type: 'password',
-      required: true,
-      placeholderKey: 'settings.channelAccess.configField.wecomApp.callbackToken.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.wecomApp.callbackToken.help',
-    },
-    {
-      key: 'encoding_aes_key',
-      labelKey: 'settings.channelAccess.configField.wecomApp.encodingAesKey.label',
-      type: 'password',
-      required: true,
-      placeholderKey: 'settings.channelAccess.configField.wecomApp.encodingAesKey.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.wecomApp.encodingAesKey.help',
-    },
-  ],
-  wecom_bot: [
-    {
-      key: 'webhook_url',
-      labelKey: 'settings.channelAccess.configField.wecomBot.webhookUrl.label',
-      type: 'text',
-      required: false,
-      placeholderKey: 'settings.channelAccess.configField.wecomBot.webhookUrl.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.wecomBot.webhookUrl.help',
-    },
-    {
-      key: 'key',
-      labelKey: 'settings.channelAccess.configField.wecomBot.key.label',
-      type: 'password',
-      required: false,
-      placeholderKey: 'settings.channelAccess.configField.wecomBot.key.placeholder',
-      helpTextKey: 'settings.channelAccess.configField.wecomBot.key.help',
-    },
-  ],
-};
-
 const PLATFORMS: PlatformInfo[] = [
   {
     code: 'telegram',
     nameKey: 'settings.channelAccess.platform.telegram',
-    description: '全球流行的即时通讯平台，支持群组、频道和机器人',
+    descriptionKey: 'settings.channelAccess.platformDescription.telegram',
     Logo: TelegramLogo,
     Icon: MessageSquare,
   },
   {
     code: 'discord',
     nameKey: 'settings.channelAccess.platform.discord',
-    description: '面向社区的语音、视频和文字通讯平台',
+    descriptionKey: 'settings.channelAccess.platformDescription.discord',
     Logo: DiscordLogo,
     Icon: Gamepad2,
   },
   {
     code: 'feishu',
     nameKey: 'settings.channelAccess.platform.feishu',
-    description: '字节跳动旗下企业协作平台，支持机器人与多维表格',
+    descriptionKey: 'settings.channelAccess.platformDescription.feishu',
     Logo: FeishuLogo,
     Icon: Building2,
   },
   {
     code: 'dingtalk',
     nameKey: 'settings.channelAccess.platform.dingtalk',
-    description: '阿里巴巴旗下企业通讯与协作平台',
+    descriptionKey: 'settings.channelAccess.platformDescription.dingtalk',
     Logo: DingtalkLogo,
     Icon: Bot,
   },
 ];
+
+const PLATFORM_CONFIG_FIELDS: Record<string, LegacyFallbackConfigField[]> = {};
 
 function buildInitialAccountForm(): AccountFormState {
   return { plugin_id: '', display_name: '', connection_mode: 'polling', config: {}, status: 'draft' };
@@ -239,10 +130,27 @@ function normalizeLocale(locale?: string) {
 function getPlatformInfo(platformCode: string): PlatformInfo {
   return PLATFORMS.find((item) => item.code === platformCode) ?? {
     code: platformCode,
-    nameKey: 'settings.channelAccess.platform.telegram' as MessageKey,
-    description: '未知平台',
-    Logo: TelegramLogo,
-    Icon: MessageSquare,
+    Icon: Puzzle,
+  };
+}
+
+function buildAvailableChannelPlugin(
+  plugin: PluginRegistryItem,
+  locale: string | undefined,
+): AvailableChannelPlugin | null {
+  if (!plugin.enabled) return null;
+  const platformCode = plugin.capabilities.channel?.platform_code ?? plugin.id.replace(/^channel-/, '');
+  if (!platformCode) return null;
+  const platformInfo = getPlatformInfo(platformCode);
+  return {
+    pluginId: plugin.id,
+    platformCode,
+    displayName: platformInfo.nameKey ? getPageMessage(locale, platformInfo.nameKey) : plugin.name,
+    description: platformInfo.descriptionKey
+      ? getPageMessage(locale, platformInfo.descriptionKey)
+      : getPageMessage(locale, 'settings.channelAccess.platformDescription.pluginProvided', { pluginName: plugin.name }),
+    Logo: platformInfo.Logo,
+    Icon: platformInfo.Icon,
   };
 }
 
@@ -309,36 +217,69 @@ function formatApiErrorMessage(error: ApiError, locale: string | undefined): str
   return error.message || getPageMessage(locale, 'settings.channelAccess.status.saveFailed');
 }
 
+function resolvePluginSummaryNotice(summary: ChannelAccountPluginStatusSummaryRead): {
+  tone: 'info' | 'success' | 'error';
+  icon: string;
+} {
+  if (summary.tone === 'success') return { tone: 'success', icon: '✓' };
+  if (summary.tone === 'danger') return { tone: 'error', icon: '⚠️' };
+  if (summary.tone === 'warning') return { tone: 'info', icon: '!' };
+  return { tone: 'info', icon: 'ℹ️' };
+}
+
+function renderPluginStatusSummary(
+  summary: ChannelAccountPluginStatusSummaryRead,
+  locale: string | undefined,
+  t: (key: MessageKey, params?: Record<string, string | number>) => string,
+) {
+  const notice = resolvePluginSummaryNotice(summary);
+  return (
+    <SettingsNotice tone={notice.tone} icon={notice.icon}>
+      <>
+        <strong>{summary.title ?? t('settings.channelAccess.detail.pluginStatusFallback')}</strong>
+        {` ${summary.message ?? t('settings.channelAccess.detail.pluginStatusEmpty')}`}
+        {summary.last_error_message ? (
+          <span className="channel-detail-error__time">{summary.last_error_message}</span>
+        ) : null}
+        {summary.updated_at ? (
+          <span className="channel-detail-error__time">
+            {t('settings.channelAccess.detail.pluginStatusUpdatedAt', {
+              time: formatTimestamp(summary.updated_at, locale),
+            })}
+          </span>
+        ) : null}
+      </>
+    </SettingsNotice>
+  );
+}
+
 function getConfigFields(
   plugin: PluginRegistryItem | null,
   platformCode: string | null,
   locale: string | undefined,
-  translate: (key: string, params?: Record<string, string | number>) => string,
+  _translate: (key: string, params?: Record<string, string | number>) => string,
 ): ConfigFieldDef[] {
-  const configSpec = plugin?.config_specs?.find((item) => item.scope_type === 'channel_account');
+  const configSpec = plugin?.config_specs?.find((item) => item.scope_type === 'channel_account') ?? null;
   if (configSpec) {
     const fieldMap = new Map(configSpec.config_schema.fields.map((field) => [field.key, field]));
     const widgets = configSpec.ui_schema.widgets ?? {};
     const orderedKeys = configSpec.ui_schema.field_order?.filter((key) => fieldMap.has(key))
       ?? configSpec.config_schema.fields.map((field) => field.key);
-    return orderedKeys.flatMap((key) => {
+    return orderedKeys.flatMap<PluginConfigFieldDef>((key) => {
       const field = fieldMap.get(key);
       if (!field) return [];
-      const widget = widgets[key];
       return [{
-        key: field.key,
-        label: resolvePluginFieldLabel(field, translate),
-        type: field.type === 'secret' || widget?.widget === 'password' ? 'password' : 'text',
-        required: field.required,
-        placeholder: resolvePluginWidgetPlaceholder(widget, translate),
-        helpText: resolvePluginWidgetHelpText(widget, field, translate) || undefined,
+        mode: 'plugin_field',
+        field,
+        widget: widgets[key],
       }];
     });
   }
 
   const legacyFields = plugin?.capabilities.channel?.ui?.account_config_fields;
   if (legacyFields?.length) {
-    return legacyFields.map((field) => ({
+    return legacyFields.map<LegacyConfigFieldDef>((field) => ({
+      mode: 'legacy_field',
       key: field.key,
       label: field.label,
       type: field.type,
@@ -349,7 +290,8 @@ function getConfigFields(
   }
 
   const fallbackFields = platformCode ? (PLATFORM_CONFIG_FIELDS[platformCode] ?? []) : [];
-  return fallbackFields.map((field) => ({
+  return fallbackFields.map<LegacyConfigFieldDef>((field) => ({
+    mode: 'legacy_field',
     key: field.key,
     label: getPageMessage(locale, field.labelKey),
     type: field.type,
@@ -357,6 +299,57 @@ function getConfigFields(
     placeholder: getPageMessage(locale, field.placeholderKey),
     helpText: field.helpTextKey ? getPageMessage(locale, field.helpTextKey) : undefined,
   }));
+}
+
+function getScalarValue(values: Record<string, unknown>, key: string): string {
+  const value = values[key];
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  return '';
+}
+
+function getMultiEnumValues(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function formatJsonEditorValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return '';
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return '';
+  }
+}
+
+function formatDisplayValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value === null || value === undefined) return '';
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return '';
+  }
+}
+
+function isPluginFieldVisible(
+  fieldKey: string,
+  values: Record<string, unknown>,
+  widgets: Record<string, PluginManifestFieldUiSchema> | undefined,
+): boolean {
+  const rules = widgets?.[fieldKey]?.visible_when ?? [];
+  if (rules.length === 0) {
+    return true;
+  }
+  return rules.every((rule) => {
+    const currentValue = values[rule.field];
+    if (rule.operator === 'truthy') return Boolean(currentValue);
+    if (rule.operator === 'equals') return currentValue === rule.value;
+    if (rule.operator === 'not_equals') return currentValue !== rule.value;
+    if (rule.operator === 'in') return Array.isArray(rule.value) && rule.value.includes(currentValue);
+    return true;
+  });
 }
 
 function getSupportedConnectionModes(plugin: PluginRegistryItem | null): ChannelConnectionMode[] {
@@ -385,9 +378,16 @@ function SettingsChannelAccessContent() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [platformSelectOpen, setPlatformSelectOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [accountModalMode, setAccountModalMode] = useState<'create' | 'edit'>('create');
   const [editingAccount, setEditingAccount] = useState<ChannelAccountRead | null>(null);
+  const [transientDraftAccountId, setTransientDraftAccountId] = useState<string | null>(null);
   const [accountForm, setAccountForm] = useState<AccountFormState>(buildInitialAccountForm);
+  const [accountFieldErrors, setAccountFieldErrors] = useState<Record<string, string>>({});
+  const [configPreview, setConfigPreview] = useState<PluginConfigFormRead | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
+  const [pluginActionLoadingKey, setPluginActionLoadingKey] = useState<string | null>(null);
+  const [pluginActionResult, setPluginActionResult] = useState<ChannelAccountPluginActionExecuteRead | null>(null);
 
   const t = (key: MessageKey, params?: Record<string, string | number>) => getPageMessage(locale, key, params);
   const separator = t('settings.channelAccess.separator.dot');
@@ -434,12 +434,12 @@ function SettingsChannelAccessContent() {
   }, [currentHouseholdId]);
 
   const channelPluginMap = useMemo(() => new Map(channelPlugins.map((plugin) => [plugin.id, plugin])), [channelPlugins]);
-  const availableChannelPlugins = useMemo(() => channelPlugins
-    .filter((plugin) => plugin.enabled && !!plugin.capabilities.channel?.platform_code)
-    .map((plugin) => {
-      const platformCode = plugin.capabilities.channel?.platform_code ?? plugin.id.replace(/^channel-/, '');
-      return { pluginId: plugin.id, platformCode, name: plugin.name, Icon: getPlatformInfo(platformCode).Icon };
-    }), [channelPlugins]);
+  const availableChannelPlugins = useMemo(
+    () => channelPlugins
+      .map((plugin) => buildAvailableChannelPlugin(plugin, locale))
+      .filter((plugin): plugin is AvailableChannelPlugin => plugin !== null),
+    [channelPlugins, locale],
+  );
   const activeMembers = useMemo(() => members.filter((member) => member.status === 'active'), [members]);
 
   async function loadAccountDetail(accountId: string) {
@@ -474,6 +474,8 @@ function SettingsChannelAccessContent() {
     setAccountStatus(null);
     setFailedDeliveries([]);
     setFailedInboundEvents([]);
+    setPluginActionResult(null);
+    setPluginActionLoadingKey(null);
   }
 
   function toggleAccountExpand(accountId: string) {
@@ -482,27 +484,94 @@ function SettingsChannelAccessContent() {
       return;
     }
     setExpandedAccountId(accountId);
+    setPluginActionResult(null);
     void loadAccountDetail(accountId);
   }
 
   function openCreateModal() {
-    // 先打开平台选择对话框
     setPlatformSelectOpen(true);
   }
 
-  function selectPlatform(platformCode: string) {
-    // 选择平台后，关闭平台选择对话框，打开表单对话框
-    setPlatformSelectOpen(false);
+  function resetAccountModalState() {
+    setAccountModalOpen(false);
+    setAccountModalMode('create');
     setEditingAccount(null);
-    setAccountForm({
-      ...buildInitialAccountForm(),
-      plugin_id: `channel-${platformCode}`, // 假设插件ID格式
-    });
-    setAccountModalOpen(true);
+    setTransientDraftAccountId(null);
+    setAccountForm(buildInitialAccountForm());
+    setAccountFieldErrors({});
+    setConfigPreview(null);
+    setPreviewLoading(false);
+  }
+
+  async function closeAccountModal() {
+    if (modalLoading || previewLoading) return;
+    if (transientDraftAccountId && currentHouseholdId) {
+      setModalLoading(true);
+      try {
+        await settingsApi.deleteChannelAccount(currentHouseholdId, transientDraftAccountId);
+      } catch (closeError) {
+        setError(
+          closeError instanceof ApiError
+            ? formatApiErrorMessage(closeError, locale)
+            : closeError instanceof Error
+              ? closeError.message
+              : t('settings.channelAccess.status.deleteFailed'),
+        );
+        setModalLoading(false);
+        return;
+      }
+      setModalLoading(false);
+    }
+    resetAccountModalState();
+  }
+
+  async function selectPlatform(pluginId: string) {
+    const plugin = channelPluginMap.get(pluginId) ?? null;
+    if (!plugin || !currentHouseholdId) return;
+    const availablePlugin = availableChannelPlugins.find((item) => item.pluginId === pluginId) ?? null;
+    const defaultDisplayName = availablePlugin?.displayName ?? plugin.name;
+    const defaultMode = resolveDefaultConnectionMode(plugin);
+    setPlatformSelectOpen(false);
+    setModalLoading(true);
+    setError('');
+    try {
+      const draftAccount = await settingsApi.createChannelAccount(currentHouseholdId, {
+        plugin_id: pluginId,
+        display_name: defaultDisplayName,
+        connection_mode: defaultMode,
+        config: {},
+        status: 'draft',
+      });
+      setAccountModalMode('create');
+      setEditingAccount(draftAccount);
+      setTransientDraftAccountId(draftAccount.id);
+      setAccountForm({
+        plugin_id: draftAccount.plugin_id,
+        display_name: draftAccount.display_name,
+        connection_mode: draftAccount.connection_mode,
+        config: draftAccount.config,
+        status: draftAccount.status,
+      });
+      setAccountFieldErrors({});
+      setConfigPreview(null);
+      setAccountModalOpen(true);
+    } catch (selectError) {
+      setError(
+        selectError instanceof ApiError
+          ? formatApiErrorMessage(selectError, locale)
+          : selectError instanceof Error
+            ? selectError.message
+            : t('settings.channelAccess.status.createFailed'),
+      );
+    } finally {
+      setModalLoading(false);
+    }
   }
 
   function openEditModal(account: ChannelAccountRead) {
+    setAccountModalMode('edit');
     setEditingAccount(account);
+    setTransientDraftAccountId(null);
     setAccountForm({
       plugin_id: account.plugin_id,
       display_name: account.display_name,
@@ -510,6 +579,8 @@ function SettingsChannelAccessContent() {
       config: account.config,
       status: account.status,
     });
+    setAccountFieldErrors({});
+    setConfigPreview(null);
     setAccountModalOpen(true);
   }
 
@@ -523,34 +594,30 @@ function SettingsChannelAccessContent() {
 
   async function handleSaveAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!currentHouseholdId) return;
+    if (!currentHouseholdId || !editingAccount) return;
     setModalLoading(true);
     setError('');
     setStatus('');
     try {
-      if (editingAccount) {
-        const payload: ChannelAccountUpdate = {
-          display_name: accountForm.display_name,
-          connection_mode: accountForm.connection_mode,
-          config: accountForm.config,
-          status: accountForm.status,
-        };
-        const result = await settingsApi.updateChannelAccount(currentHouseholdId, editingAccount.id, payload);
-        setAccounts((current) => current.map((item) => item.id === result.id ? result : item));
-        setStatus(t('settings.channelAccess.status.updateSuccess'));
-      } else {
-        const payload: ChannelAccountCreate = {
-          plugin_id: accountForm.plugin_id,
-          display_name: accountForm.display_name,
-          connection_mode: accountForm.connection_mode,
-          config: accountForm.config,
-          status: accountForm.status,
-        };
-        const result = await settingsApi.createChannelAccount(currentHouseholdId, payload);
-        setAccounts((current) => [result, ...current]);
-        setStatus(t('settings.channelAccess.status.createSuccess'));
-      }
-      setAccountModalOpen(false);
+      const payload: ChannelAccountUpdate = {
+        display_name: accountForm.display_name,
+        connection_mode: accountForm.connection_mode,
+        config: accountForm.config,
+        status: accountForm.status,
+      };
+      const result = await settingsApi.updateChannelAccount(currentHouseholdId, editingAccount.id, payload);
+      setAccounts((current) => {
+        if (accountModalMode === 'create') {
+          return [result, ...current];
+        }
+        return current.map((item) => item.id === result.id ? result : item);
+      });
+      setStatus(
+        accountModalMode === 'create'
+          ? t('settings.channelAccess.status.createSuccess')
+          : t('settings.channelAccess.status.updateSuccess'),
+      );
+      resetAccountModalState();
     } catch (saveError) {
       setError(
         saveError instanceof ApiError
@@ -561,6 +628,38 @@ function SettingsChannelAccessContent() {
       );
     } finally {
       setModalLoading(false);
+    }
+  }
+
+  async function handlePreviewAccountConfig() {
+    if (!currentHouseholdId || !editingAccount || !selectedPlugin?.entrypoints.config_preview) return;
+    setPreviewLoading(true);
+    setError('');
+    setAccountFieldErrors({});
+    try {
+      const previewForm = await settingsApi.previewHouseholdPluginConfigForm(currentHouseholdId, selectedPlugin.id, {
+        scope_type: 'channel_account',
+        scope_key: editingAccount.id,
+        values: accountForm.config,
+        secret_values: {},
+        clear_secret_fields: [],
+      });
+      setConfigPreview(previewForm);
+      setAccountFieldErrors(previewForm.view.field_errors);
+      setAccountForm((current) => ({
+        ...current,
+        config: { ...current.config, ...previewForm.view.values },
+      }));
+    } catch (previewError) {
+      setError(
+        previewError instanceof ApiError
+          ? formatApiErrorMessage(previewError, locale)
+          : previewError instanceof Error
+            ? previewError.message
+            : t('settings.channelAccess.status.previewFailed'),
+      );
+    } finally {
+      setPreviewLoading(false);
     }
   }
 
@@ -630,6 +729,55 @@ function SettingsChannelAccessContent() {
     }
   }
 
+  async function handleExecutePluginAction(
+    account: ChannelAccountRead,
+    actionKey: string,
+  ) {
+    if (!currentHouseholdId || !accountStatus) return;
+    const action = accountStatus.plugin_actions.find((item) => item.key === actionKey);
+    if (!action || action.disabled) return;
+
+    if (action.requires_confirmation) {
+      const confirmResult = await Taro.showModal({
+        title: t('settings.channelAccess.pluginAction.confirmTitle'),
+        content: action.confirmation_text
+          ?? action.description
+          ?? t('settings.channelAccess.pluginAction.confirmFallback'),
+        confirmText: t('settings.channelAccess.pluginAction.confirmButton'),
+        cancelText: t('settings.channelAccess.actions.cancel'),
+      });
+      if (!confirmResult.confirm) return;
+    }
+
+    setPluginActionLoadingKey(action.key);
+    setError('');
+    setStatus('');
+    try {
+      const result = await settingsApi.executeChannelAccountPluginAction(
+        currentHouseholdId,
+        account.id,
+        action.key,
+        { payload: {} },
+      );
+      setPluginActionResult(result);
+      await loadAccounts();
+      if (expandedAccountId === account.id) {
+        await loadAccountDetail(account.id);
+      }
+      setStatus(result.message ?? t('settings.channelAccess.status.pluginActionSuccess'));
+    } catch (actionError) {
+      setError(
+        actionError instanceof ApiError
+          ? formatApiErrorMessage(actionError, locale)
+          : actionError instanceof Error
+            ? actionError.message
+            : t('settings.channelAccess.status.actionFailed'),
+      );
+    } finally {
+      setPluginActionLoadingKey(null);
+    }
+  }
+
   const selectedPlugin = editingAccount?.plugin_id
     ? channelPluginMap.get(editingAccount.plugin_id) ?? null
     : accountForm.plugin_id
@@ -642,6 +790,18 @@ function SettingsChannelAccessContent() {
     () => getConfigFields(selectedPlugin, selectedPlatformCode, locale, translate),
     [selectedPlugin, selectedPlatformCode, locale, translate],
   );
+  const pluginConfigSpec = selectedPlugin?.config_specs?.find((item) => item.scope_type === 'channel_account') ?? null;
+  const pluginConfigWidgets = pluginConfigSpec?.ui_schema.widgets;
+  const visibleConfigFields = useMemo(
+    () => configFields.filter((item) => {
+      if (item.mode === 'legacy_field') {
+        return true;
+      }
+      return isPluginFieldVisible(item.field.key, accountForm.config, pluginConfigWidgets);
+    }),
+    [accountForm.config, configFields, pluginConfigWidgets],
+  );
+  const canPreviewConfig = Boolean(selectedPlugin?.entrypoints.config_preview && editingAccount?.id);
   const supportedConnectionModes = useMemo(() => getSupportedConnectionModes(selectedPlugin), [selectedPlugin]);
 
   useEffect(() => {
@@ -651,6 +811,240 @@ function SettingsChannelAccessContent() {
       setAccountForm((current) => ({ ...current, connection_mode: defaultMode }));
     }
   }, [accountForm.connection_mode, selectedPlugin, supportedConnectionModes]);
+
+  function updateConfigValue(fieldKey: string, value: unknown) {
+    setAccountForm((current) => ({
+      ...current,
+      config: { ...current.config, [fieldKey]: value },
+    }));
+    setAccountFieldErrors((current) => {
+      if (!(fieldKey in current)) {
+        return current;
+      }
+      const nextErrors = { ...current };
+      delete nextErrors[fieldKey];
+      return nextErrors;
+    });
+    setConfigPreview(null);
+  }
+
+  function renderConfigField(fieldDef: ConfigFieldDef) {
+    if (fieldDef.mode === 'legacy_field') {
+      return (
+        <div key={fieldDef.key} className="channel-config-field">
+          <label className="channel-config-field__label">
+            {fieldDef.label}
+            {fieldDef.required ? <span className="required-mark">*</span> : null}
+          </label>
+          <input
+            type={fieldDef.type}
+            className="form-input"
+            value={String(accountForm.config[fieldDef.key] ?? '')}
+            onChange={(event) => updateConfigValue(fieldDef.key, event.target.value)}
+            placeholder={fieldDef.placeholder}
+            required={fieldDef.required}
+          />
+          {fieldDef.helpText ? <div className="form-help">{fieldDef.helpText}</div> : null}
+          {accountFieldErrors[fieldDef.key] ? <div className="form-help">{accountFieldErrors[fieldDef.key]}</div> : null}
+        </div>
+      );
+    }
+
+    const { field, widget } = fieldDef;
+    const label = resolvePluginFieldLabel(field, translate);
+    const helpText = resolvePluginWidgetHelpText(widget, field, translate);
+    const placeholder = resolvePluginWidgetPlaceholder(widget, translate);
+    const fieldError = accountFieldErrors[field.key];
+    const widgetType = widget?.widget;
+    const rawValue = accountForm.config[field.key];
+    const displayValue = formatDisplayValue(rawValue ?? field.default);
+
+    if (widgetType === 'display') {
+      return (
+        <div key={field.key} className="channel-config-field channel-config-field--display">
+          <label className="channel-config-field__label">{label}</label>
+          <pre className="channel-config-field__display">
+            {displayValue || helpText || t('settings.channelAccess.form.displayWidgetEmpty')}
+          </pre>
+          {helpText ? <div className="form-help">{helpText}</div> : null}
+        </div>
+      );
+    }
+
+    if (field.type === 'secret') {
+      return (
+        <div key={field.key} className="channel-config-field">
+          <label className="channel-config-field__label">
+            {label}
+            {field.required ? <span className="required-mark">*</span> : null}
+          </label>
+          <input
+            type="password"
+            className="form-input"
+            value={getScalarValue(accountForm.config, field.key)}
+            onChange={(event) => updateConfigValue(field.key, event.target.value)}
+            placeholder={placeholder || undefined}
+            required={field.required}
+          />
+          {helpText ? <div className="form-help">{helpText}</div> : null}
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+
+    if (field.type === 'boolean') {
+      if (widgetType === 'switch') {
+        return (
+          <div key={field.key} className="channel-config-field">
+            <label className="channel-config-field__label">{label}</label>
+            <label className="channel-config-field__toggle">
+              <input
+                type="checkbox"
+                checked={rawValue === true}
+                onChange={(event) => updateConfigValue(field.key, event.target.checked)}
+              />
+              <span>{rawValue === true ? t('settings.channelAccess.form.booleanTrue') : t('settings.channelAccess.form.booleanFalse')}</span>
+            </label>
+            {helpText ? <div className="form-help">{helpText}</div> : null}
+            {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          </div>
+        );
+      }
+      return (
+        <div key={field.key} className="channel-config-field">
+          <label className="channel-config-field__label">{label}</label>
+          <select
+            className="form-select"
+            value={rawValue === true ? 'true' : 'false'}
+            onChange={(event) => updateConfigValue(field.key, event.target.value === 'true')}
+          >
+            <option value="false">{t('settings.channelAccess.form.booleanFalse')}</option>
+            <option value="true">{t('settings.channelAccess.form.booleanTrue')}</option>
+          </select>
+          {helpText ? <div className="form-help">{helpText}</div> : null}
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+
+    if (field.type === 'enum') {
+      return (
+        <div key={field.key} className="channel-config-field">
+          <label className="channel-config-field__label">
+            {label}
+            {field.required ? <span className="required-mark">*</span> : null}
+          </label>
+          <select
+            className="form-select"
+            value={getScalarValue(accountForm.config, field.key)}
+            onChange={(event) => updateConfigValue(field.key, event.target.value)}
+          >
+            <option value="">{t('settings.channelAccess.form.selectPlaceholder')}</option>
+            {(field.enum_options ?? []).map((option: NonNullable<PluginManifestConfigField['enum_options']>[number]) => (
+              <option key={option.value} value={option.value}>{resolvePluginOptionLabel(option, translate)}</option>
+            ))}
+          </select>
+          {helpText ? <div className="form-help">{helpText}</div> : null}
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+
+    if (field.type === 'multi_enum') {
+      return (
+        <div key={field.key} className="channel-config-field">
+          <label className="channel-config-field__label">{label}</label>
+          <select
+            className="form-select"
+            multiple
+            value={getMultiEnumValues(rawValue)}
+            onChange={(event) => {
+              const nextValues = Array.from(event.target.selectedOptions).map((option) => option.value);
+              updateConfigValue(field.key, nextValues);
+            }}
+          >
+            {(field.enum_options ?? []).map((option: NonNullable<PluginManifestConfigField['enum_options']>[number]) => (
+              <option key={option.value} value={option.value}>{resolvePluginOptionLabel(option, translate)}</option>
+            ))}
+          </select>
+          <div className="form-help">{t('settings.channelAccess.form.multiSelectHint')}</div>
+          {helpText ? <div className="form-help">{helpText}</div> : null}
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+
+    if (field.type === 'json') {
+      return (
+        <div key={field.key} className="channel-config-field">
+          <label className="channel-config-field__label">{label}</label>
+          <textarea
+            className="form-input"
+            value={formatJsonEditorValue(rawValue)}
+            onChange={(event) => updateConfigValue(field.key, event.target.value)}
+            placeholder={placeholder || undefined}
+            rows={6}
+          />
+          {helpText ? <div className="form-help">{helpText}</div> : null}
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+
+    if (field.type === 'text' || widgetType === 'textarea') {
+      return (
+        <div key={field.key} className="channel-config-field">
+          <label className="channel-config-field__label">
+            {label}
+            {field.required ? <span className="required-mark">*</span> : null}
+          </label>
+          <textarea
+            className="form-input"
+            value={getScalarValue(accountForm.config, field.key)}
+            onChange={(event) => updateConfigValue(field.key, event.target.value)}
+            placeholder={placeholder || undefined}
+            rows={4}
+            required={field.required}
+          />
+          {helpText ? <div className="form-help">{helpText}</div> : null}
+          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+        </div>
+      );
+    }
+
+    const inputType = field.type === 'integer' || field.type === 'number' ? 'number' : 'text';
+    return (
+      <div key={field.key} className="channel-config-field">
+        <label className="channel-config-field__label">
+          {label}
+          {field.required ? <span className="required-mark">*</span> : null}
+        </label>
+        <input
+          type={inputType}
+          className="form-input"
+          value={getScalarValue(accountForm.config, field.key)}
+          onChange={(event) => {
+            if (field.type === 'integer') {
+              const rawInput = event.target.value;
+              updateConfigValue(field.key, rawInput === '' ? '' : Number.parseInt(rawInput, 10));
+              return;
+            }
+            if (field.type === 'number') {
+              const rawInput = event.target.value;
+              updateConfigValue(field.key, rawInput === '' ? '' : Number(rawInput));
+              return;
+            }
+            updateConfigValue(field.key, event.target.value);
+          }}
+          placeholder={placeholder || undefined}
+          required={field.required}
+          step={field.type === 'integer' ? 1 : undefined}
+        />
+        {helpText ? <div className="form-help">{helpText}</div> : null}
+        {fieldError ? <div className="form-help">{fieldError}</div> : null}
+      </div>
+    );
+  }
 
   const headerActions = (
     <div className="channel-account-card__actions">
@@ -696,17 +1090,18 @@ function SettingsChannelAccessContent() {
                 </div>
                 {accounts.map((account) => {
                   const platform = getPlatformInfo(account.platform_code);
-                  const platformName = platform.nameKey ? t(platform.nameKey) : account.platform_code;
+                  const pluginState = getAccountPluginState(account);
+                  const platformName = platform.nameKey ? t(platform.nameKey) : pluginState?.name ?? account.platform_code;
                   const statusInfo = formatStatus(account.status, locale);
                   const probeInfo = formatProbeStatus(account.last_probe_status, locale);
                   const isExpanded = expandedAccountId === account.id;
-                  const pluginState = getAccountPluginState(account);
                   const pluginDisabled = isAccountPluginDisabled(account);
                   const pluginDisabledReason = pluginState?.disabled_reason ?? t('settings.channelAccess.status.pluginDisabledFallback');
                   const supportsMemberBinding = pluginState?.capabilities.channel?.supports_member_binding !== false;
                   const accountMessageClassName = account.last_probe_status === 'ok'
                     ? 'channel-account-card__success'
                     : 'channel-account-card__error';
+                  const currentPluginStatusSummary = accountStatus?.plugin_status_summary ?? pluginActionResult?.status_summary ?? null;
 
                   return (
                     <Card key={account.id} className="channel-account-card">
@@ -824,6 +1219,49 @@ function SettingsChannelAccessContent() {
                                   ) : null}
                                 </div>
                               ) : null}
+                              {accountStatus?.plugin_status_summary || accountStatus?.plugin_actions.length || pluginActionResult ? (
+                                <div className="channel-detail-section">
+                                  <h4>{t('settings.channelAccess.detail.pluginActionsTitle')}</h4>
+                                  {currentPluginStatusSummary ? (
+                                    renderPluginStatusSummary(currentPluginStatusSummary, locale, t)
+                                  ) : (
+                                    <div className="text-text-secondary">
+                                      {t('settings.channelAccess.detail.pluginStatusEmpty')}
+                                    </div>
+                                  )}
+                                  {accountStatus?.plugin_actions.length ? (
+                                    <div className="channel-account-card__actions">
+                                      {accountStatus.plugin_actions.map((action) => (
+                                        <button
+                                          key={action.key}
+                                          className={`btn btn--outline btn--sm${action.variant === 'danger' ? ' btn--danger' : ''}`}
+                                          onClick={() => void handleExecutePluginAction(account, action.key)}
+                                          disabled={loading || action.disabled || pluginActionLoadingKey === action.key}
+                                          title={action.disabled_reason ?? action.description ?? undefined}
+                                        >
+                                          {pluginActionLoadingKey === action.key
+                                            ? t('settings.channelAccess.pluginAction.running')
+                                            : action.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                  {pluginActionResult ? (
+                                    <div className="form-help">
+                                      <strong>{pluginActionResult.action.label}</strong>
+                                      {pluginActionResult.message
+                                        ? ` ${pluginActionResult.message}`
+                                        : ''}
+                                      <PluginArtifactList
+                                        items={pluginActionResult.artifacts}
+                                        artifactFallback={t('settings.channelAccess.pluginAction.artifactFallback')}
+                                        openLinkText={t('settings.channelAccess.pluginAction.openArtifact')}
+                                        className="plugin-artifact-list--compact"
+                                      />
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               <div className="channel-detail-section">
                                 <h4>{t('settings.channelAccess.detail.memberBindings')}</h4>
                                 <ChannelAccountBindingsPanel
@@ -880,21 +1318,24 @@ function SettingsChannelAccessContent() {
         </Section>
         <SettingsDialog
           open={accountModalOpen}
-          title={editingAccount ? t('settings.channelAccess.modal.editTitle') : t('settings.channelAccess.modal.createTitle')}
+          title={accountModalMode === 'edit'
+            ? t('settings.channelAccess.modal.editTitle')
+            : t('settings.channelAccess.modal.createTitle')}
           description={t('settings.channelAccess.modal.description')}
-          onClose={() => setAccountModalOpen(false)}
+          onClose={() => { void closeAccountModal(); }}
+          closeDisabled={modalLoading || previewLoading}
           onSubmit={handleSaveAccount}
           actions={(
             <>
               <button
                 className="btn btn--outline btn--sm"
                 type="button"
-                onClick={() => setAccountModalOpen(false)}
-                disabled={modalLoading}
+                onClick={() => { void closeAccountModal(); }}
+                disabled={modalLoading || previewLoading}
               >
                 {t('settings.channelAccess.actions.cancel')}
               </button>
-              <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading}>
+              <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading || previewLoading}>
                 {modalLoading ? t('settings.channelAccess.actions.saving') : t('settings.channelAccess.actions.save')}
               </button>
             </>
@@ -912,14 +1353,15 @@ function SettingsChannelAccessContent() {
                   plugin_id: event.target.value,
                   connection_mode: resolveDefaultConnectionMode(nextPlugin),
                 }));
+                setConfigPreview(null);
               }}
-              disabled={Boolean(editingAccount)}
+              disabled
               required
             >
               <option value="">{t('settings.channelAccess.form.platformPlaceholder')}</option>
               {availableChannelPlugins.map((plugin) => (
                 <option key={plugin.pluginId} value={plugin.pluginId}>
-                  {plugin.name}
+                  {plugin.displayName}
                 </option>
               ))}
             </select>
@@ -973,31 +1415,39 @@ function SettingsChannelAccessContent() {
               <option value="disabled">{t('settings.channelAccess.accountStatus.disabled')}</option>
             </select>
           </div>
-          {configFields.length > 0 ? (
+          {visibleConfigFields.length > 0 ? (
             <div className="form-group channel-config-section">
               <label>{t('settings.channelAccess.form.platformConfig')}</label>
               <div className="channel-config-fields">
-                {configFields.map((field) => (
-                  <div key={field.key} className="channel-config-field">
-                    <label className="channel-config-field__label">
-                      {field.label}
-                      {field.required ? <span className="required-mark">*</span> : null}
-                    </label>
-                    <input
-                      type={field.type}
-                      className="form-input"
-                      value={String(accountForm.config[field.key] ?? '')}
-                      onChange={(event) => setAccountForm((current) => ({
-                        ...current,
-                        config: { ...current.config, [field.key]: event.target.value },
-                      }))}
-                      placeholder={field.placeholder}
-                      required={field.required}
-                    />
-                    {field.helpText ? <div className="form-help">{field.helpText}</div> : null}
-                  </div>
-                ))}
+                {visibleConfigFields.map((field) => renderConfigField(field))}
               </div>
+            </div>
+          ) : null}
+          {canPreviewConfig ? (
+            <div className="form-group channel-config-preview">
+              <div className="channel-config-preview__header">
+                <label>{t('settings.channelAccess.form.previewTitle')}</label>
+                <button
+                  className="btn btn--outline btn--sm"
+                  type="button"
+                  onClick={() => void handlePreviewAccountConfig()}
+                  disabled={previewLoading || modalLoading}
+                >
+                  {previewLoading
+                    ? t('settings.channelAccess.actions.previewing')
+                    : t('settings.channelAccess.actions.refreshPreview')}
+                </button>
+              </div>
+              <div className="form-help">{t('settings.channelAccess.form.previewHelp')}</div>
+              {configPreview?.view.preview_artifacts.length ? (
+                <PluginArtifactList
+                  items={configPreview.view.preview_artifacts}
+                  artifactFallback={t('settings.channelAccess.form.previewArtifactFallback')}
+                  openLinkText={t('settings.channelAccess.form.previewOpenArtifact')}
+                />
+              ) : (
+                <div className="form-help">{t('settings.channelAccess.form.previewEmpty')}</div>
+              )}
             </div>
           ) : null}
         </SettingsDialog>
@@ -1008,33 +1458,33 @@ function SettingsChannelAccessContent() {
             <div className="member-modal platform-select-modal" onClick={(event) => event.stopPropagation()}>
               <div className="member-modal__header">
                 <div>
-                  <h3>{locale.startsWith('en') ? 'Select Platform' : '选择平台'}</h3>
-                  <p>{locale.startsWith('en') ? 'Choose a communication platform to connect' : '选择要连接的通讯平台'}</p>
+                  <h3>{t('settings.channelAccess.platformSelect.title')}</h3>
+                  <p>{t('settings.channelAccess.platformSelect.description')}</p>
                 </div>
                 <button
                   type="button"
                   className="member-modal__close"
                   onClick={() => setPlatformSelectOpen(false)}
-                  aria-label="Close"
+                  aria-label={t('settings.channelAccess.actions.cancel')}
                 >
                   ×
                 </button>
               </div>
               <div className="platform-select-grid">
-                {PLATFORMS.map((platform) => {
-                  const { Logo, nameKey, description } = platform;
+                {availableChannelPlugins.map((plugin) => {
+                  const { Logo, Icon, description, displayName } = plugin;
                   return (
                     <button
-                      key={platform.code}
+                      key={plugin.pluginId}
                       type="button"
                       className="platform-select-card"
-                      onClick={() => selectPlatform(platform.code)}
+                      onClick={() => void selectPlatform(plugin.pluginId)}
                     >
                       <div className="platform-select-card__logo">
-                        <Logo width={48} height={48} />
+                        {Logo ? <Logo width={48} height={48} /> : <Icon size={32} />}
                       </div>
                       <div className="platform-select-card__body">
-                        <h4 className="platform-select-card__name">{t(nameKey)}</h4>
+                        <h4 className="platform-select-card__name">{displayName}</h4>
                         <p className="platform-select-card__desc">{description}</p>
                       </div>
                       <div className="platform-select-card__arrow">
@@ -1049,9 +1499,7 @@ function SettingsChannelAccessContent() {
                   <Puzzle size={16} />
                 </div>
                 <span className="platform-select-footer__text">
-                  {locale.startsWith('en')
-                    ? 'More platforms can be extended via plugins'
-                    : '更多平台可通过插件扩展接入'}
+                  {t('settings.channelAccess.platformSelect.footer')}
                 </span>
               </div>
             </div>
