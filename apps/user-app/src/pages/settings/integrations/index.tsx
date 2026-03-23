@@ -29,15 +29,21 @@ import {
   type SyncAllImpactSummary,
 } from './integrationSyncHelpers';
 import type {
+  PluginConfigPreviewArtifactRead,
+  PluginConfigAuthSessionRead,
   IntegrationActionResult,
   IntegrationCatalogItem,
   IntegrationDiscoveryItem,
   IntegrationInstance,
   IntegrationResource,
   PluginConfigFormRead,
+  PluginManifestConfigPreviewAction,
   PluginManifestConfigField,
   PluginManifestConfigSpec,
   PluginManifestFieldUiSchema,
+  PluginManifestRuntimeStateItem,
+  PluginManifestRuntimeStateSection,
+  PluginManifestUiSection,
 } from '../settingsTypes';
 
 type CreateDraft = {
@@ -59,16 +65,9 @@ type InstanceFormContext = {
   instanceDisplayNamePlaceholderKey: string | null;
   configSpec: PluginManifestConfigSpec;
 };
-type OpenXiaoaiGatewayCandidate = {
-  gatewayId: string;
-  modelSummary: string;
-  speakerCount: number;
-  onlineSpeakerCount: number;
-  lastSeenAt: string | null;
-};
-
-const OPEN_XIAOAI_PLUGIN_ID = 'open-xiaoai-speaker';
-const OPEN_XIAOAI_GATEWAY_FIELD_KEY = 'gateway_id';
+const EMPTY_RUNTIME_STATE: Record<string, unknown> = {};
+const EMPTY_PREVIEW_ARTIFACTS: PluginConfigPreviewArtifactRead[] = [];
+const PREVIEW_AUTH_SESSION_POLL_INTERVAL_MS = 2000;
 
 function getActionOutputItems<T>(result: IntegrationActionResult): T[] {
   const items = result.output.items;
@@ -240,7 +239,20 @@ function normalizeSubmitValue(field: PluginManifestConfigField, value: unknown):
   if (field.type === 'boolean') {
     return value === true;
   }
-  if (field.type === 'integer' || field.type === 'number') {
+  if (field.type === 'integer') {
+    if (typeof value === 'number') {
+      return Number.isInteger(value) ? value : value;
+    }
+    if (typeof value === 'string') {
+      const normalizedValue = value.trim();
+      if (!normalizedValue) {
+        return field.required ? value : undefined;
+      }
+      const parsed = Number(normalizedValue);
+      return Number.isInteger(parsed) ? parsed : value;
+    }
+  }
+  if (field.type === 'number') {
     if (typeof value === 'number') {
       return value;
     }
@@ -263,68 +275,221 @@ function normalizeSubmitValue(field: PluginManifestConfigField, value: unknown):
     }
     return normalizedValue;
   }
+  if (field.type === 'multi_enum') {
+    if (!Array.isArray(value)) {
+      return value;
+    }
+    const normalizedValues = value
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (normalizedValues.length === 0) {
+      return field.required ? value : undefined;
+    }
+    return normalizedValues;
+  }
+  if (field.type === 'json') {
+    if (typeof value === 'string') {
+      const normalizedValue = value.trim();
+      if (!normalizedValue) {
+        return field.required ? value : undefined;
+      }
+      try {
+        const parsed = JSON.parse(normalizedValue);
+        if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) {
+          return parsed;
+        }
+      } catch {
+        return value;
+      }
+      return value;
+    }
+    if (Array.isArray(value) || (value && typeof value === 'object')) {
+      return value;
+    }
+  }
   return value ?? undefined;
 }
 
-function buildOpenXiaoaiGatewayCandidates(discoveries: IntegrationDiscoveryItem[]): OpenXiaoaiGatewayCandidate[] {
-  const gatewayMap = new Map<
-    string,
-    {
-      models: Set<string>;
-      speakerCount: number;
-      onlineSpeakerCount: number;
-      lastSeenAt: string | null;
-    }
-  >();
-
-  for (const discovery of discoveries) {
-    if (
-      discovery.plugin_id !== OPEN_XIAOAI_PLUGIN_ID
-      || discovery.integration_instance_id
-      || discovery.status !== 'pending'
-    ) {
+function normalizeDraftValuesForConfigSpec(
+  configSpec: PluginManifestConfigSpec,
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalizedValues: Record<string, unknown> = {};
+  for (const field of configSpec.config_schema.fields) {
+    const rawValue = values[field.key];
+    if (rawValue === undefined) {
       continue;
     }
-    const gatewayId = String(discovery.metadata.gateway_id ?? '').trim();
-    if (!gatewayId) {
+    const normalizedValue = normalizeSubmitValue(field, rawValue);
+    if (normalizedValue === undefined) {
       continue;
     }
+    normalizedValues[field.key] = normalizedValue;
+  }
+  return normalizedValues;
+}
 
-    const current = gatewayMap.get(gatewayId) ?? {
-      models: new Set<string>(),
-      speakerCount: 0,
-      onlineSpeakerCount: 0,
-      lastSeenAt: null,
-    };
-    const model = String(discovery.metadata.model ?? '').trim();
-    const connectionStatus = String(discovery.metadata.connection_status ?? '').trim();
-    const lastSeenAt = typeof discovery.updated_at === 'string' && discovery.updated_at.trim()
-      ? discovery.updated_at
-      : discovery.discovered_at;
+function getMultiEnumValues(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === 'string');
+}
 
-    if (model) {
-      current.models.add(model);
+function formatJsonEditorValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (Array.isArray(value) || typeof value === 'object') {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return '';
     }
-    current.speakerCount += 1;
-    if (connectionStatus === 'online') {
-      current.onlineSpeakerCount += 1;
-    }
-    if (!current.lastSeenAt || (lastSeenAt && lastSeenAt > current.lastSeenAt)) {
-      current.lastSeenAt = lastSeenAt;
-    }
-    gatewayMap.set(gatewayId, current);
+  }
+  return String(value);
+}
+
+function getVisibleSectionFieldKeys(
+  section: PluginManifestUiSection,
+  configSpec: PluginManifestConfigSpec,
+  values: Record<string, unknown>,
+): string[] {
+  return section.fields.filter((fieldKey) => (
+    isPluginFieldVisible(fieldKey, values, configSpec.ui_schema.widgets)
+  ));
+}
+
+function isAdvancedUiSection(section: PluginManifestUiSection): boolean {
+  return section.mode === 'advanced';
+}
+
+function areNormalizedValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function hasMeaningfulConfiguredValue(field: PluginManifestConfigField, draft: CreateDraft): boolean {
+  if (field.type === 'secret') {
+    return Boolean(draft.secrets[field.key]?.trim())
+      || (Boolean(draft.secretFields[field.key]?.has_value) && !draft.clearSecretFields[field.key]);
   }
 
-  return Array.from(gatewayMap.entries())
-    .map(([gatewayId, item]) => ({
-      gatewayId,
-      modelSummary: Array.from(item.models).join(' / ') || '小爱网关',
-      speakerCount: item.speakerCount,
-      onlineSpeakerCount: item.onlineSpeakerCount,
-      lastSeenAt: item.lastSeenAt,
-    }))
-    .sort((left, right) => left.gatewayId.localeCompare(right.gatewayId));
+  const normalizedValue = normalizeSubmitValue(field, draft.values[field.key]);
+  if (normalizedValue === undefined) {
+    return false;
+  }
+  if (field.default !== undefined) {
+    const normalizedDefaultValue = normalizeSubmitValue(field, field.default);
+    if (areNormalizedValuesEqual(normalizedValue, normalizedDefaultValue)) {
+      return false;
+    }
+  }
+  return true;
 }
+
+function sectionHasConfiguredValue(
+  section: PluginManifestUiSection,
+  configSpec: PluginManifestConfigSpec,
+  draft: CreateDraft,
+): boolean {
+  return section.fields.some((fieldKey) => {
+    const field = configSpec.config_schema.fields.find((item) => item.key === fieldKey);
+    if (!field) {
+      return false;
+    }
+    return hasMeaningfulConfiguredValue(field, draft);
+  });
+}
+
+
+
+
+function getPreviewActionErrorKey(actionKey: string): string {
+  return `__preview_action__:${actionKey}`;
+}
+
+function getRuntimeItemErrorKey(itemKey: string): string {
+  return `__runtime_item__:${itemKey}`;
+}
+
+function readPreviewAuthSession(runtimeState: Record<string, unknown>): PluginConfigAuthSessionRead | null {
+  const rawValue = runtimeState.auth_session;
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null;
+  }
+  const candidate = rawValue as Record<string, unknown>;
+  if (
+    typeof candidate.id !== 'string'
+    || typeof candidate.plugin_id !== 'string'
+    || typeof candidate.scope_type !== 'string'
+    || typeof candidate.scope_key !== 'string'
+    || typeof candidate.action_key !== 'string'
+    || typeof candidate.status !== 'string'
+    || typeof candidate.expires_at !== 'string'
+  ) {
+    return null;
+  }
+  return candidate as PluginConfigAuthSessionRead;
+}
+
+function isMeaningfulRuntimeValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>).length > 0;
+  }
+  return true;
+}
+
+function getObjectPathValue(payload: unknown, source: string): unknown {
+  if (!source.trim()) {
+    return undefined;
+  }
+  const parts = source.split('.').map((item) => item.trim()).filter(Boolean);
+  let current: unknown = payload;
+  for (const part of parts) {
+    if (Array.isArray(current)) {
+      const index = Number(part);
+      current = Number.isInteger(index) ? current[index] : undefined;
+      continue;
+    }
+    if (!current || typeof current !== 'object') {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function buildRuntimeSelectionValue(item: PluginManifestRuntimeStateItem, candidate: Record<string, unknown>): unknown {
+  if (item.selection_mode === 'field') {
+    return item.selection_value_field ? getObjectPathValue(candidate, item.selection_value_field) : undefined;
+  }
+  if (item.selection_mode === 'object') {
+    const nextValue: Record<string, unknown> = {};
+    for (const fieldPath of item.selection_object_fields ?? []) {
+      const nextFieldValue = getObjectPathValue(candidate, fieldPath);
+      if (nextFieldValue !== undefined) {
+        const key = fieldPath.split('.').pop() ?? fieldPath;
+        nextValue[key] = nextFieldValue;
+      }
+    }
+    return nextValue;
+  }
+  return undefined;
+}
+
 
 function SettingsIntegrationsContent() {
   const { locale, t } = useI18n();
@@ -343,6 +508,13 @@ function SettingsIntegrationsContent() {
   const [instanceFormMode, setInstanceFormMode] = useState<InstanceFormMode>('create');
   const [editingInstanceId, setEditingInstanceId] = useState<string | null>(null);
   const [createDraft, setCreateDraft] = useState<CreateDraft>(() => buildDraft(null));
+  const [createStepIndex, setCreateStepIndex] = useState(0);
+  const [showAdvancedWizardSections, setShowAdvancedWizardSections] = useState(false);
+
+  const [previewRuntimeState, setPreviewRuntimeState] = useState<Record<string, unknown>>(EMPTY_RUNTIME_STATE);
+  const [previewArtifacts, setPreviewArtifacts] = useState<PluginConfigPreviewArtifactRead[]>(EMPTY_PREVIEW_ARTIFACTS);
+  const [previewLoadingActionKey, setPreviewLoadingActionKey] = useState<string | null>(null);
+  const [previewResultActionKey, setPreviewResultActionKey] = useState<string | null>(null);
   const [deviceCandidates, setDeviceCandidates] = useState<IntegrationDeviceCandidate[]>([]);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
   const [catalogModalOpen, setCatalogModalOpen] = useState(false);
@@ -361,6 +533,86 @@ function SettingsIntegrationsContent() {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const configResolveSeqRef = useRef(0);
+  const previewAuthPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handledPreviewAuthCallbackRef = useRef<string | null>(null);
+
+  const allWizardSections = useMemo(() => {
+    if (!formContext) {
+      return [];
+    }
+    return formContext.configSpec.ui_schema.sections.filter((section) => (
+      getVisibleSectionFieldKeys(section, formContext.configSpec, createDraft.values).length > 0
+    ));
+  }, [formContext, createDraft.values]);
+
+  const defaultWizardSections = useMemo(
+    () => allWizardSections.filter((section) => !isAdvancedUiSection(section)),
+    [allWizardSections],
+  );
+  const advancedWizardSections = useMemo(
+    () => allWizardSections.filter((section) => isAdvancedUiSection(section)),
+    [allWizardSections],
+  );
+  const wizardSections = useMemo(() => {
+    if (
+      showAdvancedWizardSections
+      || advancedWizardSections.length === 0
+      || defaultWizardSections.length === 0
+    ) {
+      return allWizardSections;
+    }
+    return defaultWizardSections;
+  }, [advancedWizardSections.length, allWizardSections, defaultWizardSections, showAdvancedWizardSections]);
+  const hasHiddenAdvancedWizardSections = advancedWizardSections.length > 0
+    && !showAdvancedWizardSections
+    && defaultWizardSections.length > 0;
+  const hasConfiguredHiddenAdvancedSections = Boolean(
+    formContext
+    && hasHiddenAdvancedWizardSections
+    && advancedWizardSections.some((section) => sectionHasConfiguredValue(section, formContext.configSpec, createDraft)),
+  );
+  const wizardMode = Boolean(formContext && wizardSections.length > 1);
+  const activeWizardStepIndex = wizardMode
+    ? Math.min(createStepIndex, Math.max(wizardSections.length - 1, 0))
+    : 0;
+  const currentWizardSection = wizardMode ? wizardSections[activeWizardStepIndex] : null;
+  const renderedSections = wizardMode
+    ? (currentWizardSection ? [currentWizardSection] : [])
+    : wizardSections;
+  const isLastWizardStep = !wizardMode || activeWizardStepIndex === wizardSections.length - 1;
+  const previewActions = formContext?.configSpec.ui_schema.actions ?? [];
+  const runtimeStateSections = formContext?.configSpec.ui_schema.runtime_sections ?? [];
+  const previewAuthSession = useMemo(
+    () => readPreviewAuthSession(previewRuntimeState),
+    [previewRuntimeState],
+  );
+
+  useEffect(() => {
+    if (!createModalOpen) {
+      setCreateStepIndex(0);
+      setShowAdvancedWizardSections(false);
+      setPreviewRuntimeState(EMPTY_RUNTIME_STATE);
+      setPreviewArtifacts(EMPTY_PREVIEW_ARTIFACTS);
+      setPreviewLoadingActionKey(null);
+      setPreviewResultActionKey(null);
+      return;
+    }
+    setCreateStepIndex(0);
+    setShowAdvancedWizardSections(false);
+    setPreviewRuntimeState(EMPTY_RUNTIME_STATE);
+    setPreviewArtifacts(EMPTY_PREVIEW_ARTIFACTS);
+    setPreviewLoadingActionKey(null);
+    setPreviewResultActionKey(null);
+  }, [createModalOpen, formContext?.pluginId, instanceFormMode]);
+
+  useEffect(() => {
+    if (!wizardMode) {
+      return;
+    }
+    if (createStepIndex > wizardSections.length - 1) {
+      setCreateStepIndex(Math.max(wizardSections.length - 1, 0));
+    }
+  }, [wizardMode, createStepIndex, wizardSections.length]);
 
   useEffect(() => {
     void Taro.setNavigationBarTitle({ title: page('settings.integrations.title') }).catch(() => undefined);
@@ -409,15 +661,6 @@ function SettingsIntegrationsContent() {
     () => deviceResources.filter((item) => item.integration_instance_id === selectedInstanceId),
     [deviceResources, selectedInstanceId],
   );
-  const openXiaoaiGatewayCandidates = useMemo(
-    () => buildOpenXiaoaiGatewayCandidates(discoveries),
-    [discoveries],
-  );
-  const selectedGatewayId = getScalarValue(createDraft.values, OPEN_XIAOAI_GATEWAY_FIELD_KEY).trim();
-  const selectedGatewayCandidate = useMemo(
-    () => openXiaoaiGatewayCandidates.find((item) => item.gatewayId === selectedGatewayId) ?? null,
-    [openXiaoaiGatewayCandidates, selectedGatewayId],
-  );
   const candidateRoomOptions = useMemo(() => getCandidateRoomOptions(deviceCandidates), [deviceCandidates]);
   const candidateDomainOptions = useMemo(() => getCandidateDomainOptions(deviceCandidates), [deviceCandidates]);
   const filteredDeviceCandidates = useMemo(() => filterIntegrationDeviceCandidates(deviceCandidates, {
@@ -431,6 +674,51 @@ function SettingsIntegrationsContent() {
     setSyncAllConfirmStep(null);
     setSyncAllImpactSummary(null);
   }, [selectedInstanceId]);
+
+  useEffect(() => () => {
+    clearPreviewAuthPolling();
+  }, []);
+
+  useEffect(() => {
+    clearPreviewAuthPolling();
+    if (!createModalOpen || !currentHouseholdId || !formContext || !previewAuthSession) {
+      return;
+    }
+
+    if (previewAuthSession.status === 'callback_received') {
+      const handledMarker = `${previewAuthSession.id}:${previewAuthSession.callback_received_at ?? ''}`;
+      if (handledPreviewAuthCallbackRef.current !== handledMarker) {
+        handledPreviewAuthCallbackRef.current = handledMarker;
+        const action = findPreviewActionByActionKey(previewAuthSession.action_key);
+        if (action) {
+          void executePreviewAction(action, {
+            authSessionId: previewAuthSession.id,
+            showLoading: false,
+          });
+        }
+      }
+    }
+
+    if (previewAuthSession.status !== 'pending' && previewAuthSession.status !== 'callback_received') {
+      return;
+    }
+
+    previewAuthPollTimerRef.current = setTimeout(() => {
+      void pollPreviewAuthSession(previewAuthSession.id);
+    }, PREVIEW_AUTH_SESSION_POLL_INTERVAL_MS);
+
+    return () => {
+      clearPreviewAuthPolling();
+    };
+  }, [
+    createModalOpen,
+    currentHouseholdId,
+    formContext,
+    previewAuthSession?.action_key,
+    previewAuthSession?.callback_received_at,
+    previewAuthSession?.id,
+    previewAuthSession?.status,
+  ]);
 
   function getInstanceStatusPresentation(instance: IntegrationInstance) {
     if (instance.status === 'degraded') {
@@ -484,17 +772,95 @@ function SettingsIntegrationsContent() {
       ) || page('settings.integrations.modal.instance.displayNamePlaceholder')
     )
     : page('settings.integrations.modal.instance.displayNamePlaceholder');
+  function getConfigField(fieldKey: string): PluginManifestConfigField | null {
+    return formContext?.configSpec.config_schema.fields.find((item) => item.key === fieldKey) ?? null;
+  }
 
-  function formatOpenXiaoaiGatewaySummary(candidate: OpenXiaoaiGatewayCandidate) {
-    return page('settings.integrations.modal.create.gateway.summary', {
-      model: candidate.modelSummary,
-      count: candidate.speakerCount,
-      online: candidate.onlineSpeakerCount,
+  function hasDraftFieldValue(fieldKey: string): boolean {
+    const field = getConfigField(fieldKey);
+    if (!field) {
+      return false;
+    }
+    if (field.type === 'secret') {
+      return Boolean(createDraft.secrets[field.key]?.trim())
+        || (Boolean(createDraft.secretFields[field.key]?.has_value) && !createDraft.clearSecretFields[field.key]);
+    }
+    return isMeaningfulRuntimeValue(normalizeSubmitValue(field, createDraft.values[field.key]));
+  }
+
+  function resetPreviewState(errorKeys: string[] = []) {
+    clearPreviewAuthPolling();
+    handledPreviewAuthCallbackRef.current = null;
+    setPreviewRuntimeState(EMPTY_RUNTIME_STATE);
+    setPreviewArtifacts(EMPTY_PREVIEW_ARTIFACTS);
+    setPreviewLoadingActionKey(null);
+    setPreviewResultActionKey(null);
+    if (errorKeys.length === 0) {
+      return;
+    }
+    setCreateDraft((current) => {
+      const nextFieldErrors = { ...current.fieldErrors };
+      for (const errorKey of errorKeys) {
+        nextFieldErrors[errorKey] = '';
+      }
+      return {
+        ...current,
+        fieldErrors: nextFieldErrors,
+      };
     });
+  }
+
+  function getPreviewSupplementErrorKeys(): string[] {
+    return [
+      ...previewActions.map((action) => getPreviewActionErrorKey(action.key)),
+      ...runtimeStateSections.flatMap((section) => section.items.map((item) => getRuntimeItemErrorKey(item.key))),
+    ];
+  }
+
+  function getSectionPreviewActions(sectionId: string): PluginManifestConfigPreviewAction[] {
+    return previewActions.filter((action) => (
+      action.section_id === sectionId
+      && (action.modes ?? ['create', 'edit']).includes(instanceFormMode)
+    ));
+  }
+
+  function getSectionRuntimeSections(sectionId: string): PluginManifestRuntimeStateSection[] {
+    return runtimeStateSections.filter((section) => (
+      section.section_id === sectionId
+      && (!section.action_key || section.action_key === previewResultActionKey)
+    ));
+  }
+
+  function clearPreviewAuthPolling() {
+    if (previewAuthPollTimerRef.current) {
+      clearTimeout(previewAuthPollTimerRef.current);
+      previewAuthPollTimerRef.current = null;
+    }
+  }
+
+  function findPreviewActionByActionKey(actionKey: string): PluginManifestConfigPreviewAction | null {
+    return previewActions.find((item) => (item.action_key ?? item.key) === actionKey) ?? null;
+  }
+
+  function resolveActionLabel(action: PluginManifestConfigPreviewAction): string {
+    return resolvePluginTextValue(action.label, action.label_key, t) || action.key;
+  }
+
+  function resolveActionDescription(action: PluginManifestConfigPreviewAction): string {
+    return resolvePluginTextValue(action.description, action.description_key, t) || '';
+  }
+
+  function resolveRuntimeText(value: string | null | undefined, valueKey: string | null | undefined): string {
+    return resolvePluginTextValue(value ?? null, valueKey ?? null, t) || '';
+  }
+
+  function isPreviewActionReady(action: PluginManifestConfigPreviewAction): boolean {
+    return (action.depends_on_fields ?? []).every((fieldKey) => hasDraftFieldValue(fieldKey));
   }
 
   async function resolveIntegrationDraftConfig(
     pluginId: string,
+    configSpec: PluginManifestConfigSpec,
     draft: CreateDraft,
     scopeKey?: string,
   ) {
@@ -504,7 +870,7 @@ function SettingsIntegrationsContent() {
     const resolveSeq = configResolveSeqRef.current + 1;
     configResolveSeqRef.current = resolveSeq;
 
-    let workingValues = { ...draft.values };
+    let workingValues = normalizeDraftValuesForConfigSpec(configSpec, draft.values);
     let resolvedForm: PluginConfigFormRead | null = null;
     for (let attempt = 0; attempt < 4; attempt += 1) {
       resolvedForm = await settingsApi.resolveHouseholdPluginConfigForm(currentHouseholdId, pluginId, {
@@ -575,6 +941,7 @@ function SettingsIntegrationsContent() {
       setCreateDraft(buildDraft(resolvedForm.config_spec, {
         form: resolvedForm,
       }));
+      resetPreviewState(getPreviewSupplementErrorKeys());
       setCatalogModalOpen(false);
       setCreateModalOpen(true);
       setError('');
@@ -615,6 +982,7 @@ function SettingsIntegrationsContent() {
         displayName: instance.display_name,
         form: configForm,
       }));
+      resetPreviewState(getPreviewSupplementErrorKeys());
       setCreateModalOpen(true);
       setError('');
     } catch (loadError) {
@@ -631,106 +999,690 @@ function SettingsIntegrationsContent() {
     setEditingInstanceId(null);
     setInstanceFormMode('create');
     setCreateDraft(buildDraft(null));
+    setCreateStepIndex(0);
+    setShowAdvancedWizardSections(false);
+    resetPreviewState(getPreviewSupplementErrorKeys());
+  }
+
+  function buildPreviewPayload(draft: CreateDraft) {
+    const payloadValues: Record<string, unknown> = {};
+    const secretValues: Record<string, string> = {};
+    const clearSecretFields: string[] = [];
+    if (!formContext) {
+      return {
+        values: payloadValues,
+        secret_values: secretValues,
+        clear_secret_fields: clearSecretFields,
+      };
+    }
+    for (const field of formContext.configSpec.config_schema.fields) {
+      if (field.type === 'secret') {
+        const rawSecret = (draft.secrets[field.key] ?? '').trim();
+        if (rawSecret) {
+          secretValues[field.key] = rawSecret;
+          continue;
+        }
+        if (draft.clearSecretFields[field.key]) {
+          clearSecretFields.push(field.key);
+        }
+        continue;
+      }
+      const rawValue = draft.values[field.key];
+      if (rawValue === undefined) {
+        continue;
+      }
+      const normalizedValue = normalizeSubmitValue(field, rawValue);
+      if (normalizedValue === undefined) {
+        continue;
+      }
+      payloadValues[field.key] = normalizedValue;
+    }
+    return {
+      values: payloadValues,
+      secret_values: secretValues,
+      clear_secret_fields: clearSecretFields,
+    };
+  }
+
+
+  function applyPreviewResetToDraft(draft: CreateDraft, fieldKey: string): CreateDraft {
+    const resetActions = previewActions.filter((action) => (action.reset_on_change_fields ?? []).includes(fieldKey));
+    if (resetActions.length === 0) {
+      return draft;
+    }
+    const clearFieldKeys = new Set<string>();
+    for (const action of resetActions) {
+      for (const clearFieldKey of action.clear_fields_on_reset ?? []) {
+        clearFieldKeys.add(clearFieldKey);
+      }
+    }
+    const nextValues = { ...draft.values };
+    const nextFieldErrors = { ...draft.fieldErrors };
+    for (const clearFieldKey of clearFieldKeys) {
+      delete nextValues[clearFieldKey];
+      nextFieldErrors[clearFieldKey] = '';
+    }
+    for (const errorKey of getPreviewSupplementErrorKeys()) {
+      nextFieldErrors[errorKey] = '';
+    }
+    return {
+      ...draft,
+      values: nextValues,
+      fieldErrors: nextFieldErrors,
+    };
   }
 
   async function updateValue(fieldKey: string, value: unknown) {
-    const nextDraft: CreateDraft = {
+    const baseDraft: CreateDraft = {
       ...createDraft,
       values: { ...createDraft.values, [fieldKey]: value },
-      fieldErrors: { ...createDraft.fieldErrors, [fieldKey]: '' },
+      fieldErrors: {
+        ...createDraft.fieldErrors,
+        [fieldKey]: '',
+      },
     };
+    const nextDraft = applyPreviewResetToDraft(baseDraft, fieldKey);
     setCreateDraft(nextDraft);
+    if (nextDraft !== baseDraft) {
+      resetPreviewState(getPreviewSupplementErrorKeys());
+    }
     if (!formContext || !shouldResolveConfigChange(formContext.configSpec, fieldKey)) {
       return;
     }
     await resolveIntegrationDraftConfig(
       formContext.pluginId,
+      formContext.configSpec,
       nextDraft,
       instanceFormMode === 'edit' ? (editingInstanceId ?? undefined) : undefined,
     );
   }
 
   function updateSecret(fieldKey: string, value: string) {
-    setCreateDraft((current) => ({
+    const shouldResetPreview = previewActions.some((action) => (action.reset_on_change_fields ?? []).includes(fieldKey));
+    if (shouldResetPreview) {
+      resetPreviewState(getPreviewSupplementErrorKeys());
+    }
+    setCreateDraft((current) => applyPreviewResetToDraft({
       ...current,
       secrets: { ...current.secrets, [fieldKey]: value },
       clearSecretFields: value.trim()
         ? { ...current.clearSecretFields, [fieldKey]: false }
         : current.clearSecretFields,
       fieldErrors: { ...current.fieldErrors, [fieldKey]: '' },
-    }));
+    }, fieldKey));
   }
 
   function toggleClearSecret(fieldKey: string, checked: boolean) {
-    setCreateDraft((current) => ({
+    const shouldResetPreview = previewActions.some((action) => (action.reset_on_change_fields ?? []).includes(fieldKey));
+    if (shouldResetPreview) {
+      resetPreviewState(getPreviewSupplementErrorKeys());
+    }
+    setCreateDraft((current) => applyPreviewResetToDraft({
       ...current,
       secrets: checked
         ? { ...current.secrets, [fieldKey]: '' }
         : current.secrets,
       clearSecretFields: { ...current.clearSecretFields, [fieldKey]: checked },
       fieldErrors: { ...current.fieldErrors, [fieldKey]: '' },
+    }, fieldKey));
+  }
+
+  async function executePreviewAction(
+    action: PluginManifestConfigPreviewAction,
+    options?: {
+      authSessionId?: string | null;
+      showLoading?: boolean;
+    },
+  ) {
+    if (!currentHouseholdId || !formContext) {
+      return;
+    }
+    const shouldShowLoading = options?.showLoading ?? true;
+    if (shouldShowLoading) {
+      setPreviewLoadingActionKey(action.key);
+    }
+    try {
+      const previewForm = await settingsApi.previewHouseholdPluginConfigForm(currentHouseholdId, formContext.pluginId, {
+        scope_type: 'integration_instance',
+        scope_key: instanceFormMode === 'edit' ? (editingInstanceId ?? null) : null,
+        ...buildPreviewPayload(createDraft),
+        action_key: action.action_key ?? action.key,
+        auth_session_id: options?.authSessionId ?? null,
+      });
+      setFormContext((current) => {
+        if (!current || current.pluginId !== formContext.pluginId) {
+          return current;
+        }
+        return {
+          ...current,
+          configSpec: previewForm.config_spec,
+        };
+      });
+      setCreateDraft((current) => {
+        const displayNameError = current.fieldErrors.display_name;
+        const nextFieldErrors: Record<string, string> = {
+          ...(displayNameError ? { display_name: displayNameError } : {}),
+          ...previewForm.view.field_errors,
+        };
+        for (const errorKey of getPreviewSupplementErrorKeys()) {
+          nextFieldErrors[errorKey] = '';
+        }
+        return {
+          ...current,
+          values: previewForm.view.values,
+          secretFields: Object.keys(previewForm.view.secret_fields).length > 0
+            ? previewForm.view.secret_fields
+            : current.secretFields,
+          fieldErrors: nextFieldErrors,
+        };
+      });
+      setPreviewRuntimeState(previewForm.view.runtime_state ?? EMPTY_RUNTIME_STATE);
+      setPreviewArtifacts(previewForm.view.preview_artifacts ?? EMPTY_PREVIEW_ARTIFACTS);
+      setPreviewResultActionKey(action.key);
+      setError('');
+    } catch (previewError) {
+      const fallbackMessage = previewError instanceof Error
+        ? previewError.message
+        : page('settings.integrations.error.previewActionFailed');
+      if (previewError instanceof ApiError) {
+        const payload = previewError.payload as { detail?: { field_errors?: Record<string, string> } } | undefined;
+        if (payload?.detail?.field_errors) {
+          setCreateDraft((current) => ({
+            ...current,
+            fieldErrors: {
+              ...current.fieldErrors,
+              ...payload.detail!.field_errors!,
+              [getPreviewActionErrorKey(action.key)]: fallbackMessage,
+            },
+          }));
+        }
+      }
+      setPreviewRuntimeState(EMPTY_RUNTIME_STATE);
+      setPreviewArtifacts(EMPTY_PREVIEW_ARTIFACTS);
+      setPreviewResultActionKey(action.key);
+      setCreateDraft((current) => ({
+        ...current,
+        fieldErrors: {
+          ...current.fieldErrors,
+          [getPreviewActionErrorKey(action.key)]: fallbackMessage,
+        },
+      }));
+      setError(fallbackMessage);
+    } finally {
+      if (shouldShowLoading) {
+        setPreviewLoadingActionKey((current) => (current === action.key ? null : current));
+      }
+    }
+  }
+
+  async function pollPreviewAuthSession(sessionId: string) {
+    if (!currentHouseholdId || !formContext) {
+      return;
+    }
+    try {
+      const authSession = await settingsApi.getHouseholdPluginConfigAuthSession(
+        currentHouseholdId,
+        formContext.pluginId,
+        sessionId,
+      );
+      setPreviewRuntimeState((current) => {
+        const currentAuthSession = readPreviewAuthSession(current);
+        if (currentAuthSession && currentAuthSession.id !== authSession.id) {
+          return current;
+        }
+        return {
+          ...current,
+          auth_session: authSession,
+        };
+      });
+      if (
+        authSession.status !== 'pending'
+        && authSession.status !== 'callback_received'
+        && authSession.error_message
+      ) {
+        const action = findPreviewActionByActionKey(authSession.action_key);
+        if (action) {
+          setCreateDraft((current) => ({
+            ...current,
+            fieldErrors: {
+              ...current.fieldErrors,
+              [getPreviewActionErrorKey(action.key)]: authSession.error_message ?? '',
+            },
+          }));
+        }
+        setError(authSession.error_message);
+      }
+    } catch (pollError) {
+      setError(
+        pollError instanceof Error
+          ? pollError.message
+          : page('settings.integrations.error.previewActionFailed'),
+      );
+    }
+  }
+
+  function validateSingleField(field: PluginManifestConfigField): string | null {
+    const fieldLabel = resolvePluginFieldLabel(field, t);
+
+    if (field.type === 'secret') {
+      const rawSecret = createDraft.secrets[field.key] ?? '';
+      const hasExistingValue = Boolean(createDraft.secretFields[field.key]?.has_value) && !createDraft.clearSecretFields[field.key];
+      if (field.required && !rawSecret.trim() && !hasExistingValue) {
+        return page('settings.integrations.modal.create.validation.required', { field: fieldLabel });
+      }
+      return null;
+    }
+
+    const rawValue = createDraft.values[field.key];
+    const normalizedValue = normalizeSubmitValue(field, rawValue);
+
+    if (normalizedValue === undefined) {
+      if (field.required && !field.nullable) {
+        return page('settings.integrations.modal.create.validation.required', { field: fieldLabel });
+      }
+      return null;
+    }
+
+    if (field.type === 'integer' && (typeof normalizedValue !== 'number' || !Number.isInteger(normalizedValue))) {
+      return page('settings.integrations.modal.create.validation.integer', { field: fieldLabel });
+    }
+    if (field.type === 'number' && (typeof normalizedValue !== 'number' || Number.isNaN(normalizedValue))) {
+      return page('settings.integrations.modal.create.validation.number', { field: fieldLabel });
+    }
+    if (field.type === 'enum') {
+      const allowedValues = new Set((field.enum_options ?? []).map((option) => option.value));
+      if (typeof normalizedValue !== 'string' || !allowedValues.has(normalizedValue)) {
+        return page('settings.integrations.modal.create.validation.select', { field: fieldLabel });
+      }
+    }
+    if (field.type === 'multi_enum') {
+      if (!Array.isArray(normalizedValue)) {
+        return page('settings.integrations.modal.create.validation.multiSelect', { field: fieldLabel });
+      }
+      if (field.required && normalizedValue.length === 0) {
+        return page('settings.integrations.modal.create.validation.multiSelect', { field: fieldLabel });
+      }
+    }
+    if (field.type === 'json') {
+      if (typeof normalizedValue === 'string') {
+        return page('settings.integrations.modal.create.validation.json', { field: fieldLabel });
+      }
+      if (!Array.isArray(normalizedValue) && typeof normalizedValue !== 'object') {
+        return page('settings.integrations.modal.create.validation.json', { field: fieldLabel });
+      }
+    }
+    return null;
+  }
+
+  function validateRuntimeSectionRequirements(
+    sectionId: string,
+    nextFieldErrors: Record<string, string>,
+  ): boolean {
+    let hasError = false;
+    for (const runtimeSection of getSectionRuntimeSections(sectionId)) {
+      for (const item of runtimeSection.items) {
+        const errorKey = getRuntimeItemErrorKey(item.key);
+        if (item.kind !== 'candidate_select' || !item.required || !item.target_field) {
+          nextFieldErrors[errorKey] = '';
+          continue;
+        }
+        const targetField = getConfigField(item.target_field);
+        const selectedValue = targetField
+          ? normalizeSubmitValue(targetField, createDraft.values[item.target_field])
+          : createDraft.values[item.target_field];
+        if (isMeaningfulRuntimeValue(selectedValue)) {
+          nextFieldErrors[errorKey] = '';
+          continue;
+        }
+        nextFieldErrors[errorKey] = resolveRuntimeText(item.required_message, item.required_message_key)
+          || page('settings.integrations.modal.create.validation.required', {
+            field: resolveRuntimeText(item.label, item.label_key) || item.target_field,
+          });
+        hasError = true;
+      }
+    }
+    return hasError;
+  }
+
+  function validateCurrentWizardStep(): boolean {
+    if (!formContext || !wizardMode || !currentWizardSection) {
+      return true;
+    }
+
+    const nextFieldErrors = { ...createDraft.fieldErrors };
+    let hasError = false;
+
+    if (activeWizardStepIndex === 0) {
+      if (!createDraft.displayName.trim()) {
+        nextFieldErrors.display_name = page('settings.integrations.modal.create.displayNameRequired');
+        hasError = true;
+      } else {
+        nextFieldErrors.display_name = '';
+      }
+    }
+
+    for (const fieldKey of currentWizardSection.fields) {
+      const field = formContext.configSpec.config_schema.fields.find((item) => item.key === fieldKey);
+      if (!field) {
+        continue;
+      }
+      if (!isPluginFieldVisible(field.key, createDraft.values, formContext.configSpec.ui_schema.widgets)) {
+        nextFieldErrors[field.key] = '';
+        continue;
+      }
+      const fieldError = validateSingleField(field);
+      nextFieldErrors[field.key] = fieldError ?? '';
+      hasError = hasError || Boolean(fieldError);
+    }
+
+    hasError = validateRuntimeSectionRequirements(currentWizardSection.id, nextFieldErrors) || hasError;
+
+    setCreateDraft((current) => ({
+      ...current,
+      fieldErrors: nextFieldErrors,
     }));
+    return !hasError;
+  }
+
+  function goToNextWizardStep() {
+    if (!wizardMode) {
+      return;
+    }
+    if (!validateCurrentWizardStep()) {
+      return;
+    }
+    setCreateStepIndex((current) => Math.min(current + 1, wizardSections.length - 1));
+  }
+
+  function revealAdvancedWizardSections() {
+    if (advancedWizardSections.length === 0) {
+      return;
+    }
+    const firstAdvancedIndex = allWizardSections.findIndex((section) => isAdvancedUiSection(section));
+    setShowAdvancedWizardSections(true);
+    if (firstAdvancedIndex >= 0) {
+      setCreateStepIndex(firstAdvancedIndex);
+    }
+  }
+
+  function getRuntimeCandidateSelectionValue(item: PluginManifestRuntimeStateItem): unknown {
+    if (!item.target_field) {
+      return undefined;
+    }
+    return createDraft.values[item.target_field];
+  }
+
+  function isRuntimeCandidateSelected(item: PluginManifestRuntimeStateItem, candidate: Record<string, unknown>): boolean {
+    const selectedValue = getRuntimeCandidateSelectionValue(item);
+    if (selectedValue === undefined || item.selected_match_field == null) {
+      return false;
+    }
+    const candidateMatchValue = getObjectPathValue(candidate, item.selected_match_field);
+    if (item.selection_mode === 'field') {
+      return areNormalizedValuesEqual(selectedValue, candidateMatchValue);
+    }
+    if (!selectedValue || typeof selectedValue !== 'object') {
+      return false;
+    }
+    const selectedKey = item.selected_match_field.split('.').pop() ?? item.selected_match_field;
+    return areNormalizedValuesEqual((selectedValue as Record<string, unknown>)[selectedKey], candidateMatchValue);
+  }
+
+  function renderRuntimeStateItem(item: PluginManifestRuntimeStateItem) {
+    const itemError = createDraft.fieldErrors[getRuntimeItemErrorKey(item.key)];
+    const itemLabel = resolveRuntimeText(item.label, item.label_key);
+    const itemDescription = resolveRuntimeText(item.description, item.description_key);
+
+    if (item.kind === 'status_badge') {
+      const rawValue = getObjectPathValue(previewRuntimeState, item.source);
+      if (!isMeaningfulRuntimeValue(rawValue)) {
+        return null;
+      }
+      const statusValue = String(rawValue);
+      const option = (item.status_options ?? []).find((statusOption) => statusOption.value === statusValue) ?? null;
+      const badgeLabel = option
+        ? resolveRuntimeText(option.label, option.label_key) || statusValue
+        : statusValue;
+      const badgeClassName = option?.tone === 'success'
+        ? 'badge badge--success'
+        : option?.tone === 'warning'
+          ? 'badge badge--warning'
+          : option?.tone === 'danger'
+            ? 'badge badge--danger'
+            : 'badge';
+      return (
+        <div key={item.key} className="form-group" style={{ marginBottom: '12px' }}>
+          {itemLabel ? <label>{itemLabel}</label> : null}
+          {itemDescription ? <div className="form-help">{itemDescription}</div> : null}
+          <div style={{ marginTop: itemLabel || itemDescription ? '8px' : 0 }}>
+            <span className={badgeClassName}>{badgeLabel}</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (item.kind === 'text') {
+      const rawValue = getObjectPathValue(previewRuntimeState, item.source);
+      if (!isMeaningfulRuntimeValue(rawValue)) {
+        const emptyText = resolveRuntimeText(item.empty_text, item.empty_text_key);
+        return emptyText ? <div key={item.key} className="form-help">{emptyText}</div> : null;
+      }
+      const textValue = typeof rawValue === 'string'
+        ? rawValue
+        : typeof rawValue === 'number' || typeof rawValue === 'boolean'
+          ? String(rawValue)
+          : formatJsonEditorValue(rawValue);
+      return (
+        <div key={item.key} className="form-group" style={{ marginBottom: '12px' }}>
+          {itemLabel ? <label>{itemLabel}</label> : null}
+          {itemDescription ? <div className="form-help">{itemDescription}</div> : null}
+          <div className="integration-status__detail" style={{ marginTop: itemLabel || itemDescription ? '8px' : 0 }}>
+            {textValue}
+          </div>
+          {itemError ? <div className="form-help" style={{ marginTop: '8px' }}>{resolvePluginMaybeKey(itemError, t)}</div> : null}
+        </div>
+      );
+    }
+
+    if (item.kind === 'link') {
+      const rawUrl = getObjectPathValue(previewRuntimeState, item.source);
+      const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+      if (!url) {
+        const emptyText = resolveRuntimeText(item.empty_text, item.empty_text_key);
+        return emptyText ? <div key={item.key} className="form-help">{emptyText}</div> : null;
+      }
+      const linkTextSource = item.link_text_source ? getObjectPathValue(previewRuntimeState, item.link_text_source) : null;
+      const linkText = resolveRuntimeText(item.link_text, item.link_text_key)
+        || (typeof linkTextSource === 'string' ? linkTextSource.trim() : '')
+        || url;
+      return (
+        <div key={item.key} className="form-group" style={{ marginBottom: '12px' }}>
+          {itemLabel ? <label>{itemLabel}</label> : null}
+          {itemDescription ? <div className="form-help">{itemDescription}</div> : null}
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: 'var(--brand-primary)', textDecoration: 'underline', wordBreak: 'break-all', display: 'inline-block', marginTop: itemLabel || itemDescription ? '8px' : 0 }}
+          >
+            {linkText}
+          </a>
+          {itemError ? <div className="form-help" style={{ marginTop: '8px' }}>{resolvePluginMaybeKey(itemError, t)}</div> : null}
+        </div>
+      );
+    }
+
+    if (item.kind === 'candidate_select') {
+      const rawCandidates = getObjectPathValue(previewRuntimeState, item.source);
+      const candidates = Array.isArray(rawCandidates)
+        ? rawCandidates.filter((candidate): candidate is Record<string, unknown> => Boolean(candidate && typeof candidate === 'object'))
+        : [];
+      const emptyText = resolveRuntimeText(item.empty_text, item.empty_text_key);
+      return (
+        <div key={item.key} className="form-group" style={{ marginBottom: '12px' }}>
+          {itemLabel ? <label>{itemLabel}</label> : null}
+          {itemDescription ? <div className="form-help">{itemDescription}</div> : null}
+          {candidates.length === 0 ? (
+            emptyText ? <div className="form-help" style={{ marginTop: itemLabel || itemDescription ? '8px' : 0 }}>{emptyText}</div> : null
+          ) : (
+            <div style={{ display: 'grid', gap: '8px', marginTop: itemLabel || itemDescription ? '8px' : 0 }}>
+              {candidates.map((candidate, index) => {
+                const label = (item.option_label_fields ?? [])
+                  .map((fieldPath) => getObjectPathValue(candidate, fieldPath))
+                  .find((fieldValue) => typeof fieldValue === 'string' && fieldValue.trim()) as string | undefined;
+                const descriptionParts = (item.option_description_fields ?? [])
+                  .map((fieldPath) => getObjectPathValue(candidate, fieldPath))
+                  .filter((fieldValue): fieldValue is string => typeof fieldValue === 'string' && fieldValue.trim().length > 0);
+                const candidateKey = String(getObjectPathValue(candidate, item.selected_match_field ?? '') ?? index);
+                const selected = isRuntimeCandidateSelected(item, candidate);
+                return (
+                  <button
+                    key={`${item.key}-${candidateKey}`}
+                    className="btn"
+                    type="button"
+                    onClick={() => {
+                      if (!item.target_field) {
+                        return;
+                      }
+                      const nextValue = buildRuntimeSelectionValue(item, candidate);
+                      setCreateDraft((current) => ({
+                        ...current,
+                        values: { ...current.values, [item.target_field!]: nextValue },
+                        fieldErrors: {
+                          ...current.fieldErrors,
+                          [item.target_field!]: '',
+                          [getRuntimeItemErrorKey(item.key)]: '',
+                        },
+                      }));
+                    }}
+                    style={{
+                      textAlign: 'left',
+                      border: selected ? '1px solid var(--brand-primary)' : '1px solid var(--border-light)',
+                      background: selected ? 'var(--brand-primary-light)' : 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      borderRadius: '12px',
+                      padding: '12px',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: descriptionParts.length > 0 ? '4px' : 0 }}>
+                      {label || candidateKey}
+                    </div>
+                    {descriptionParts.length > 0 ? (
+                      <div className="form-help">{descriptionParts.join(' / ')}</div>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {itemError ? <div className="form-help" style={{ marginTop: '8px' }}>{resolvePluginMaybeKey(itemError, t)}</div> : null}
+        </div>
+      );
+    }
+
+    return null;
+  }
+
+  function renderConfigPreviewPanel(sectionId: string) {
+    const sectionActions = getSectionPreviewActions(sectionId);
+    const sectionRuntimeSections = getSectionRuntimeSections(sectionId);
+    const shouldRenderArtifacts = previewArtifacts.length > 0 && (
+      sectionActions.some((action) => action.key === previewResultActionKey)
+      || sectionRuntimeSections.some((runtimeSection) => !runtimeSection.action_key || runtimeSection.action_key === previewResultActionKey)
+    );
+    if (sectionActions.length === 0 && sectionRuntimeSections.length === 0 && !shouldRenderArtifacts) {
+      return null;
+    }
+    return (
+      <div
+        key={`config-preview-${sectionId}`}
+        style={{
+          border: '1px solid var(--border-light)',
+          borderRadius: '16px',
+          padding: '16px',
+          marginBottom: '16px',
+          background: 'var(--bg-card)',
+        }}
+      >
+        {sectionActions.map((action) => {
+          const actionError = createDraft.fieldErrors[getPreviewActionErrorKey(action.key)];
+          const actionLoading = previewLoadingActionKey === action.key;
+          return (
+            <div key={action.key} className="form-group" style={{ marginBottom: '12px' }}>
+              <label>{resolveActionLabel(action)}</label>
+              {resolveActionDescription(action) ? <div className="form-help">{resolveActionDescription(action)}</div> : null}
+              <div style={{ marginTop: '8px' }}>
+                <button
+                  className="btn btn--primary btn--sm"
+                  type="button"
+                  onClick={() => void executePreviewAction(action)}
+                  disabled={submitting || Boolean(previewLoadingActionKey) || !isPreviewActionReady(action)}
+                >
+                  {actionLoading ? page('common.loading') : resolveActionLabel(action)}
+                </button>
+              </div>
+              {!isPreviewActionReady(action) ? (
+                <div className="form-help" style={{ marginTop: '8px' }}>
+                  {page('settings.integrations.modal.create.previewAction.dependencyHint')}
+                </div>
+              ) : null}
+              {actionError ? <div className="form-help" style={{ marginTop: '8px' }}>{resolvePluginMaybeKey(actionError, t)}</div> : null}
+            </div>
+          );
+        })}
+
+        {sectionRuntimeSections.map((runtimeSection) => (
+          <div key={runtimeSection.key} style={{ marginTop: '8px' }}>
+            {resolveRuntimeText(runtimeSection.title, runtimeSection.title_key) ? (
+              <div className="form-group" style={{ marginBottom: '8px' }}>
+                <label>{resolveRuntimeText(runtimeSection.title, runtimeSection.title_key)}</label>
+                {resolveRuntimeText(runtimeSection.description, runtimeSection.description_key) ? (
+                  <div className="form-help">{resolveRuntimeText(runtimeSection.description, runtimeSection.description_key)}</div>
+                ) : null}
+              </div>
+            ) : null}
+            {runtimeSection.items
+              .filter((item) => !item.action_key || item.action_key === previewResultActionKey)
+              .map((item) => renderRuntimeStateItem(item))}
+          </div>
+        ))}
+
+        {shouldRenderArtifacts ? (
+          <div style={{ display: 'grid', gap: '8px' }}>
+            {previewArtifacts.map((artifact) => (
+              <div key={artifact.key} className="form-help">
+                {artifact.kind === 'external_url' || artifact.kind === 'image_url' ? (
+                  <a href={artifact.url ?? '#'} target="_blank" rel="noreferrer" style={{ color: 'var(--brand-primary)', textDecoration: 'underline', wordBreak: 'break-all' }}>
+                    {artifact.label || artifact.url}
+                  </a>
+                ) : (
+                  artifact.text ?? artifact.label ?? ''
+                )}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   function renderField(field: PluginManifestConfigField, widget?: PluginManifestFieldUiSchema) {
     const fieldError = createDraft.fieldErrors[field.key];
-    if (formContext?.pluginId === OPEN_XIAOAI_PLUGIN_ID && field.key === OPEN_XIAOAI_GATEWAY_FIELD_KEY) {
+    if (widget?.widget === 'display') {
+      const rawValue = createDraft.values[field.key] ?? field.default;
+      const displayValue = typeof rawValue === 'string'
+        ? rawValue
+        : typeof rawValue === 'number' || typeof rawValue === 'boolean'
+          ? String(rawValue)
+          : formatJsonEditorValue(rawValue);
       return (
         <div key={field.key} className="form-group">
-          <label>{page('settings.integrations.modal.create.gateway.label')}</label>
-          {openXiaoaiGatewayCandidates.length === 0 ? (
-            selectedGatewayId ? (
-              <>
-                <div className="integration-status__detail">
-                  {page('settings.integrations.modal.create.gateway.currentBound', { gateway: selectedGatewayId })}
-                </div>
-                <div className="form-help">{page('settings.integrations.modal.create.gateway.currentBoundHint')}</div>
-              </>
-            ) : (
-              <>
-                <div className="form-help">{page('settings.integrations.modal.create.gateway.empty')}</div>
-                <div className="form-help">{page('settings.integrations.modal.create.gateway.emptyHint')}</div>
-              </>
-            )
-          ) : openXiaoaiGatewayCandidates.length === 1 ? (
-            <>
-              <div className="integration-status__detail">
-                {page('settings.integrations.modal.create.gateway.autoSelected')}
-              </div>
-              <div className="form-help">{formatOpenXiaoaiGatewaySummary(openXiaoaiGatewayCandidates[0])}</div>
-              {openXiaoaiGatewayCandidates[0].lastSeenAt ? (
-                <div className="form-help">
-                  {page('settings.integrations.modal.create.gateway.lastSeen', {
-                    time: openXiaoaiGatewayCandidates[0].lastSeenAt,
-                  })}
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <select
-                className="form-select"
-                value={selectedGatewayId}
-                onChange={(event) => void updateValue(field.key, event.target.value)}
-              >
-                <option value="">{page('settings.integrations.modal.create.gateway.selectPlaceholder')}</option>
-                {openXiaoaiGatewayCandidates.map((candidate) => (
-                  <option key={candidate.gatewayId} value={candidate.gatewayId}>
-                    {formatOpenXiaoaiGatewaySummary(candidate)}
-                  </option>
-                ))}
-              </select>
-              <div className="form-help">{page('settings.integrations.modal.create.gateway.multipleHint')}</div>
-              {selectedGatewayCandidate?.lastSeenAt ? (
-                <div className="form-help">
-                  {page('settings.integrations.modal.create.gateway.lastSeen', {
-                    time: selectedGatewayCandidate.lastSeenAt,
-                  })}
-                </div>
-              ) : null}
-            </>
-          )}
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          <label>{resolvePluginFieldLabel(field, t)}</label>
+          <pre className="channel-config-field__display">
+            {displayValue || resolvePluginWidgetHelpText(widget, field, t) || page('settings.integrations.modal.config.displayEmpty')}
+          </pre>
+          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
     }
@@ -811,6 +1763,47 @@ function SettingsIntegrationsContent() {
         </div>
       );
     }
+    if (field.type === 'multi_enum') {
+      return (
+        <div key={field.key} className="form-group">
+          <label>{resolvePluginFieldLabel(field, t)}</label>
+          <select
+            className="form-select"
+            multiple
+            value={getMultiEnumValues(createDraft.values[field.key])}
+            onChange={(event) => {
+              const nextValues = Array.from(event.target.selectedOptions).map((option) => option.value);
+              void updateValue(field.key, nextValues);
+            }}
+          >
+            {(field.enum_options ?? []).map((option) => (
+              <option key={option.value} value={option.value}>{resolvePluginOptionLabel(option, t)}</option>
+            ))}
+          </select>
+          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          <div className="form-help">{page('settings.integrations.modal.config.multiSelectHint')}</div>
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
+        </div>
+      );
+    }
+    if (field.type === 'json') {
+      return (
+        <div key={field.key} className="form-group">
+          <label>{resolvePluginFieldLabel(field, t)}</label>
+          <textarea
+            className="form-input"
+            value={formatJsonEditorValue(createDraft.values[field.key])}
+            onChange={(event) => void updateValue(field.key, event.target.value)}
+            placeholder={resolvePluginWidgetPlaceholder(widget, t) || undefined}
+            spellCheck={false}
+            rows={8}
+          />
+          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          <div className="form-help">{page('settings.integrations.modal.config.jsonHint')}</div>
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
+        </div>
+      );
+    }
     if (field.type === 'text') {
       return (
         <div key={field.key} className="form-group">
@@ -857,29 +1850,6 @@ function SettingsIntegrationsContent() {
       }));
       return;
     }
-    if (instanceFormMode === 'create' && formContext.pluginId === OPEN_XIAOAI_PLUGIN_ID) {
-      if (openXiaoaiGatewayCandidates.length === 0) {
-        setCreateDraft((current) => ({
-          ...current,
-          fieldErrors: {
-            ...current.fieldErrors,
-            gateway_id: page('settings.integrations.modal.create.gateway.empty'),
-          },
-        }));
-        return;
-      }
-      if (!selectedGatewayId || !selectedGatewayCandidate) {
-        setCreateDraft((current) => ({
-          ...current,
-          fieldErrors: {
-            ...current.fieldErrors,
-            gateway_id: page('settings.integrations.modal.create.gateway.selectRequired'),
-          },
-        }));
-        return;
-      }
-    }
-
     const payloadValues: Record<string, unknown> = {};
     const clearFields = buildPluginClearFields(
       formContext.configSpec,
@@ -928,12 +1898,13 @@ function SettingsIntegrationsContent() {
           ...payload,
         })
         : await settingsApi.updateIntegrationInstance(editingInstanceId ?? '', payload);
-      setStatus(page(
+      const nextStatus = page(
         instanceFormMode === 'create'
           ? 'settings.integrations.status.instanceCreated'
           : 'settings.integrations.status.instanceUpdated',
         { name: instance.display_name },
-      ));
+      );
+      setStatus(nextStatus);
       closeCreateModal();
       await reload(currentHouseholdId, instance.id);
     } catch (submitError) {
@@ -954,42 +1925,6 @@ function SettingsIntegrationsContent() {
       setSubmitting(false);
     }
   }
-
-  useEffect(() => {
-    if (formContext?.pluginId !== OPEN_XIAOAI_PLUGIN_ID) {
-      return;
-    }
-    setCreateDraft((current) => {
-      const currentGatewayId = getScalarValue(current.values, OPEN_XIAOAI_GATEWAY_FIELD_KEY).trim();
-      if (instanceFormMode === 'edit' && currentGatewayId) {
-        return current;
-      }
-      if (openXiaoaiGatewayCandidates.length === 1) {
-        const onlyCandidate = openXiaoaiGatewayCandidates[0];
-        if (currentGatewayId === onlyCandidate.gatewayId && !current.fieldErrors.gateway_id) {
-          return current;
-        }
-        return {
-          ...current,
-          values: { ...current.values, [OPEN_XIAOAI_GATEWAY_FIELD_KEY]: onlyCandidate.gatewayId },
-          fieldErrors: { ...current.fieldErrors, gateway_id: '' },
-        };
-      }
-      if (currentGatewayId && openXiaoaiGatewayCandidates.some((item) => item.gatewayId === currentGatewayId)) {
-        return current;
-      }
-      if (!currentGatewayId && !current.fieldErrors.gateway_id) {
-        return current;
-      }
-      const nextValues = { ...current.values };
-      delete nextValues[OPEN_XIAOAI_GATEWAY_FIELD_KEY];
-      return {
-        ...current,
-        values: nextValues,
-        fieldErrors: { ...current.fieldErrors, gateway_id: '' },
-      };
-    });
-  }, [formContext?.pluginId, instanceFormMode, openXiaoaiGatewayCandidates]);
 
   async function handleOpenSyncAllConfirm() {
     if (!selectedInstance || syncActionDisabled) {
@@ -1446,23 +2381,95 @@ function SettingsIntegrationsContent() {
                 </div>
               </div>
               <form className="settings-form integration-config-form" onSubmit={handleSubmitInstance}>
-                <div className="form-group">
-                  <label>{page('settings.integrations.modal.instance.displayName')}</label>
-                  <input
-                    className="form-input"
-                    value={createDraft.displayName}
-                    onChange={(event) => setCreateDraft((current) => ({
-                      ...current,
-                      displayName: event.target.value,
-                      fieldErrors: { ...current.fieldErrors, display_name: '' },
-                    }))}
-                    placeholder={instanceFormMode === 'create'
-                      ? createDisplayNamePlaceholder
-                      : page('settings.integrations.modal.instance.displayNamePlaceholder')}
-                  />
-                  {createDraft.fieldErrors.display_name ? <div className="form-help">{resolvePluginMaybeKey(createDraft.fieldErrors.display_name, t)}</div> : null}
-                </div>
-                {formContext.configSpec.ui_schema.sections.map((section) => (
+                {wizardMode ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px',
+                      marginBottom: '16px',
+                    }}
+                  >
+                    <div className="integration-status__detail">
+                      {page('settings.integrations.modal.create.step.progress', {
+                        current: activeWizardStepIndex + 1,
+                        total: wizardSections.length,
+                      })}
+                    </div>
+                    <div className="form-help">{page('settings.integrations.modal.create.step.hint')}</div>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                        gap: '8px',
+                      }}
+                    >
+                      {wizardSections.map((section, index) => {
+                        const active = index === activeWizardStepIndex;
+                        const completed = index < activeWizardStepIndex;
+                        return (
+                          <button
+                            key={section.id}
+                            type="button"
+                            onClick={() => setCreateStepIndex(index)}
+                            style={{
+                              border: active ? '1px solid var(--brand-primary)' : '1px solid var(--border-light)',
+                              background: active ? 'var(--brand-primary-light)' : 'var(--bg-card)',
+                              color: active ? 'var(--brand-primary)' : 'var(--text-primary)',
+                              borderRadius: '12px',
+                              padding: '12px',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '4px',
+                            }}
+                          >
+                            <span style={{ fontSize: '12px', color: completed ? 'var(--brand-primary)' : 'var(--text-tertiary)' }}>
+                              {completed
+                                ? page('settings.integrations.modal.create.step.done')
+                                : page('settings.integrations.modal.create.step.index', { index: index + 1 })}
+                            </span>
+                            <span style={{ fontSize: '14px', fontWeight: 600 }}>
+                              {resolvePluginConfigSectionTitle(section, t)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {hasHiddenAdvancedWizardSections ? (
+                  <div className="integration-status__detail" style={{ marginBottom: '12px' }}>
+                    {hasConfiguredHiddenAdvancedSections
+                      ? page('settings.integrations.modal.create.step.advancedConfigured')
+                      : page('settings.integrations.modal.create.step.optionalHint', {
+                        count: advancedWizardSections.length,
+                      })}
+                  </div>
+                ) : null}
+
+                {(!wizardMode || activeWizardStepIndex === 0) ? (
+                  <div className="form-group">
+                    <label>{page('settings.integrations.modal.instance.displayName')}</label>
+                    <input
+                      className="form-input"
+                      value={createDraft.displayName}
+                      onChange={(event) => setCreateDraft((current) => ({
+                        ...current,
+                        displayName: event.target.value,
+                        fieldErrors: { ...current.fieldErrors, display_name: '' },
+                      }))}
+                      placeholder={instanceFormMode === 'create'
+                        ? createDisplayNamePlaceholder
+                        : page('settings.integrations.modal.instance.displayNamePlaceholder')}
+                    />
+                    {createDraft.fieldErrors.display_name ? <div className="form-help">{resolvePluginMaybeKey(createDraft.fieldErrors.display_name, t)}</div> : null}
+                  </div>
+                ) : null}
+
+                {renderedSections.map((section) => (
                   <div key={section.id}>
                     <div className="form-group">
                       <label>{resolvePluginConfigSectionTitle(section, t)}</label>
@@ -1480,38 +2487,60 @@ function SettingsIntegrationsContent() {
                       }
                       return renderField(field, formContext.configSpec.ui_schema.widgets?.[field.key]);
                     })}
+                    {renderConfigPreviewPanel(section.id)}
                   </div>
                 ))}
                 <div className="member-modal__actions">
                   <button className="btn btn--outline btn--sm" type="button" onClick={closeCreateModal} disabled={submitting}>
                     {page('settings.integrations.action.cancel')}
                   </button>
-                  <button
-                    className="btn btn--primary btn--sm"
-                    type="submit"
-                    disabled={
-                      submitting
-                      || (
-                        instanceFormMode === 'create'
-                        && formContext.pluginId === OPEN_XIAOAI_PLUGIN_ID
-                        && (
-                          openXiaoaiGatewayCandidates.length === 0
-                          || (openXiaoaiGatewayCandidates.length > 1 && !selectedGatewayCandidate)
-                        )
-                      )
-                    }
-                  >
-                    {submitting
-                      ? page('settings.integrations.action.saving')
-                      : (
-                        resolvePluginConfigSubmitText(formContext.configSpec, t)
-                        || page(
-                          instanceFormMode === 'create'
-                            ? 'settings.integrations.modal.create.submit'
-                            : 'settings.integrations.modal.edit.submit',
-                        )
-                      )}
-                  </button>
+                  {hasHiddenAdvancedWizardSections && isLastWizardStep ? (
+                    <button
+                      className="btn btn--outline btn--sm"
+                      type="button"
+                      onClick={revealAdvancedWizardSections}
+                      disabled={submitting}
+                    >
+                      {page('settings.integrations.modal.create.step.showAdvanced')}
+                    </button>
+                  ) : null}
+                  {wizardMode && activeWizardStepIndex > 0 ? (
+                    <button
+                      className="btn btn--outline btn--sm"
+                      type="button"
+                      onClick={() => setCreateStepIndex((current) => Math.max(current - 1, 0))}
+                      disabled={submitting}
+                    >
+                      {page('settings.integrations.modal.create.step.previous')}
+                    </button>
+                  ) : null}
+                  {wizardMode && !isLastWizardStep ? (
+                    <button
+                      className="btn btn--primary btn--sm"
+                      type="button"
+                      onClick={goToNextWizardStep}
+                      disabled={submitting}
+                    >
+                      {page('settings.integrations.modal.create.step.next')}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn--primary btn--sm"
+                      type="submit"
+                      disabled={submitting}
+                    >
+                      {submitting
+                        ? page('settings.integrations.action.saving')
+                        : (
+                          resolvePluginConfigSubmitText(formContext.configSpec, t)
+                          || page(
+                            instanceFormMode === 'create'
+                              ? 'settings.integrations.modal.create.submit'
+                              : 'settings.integrations.modal.edit.submit',
+                          )
+                        )}
+                    </button>
+                  )}
                 </div>
               </form>
             </div>

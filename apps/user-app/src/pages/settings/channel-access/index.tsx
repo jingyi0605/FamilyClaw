@@ -9,8 +9,13 @@ import { ChannelAccountBindingsPanel } from '../components/ChannelAccountBinding
 import { PluginArtifactList } from '../components/PluginArtifactList';
 import { SettingsDialog, SettingsNotice } from '../components/SettingsSharedBlocks';
 import {
+  resolvePluginConfigSectionDescription,
+  resolvePluginConfigSectionTitle,
+  resolvePluginConfigSubmitText,
   resolvePluginFieldLabel,
+  resolvePluginMaybeKey,
   resolvePluginOptionLabel,
+  resolvePluginTextValue,
   resolvePluginWidgetHelpText,
   resolvePluginWidgetPlaceholder,
 } from '../pluginConfigI18n';
@@ -34,8 +39,12 @@ import type {
   ChannelInboundEventRead,
   Member,
   PluginConfigFormRead,
+  PluginManifestConfigPreviewAction,
   PluginManifestConfigField,
   PluginManifestFieldUiSchema,
+  PluginManifestRuntimeStateItem,
+  PluginManifestRuntimeStateSection,
+  PluginManifestUiSection,
   PluginRegistryItem,
 } from '../settingsTypes';
 
@@ -352,6 +361,50 @@ function isPluginFieldVisible(
   });
 }
 
+function getPreviewActionErrorKey(actionKey: string): string {
+  return `__preview_action__:${actionKey}`;
+}
+
+function getRuntimeItemErrorKey(itemKey: string): string {
+  return `__runtime_item__:${itemKey}`;
+}
+
+function isMeaningfulRuntimeValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>).length > 0;
+  }
+  return true;
+}
+
+function getObjectPathValue(payload: unknown, source: string): unknown {
+  if (!source.trim()) {
+    return undefined;
+  }
+  const parts = source.split('.').map((item) => item.trim()).filter(Boolean);
+  let current: unknown = payload;
+  for (const part of parts) {
+    if (Array.isArray(current)) {
+      const index = Number(part);
+      current = Number.isInteger(index) ? current[index] : undefined;
+      continue;
+    }
+    if (!current || typeof current !== 'object') {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
 function getSupportedConnectionModes(plugin: PluginRegistryItem | null): ChannelConnectionMode[] {
   return (plugin?.capabilities.channel?.inbound_modes ?? []).filter((mode): mode is ChannelConnectionMode => (
     mode === 'webhook' || mode === 'polling' || mode === 'websocket'
@@ -385,6 +438,8 @@ function SettingsChannelAccessContent() {
   const [accountFieldErrors, setAccountFieldErrors] = useState<Record<string, string>>({});
   const [configPreview, setConfigPreview] = useState<PluginConfigFormRead | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewLoadingActionKey, setPreviewLoadingActionKey] = useState<string | null>(null);
+  const [previewResultActionKey, setPreviewResultActionKey] = useState<string | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [pluginActionLoadingKey, setPluginActionLoadingKey] = useState<string | null>(null);
   const [pluginActionResult, setPluginActionResult] = useState<ChannelAccountPluginActionExecuteRead | null>(null);
@@ -501,6 +556,8 @@ function SettingsChannelAccessContent() {
     setAccountFieldErrors({});
     setConfigPreview(null);
     setPreviewLoading(false);
+    setPreviewLoadingActionKey(null);
+    setPreviewResultActionKey(null);
   }
 
   async function closeAccountModal() {
@@ -554,6 +611,8 @@ function SettingsChannelAccessContent() {
       });
       setAccountFieldErrors({});
       setConfigPreview(null);
+      setPreviewLoadingActionKey(null);
+      setPreviewResultActionKey(null);
       setAccountModalOpen(true);
     } catch (selectError) {
       setError(
@@ -581,6 +640,8 @@ function SettingsChannelAccessContent() {
     });
     setAccountFieldErrors({});
     setConfigPreview(null);
+    setPreviewLoadingActionKey(null);
+    setPreviewResultActionKey(null);
     setAccountModalOpen(true);
   }
 
@@ -595,6 +656,11 @@ function SettingsChannelAccessContent() {
   async function handleSaveAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentHouseholdId || !editingAccount) return;
+    const nextFieldErrors = { ...accountFieldErrors };
+    if (validateRuntimeRequirements(nextFieldErrors)) {
+      setAccountFieldErrors(nextFieldErrors);
+      return;
+    }
     setModalLoading(true);
     setError('');
     setStatus('');
@@ -631,11 +697,18 @@ function SettingsChannelAccessContent() {
     }
   }
 
-  async function handlePreviewAccountConfig() {
+  async function handlePreviewAccountConfig(action?: PluginManifestConfigPreviewAction) {
     if (!currentHouseholdId || !editingAccount || !selectedPlugin?.entrypoints.config_preview) return;
     setPreviewLoading(true);
+    setPreviewLoadingActionKey(action?.key ?? '__default__');
     setError('');
-    setAccountFieldErrors({});
+    setAccountFieldErrors((current) => {
+      const nextErrors = { ...current };
+      if (action) {
+        delete nextErrors[getPreviewActionErrorKey(action.key)];
+      }
+      return nextErrors;
+    });
     try {
       const previewForm = await settingsApi.previewHouseholdPluginConfigForm(currentHouseholdId, selectedPlugin.id, {
         scope_type: 'channel_account',
@@ -643,9 +716,14 @@ function SettingsChannelAccessContent() {
         values: accountForm.config,
         secret_values: {},
         clear_secret_fields: [],
+        action_key: action?.action_key ?? action?.key ?? null,
       });
       setConfigPreview(previewForm);
-      setAccountFieldErrors(previewForm.view.field_errors);
+      setPreviewResultActionKey(action?.key ?? '__default__');
+      setAccountFieldErrors((current) => ({
+        ...current,
+        ...previewForm.view.field_errors,
+      }));
       setAccountForm((current) => ({
         ...current,
         config: { ...current.config, ...previewForm.view.values },
@@ -658,8 +736,17 @@ function SettingsChannelAccessContent() {
             ? previewError.message
             : t('settings.channelAccess.status.previewFailed'),
       );
+      if (action) {
+        setAccountFieldErrors((current) => ({
+          ...current,
+          [getPreviewActionErrorKey(action.key)]: previewError instanceof Error
+            ? previewError.message
+            : t('settings.channelAccess.status.previewFailed'),
+        }));
+      }
     } finally {
       setPreviewLoading(false);
+      setPreviewLoadingActionKey(null);
     }
   }
 
@@ -792,6 +879,10 @@ function SettingsChannelAccessContent() {
   );
   const pluginConfigSpec = selectedPlugin?.config_specs?.find((item) => item.scope_type === 'channel_account') ?? null;
   const pluginConfigWidgets = pluginConfigSpec?.ui_schema.widgets;
+  const previewActions = pluginConfigSpec?.ui_schema.actions ?? [];
+  const runtimeSections = pluginConfigSpec?.ui_schema.runtime_sections ?? [];
+  const previewRuntimeState = configPreview?.view.runtime_state ?? {};
+  const previewArtifacts = configPreview?.view.preview_artifacts ?? [];
   const visibleConfigFields = useMemo(
     () => configFields.filter((item) => {
       if (item.mode === 'legacy_field') {
@@ -801,6 +892,29 @@ function SettingsChannelAccessContent() {
     }),
     [accountForm.config, configFields, pluginConfigWidgets],
   );
+  const visiblePluginSections = useMemo(() => {
+    if (!pluginConfigSpec) {
+      return [];
+    }
+    const fieldDefMap = new Map(
+      visibleConfigFields
+        .filter((item): item is PluginConfigFieldDef => item.mode === 'plugin_field')
+        .map((item) => [item.field.key, item]),
+    );
+    return pluginConfigSpec.ui_schema.sections
+      .map((section) => ({
+        section,
+        fields: section.fields
+          .map((fieldKey) => fieldDefMap.get(fieldKey) ?? null)
+          .filter((item): item is PluginConfigFieldDef => item !== null),
+      }))
+      .filter(({ section, fields }) => (
+        fields.length > 0
+        || getSectionPreviewActions(section.id).length > 0
+        || getSectionRuntimeSections(section.id).length > 0
+      ));
+  }, [pluginConfigSpec, visibleConfigFields, previewActions, runtimeSections, previewResultActionKey, accountModalMode]);
+  const hasStagedPreviewUi = previewActions.length > 0 || runtimeSections.length > 0;
   const canPreviewConfig = Boolean(selectedPlugin?.entrypoints.config_preview && editingAccount?.id);
   const supportedConnectionModes = useMemo(() => getSupportedConnectionModes(selectedPlugin), [selectedPlugin]);
 
@@ -812,20 +926,131 @@ function SettingsChannelAccessContent() {
     }
   }, [accountForm.connection_mode, selectedPlugin, supportedConnectionModes]);
 
+  function resolveActionLabel(action: PluginManifestConfigPreviewAction): string {
+    return resolvePluginTextValue(action.label, action.label_key, translate) || action.key;
+  }
+
+  function resolveActionDescription(action: PluginManifestConfigPreviewAction): string {
+    return resolvePluginTextValue(action.description, action.description_key, translate) || '';
+  }
+
+  function resolveRuntimeText(value: string | null | undefined, valueKey: string | null | undefined): string {
+    return resolvePluginTextValue(value ?? null, valueKey ?? null, translate) || '';
+  }
+
+  function getSectionPreviewActions(sectionId: string): PluginManifestConfigPreviewAction[] {
+    return previewActions.filter((action) => (
+      action.section_id === sectionId
+      && (action.modes ?? ['create', 'edit']).includes(accountModalMode)
+    ));
+  }
+
+  function getSectionRuntimeSections(sectionId: string): PluginManifestRuntimeStateSection[] {
+    return runtimeSections.filter((section) => (
+      section.section_id === sectionId
+      && (!section.action_key || section.action_key === previewResultActionKey)
+    ));
+  }
+
+  function isPreviewActionReady(action: PluginManifestConfigPreviewAction): boolean {
+    return (action.depends_on_fields ?? []).every((fieldKey) => isMeaningfulRuntimeValue(accountForm.config[fieldKey]));
+  }
+
+  function getConfigField(fieldKey: string): PluginManifestConfigField | null {
+    if (!pluginConfigSpec) {
+      return null;
+    }
+    return pluginConfigSpec.config_schema.fields.find((field) => field.key === fieldKey) ?? null;
+  }
+
+  function buildRuntimeSelectionValue(item: PluginManifestRuntimeStateItem, candidate: unknown): unknown {
+    if (item.selection_mode === 'field') {
+      return getObjectPathValue(candidate, item.selection_value_field ?? '');
+    }
+    const payload: Record<string, unknown> = {};
+    for (const fieldPath of item.selection_object_fields ?? []) {
+      const fieldName = fieldPath.split('.').at(-1)?.trim();
+      if (!fieldName) {
+        continue;
+      }
+      payload[fieldName] = getObjectPathValue(candidate, fieldPath);
+    }
+    return payload;
+  }
+
+  function isRuntimeCandidateSelected(item: PluginManifestRuntimeStateItem, candidate: unknown): boolean {
+    if (!item.target_field || !item.selected_match_field) {
+      return false;
+    }
+    const currentValue = accountForm.config[item.target_field];
+    const candidateValue = getObjectPathValue(candidate, item.selected_match_field);
+    if (item.selection_mode === 'field') {
+      return currentValue === candidateValue;
+    }
+    const currentMatchValue = getObjectPathValue(currentValue, item.selected_match_field);
+    return currentMatchValue === candidateValue;
+  }
+
+  function validateRuntimeRequirements(nextErrors: Record<string, string>): boolean {
+    let hasError = false;
+    for (const section of runtimeSections) {
+      if (section.action_key && section.action_key !== previewResultActionKey) {
+        continue;
+      }
+      for (const item of section.items) {
+        const errorKey = getRuntimeItemErrorKey(item.key);
+        if (item.kind !== 'candidate_select' || !item.required || !item.target_field) {
+          nextErrors[errorKey] = '';
+          continue;
+        }
+        const selectedValue = accountForm.config[item.target_field];
+        if (isMeaningfulRuntimeValue(selectedValue)) {
+          nextErrors[errorKey] = '';
+          continue;
+        }
+        nextErrors[errorKey] = resolveRuntimeText(item.required_message, item.required_message_key)
+          || `${resolveRuntimeText(item.label, item.label_key) || item.target_field} ${t('settings.channelAccess.form.requiredSuffix')}`;
+        hasError = true;
+      }
+    }
+    return hasError;
+  }
+
   function updateConfigValue(fieldKey: string, value: unknown) {
+    const resetActions = previewActions.filter((action) => (action.reset_on_change_fields ?? []).includes(fieldKey));
+    const resetFieldKeys = new Set<string>();
+    for (const action of resetActions) {
+      for (const clearField of action.clear_fields_on_reset ?? []) {
+        resetFieldKeys.add(clearField);
+      }
+    }
     setAccountForm((current) => ({
       ...current,
-      config: { ...current.config, [fieldKey]: value },
+      config: (() => {
+        const nextConfig = { ...current.config, [fieldKey]: value };
+        for (const clearField of resetFieldKeys) {
+          delete nextConfig[clearField];
+        }
+        return nextConfig;
+      })(),
     }));
     setAccountFieldErrors((current) => {
-      if (!(fieldKey in current)) {
-        return current;
-      }
       const nextErrors = { ...current };
       delete nextErrors[fieldKey];
+      for (const action of resetActions) {
+        delete nextErrors[getPreviewActionErrorKey(action.key)];
+      }
+      for (const clearField of resetFieldKeys) {
+        delete nextErrors[clearField];
+      }
+      if (Object.keys(nextErrors).length === Object.keys(current).length) {
+        return current;
+      }
       return nextErrors;
     });
     setConfigPreview(null);
+    setPreviewLoadingActionKey(null);
+    setPreviewResultActionKey(null);
   }
 
   function renderConfigField(fieldDef: ConfigFieldDef) {
@@ -845,7 +1070,9 @@ function SettingsChannelAccessContent() {
             required={fieldDef.required}
           />
           {fieldDef.helpText ? <div className="form-help">{fieldDef.helpText}</div> : null}
-          {accountFieldErrors[fieldDef.key] ? <div className="form-help">{accountFieldErrors[fieldDef.key]}</div> : null}
+          {accountFieldErrors[fieldDef.key] ? (
+            <div className="form-help">{resolvePluginMaybeKey(accountFieldErrors[fieldDef.key], translate)}</div>
+          ) : null}
         </div>
       );
     }
@@ -887,7 +1114,7 @@ function SettingsChannelAccessContent() {
             required={field.required}
           />
           {helpText ? <div className="form-help">{helpText}</div> : null}
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, translate)}</div> : null}
         </div>
       );
     }
@@ -922,7 +1149,7 @@ function SettingsChannelAccessContent() {
             <option value="true">{t('settings.channelAccess.form.booleanTrue')}</option>
           </select>
           {helpText ? <div className="form-help">{helpText}</div> : null}
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, translate)}</div> : null}
         </div>
       );
     }
@@ -945,7 +1172,7 @@ function SettingsChannelAccessContent() {
             ))}
           </select>
           {helpText ? <div className="form-help">{helpText}</div> : null}
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, translate)}</div> : null}
         </div>
       );
     }
@@ -969,7 +1196,7 @@ function SettingsChannelAccessContent() {
           </select>
           <div className="form-help">{t('settings.channelAccess.form.multiSelectHint')}</div>
           {helpText ? <div className="form-help">{helpText}</div> : null}
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, translate)}</div> : null}
         </div>
       );
     }
@@ -986,7 +1213,7 @@ function SettingsChannelAccessContent() {
             rows={6}
           />
           {helpText ? <div className="form-help">{helpText}</div> : null}
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, translate)}</div> : null}
         </div>
       );
     }
@@ -1007,7 +1234,7 @@ function SettingsChannelAccessContent() {
             required={field.required}
           />
           {helpText ? <div className="form-help">{helpText}</div> : null}
-          {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, translate)}</div> : null}
         </div>
       );
     }
@@ -1041,7 +1268,244 @@ function SettingsChannelAccessContent() {
           step={field.type === 'integer' ? 1 : undefined}
         />
         {helpText ? <div className="form-help">{helpText}</div> : null}
-        {fieldError ? <div className="form-help">{fieldError}</div> : null}
+          {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, translate)}</div> : null}
+      </div>
+    );
+  }
+
+  function renderRuntimeStateItem(item: PluginManifestRuntimeStateItem) {
+    const runtimeValue = getObjectPathValue(previewRuntimeState, item.source);
+    const itemLabel = resolveRuntimeText(item.label, item.label_key);
+    const itemDescription = resolveRuntimeText(item.description, item.description_key);
+    const itemError = accountFieldErrors[getRuntimeItemErrorKey(item.key)];
+
+    if (item.kind === 'status_badge') {
+      if (!isMeaningfulRuntimeValue(runtimeValue)) {
+        return null;
+      }
+      const selectedOption = (item.status_options ?? []).find((option) => option.value === runtimeValue) ?? null;
+      const badgeTone = selectedOption?.tone ?? 'neutral';
+      const toneStyle = badgeTone === 'success'
+        ? { background: 'rgba(22, 163, 74, 0.12)', color: '#166534' }
+        : badgeTone === 'warning'
+          ? { background: 'rgba(245, 158, 11, 0.14)', color: '#92400e' }
+          : badgeTone === 'danger'
+            ? { background: 'rgba(220, 38, 38, 0.12)', color: '#991b1b' }
+            : badgeTone === 'info'
+              ? { background: 'rgba(14, 165, 233, 0.12)', color: '#0c4a6e' }
+              : { background: 'rgba(15, 23, 42, 0.06)', color: '#475569' };
+      const badgeLabel = selectedOption
+        ? resolveRuntimeText(selectedOption.label, selectedOption.label_key)
+        : (typeof runtimeValue === 'string' ? runtimeValue : '');
+      return (
+        <div key={item.key} className="channel-config-field">
+          {itemLabel ? <label className="channel-config-field__label">{itemLabel}</label> : null}
+          {itemDescription ? <div className="form-help">{itemDescription}</div> : null}
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              borderRadius: '999px',
+              padding: '6px 12px',
+              fontSize: '13px',
+              fontWeight: 600,
+              marginTop: itemLabel || itemDescription ? '8px' : 0,
+              ...toneStyle,
+            }}
+          >
+            {badgeLabel || t('settings.channelAccess.form.previewEmpty')}
+          </div>
+          {itemError ? <div className="form-help">{resolvePluginMaybeKey(itemError, translate)}</div> : null}
+        </div>
+      );
+    }
+
+    if (item.kind === 'link') {
+      const linkUrl = typeof runtimeValue === 'string' ? runtimeValue.trim() : '';
+      const linkText = resolveRuntimeText(
+        typeof getObjectPathValue(previewRuntimeState, item.link_text_source ?? '') === 'string'
+          ? String(getObjectPathValue(previewRuntimeState, item.link_text_source ?? ''))
+          : item.link_text,
+        item.link_text_key,
+      );
+      const emptyText = resolveRuntimeText(item.empty_text, item.empty_text_key);
+      return (
+        <div key={item.key} className="channel-config-field">
+          {itemLabel ? <label className="channel-config-field__label">{itemLabel}</label> : null}
+          {itemDescription ? <div className="form-help">{itemDescription}</div> : null}
+          {linkUrl ? (
+            <a
+              href={linkUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="plugin-artifact-card__link"
+              style={{ marginTop: itemLabel || itemDescription ? '8px' : 0 }}
+            >
+              {linkText || t('settings.channelAccess.form.previewOpenArtifact')}
+            </a>
+          ) : (
+            <div className="form-help" style={{ marginTop: itemLabel || itemDescription ? '8px' : 0 }}>
+              {emptyText || t('settings.channelAccess.form.previewEmpty')}
+            </div>
+          )}
+          {itemError ? <div className="form-help">{resolvePluginMaybeKey(itemError, translate)}</div> : null}
+        </div>
+      );
+    }
+
+    if (item.kind === 'candidate_select') {
+      const candidates = Array.isArray(runtimeValue) ? runtimeValue : [];
+      const emptyText = resolveRuntimeText(item.empty_text, item.empty_text_key);
+      return (
+        <div key={item.key} className="channel-config-field">
+          {itemLabel ? <label className="channel-config-field__label">{itemLabel}</label> : null}
+          {itemDescription ? <div className="form-help">{itemDescription}</div> : null}
+          {candidates.length === 0 ? (
+            <div className="form-help" style={{ marginTop: itemLabel || itemDescription ? '8px' : 0 }}>
+              {emptyText || t('settings.channelAccess.form.previewEmpty')}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: '8px', marginTop: itemLabel || itemDescription ? '8px' : 0 }}>
+              {candidates.map((candidate, index) => {
+                const label = (item.option_label_fields ?? [])
+                  .map((fieldPath) => getObjectPathValue(candidate, fieldPath))
+                  .find((fieldValue) => typeof fieldValue === 'string' && fieldValue.trim()) as string | undefined;
+                const descriptionParts = (item.option_description_fields ?? [])
+                  .map((fieldPath) => getObjectPathValue(candidate, fieldPath))
+                  .filter((fieldValue): fieldValue is string => typeof fieldValue === 'string' && fieldValue.trim().length > 0);
+                const candidateKey = String(getObjectPathValue(candidate, item.selected_match_field ?? '') ?? index);
+                const selected = isRuntimeCandidateSelected(item, candidate);
+                return (
+                  <button
+                    key={`${item.key}-${candidateKey}`}
+                    className="btn"
+                    type="button"
+                    onClick={() => {
+                      if (!item.target_field) {
+                        return;
+                      }
+                      const nextValue = buildRuntimeSelectionValue(item, candidate);
+                      setAccountForm((current) => ({
+                        ...current,
+                        config: { ...current.config, [item.target_field!]: nextValue },
+                      }));
+                      setAccountFieldErrors((current) => ({
+                        ...current,
+                        [item.target_field!]: '',
+                        [getRuntimeItemErrorKey(item.key)]: '',
+                      }));
+                    }}
+                    style={{
+                      textAlign: 'left',
+                      border: selected ? '1px solid var(--brand-primary)' : '1px solid var(--border-light)',
+                      background: selected ? 'var(--brand-primary-light)' : 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      borderRadius: '12px',
+                      padding: '12px',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: descriptionParts.length > 0 ? '4px' : 0 }}>
+                      {label || candidateKey}
+                    </div>
+                    {descriptionParts.length > 0 ? (
+                      <div className="form-help">{descriptionParts.join(' / ')}</div>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {itemError ? <div className="form-help" style={{ marginTop: '8px' }}>{resolvePluginMaybeKey(itemError, translate)}</div> : null}
+        </div>
+      );
+    }
+
+    const textValue = typeof runtimeValue === 'string'
+      ? runtimeValue
+      : typeof runtimeValue === 'number' || typeof runtimeValue === 'boolean'
+        ? String(runtimeValue)
+        : isMeaningfulRuntimeValue(runtimeValue)
+          ? formatJsonEditorValue(runtimeValue)
+          : '';
+    const emptyText = resolveRuntimeText(item.empty_text, item.empty_text_key);
+    return (
+      <div key={item.key} className="channel-config-field">
+        {itemLabel ? <label className="channel-config-field__label">{itemLabel}</label> : null}
+        {itemDescription ? <div className="form-help">{itemDescription}</div> : null}
+        <div className="form-help" style={{ marginTop: itemLabel || itemDescription ? '8px' : 0 }}>
+          {textValue || emptyText || t('settings.channelAccess.form.previewEmpty')}
+        </div>
+        {itemError ? <div className="form-help">{resolvePluginMaybeKey(itemError, translate)}</div> : null}
+      </div>
+    );
+  }
+
+  function renderConfigPreviewPanel(section: PluginManifestUiSection) {
+    const sectionActions = getSectionPreviewActions(section.id);
+    const sectionRuntimeSections = getSectionRuntimeSections(section.id);
+    const shouldRenderArtifacts = previewArtifacts.length > 0 && (
+      sectionActions.some((action) => action.key === previewResultActionKey)
+      || sectionRuntimeSections.some((runtimeSection) => !runtimeSection.action_key || runtimeSection.action_key === previewResultActionKey)
+    );
+    if (sectionActions.length === 0 && sectionRuntimeSections.length === 0 && !shouldRenderArtifacts) {
+      return null;
+    }
+    return (
+      <div className="form-group channel-config-preview" key={`preview-${section.id}`}>
+        {sectionActions.map((action) => {
+          const actionError = accountFieldErrors[getPreviewActionErrorKey(action.key)];
+          const actionLoading = previewLoadingActionKey === action.key;
+          return (
+            <div key={action.key} className="channel-config-preview__action">
+              <label>{resolveActionLabel(action)}</label>
+              {resolveActionDescription(action) ? <div className="form-help">{resolveActionDescription(action)}</div> : null}
+              <div style={{ marginTop: '8px' }}>
+                <button
+                  className="btn btn--outline btn--sm"
+                  type="button"
+                  onClick={() => void handlePreviewAccountConfig(action)}
+                  disabled={previewLoading || modalLoading || !isPreviewActionReady(action)}
+                >
+                  {actionLoading ? t('settings.channelAccess.actions.previewing') : resolveActionLabel(action)}
+                </button>
+              </div>
+              {!isPreviewActionReady(action) ? (
+                <div className="form-help" style={{ marginTop: '8px' }}>
+                  {t('settings.channelAccess.form.previewDependencyHint')}
+                </div>
+              ) : null}
+              {actionError ? (
+                <div className="form-help" style={{ marginTop: '8px' }}>
+                  {resolvePluginMaybeKey(actionError, translate)}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        {sectionRuntimeSections.map((runtimeSection) => (
+          <div key={runtimeSection.key} className="channel-config-preview__runtime">
+            {resolveRuntimeText(runtimeSection.title, runtimeSection.title_key) ? (
+              <>
+                <label>{resolveRuntimeText(runtimeSection.title, runtimeSection.title_key)}</label>
+                {resolveRuntimeText(runtimeSection.description, runtimeSection.description_key) ? (
+                  <div className="form-help">{resolveRuntimeText(runtimeSection.description, runtimeSection.description_key)}</div>
+                ) : null}
+              </>
+            ) : null}
+            <div className="channel-config-fields">
+              {runtimeSection.items
+                .filter((item) => !item.action_key || item.action_key === previewResultActionKey)
+                .map((item) => renderRuntimeStateItem(item))}
+            </div>
+          </div>
+        ))}
+        {shouldRenderArtifacts ? (
+          <PluginArtifactList
+            items={previewArtifacts}
+            artifactFallback={t('settings.channelAccess.form.previewArtifactFallback')}
+            openLinkText={t('settings.channelAccess.form.previewOpenArtifact')}
+          />
+        ) : null}
       </div>
     );
   }
@@ -1336,7 +1800,11 @@ function SettingsChannelAccessContent() {
                 {t('settings.channelAccess.actions.cancel')}
               </button>
               <button className="btn btn--primary btn--sm" type="submit" disabled={modalLoading || previewLoading}>
-                {modalLoading ? t('settings.channelAccess.actions.saving') : t('settings.channelAccess.actions.save')}
+                {modalLoading
+                  ? t('settings.channelAccess.actions.saving')
+                  : (pluginConfigSpec
+                    ? (resolvePluginConfigSubmitText(pluginConfigSpec, translate) || t('settings.channelAccess.actions.save'))
+                    : t('settings.channelAccess.actions.save'))}
               </button>
             </>
           )}
@@ -1354,6 +1822,8 @@ function SettingsChannelAccessContent() {
                   connection_mode: resolveDefaultConnectionMode(nextPlugin),
                 }));
                 setConfigPreview(null);
+                setPreviewLoadingActionKey(null);
+                setPreviewResultActionKey(null);
               }}
               disabled
               required
@@ -1415,7 +1885,20 @@ function SettingsChannelAccessContent() {
               <option value="disabled">{t('settings.channelAccess.accountStatus.disabled')}</option>
             </select>
           </div>
-          {visibleConfigFields.length > 0 ? (
+          {pluginConfigSpec ? (
+            visiblePluginSections.map(({ section, fields }) => (
+              <div key={section.id} className="form-group channel-config-section">
+                <label>{resolvePluginConfigSectionTitle(section, translate) || t('settings.channelAccess.form.platformConfig')}</label>
+                {resolvePluginConfigSectionDescription(section, translate) ? (
+                  <div className="form-help">{resolvePluginConfigSectionDescription(section, translate)}</div>
+                ) : null}
+                <div className="channel-config-fields">
+                  {fields.map((field) => renderConfigField(field))}
+                </div>
+                {canPreviewConfig ? renderConfigPreviewPanel(section) : null}
+              </div>
+            ))
+          ) : visibleConfigFields.length > 0 ? (
             <div className="form-group channel-config-section">
               <label>{t('settings.channelAccess.form.platformConfig')}</label>
               <div className="channel-config-fields">
@@ -1423,7 +1906,7 @@ function SettingsChannelAccessContent() {
               </div>
             </div>
           ) : null}
-          {canPreviewConfig ? (
+          {canPreviewConfig && !hasStagedPreviewUi ? (
             <div className="form-group channel-config-preview">
               <div className="channel-config-preview__header">
                 <label>{t('settings.channelAccess.form.previewTitle')}</label>
@@ -1439,9 +1922,9 @@ function SettingsChannelAccessContent() {
                 </button>
               </div>
               <div className="form-help">{t('settings.channelAccess.form.previewHelp')}</div>
-              {configPreview?.view.preview_artifacts.length ? (
+              {previewArtifacts.length ? (
                 <PluginArtifactList
-                  items={configPreview.view.preview_artifacts}
+                  items={previewArtifacts}
                   artifactFallback={t('settings.channelAccess.form.previewArtifactFallback')}
                   openLinkText={t('settings.channelAccess.form.previewOpenArtifact')}
                 />

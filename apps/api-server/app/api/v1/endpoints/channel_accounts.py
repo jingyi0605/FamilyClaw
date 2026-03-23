@@ -11,6 +11,8 @@ from app.modules.audit.service import write_audit_log
 from app.modules.channel.account_service import ChannelAccountServiceError
 from app.modules.channel.schemas import (
     ChannelAccountCreate,
+    ChannelAccountPluginActionExecuteRead,
+    ChannelAccountPluginActionExecuteRequest,
     ChannelAccountRead,
     ChannelAccountStatusRead,
     ChannelBindingCandidateRead,
@@ -36,6 +38,10 @@ from app.modules.channel.status_service import (
     list_channel_delivery_status_records,
     list_channel_inbound_event_status_records,
     probe_channel_account,
+)
+from app.modules.channel.account_action_service import (
+    ChannelAccountPluginActionServiceError,
+    execute_channel_account_plugin_action,
 )
 from app.modules.plugin.service import PluginServiceError
 
@@ -203,6 +209,51 @@ def get_channel_account_status_endpoint(
     except (ChannelAccountServiceError, ChannelStatusServiceError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except PluginServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+
+@router.post(
+    "/{household_id}/channel-accounts/{account_id}/plugin-actions/{action_key}",
+    response_model=ChannelAccountPluginActionExecuteRead,
+)
+def execute_channel_account_plugin_action_endpoint(
+    household_id: str,
+    account_id: str,
+    action_key: str,
+    payload: ChannelAccountPluginActionExecuteRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_admin_actor),
+) -> ChannelAccountPluginActionExecuteRead:
+    ensure_actor_can_access_household(actor, household_id)
+    try:
+        result = execute_channel_account_plugin_action(
+            db,
+            household_id=household_id,
+            account_id=account_id,
+            action_key=action_key,
+            payload=payload.payload,
+        )
+        write_audit_log(
+            db,
+            household_id=household_id,
+            actor=actor,
+            action="channel_account.plugin_action.execute",
+            target_type="channel_plugin_account",
+            target_id=account_id,
+            result="success",
+            details={
+                "action_key": action_key,
+                "message": result.message,
+                "status_summary": None if result.status_summary is None else result.status_summary.model_dump(mode="json"),
+            },
+        )
+        db.commit()
+        return result
+    except ChannelAccountPluginActionServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    except PluginServiceError as exc:
+        db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
 

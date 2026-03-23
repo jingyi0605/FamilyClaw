@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.modules.channel import repository
 from app.modules.channel.account_service import get_channel_account_or_404
+from app.modules.channel.account_action_service import (
+    get_channel_account_plugin_status_summary,
+    list_channel_account_plugin_actions,
+)
 from app.modules.channel.schemas import (
     ChannelAccountRead,
     ChannelAccountStatusRead,
@@ -91,6 +95,16 @@ def get_channel_account_status(
         latest_failed_inbound_event=None if failed_inbound is None else _to_channel_inbound_event_read(failed_inbound),
         recent_delivery_count=len(deliveries),
         recent_inbound_count=len(inbound_events),
+        plugin_status_summary=get_channel_account_plugin_status_summary(
+            db,
+            household_id=household_id,
+            account_id=account_id,
+        ),
+        plugin_actions=list_channel_account_plugin_actions(
+            db,
+            household_id=household_id,
+            account_id=account_id,
+        ),
     )
 
 

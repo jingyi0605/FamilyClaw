@@ -139,7 +139,38 @@ The recommended pattern is:
 - keep returning the standard `PluginConfigFormRead`
 - put temporary runtime output in `view.runtime_state`
 
+If the preview flow includes third-party verification callbacks, do not invent a plugin-private callback endpoint. The host now provides a unified auth-session runtime object through `view.runtime_state.auth_session`.
+
+The plugin side should treat it as a generic contract:
+
+- read `auth_session.callback_url` and use it as the provider callback target
+- write provider resume data into `auth_session.payload`
+- wait for the host to move the session into `callback_received`
+- consume `auth_session.callback_payload` on the next preview run and continue the flow
+- mark the session `completed` or `failed` when the staged setup is done
+
 That keeps the saved config schema clean while still allowing staged setup flows with real login, verification links, and live device lists.
+
+## How `ui_schema.actions` and `runtime_sections` work now
+
+If a plugin setup flow needs a staged step such as "click a button, wait for real login, then pick a device", do not hardcode that in the host. Declare it in the manifest:
+
+- `ui_schema.actions`: preview actions the host can render inside a config section
+- `ui_schema.runtime_sections`: runtime-only output the host can render after an action finishes
+
+The normal handshake is:
+
+1. gate the button with `depends_on_fields`
+2. let the host call `config_preview` with the matching `action_key`
+3. return login state, verification links, candidate devices, or other temporary data through `runtime_state`
+4. render them with `status_badge`, `text`, `link`, or `candidate_select` items
+5. if the user picks a candidate, the host only writes the selected value back to `target_field`; it does not understand vendor-specific meaning
+
+Keep the boundary strict:
+
+- persisted values still belong in real config fields such as `device_selector`
+- `runtime_state` is temporary output, not saved config
+- the host renders a generic contract, not Xiaomi-specific or Weixin-specific setup logic
 
 ## Dynamic option fields
 

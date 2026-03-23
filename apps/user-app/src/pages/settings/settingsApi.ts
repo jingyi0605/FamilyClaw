@@ -14,6 +14,8 @@ import type {
   AiProviderProfileCreatePayload,
   AiProviderProfileUpdatePayload,
   ChannelAccountCreate,
+  ChannelAccountPluginActionExecuteRead,
+  ChannelAccountPluginActionExecuteRequest,
   ChannelAccountRead,
   ChannelAccountStatusRead,
   ChannelAccountUpdate,
@@ -47,6 +49,8 @@ import type {
   MarketplaceVersionOptionsRead,
   HouseholdVoiceprintSummaryRead,
   PluginConfigFormRead,
+  PluginConfigAuthSessionRead,
+  PluginConfigPreviewRequest,
   PluginConfigResolveRequest,
   MemberChannelBindingCreate,
   MemberChannelBindingRead,
@@ -401,6 +405,28 @@ export const settingsApi = {
       },
     );
   },
+  previewHouseholdPluginConfigForm(
+    householdId: string,
+    pluginId: string,
+    payload: PluginConfigPreviewRequest,
+  ) {
+    return request<PluginConfigFormRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config/preview`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  getHouseholdPluginConfigAuthSession(
+    householdId: string,
+    pluginId: string,
+    sessionId: string,
+  ) {
+    return request<PluginConfigAuthSessionRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config/auth-sessions/${encodeURIComponent(sessionId)}`,
+    );
+  },
   listIntegrationCatalog(
     householdId: string,
     params?: {
@@ -521,6 +547,20 @@ export const settingsApi = {
   getChannelAccountStatus(householdId: string, accountId: string) {
     return request<ChannelAccountStatusRead>(
       `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/status`,
+    );
+  },
+  executeChannelAccountPluginAction(
+    householdId: string,
+    accountId: string,
+    actionKey: string,
+    payload: ChannelAccountPluginActionExecuteRequest,
+  ) {
+    return request<ChannelAccountPluginActionExecuteRead>(
+      `/ai-config/${encodeURIComponent(householdId)}/channel-accounts/${encodeURIComponent(accountId)}/plugin-actions/${encodeURIComponent(actionKey)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
     );
   },
   listChannelDeliveries(

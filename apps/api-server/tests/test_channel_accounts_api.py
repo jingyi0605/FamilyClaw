@@ -20,7 +20,7 @@ from app.modules.channel.schemas import ChannelDeliveryCreate, ChannelInboundEve
 from app.modules.channel.service import create_channel_delivery, record_channel_inbound_event
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
-from app.modules.plugin.schemas import PluginStateUpdateRequest
+from app.modules.plugin.schemas import PluginExecutionResult, PluginRegistryItem, PluginStateUpdateRequest
 from app.modules.plugin.service import set_household_plugin_enabled
 
 
@@ -84,6 +84,62 @@ class ChannelAccountsApiTests(unittest.TestCase):
         self.client.close()
         self._db_helper.close()
         self._tempdir.cleanup()
+
+    def _build_action_capable_channel_plugin(self, *, plugin_id: str) -> PluginRegistryItem:
+        return PluginRegistryItem.model_validate(
+            {
+                "id": plugin_id,
+                "name": "测试通道动作插件",
+                "version": "0.1.0",
+                "types": ["channel", "action"],
+                "permissions": ["channel.receive", "channel.send"],
+                "risk_level": "low",
+                "triggers": ["manual"],
+                "base_enabled": True,
+                "household_enabled": True,
+                "enabled": True,
+                "disabled_reason": None,
+                "manifest_path": "C:/mock/manifest.json",
+                "entrypoints": {
+                    "channel": "plugin.channel.handle",
+                    "action": "plugin.action.execute",
+                },
+                "capabilities": {
+                    "channel": {
+                        "platform_code": "telegram",
+                        "inbound_modes": ["polling"],
+                        "delivery_modes": ["reply"],
+                        "supports_member_binding": True,
+                        "supports_group_chat": False,
+                        "supports_threading": False,
+                        "reserved": False,
+                        "ui": {
+                            "status_action_key": "refresh-login-status",
+                            "account_actions": [
+                                {
+                                    "key": "start-login",
+                                    "action_name": "start_login",
+                                    "label": "开始登录",
+                                    "description": "生成二维码",
+                                    "variant": "primary",
+                                },
+                                {
+                                    "key": "refresh-login-status",
+                                    "action_name": "get_login_status",
+                                    "label": "刷新登录状态",
+                                    "description": "读取当前登录状态",
+                                },
+                            ],
+                        },
+                    }
+                },
+                "config_specs": [],
+                "locales": [],
+                "schedule_templates": [],
+                "source_type": "builtin",
+                "runtime_source": "builtin",
+            }
+        )
 
     @patch("app.plugins.builtin.channel_telegram.channel.httpx.get")
     def test_channel_account_admin_endpoints_cover_probe_status_and_recent_records(self, telegram_http_get) -> None:
@@ -339,6 +395,116 @@ class ChannelAccountsApiTests(unittest.TestCase):
         )
         self.assertEqual(200, update_response.status_code)
         self.assertEqual("active", update_response.json()["status"])
+
+    def test_channel_account_status_includes_plugin_actions_and_status_summary(self) -> None:
+        create_response = self.client.post(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts",
+            json={
+                "plugin_id": "channel-telegram",
+                "account_code": "telegram-main",
+                "display_name": "Telegram 主账号",
+                "connection_mode": "polling",
+                "config": {
+                    "bot_token": "telegram-token-001",
+                },
+                "status": "draft",
+            },
+        )
+        self.assertEqual(201, create_response.status_code)
+        account_id = create_response.json()["id"]
+        action_plugin = self._build_action_capable_channel_plugin(plugin_id="channel-telegram")
+
+        with patch("app.modules.channel.account_action_service.get_household_plugin", return_value=action_plugin), patch(
+            "app.modules.channel.account_action_service.execute_household_plugin",
+            return_value=PluginExecutionResult(
+                run_id="run-001",
+                plugin_id="channel-telegram",
+                plugin_type="action",
+                execution_backend="in_process",
+                success=True,
+                trigger="channel-account-status",
+                started_at="2026-03-23T00:00:00Z",
+                finished_at="2026-03-23T00:00:01Z",
+                output={
+                    "message": "二维码已生成，请扫码。",
+                    "status_summary": {
+                        "status": "waiting_scan",
+                        "title": "等待扫码",
+                        "message": "二维码已生成，请扫码。",
+                        "tone": "info",
+                    },
+                },
+            ),
+        ):
+            response = self.client.get(
+                f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts/{account_id}/status"
+            )
+
+        self.assertEqual(200, response.status_code)
+        payload = response.json()
+        self.assertEqual("waiting_scan", payload["plugin_status_summary"]["status"])
+        self.assertEqual("refresh-login-status", payload["plugin_actions"][1]["key"])
+
+    def test_execute_channel_account_plugin_action_returns_generic_result(self) -> None:
+        create_response = self.client.post(
+            f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts",
+            json={
+                "plugin_id": "channel-telegram",
+                "account_code": "telegram-main",
+                "display_name": "Telegram 主账号",
+                "connection_mode": "polling",
+                "config": {
+                    "bot_token": "telegram-token-001",
+                },
+                "status": "draft",
+            },
+        )
+        self.assertEqual(201, create_response.status_code)
+        account_id = create_response.json()["id"]
+        action_plugin = self._build_action_capable_channel_plugin(plugin_id="channel-telegram")
+
+        with patch(
+            "app.modules.channel.account_action_service.require_available_household_plugin",
+            return_value=action_plugin,
+        ), patch(
+            "app.modules.channel.account_action_service.execute_household_plugin",
+            return_value=PluginExecutionResult(
+                run_id="run-002",
+                plugin_id="channel-telegram",
+                plugin_type="action",
+                execution_backend="in_process",
+                success=True,
+                trigger="channel-account-action",
+                started_at="2026-03-23T00:00:00Z",
+                finished_at="2026-03-23T00:00:01Z",
+                output={
+                    "message": "二维码已生成，请扫码。",
+                    "status_summary": {
+                        "status": "waiting_scan",
+                        "title": "等待扫码",
+                        "message": "二维码已生成，请扫码。",
+                        "tone": "info",
+                    },
+                    "artifacts": [
+                        {
+                            "kind": "image_url",
+                            "label": "登录二维码",
+                            "url": "https://example.com/qr.png",
+                        }
+                    ],
+                },
+            ),
+        ):
+            response = self.client.post(
+                f"{settings.api_v1_prefix}/ai-config/{self.household_id}/channel-accounts/{account_id}/plugin-actions/start-login",
+                json={"payload": {}},
+            )
+
+        self.assertEqual(200, response.status_code)
+        payload = response.json()
+        self.assertEqual("start-login", payload["action"]["key"])
+        self.assertEqual("waiting_scan", payload["status_summary"]["status"])
+        self.assertEqual("https://example.com/qr.png", payload["artifacts"][0]["url"])
 
 
 if __name__ == "__main__":

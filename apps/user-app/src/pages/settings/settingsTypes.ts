@@ -752,6 +752,7 @@ export type PluginManifestConfigSpec = {
 };
 
 export type PluginConfigState = 'unconfigured' | 'configured' | 'invalid';
+export type PluginConfigAuthSessionStatus = 'pending' | 'callback_received' | 'completed' | 'failed' | 'expired' | 'cancelled';
 export type PluginConfigPreviewArtifactKind = 'image_url' | 'external_url' | 'text';
 
 export type PluginConfigPreviewArtifactRead = {
@@ -765,6 +766,21 @@ export type PluginConfigPreviewArtifactRead = {
 export type PluginConfigSecretFieldRead = {
   has_value: boolean;
   masked: string | null;
+};
+
+export type PluginConfigAuthSessionRead = {
+  id: string;
+  plugin_id: string;
+  scope_type: PluginConfigScopeType;
+  scope_key: string;
+  action_key: string;
+  status: PluginConfigAuthSessionStatus;
+  callback_url?: string | null;
+  expires_at: string;
+  callback_received_at?: string | null;
+  finished_at?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
 };
 
 export type PluginConfigView = {
@@ -798,6 +814,7 @@ export type PluginConfigPreviewRequest = {
   secret_values: Record<string, string>;
   clear_secret_fields: string[];
   action_key?: string | null;
+  auth_session_id?: string | null;
 };
 
 export type PluginVersionGovernanceRead = {
