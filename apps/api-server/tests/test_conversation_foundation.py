@@ -1,6 +1,6 @@
 ﻿import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -1493,6 +1493,13 @@ class ConversationFoundationTests(unittest.TestCase):
         )
         self.assertIn("当前本地时间：", variables["household_context"])
         self.assertIn("星期：", variables["household_context"])
+        self.assertIn("今天类型：", variables["household_context"])
+        self.assertIn(
+            f"明天日期：{(datetime.now(ZoneInfo('Asia/Shanghai')) + timedelta(days=1)).strftime('%Y-%m-%d')}",
+            variables["household_context"],
+        )
+        self.assertIn("明天星期：", variables["household_context"])
+        self.assertIn("明天类型：", variables["household_context"])
         self.assertIn("当前时区：Asia/Shanghai", variables["household_context"])
 
     @patch("app.modules.conversation.orchestrator.invoke_llm")

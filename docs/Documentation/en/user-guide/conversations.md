@@ -124,6 +124,8 @@ This panel is not for manual system configuration. It is there to help you quick
 - which recent context the assistant is using
 - whether there are pending actions or proposals waiting for you
 
+The conversation engine also injects current date, local time, weekday, current day period, and whether today and tomorrow are workdays or weekends. That reduces wrong guesses around relative time phrases such as "today", "tomorrow", or "this weekend".
+
 ![fc-doc-20260320T000844.webp](../../使用指南/assets/fc-doc-20260320T000844.webp)
 
 ### 6. Confirm or dismiss proposals inside the conversation

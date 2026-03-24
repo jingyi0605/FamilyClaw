@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
@@ -54,11 +54,17 @@ def render_realtime_prompt_context(
     current_utc = _normalize_utc_datetime(now_utc)
     timezone_info, timezone_label = _resolve_timezone(timezone_name)
     local_now = current_utc.astimezone(timezone_info)
+    tomorrow = local_now.date() + timedelta(days=1)
 
     lines = [
         f"- 今天日期：{local_now.strftime('%Y-%m-%d')}",
         f"- 当前本地时间：{local_now.strftime('%Y-%m-%d %H:%M')}",
         f"- 星期：{WEEKDAY_LABELS[local_now.weekday()]}",
+        # 显式提供今天和明天的周期信息，避免模型自行猜测相对日期。
+        f"- 今天类型：{_describe_day_type(local_now.date())}",
+        f"- 明天日期：{tomorrow.strftime('%Y-%m-%d')}",
+        f"- 明天星期：{WEEKDAY_LABELS[tomorrow.weekday()]}",
+        f"- 明天类型：{_describe_day_type(tomorrow)}",
         f"- 当前时区：{timezone_label}",
         f"- 当前时段：{_describe_day_period(local_now)}",
     ]
@@ -114,6 +120,10 @@ def _describe_day_period(local_now: datetime) -> str:
     if hour < 19:
         return "傍晚"
     return "晚上"
+
+
+def _describe_day_type(target_date: date) -> str:
+    return "工作日" if target_date.weekday() < 5 else "周末"
 
 
 def _build_quiet_hours_text(

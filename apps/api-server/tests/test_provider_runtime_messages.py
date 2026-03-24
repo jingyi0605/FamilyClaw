@@ -34,14 +34,20 @@ class ProviderRuntimeMessagesTests(unittest.TestCase):
                     "- 今天日期：2026-03-19\n"
                     "- 当前本地时间：2026-03-19 22:30\n"
                     "- 星期：星期四\n"
+                    "- 今天类型：工作日\n"
+                    "- 明天日期：2026-03-20\n"
+                    "- 明天星期：星期五\n"
+                    "- 明天类型：工作日\n"
                     "- 当前时区：Asia/Shanghai"
                 ),
             },
         )
 
-        self.assertIn("下面这段实时上下文只用于理解“今天”“现在”“今晚”“明天早上”这类相对时间表达", messages[0]["content"])
+        self.assertIn("下面这段实时上下文只用于理解“今天”“明天”“现在”“今晚”“工作日”“周末”这类相对时间或周期表达", messages[0]["content"])
         self.assertIn("今天日期：2026-03-19", messages[0]["content"])
         self.assertIn("当前本地时间：2026-03-19 22:30", messages[0]["content"])
+        self.assertIn("明天星期：星期五", messages[0]["content"])
+        self.assertIn("明天类型：工作日", messages[0]["content"])
         self.assertIn("当前时区：Asia/Shanghai", messages[0]["content"])
 
 

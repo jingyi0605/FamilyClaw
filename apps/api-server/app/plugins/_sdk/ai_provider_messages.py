@@ -209,7 +209,7 @@ def _build_realtime_context_prompt(payload: Mapping[str, object]) -> str:
     if not summary_text:
         return ""
     return (
-        "\n下面这段实时上下文只用于理解“今天”“现在”“今晚”“明天早上”这类相对时间表达。"
+        "\n下面这段实时上下文只用于理解“今天”“明天”“现在”“今晚”“工作日”“周末”这类相对时间或周期表达。"
         "如果用户的问题依赖当前日期或本地时间，以这里为准。\n"
         f"{summary_text}"
     )
