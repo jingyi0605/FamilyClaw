@@ -51,7 +51,6 @@ from app.modules.memory.models import (
 from app.modules.permission.models import MemberPermission
 from app.modules.plugin.models import (
     MemberDashboardLayout,
-    PluginConfigAuthSession,
     PluginConfigInstance,
     PluginDashboardCardSnapshot,
     PluginJob,
@@ -120,7 +119,6 @@ __all__ = [
     "MemberDashboardLayout",
     "PluginRawRecord",
     "PluginConfigInstance",
-    "PluginConfigAuthSession",
     "PluginDashboardCardSnapshot",
     "PluginJob",
     "PluginJobAttempt",

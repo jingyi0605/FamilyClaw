@@ -1,7 +1,4 @@
-import html
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import HTMLResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -78,7 +75,6 @@ from app.modules.plugin import (
     ainvoke_agent_action_plugin,
     ainvoke_agent_plugin,
     AgentActionPluginInvokeRequest,
-    PluginConfigAuthSessionRead,
     AgentActionPluginInvokeResult,
     PluginConfigFormRead,
     PluginConfigPreviewRequest,
@@ -107,13 +103,8 @@ from app.modules.plugin import (
     set_household_plugin_enabled,
     install_plugin_package,
     PluginServiceError,
-    get_plugin_config_auth_session,
     get_plugin_config_form,
     update_plugin_mount,
-)
-from app.modules.plugin.config_auth_service import (
-    record_plugin_config_auth_callback,
-    resolve_plugin_config_callback_base_url,
 )
 from app.modules.plugin.schemas import PluginThemeRegistrySnapshotRead, PluginThemeResourceRead
 from app.modules.plugin.service import (
@@ -123,59 +114,6 @@ from app.modules.plugin.service import (
 
 
 router = APIRouter(prefix="/ai-config", tags=["ai-config"])
-
-
-def _resolve_request_callback_base_url(request: Request) -> str:
-    return resolve_plugin_config_callback_base_url(str(request.base_url))
-
-
-def _render_plugin_config_auth_callback_page(
-    *,
-    title: str,
-    message: str,
-    status_code: int,
-) -> HTMLResponse:
-    safe_title = html.escape(title)
-    safe_message = html.escape(message)
-    content = f"""<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{safe_title}</title>
-    <style>
-      body {{
-        margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        background: #f5f7fb;
-        color: #172033;
-      }}
-      main {{
-        max-width: 560px;
-        margin: 8vh auto;
-        background: #ffffff;
-        border-radius: 16px;
-        padding: 24px;
-        box-shadow: 0 16px 48px rgba(23, 32, 51, 0.12);
-      }}
-      h1 {{
-        margin: 0 0 12px;
-        font-size: 24px;
-      }}
-      p {{
-        margin: 0;
-        line-height: 1.7;
-      }}
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>{safe_title}</h1>
-      <p>{safe_message}</p>
-    </main>
-  </body>
-</html>"""
-    return HTMLResponse(content=content, status_code=status_code)
 
 
 @router.get("/provider-adapters", response_model=list[AiProviderAdapterRead])
@@ -764,7 +702,6 @@ def preview_household_plugin_config_form_endpoint(
     household_id: str,
     plugin_id: str,
     payload: PluginConfigPreviewRequest,
-    request: Request,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(require_admin_actor),
 ) -> PluginConfigFormRead:
@@ -775,81 +712,12 @@ def preview_household_plugin_config_form_endpoint(
             household_id=household_id,
             plugin_id=plugin_id,
             payload=payload,
-            callback_base_url=_resolve_request_callback_base_url(request),
         )
         db.commit()
         return result
     except PluginServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
-
-
-@router.get(
-    "/{household_id}/plugins/{plugin_id}/config/auth-sessions/{session_id}",
-    response_model=PluginConfigAuthSessionRead,
-)
-def get_household_plugin_config_auth_session_endpoint(
-    household_id: str,
-    plugin_id: str,
-    session_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-    actor: ActorContext = Depends(require_admin_actor),
-) -> PluginConfigAuthSessionRead:
-    ensure_actor_can_access_household(actor, household_id)
-    try:
-        result = get_plugin_config_auth_session(
-            db,
-            household_id=household_id,
-            plugin_id=plugin_id,
-            session_id=session_id,
-            callback_base_url=_resolve_request_callback_base_url(request),
-        )
-        db.commit()
-        return result
-    except PluginServiceError as exc:
-        db.rollback()
-        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
-
-
-@router.api_route(
-    "/plugin-config-auth-sessions/{session_id}/callback",
-    methods=["GET", "POST"],
-    response_class=HTMLResponse,
-    include_in_schema=False,
-)
-async def plugin_config_auth_session_callback_endpoint(
-    session_id: str,
-    request: Request,
-    token: str = Query(..., min_length=1),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    try:
-        body = await request.body()
-        record_plugin_config_auth_callback(
-            db,
-            session_id=session_id,
-            callback_token=token,
-            method=request.method,
-            headers=dict(request.headers),
-            query_params={key: value for key, value in request.query_params.items() if key != "token"},
-            body=body,
-        )
-        db.commit()
-        return _render_plugin_config_auth_callback_page(
-            title="认证已收到",
-            message="可以返回 FamilyClaw 继续下一步配置了。宿主会自动轮询这次认证结果。",
-            status_code=200,
-        )
-    except PluginServiceError as exc:
-        db.rollback()
-        detail = exc.to_detail()
-        message = detail.get("detail") if isinstance(detail, dict) else None
-        return _render_plugin_config_auth_callback_page(
-            title="认证未完成",
-            message=str(message or "当前认证回调无效或已过期，请返回宿主页面重新发起。"),
-            status_code=exc.status_code,
-        )
 
 
 @router.put("/{household_id}/plugins/{plugin_id}/config", response_model=PluginConfigFormRead)

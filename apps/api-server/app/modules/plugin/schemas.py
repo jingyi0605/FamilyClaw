@@ -1904,7 +1904,6 @@ class PluginStateUpdateRequest(BaseModel):
 
 
 PluginConfigState = Literal["unconfigured", "configured", "invalid"]
-PluginConfigAuthSessionStatus = Literal["pending", "callback_received", "completed", "failed", "expired", "cancelled"]
 
 
 class PluginConfigScopeInstanceRead(BaseModel):
@@ -1929,39 +1928,6 @@ class PluginConfigScopeListRead(BaseModel):
 class PluginConfigSecretFieldRead(BaseModel):
     has_value: bool = False
     masked: str | None = None
-
-
-class PluginConfigAuthSessionMutation(BaseModel):
-    status: PluginConfigAuthSessionStatus | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
-    clear_payload: bool = False
-    clear_callback_payload: bool = False
-    expires_in_seconds: int | None = Field(default=None, ge=30, le=3600)
-    error_code: str | None = Field(default=None, max_length=100)
-    error_message: str | None = Field(default=None, max_length=4000)
-
-    @field_validator("error_code", "error_message")
-    @classmethod
-    def validate_optional_text(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-
-class PluginConfigAuthSessionRead(BaseModel):
-    id: str
-    plugin_id: str
-    scope_type: PluginConfigScopeType
-    scope_key: str
-    action_key: str
-    status: PluginConfigAuthSessionStatus
-    callback_url: str | None = None
-    expires_at: str
-    callback_received_at: str | None = None
-    finished_at: str | None = None
-    error_code: str | None = None
-    error_message: str | None = None
 
 
 class PluginConfigPreviewArtifactRead(BaseModel):
@@ -2072,7 +2038,6 @@ class PluginConfigPreviewRequest(BaseModel):
     secret_values: dict[str, str] = Field(default_factory=dict)
     clear_secret_fields: list[str] = Field(default_factory=list)
     action_key: str | None = Field(default=None, max_length=64)
-    auth_session_id: str | None = Field(default=None, max_length=100)
 
     @field_validator("scope_key")
     @classmethod
@@ -2095,22 +2060,10 @@ class PluginConfigPreviewRequest(BaseModel):
         return normalized
 
 
-    @field_validator("auth_session_id")
-    @classmethod
-    def validate_auth_session_id(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("auth_session_id 不能为空")
-        return normalized
-
-
 class PluginConfigPreviewHookResult(BaseModel):
     field_errors: dict[str, str] = Field(default_factory=dict)
     runtime_state: dict[str, Any] = Field(default_factory=dict)
     preview_artifacts: list[PluginConfigPreviewArtifactRead] = Field(default_factory=list)
-    auth_session: PluginConfigAuthSessionMutation | None = None
 
 
 class PluginRunnerConfig(BaseModel):

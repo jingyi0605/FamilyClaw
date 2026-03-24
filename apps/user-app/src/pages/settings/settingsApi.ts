@@ -49,7 +49,6 @@ import type {
   MarketplaceVersionOptionsRead,
   HouseholdVoiceprintSummaryRead,
   PluginConfigFormRead,
-  PluginConfigAuthSessionRead,
   PluginConfigPreviewRequest,
   PluginConfigResolveRequest,
   MemberChannelBindingCreate,
@@ -416,15 +415,6 @@ export const settingsApi = {
         method: 'POST',
         body: JSON.stringify(payload),
       },
-    );
-  },
-  getHouseholdPluginConfigAuthSession(
-    householdId: string,
-    pluginId: string,
-    sessionId: string,
-  ) {
-    return request<PluginConfigAuthSessionRead>(
-      `/ai-config/${encodeURIComponent(householdId)}/plugins/${encodeURIComponent(pluginId)}/config/auth-sessions/${encodeURIComponent(sessionId)}`,
     );
   },
   listIntegrationCatalog(

@@ -30,7 +30,6 @@ import {
 } from './integrationSyncHelpers';
 import type {
   PluginConfigPreviewArtifactRead,
-  PluginConfigAuthSessionRead,
   IntegrationActionResult,
   IntegrationCatalogItem,
   IntegrationDiscoveryItem,
@@ -67,7 +66,6 @@ type InstanceFormContext = {
 };
 const EMPTY_RUNTIME_STATE: Record<string, unknown> = {};
 const EMPTY_PREVIEW_ARTIFACTS: PluginConfigPreviewArtifactRead[] = [];
-const PREVIEW_AUTH_SESSION_POLL_INTERVAL_MS = 2000;
 
 function getActionOutputItems<T>(result: IntegrationActionResult): T[] {
   const items = result.output.items;
@@ -416,26 +414,6 @@ function getRuntimeItemErrorKey(itemKey: string): string {
   return `__runtime_item__:${itemKey}`;
 }
 
-function readPreviewAuthSession(runtimeState: Record<string, unknown>): PluginConfigAuthSessionRead | null {
-  const rawValue = runtimeState.auth_session;
-  if (!rawValue || typeof rawValue !== 'object') {
-    return null;
-  }
-  const candidate = rawValue as Record<string, unknown>;
-  if (
-    typeof candidate.id !== 'string'
-    || typeof candidate.plugin_id !== 'string'
-    || typeof candidate.scope_type !== 'string'
-    || typeof candidate.scope_key !== 'string'
-    || typeof candidate.action_key !== 'string'
-    || typeof candidate.status !== 'string'
-    || typeof candidate.expires_at !== 'string'
-  ) {
-    return null;
-  }
-  return candidate as PluginConfigAuthSessionRead;
-}
-
 function isMeaningfulRuntimeValue(value: unknown): boolean {
   if (value === null || value === undefined) {
     return false;
@@ -533,8 +511,6 @@ function SettingsIntegrationsContent() {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const configResolveSeqRef = useRef(0);
-  const previewAuthPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handledPreviewAuthCallbackRef = useRef<string | null>(null);
 
   const allWizardSections = useMemo(() => {
     if (!formContext) {
@@ -582,10 +558,6 @@ function SettingsIntegrationsContent() {
   const isLastWizardStep = !wizardMode || activeWizardStepIndex === wizardSections.length - 1;
   const previewActions = formContext?.configSpec.ui_schema.actions ?? [];
   const runtimeStateSections = formContext?.configSpec.ui_schema.runtime_sections ?? [];
-  const previewAuthSession = useMemo(
-    () => readPreviewAuthSession(previewRuntimeState),
-    [previewRuntimeState],
-  );
 
   useEffect(() => {
     if (!createModalOpen) {
@@ -675,51 +647,6 @@ function SettingsIntegrationsContent() {
     setSyncAllImpactSummary(null);
   }, [selectedInstanceId]);
 
-  useEffect(() => () => {
-    clearPreviewAuthPolling();
-  }, []);
-
-  useEffect(() => {
-    clearPreviewAuthPolling();
-    if (!createModalOpen || !currentHouseholdId || !formContext || !previewAuthSession) {
-      return;
-    }
-
-    if (previewAuthSession.status === 'callback_received') {
-      const handledMarker = `${previewAuthSession.id}:${previewAuthSession.callback_received_at ?? ''}`;
-      if (handledPreviewAuthCallbackRef.current !== handledMarker) {
-        handledPreviewAuthCallbackRef.current = handledMarker;
-        const action = findPreviewActionByActionKey(previewAuthSession.action_key);
-        if (action) {
-          void executePreviewAction(action, {
-            authSessionId: previewAuthSession.id,
-            showLoading: false,
-          });
-        }
-      }
-    }
-
-    if (previewAuthSession.status !== 'pending' && previewAuthSession.status !== 'callback_received') {
-      return;
-    }
-
-    previewAuthPollTimerRef.current = setTimeout(() => {
-      void pollPreviewAuthSession(previewAuthSession.id);
-    }, PREVIEW_AUTH_SESSION_POLL_INTERVAL_MS);
-
-    return () => {
-      clearPreviewAuthPolling();
-    };
-  }, [
-    createModalOpen,
-    currentHouseholdId,
-    formContext,
-    previewAuthSession?.action_key,
-    previewAuthSession?.callback_received_at,
-    previewAuthSession?.id,
-    previewAuthSession?.status,
-  ]);
-
   function getInstanceStatusPresentation(instance: IntegrationInstance) {
     if (instance.status === 'degraded') {
       return {
@@ -789,8 +716,6 @@ function SettingsIntegrationsContent() {
   }
 
   function resetPreviewState(errorKeys: string[] = []) {
-    clearPreviewAuthPolling();
-    handledPreviewAuthCallbackRef.current = null;
     setPreviewRuntimeState(EMPTY_RUNTIME_STATE);
     setPreviewArtifacts(EMPTY_PREVIEW_ARTIFACTS);
     setPreviewLoadingActionKey(null);
@@ -829,13 +754,6 @@ function SettingsIntegrationsContent() {
       section.section_id === sectionId
       && (!section.action_key || section.action_key === previewResultActionKey)
     ));
-  }
-
-  function clearPreviewAuthPolling() {
-    if (previewAuthPollTimerRef.current) {
-      clearTimeout(previewAuthPollTimerRef.current);
-      previewAuthPollTimerRef.current = null;
-    }
   }
 
   function findPreviewActionByActionKey(actionKey: string): PluginManifestConfigPreviewAction | null {
@@ -1130,7 +1048,6 @@ function SettingsIntegrationsContent() {
   async function executePreviewAction(
     action: PluginManifestConfigPreviewAction,
     options?: {
-      authSessionId?: string | null;
       showLoading?: boolean;
     },
   ) {
@@ -1147,7 +1064,6 @@ function SettingsIntegrationsContent() {
         scope_key: instanceFormMode === 'edit' ? (editingInstanceId ?? null) : null,
         ...buildPreviewPayload(createDraft),
         action_key: action.action_key ?? action.key,
-        auth_session_id: options?.authSessionId ?? null,
       });
       setFormContext((current) => {
         if (!current || current.pluginId !== formContext.pluginId) {
@@ -1212,52 +1128,6 @@ function SettingsIntegrationsContent() {
       if (shouldShowLoading) {
         setPreviewLoadingActionKey((current) => (current === action.key ? null : current));
       }
-    }
-  }
-
-  async function pollPreviewAuthSession(sessionId: string) {
-    if (!currentHouseholdId || !formContext) {
-      return;
-    }
-    try {
-      const authSession = await settingsApi.getHouseholdPluginConfigAuthSession(
-        currentHouseholdId,
-        formContext.pluginId,
-        sessionId,
-      );
-      setPreviewRuntimeState((current) => {
-        const currentAuthSession = readPreviewAuthSession(current);
-        if (currentAuthSession && currentAuthSession.id !== authSession.id) {
-          return current;
-        }
-        return {
-          ...current,
-          auth_session: authSession,
-        };
-      });
-      if (
-        authSession.status !== 'pending'
-        && authSession.status !== 'callback_received'
-        && authSession.error_message
-      ) {
-        const action = findPreviewActionByActionKey(authSession.action_key);
-        if (action) {
-          setCreateDraft((current) => ({
-            ...current,
-            fieldErrors: {
-              ...current.fieldErrors,
-              [getPreviewActionErrorKey(action.key)]: authSession.error_message ?? '',
-            },
-          }));
-        }
-        setError(authSession.error_message);
-      }
-    } catch (pollError) {
-      setError(
-        pollError instanceof Error
-          ? pollError.message
-          : page('settings.integrations.error.previewActionFailed'),
-      );
     }
   }
 

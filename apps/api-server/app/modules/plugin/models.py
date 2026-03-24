@@ -140,38 +140,6 @@ class PluginConfigInstance(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
 
 
-class PluginConfigAuthSession(Base):
-    __tablename__ = "plugin_config_auth_sessions"
-    __table_args__ = (
-        UniqueConstraint("callback_token", name="uq_plugin_config_auth_sessions_callback_token"),
-        UniqueConstraint("state_token", name="uq_plugin_config_auth_sessions_state_token"),
-    )
-
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
-    household_id: Mapped[str] = mapped_column(
-        Text,
-        ForeignKey("households.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    plugin_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    scope_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    scope_key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    action_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
-    callback_token: Mapped[str] = mapped_column(String(128), nullable=False)
-    state_token: Mapped[str] = mapped_column(String(128), nullable=False)
-    session_payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    callback_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    callback_received_at: Mapped[str | None] = mapped_column(Text, nullable=True)
-    finished_at: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=utc_now_iso, onupdate=utc_now_iso)
-
-
 class PluginDashboardCardSnapshot(Base):
     __tablename__ = "plugin_dashboard_card_snapshots"
     __table_args__ = (

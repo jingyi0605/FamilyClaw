@@ -15,20 +15,11 @@ from app.modules.region.providers import region_provider_registry
 from app.modules.region.service import RegionServiceError, list_region_catalog
 
 from . import repository
-from .config_auth_service import (
-    apply_plugin_config_auth_session_mutation,
-    build_plugin_config_auth_session_context,
-    build_plugin_config_auth_session_read,
-    cleanup_unused_plugin_config_auth_session,
-    get_plugin_config_auth_session_read,
-    prepare_plugin_config_auth_session,
-)
 from .config_crypto import decrypt_plugin_config_secrets, encrypt_plugin_config_secrets
 from .executors import load_entrypoint_callable
 from .import_path import collect_plugin_import_roots, plugin_runtime_import_path
-from .models import PluginConfigAuthSession, PluginConfigInstance
+from .models import PluginConfigInstance
 from .schemas import (
-    PluginConfigAuthSessionRead,
     PluginConfigFormRead,
     PluginConfigPreviewHookResult,
     PluginConfigPreviewRequest,
@@ -182,7 +173,6 @@ def preview_plugin_config_form(
     household_id: str,
     plugin_id: str,
     payload: PluginConfigPreviewRequest,
-    callback_base_url: str,
 ) -> PluginConfigFormRead:
     plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
     config_spec = _require_config_spec(plugin, scope_type=payload.scope_type)
@@ -274,19 +264,7 @@ def preview_plugin_config_form(
     )
     runtime_state: dict[str, Any] = {}
     preview_artifacts: list[dict[str, Any]] = []
-    auth_session_row: PluginConfigAuthSession | None = None
     if not field_errors:
-        if payload.action_key:
-            auth_session_row = prepare_plugin_config_auth_session(
-                db,
-                household_id=household_id,
-                plugin_id=plugin.id,
-                scope_type=config_spec.scope_type,
-                scope_key=normalized_scope_key or _draft_scope_key(config_spec.scope_type),
-                action_key=payload.action_key,
-                callback_base_url=callback_base_url,
-                auth_session_id=payload.auth_session_id,
-            )
         hook_result = _run_plugin_config_preview_hook(
             plugin=plugin,
             household_id=household_id,
@@ -298,18 +276,9 @@ def preview_plugin_config_form(
             values=view_values,
             secret_fields=secret_fields,
             secret_data=next_secret_data,
-            auth_session=auth_session_row,
-            callback_base_url=callback_base_url,
         )
-        if auth_session_row is not None:
-            apply_plugin_config_auth_session_mutation(auth_session_row, hook_result.auth_session)
-            cleanup_unused_plugin_config_auth_session(db, auth_session_row)
         field_errors.update(hook_result.field_errors)
-        runtime_state = _merge_preview_runtime_auth_session(
-            hook_result.runtime_state,
-            auth_session=auth_session_row,
-            callback_base_url=callback_base_url,
-        )
+        runtime_state = dict(hook_result.runtime_state)
         preview_artifacts = [item.model_dump(mode="json") for item in hook_result.preview_artifacts]
     if field_errors:
         state = "invalid" if has_persisted_record else "unconfigured"
@@ -326,26 +295,6 @@ def preview_plugin_config_form(
         runtime_state=runtime_state,
         preview_artifacts=preview_artifacts,
     )
-
-
-def get_plugin_config_auth_session(
-    db: Session,
-    *,
-    household_id: str,
-    plugin_id: str,
-    session_id: str,
-    callback_base_url: str,
-) -> PluginConfigAuthSessionRead:
-    plugin = get_household_plugin(db, household_id=household_id, plugin_id=plugin_id)
-    return get_plugin_config_auth_session_read(
-        db,
-        household_id=household_id,
-        plugin_id=plugin.id,
-        session_id=session_id,
-        callback_base_url=callback_base_url,
-    )
-
-
 def save_plugin_config_form(
     db: Session,
     *,
@@ -792,25 +741,6 @@ def _build_config_form_read(
             preview_artifacts=list(preview_artifacts or []),
         ),
     )
-
-
-def _merge_preview_runtime_auth_session(
-    runtime_state: dict[str, Any] | None,
-    *,
-    auth_session: PluginConfigAuthSession | None,
-    callback_base_url: str,
-) -> dict[str, Any]:
-    next_runtime_state = dict(runtime_state or {})
-    if auth_session is None:
-        return next_runtime_state
-    session_read = build_plugin_config_auth_session_read(
-        auth_session,
-        callback_base_url=callback_base_url,
-    )
-    next_runtime_state["auth_session"] = session_read.model_dump(mode="json")
-    return next_runtime_state
-
-
 def _raise_for_plugin_config_runtime_validation(
     *,
     plugin: PluginRegistryItem,
@@ -833,8 +763,6 @@ def _raise_for_plugin_config_runtime_validation(
         values=values,
         secret_fields=secret_fields,
         secret_data=secret_data,
-        auth_session=None,
-        callback_base_url="",
     )
     if not hook_result.field_errors:
         return
@@ -858,8 +786,6 @@ def _run_plugin_config_preview_hook(
     values: dict[str, Any],
     secret_fields: dict[str, Any],
     secret_data: dict[str, Any],
-    auth_session: PluginConfigAuthSession | None,
-    callback_base_url: str,
 ) -> PluginConfigPreviewHookResult:
     entrypoint_path = plugin.entrypoints.config_preview
     if not entrypoint_path:
@@ -881,14 +807,6 @@ def _run_plugin_config_preview_hook(
             config_spec=config_spec,
             values=values,
             secret_data=runtime_secret_data,
-        ),
-        "auth_session": (
-            build_plugin_config_auth_session_context(
-                auth_session,
-                callback_base_url=callback_base_url,
-            )
-            if auth_session is not None
-            else None
         ),
     }
     try:
