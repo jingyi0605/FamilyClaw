@@ -4,12 +4,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.modules.device.binding_capabilities import binding_supports_voice_terminal
 from app.modules.device.models import Device, DeviceBinding
 from app.modules.voiceprint.schemas import PendingVoiceprintEnrollmentRead
 from app.modules.voiceprint.service import get_pending_voiceprint_enrollment_by_terminal
-
-OPEN_XIAOAI_PLUGIN_ID = "open-xiaoai-speaker"
-OPEN_XIAOAI_BINDING_PLATFORM = "open_xiaoai"
 
 
 class VoiceTerminalBindingSnapshot(BaseModel):
@@ -29,30 +27,15 @@ def get_voice_terminal_binding(db: Session, *, fingerprint: str) -> VoiceTermina
         select(DeviceBinding, Device)
         .join(Device, Device.id == DeviceBinding.device_id)
         .where(
-            DeviceBinding.platform == OPEN_XIAOAI_BINDING_PLATFORM,
             DeviceBinding.external_entity_id == fingerprint,
-            DeviceBinding.plugin_id == OPEN_XIAOAI_PLUGIN_ID,
         )
         .order_by(DeviceBinding.last_sync_at.desc().nullslast(), DeviceBinding.id.asc())
     )
-    row = db.execute(statement).first()
-    if row is None:
-        return None
-    _binding, device = row
-    pending_voiceprint_enrollment = get_pending_voiceprint_enrollment_by_terminal(
-        db,
-        household_id=device.household_id,
-        terminal_id=device.id,
-    )
-    return VoiceTerminalBindingSnapshot(
-        household_id=device.household_id,
-        terminal_id=device.id,
-        room_id=device.room_id,
-        terminal_name=device.name,
-        voice_auto_takeover_enabled=bool(device.voice_auto_takeover_enabled),
-        voice_takeover_prefixes=device.voice_takeover_prefixes,
-        pending_voiceprint_enrollment=pending_voiceprint_enrollment,
-    )
+    for binding, device in db.execute(statement).all():
+        if not binding_supports_voice_terminal(db, device=device, binding=binding):
+            continue
+        return _build_voice_terminal_binding_snapshot(db, device=device)
+    return None
 
 
 def get_voice_terminal_binding_by_terminal_id(db: Session, *, terminal_id: str) -> VoiceTerminalBindingSnapshot | None:
@@ -61,15 +44,21 @@ def get_voice_terminal_binding_by_terminal_id(db: Session, *, terminal_id: str) 
         .join(Device, Device.id == DeviceBinding.device_id)
         .where(
             Device.id == terminal_id,
-            DeviceBinding.platform == OPEN_XIAOAI_BINDING_PLATFORM,
-            DeviceBinding.plugin_id == OPEN_XIAOAI_PLUGIN_ID,
         )
         .order_by(DeviceBinding.last_sync_at.desc().nullslast(), DeviceBinding.id.asc())
     )
-    row = db.execute(statement).first()
-    if row is None:
-        return None
-    _binding, device = row
+    for binding, device in db.execute(statement).all():
+        if not binding_supports_voice_terminal(db, device=device, binding=binding):
+            continue
+        return _build_voice_terminal_binding_snapshot(db, device=device)
+    return None
+
+
+def _build_voice_terminal_binding_snapshot(
+    db: Session,
+    *,
+    device: Device,
+) -> VoiceTerminalBindingSnapshot:
     pending_voiceprint_enrollment = get_pending_voiceprint_enrollment_by_terminal(
         db,
         household_id=device.household_id,

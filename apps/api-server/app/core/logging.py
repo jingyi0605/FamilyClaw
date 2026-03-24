@@ -27,7 +27,7 @@ NOISY_THIRD_PARTY_LOGGER_LEVELS = {
 
 
 class UvicornAccessNoiseFilter(logging.Filter):
-    """过滤小爱发现接口的成功访问日志，保留失败请求。"""
+    """过滤语音终端发现接口的成功访问日志，保留失败请求。"""
 
     def filter(self, record: logging.LogRecord) -> bool:
         path = _extract_uvicorn_access_path(record)

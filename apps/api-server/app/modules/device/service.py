@@ -8,6 +8,11 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
+from app.modules.device.binding_capabilities import (
+    binding_supports_voice_terminal,
+    load_binding_capabilities,
+    load_capability_tags,
+)
 from app.modules.audit.models import AuditLog
 from app.modules.device.entity_store import (
     build_binding_entity_ids,
@@ -283,7 +288,7 @@ def get_device_detail_view(
 ) -> DeviceDetailViewRead:
     device = get_device_or_404(db, device_id)
     bindings = _load_device_bindings(db, device_id=device.id)
-    capabilities = _build_device_detail_capabilities(device=device, bindings=bindings)
+    capabilities = _build_device_detail_capabilities(db, device=device, bindings=bindings)
     return DeviceDetailViewRead(
         device=DeviceRead.model_validate(device),
         capabilities=capabilities,
@@ -859,6 +864,7 @@ def _extract_log_message(action: str, details: dict[str, Any]) -> str | None:
 
 
 def _build_device_detail_capabilities(
+    db: Session,
     *,
     device: Device,
     bindings: list[DeviceBinding],
@@ -869,21 +875,21 @@ def _build_device_detail_capabilities(
     capability_tags: list[str] = []
 
     for binding in bindings:
-        binding_capabilities = _load_binding_capabilities(binding)
+        binding_capabilities = load_binding_capabilities(binding)
         if plugin_id is None and binding.plugin_id:
             plugin_id = binding.plugin_id
         if adapter_type is None:
             adapter_type = _normalize_optional_text(binding_capabilities.get("adapter_type"))
         if vendor_code is None:
             vendor_code = _normalize_optional_text(binding_capabilities.get("vendor_code"))
-        for tag in _load_capability_tags(binding_capabilities):
+        for tag in load_capability_tags(binding_capabilities):
             if tag not in capability_tags:
                 capability_tags.append(tag)
 
     if vendor_code is None and device.vendor:
         vendor_code = device.vendor
 
-    supports_voice_terminal = _device_supports_voice_terminal(device=device, bindings=bindings)
+    supports_voice_terminal = _device_supports_voice_terminal(db, device=device, bindings=bindings)
     return DeviceDetailCapabilityRead(
         supports_voice_terminal=supports_voice_terminal,
         supports_voiceprint=supports_voice_terminal,
@@ -952,62 +958,36 @@ def _build_device_detail_plugin_tabs(
     return tabs
 
 
-def _load_binding_capabilities(binding: DeviceBinding) -> dict[str, Any]:
-    loaded = load_json(binding.capabilities)
-    return loaded if isinstance(loaded, dict) else {}
-
-
-def _load_capability_tags(capabilities: dict[str, Any]) -> list[str]:
-    raw_tags = capabilities.get("capability_tags")
-    if not isinstance(raw_tags, list):
-        return []
-    tags: list[str] = []
-    for item in raw_tags:
-        text = str(item).strip().lower()
-        if not text or text in tags:
-            continue
-        tags.append(text)
-    return tags
-
-
 def _binding_supports_voice_terminal(
+    db: Session,
     *,
     device: Device,
     binding: DeviceBinding,
     capabilities: dict[str, Any],
 ) -> bool:
-    if binding.platform == "open_xiaoai":
-        return True
-    if binding.plugin_id == "open-xiaoai-speaker":
-        return True
-
-    adapter_type = _normalize_optional_text(capabilities.get("adapter_type"))
-    if adapter_type in {"open_xiaoai", "voice_terminal"}:
-        return True
-
-    vendor_code = _normalize_optional_text(capabilities.get("vendor_code"))
-    if vendor_code == "xiaomi" and device.device_type == "speaker":
-        return True
-
-    capability_tags = set(_load_capability_tags(capabilities))
-    if capability_tags.intersection({"voice_terminal", "voiceprint", "speaker", "microphone"}):
-        return True
-    return False
+    return binding_supports_voice_terminal(
+        db,
+        device=device,
+        binding=binding,
+        capabilities=capabilities,
+    )
 
 
 def _device_supports_voice_terminal(
+    db: Session,
     *,
     device: Device,
     bindings: list[DeviceBinding],
 ) -> bool:
     for binding in bindings:
         if _binding_supports_voice_terminal(
+            db,
             device=device,
             binding=binding,
-            capabilities=_load_binding_capabilities(binding),
+            capabilities=load_binding_capabilities(binding),
         ):
             return True
-    return device.device_type == "speaker" and device.vendor == "xiaomi"
+    return False
 
 
 def _load_device_bindings(db: Session, *, device_id: str) -> list[DeviceBinding]:

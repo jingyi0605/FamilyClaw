@@ -114,7 +114,7 @@ class TerminalOnlinePayload(_StrictModel):
     room_id: str | None = None
     terminal_code: str | None = None
     name: str | None = None
-    adapter_type: str = "open_xiaoai"
+    adapter_type: str = "voice_terminal"
     transport_type: str = "gateway_ws"
     capabilities: list[VoiceTerminalCapability] = Field(default_factory=lambda: list(VOICE_TERMINAL_CAPABILITY_WHITELIST))
     adapter_meta: dict[str, Any] = Field(default_factory=dict)

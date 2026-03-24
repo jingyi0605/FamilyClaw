@@ -17,9 +17,13 @@ from app.modules.device_integration.service import (
 from app.modules.household.service import get_household_or_404
 from app.modules.integration import repository as integration_repository
 from app.modules.integration.discovery_service import (
-    attach_open_xiaoai_discoveries_to_instance,
+    attach_speaker_discoveries_to_instance,
     list_integration_discoveries,
-    list_unbound_open_xiaoai_gateway_ids,
+    list_unbound_speaker_gateway_ids,
+)
+from app.modules.integration.speaker_plugin_capabilities import (
+    SPEAKER_GATEWAY_CONFIG_FIELD,
+    plugin_uses_speaker_gateway_discovery,
 )
 from app.modules.integration.models import IntegrationInstance
 from app.modules.plugin import config_service as plugin_config_service
@@ -38,7 +42,6 @@ from app.modules.plugin.service import (
     run_plugin_sync_pipeline,
 )
 from app.modules.room.models import Room
-from app.modules.voice.binding_service import OPEN_XIAOAI_PLUGIN_ID
 
 from .schemas import (
     IntegrationActionRead,
@@ -236,7 +239,7 @@ def create_integration_instance(
     normalized_config = _normalize_instance_config(
         db,
         household_id=payload.household_id,
-        plugin_id=plugin.id,
+        plugin=plugin,
         config=payload.config,
     )
     instance = IntegrationInstance(
@@ -264,12 +267,13 @@ def create_integration_instance(
         clear_secret_fields=payload.clear_secret_fields,
         updated_by=updated_by,
     )
-    if plugin.id == OPEN_XIAOAI_PLUGIN_ID:
-        attach_open_xiaoai_discoveries_to_instance(
+    if _uses_speaker_gateway_discovery(plugin):
+        attach_speaker_discoveries_to_instance(
             db,
             household_id=payload.household_id,
             integration_instance_id=instance.id,
-            gateway_id=str(normalized_config.get("gateway_id") or ""),
+            plugin_id=plugin.id,
+            gateway_id=str(normalized_config.get(SPEAKER_GATEWAY_CONFIG_FIELD) or ""),
         )
     instance.status = "active" if form.view.state == "configured" else "draft"
     instance.updated_at = utc_now_iso()
@@ -300,7 +304,7 @@ def update_integration_instance(
     normalized_config = _normalize_instance_config(
         db,
         household_id=instance.household_id,
-        plugin_id=plugin.id,
+        plugin=plugin,
         config=payload.config,
     )
     form = plugin_config_service.save_integration_instance_plugin_config_form(
@@ -313,12 +317,13 @@ def update_integration_instance(
         clear_secret_fields=payload.clear_secret_fields,
         updated_by=updated_by,
     )
-    if plugin.id == OPEN_XIAOAI_PLUGIN_ID:
-        attach_open_xiaoai_discoveries_to_instance(
+    if _uses_speaker_gateway_discovery(plugin):
+        attach_speaker_discoveries_to_instance(
             db,
             household_id=instance.household_id,
             integration_instance_id=instance.id,
-            gateway_id=str(form.view.values.get("gateway_id") or ""),
+            plugin_id=plugin.id,
+            gateway_id=str(form.view.values.get(SPEAKER_GATEWAY_CONFIG_FIELD) or ""),
         )
     instance.display_name = payload.display_name.strip()
     instance.status = "active" if form.view.state == "configured" else "draft"
@@ -1002,8 +1007,6 @@ def _build_plugin_description(plugin: PluginRegistryItem) -> str | None:
         return f"通过 {plugin.name} 接入外部平台，并在当前家庭里发现可管理资源。"
     if integration_capability.supports_actions:
         return f"通过 {plugin.name} 接入外部平台，并执行统一的资源动作。"
-    if plugin.id == "open-xiaoai-speaker":
-        return "把一个小爱网关实例接入平台，并在该实例下发现和管理多台小爱音箱。"
     return None
 
 
@@ -1148,34 +1151,38 @@ def _normalize_instance_config(
     db: Session,
     *,
     household_id: str,
-    plugin_id: str,
+    plugin: PluginRegistryItem,
     config: dict[str, Any],
 ) -> dict[str, Any]:
     normalized = dict(config)
-    if plugin_id != OPEN_XIAOAI_PLUGIN_ID:
+    if not _uses_speaker_gateway_discovery(plugin):
         return normalized
 
-    gateway_id = str(normalized.get("gateway_id") or "").strip()
+    gateway_id = str(normalized.get(SPEAKER_GATEWAY_CONFIG_FIELD) or "").strip()
     if gateway_id:
-        normalized["gateway_id"] = gateway_id
+        normalized[SPEAKER_GATEWAY_CONFIG_FIELD] = gateway_id
         return normalized
 
-    gateway_candidates = list_unbound_open_xiaoai_gateway_ids(db)
+    gateway_candidates = list_unbound_speaker_gateway_ids(db, plugin_id=plugin.id)
     if len(gateway_candidates) == 1:
-        normalized["gateway_id"] = gateway_candidates[0]
+        normalized[SPEAKER_GATEWAY_CONFIG_FIELD] = gateway_candidates[0]
         return normalized
 
     if not gateway_candidates:
         raise PluginServiceError(
-            "还没有发现可用的小爱网关。",
+            "还没有发现可用的语音网关。",
             error_code="integration_instance_config_invalid",
-            field_errors={"gateway_id": "还没有发现可用的小爱网关，请先让 open-xiaoai-gateway 连到平台。"},
+            field_errors={SPEAKER_GATEWAY_CONFIG_FIELD: "还没有发现可用的语音网关，请先让对应的音箱 runtime 连到平台。"},
             status_code=400,
         )
 
     raise PluginServiceError(
-        "已发现多个小爱网关，请先选择要接入的网关。",
+        "已发现多个语音网关，请先选择要接入的网关。",
         error_code="integration_instance_config_invalid",
-        field_errors={"gateway_id": "已发现多个小爱网关，请先选择要接入的网关。"},
+        field_errors={SPEAKER_GATEWAY_CONFIG_FIELD: "已发现多个语音网关，请先选择要接入的网关。"},
         status_code=400,
     )
+
+
+def _uses_speaker_gateway_discovery(plugin: PluginRegistryItem) -> bool:
+    return plugin_uses_speaker_gateway_discovery(plugin)

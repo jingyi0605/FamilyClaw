@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.modules.device.binding_capabilities import config_spec_supports_voice_terminal_device_fields
 from app.modules.plugin.schemas import PluginManifestConfigSpec
 
 from .models import Device
-
-OPEN_XIAOAI_PLUGIN_ID = "open-xiaoai-speaker"
 
 
 def _normalize_voice_takeover_prefixes(raw_value: Any) -> list[str]:
@@ -32,11 +31,15 @@ def load_device_scope_legacy_payloads(
     config_spec: PluginManifestConfigSpec,
     device: Device,
 ) -> tuple[dict[str, Any], dict[str, Any], bool]:
-    if plugin_id != OPEN_XIAOAI_PLUGIN_ID or config_spec.scope_type != "device":
+    _ = plugin_id
+    if config_spec.scope_type != "device":
+        return {}, {}, False
+
+    field_keys = {field.key for field in config_spec.config_schema.fields}
+    if not config_spec_supports_voice_terminal_device_fields(field_keys):
         return {}, {}, False
 
     data: dict[str, Any] = {}
-    field_keys = {field.key for field in config_spec.config_schema.fields}
     if "voice_auto_takeover_enabled" in field_keys:
         data["voice_auto_takeover_enabled"] = bool(device.voice_auto_takeover_enabled)
     if "voice_takeover_prefixes" in field_keys:
@@ -51,7 +54,12 @@ def sync_device_scope_legacy_fields(
     device: Device,
     values: dict[str, Any],
 ) -> None:
-    if plugin_id != OPEN_XIAOAI_PLUGIN_ID or config_spec.scope_type != "device":
+    _ = plugin_id
+    if config_spec.scope_type != "device":
+        return
+
+    field_keys = {field.key for field in config_spec.config_schema.fields}
+    if not config_spec_supports_voice_terminal_device_fields(field_keys):
         return
 
     if "voice_auto_takeover_enabled" in values:

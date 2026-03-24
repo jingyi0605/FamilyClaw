@@ -33,7 +33,7 @@ class VoiceTerminalState(BaseModel):
     room_id: str | None = None
     terminal_code: str | None = None
     name: str | None = None
-    adapter_type: str = "open_xiaoai"
+    adapter_type: str = "voice_terminal"
     transport_type: str = "gateway_ws"
     capabilities: list[VoiceTerminalCapability] = Field(default_factory=list)
     status: VoiceTerminalStatus = "offline"
@@ -164,7 +164,7 @@ class VoiceTerminalRegistry:
                 room_id=current.room_id if current else None,
                 terminal_code=current.terminal_code if current else None,
                 name=current.name if current else None,
-                adapter_type=current.adapter_type if current else "open_xiaoai",
+                adapter_type=current.adapter_type if current else "voice_terminal",
                 transport_type=current.transport_type if current else "gateway_ws",
                 capabilities=current.capabilities if current else [],
                 status=current.status if current else "offline",
@@ -186,7 +186,7 @@ class VoiceTerminalRegistry:
                 room_id=current.room_id if current else None,
                 terminal_code=current.terminal_code if current else None,
                 name=current.name if current else None,
-                adapter_type=current.adapter_type if current else "open_xiaoai",
+                adapter_type=current.adapter_type if current else "voice_terminal",
                 transport_type=current.transport_type if current else "gateway_ws",
                 capabilities=current.capabilities if current else [],
                 status="online" if current is None or current.status != "disabled" else "disabled",

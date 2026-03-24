@@ -15,6 +15,7 @@ from app.modules.household.service import get_household_or_404
 from app.modules.integration import repository as integration_repository
 from app.modules.integration.discovery_service import mark_discovery_claimed
 from app.modules.integration.models import IntegrationInstance
+from app.modules.integration.speaker_plugin_capabilities import plugin_uses_speaker_gateway_discovery
 from app.modules.plugin import config_service as plugin_config_service
 from app.modules.plugin.schemas import PluginExecutionRequest
 from app.modules.plugin.service import (
@@ -24,7 +25,6 @@ from app.modules.plugin.service import (
     require_available_household_plugin,
 )
 from app.modules.room.models import Room
-from app.modules.voice.binding_service import OPEN_XIAOAI_PLUGIN_ID
 
 
 @dataclass(slots=True)
@@ -530,7 +530,11 @@ def _build_payload(
         selected_external_ids=[item for item in selected_external_ids if isinstance(item, str) and item.strip()],
         options=options,
         runtime_config=runtime_config,
-        system_context=_build_system_context(db, plugin_id=instance.plugin_id),
+        system_context=_build_system_context(
+            db,
+            household_id=instance.household_id,
+            plugin_id=instance.plugin_id,
+        ),
     )
 
 
@@ -885,11 +889,25 @@ def _load_runtime_config(
     return runtime_config.values
 
 
-def _build_system_context(db: Session, *, plugin_id: str) -> dict[str, Any] | None:
-    if plugin_id != OPEN_XIAOAI_PLUGIN_ID:
+def _build_system_context(
+    db: Session,
+    *,
+    household_id: str,
+    plugin_id: str,
+) -> dict[str, Any] | None:
+    try:
+        plugin = get_household_plugin(
+            db,
+            household_id=household_id,
+            plugin_id=plugin_id,
+        )
+    except PluginServiceError:
         return None
 
-    # 小爱网关同步需要回查宿主 discovery 表，插件里必须拿到数据库 URL 才能开短连接。
+    if not plugin_uses_speaker_gateway_discovery(plugin):
+        return None
+
+    # 支持设备发现的 speaker adapter 在同步阶段可能需要回查宿主 discovery 表。
     database_url = _resolve_database_url(db)
     if database_url is None:
         return None
@@ -969,8 +987,6 @@ def _resolve_vendor(*, platform: str, capabilities: dict[str, Any]) -> str:
         value = capabilities.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    if platform == "open_xiaoai":
-        return "xiaomi"
     return platform
 
 

@@ -7,15 +7,15 @@ from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.integration import repository as integration_repository
 from app.modules.integration.models import IntegrationDiscovery, IntegrationInstance
 from app.modules.integration.schemas import IntegrationDiscoveryItemRead, IntegrationDiscoveryListRead
-from app.modules.plugin.models import PluginConfigInstance
-from app.modules.voice.binding_service import (
-    OPEN_XIAOAI_BINDING_PLATFORM,
-    OPEN_XIAOAI_PLUGIN_ID,
-    VoiceTerminalBindingSnapshot,
-    get_voice_terminal_binding,
+from app.modules.integration.speaker_plugin_capabilities import (
+    SPEAKER_GATEWAY_CONFIG_FIELD,
+    plugin_uses_speaker_gateway_discovery,
 )
+from app.modules.plugin.models import PluginConfigInstance
+from app.modules.plugin.service import PluginServiceError, get_household_plugin
+from app.modules.voice.binding_service import VoiceTerminalBindingSnapshot, get_voice_terminal_binding
 
-OPEN_XIAOAI_DISCOVERY_TYPE = "speaker_terminal"
+SPEAKER_DISCOVERY_TYPE = "speaker_terminal"
 
 
 def list_integration_discoveries(
@@ -31,8 +31,7 @@ def list_integration_discoveries(
     items = [
         item
         for item in rows
-        if item.household_id == household_id
-        or (item.household_id is None and item.plugin_id == OPEN_XIAOAI_PLUGIN_ID)
+        if item.household_id == household_id or _is_visible_unbound_speaker_discovery(db, household_id=household_id, row=item)
     ]
     return IntegrationDiscoveryListRead(
         household_id=household_id,
@@ -40,13 +39,18 @@ def list_integration_discoveries(
     )
 
 
-def find_open_xiaoai_instance_by_gateway_id(db: Session, *, gateway_id: str) -> IntegrationInstance | None:
+def find_speaker_instance_by_gateway_id(
+    db: Session,
+    *,
+    plugin_id: str,
+    gateway_id: str,
+) -> IntegrationInstance | None:
     normalized_gateway_id = gateway_id.strip()
     if not normalized_gateway_id:
         return None
 
     stmt = select(PluginConfigInstance).where(
-        PluginConfigInstance.plugin_id == OPEN_XIAOAI_PLUGIN_ID,
+        PluginConfigInstance.plugin_id == plugin_id,
         PluginConfigInstance.scope_type.in_(("plugin", "integration_instance")),
         PluginConfigInstance.integration_instance_id.is_not(None),
     )
@@ -54,7 +58,7 @@ def find_open_xiaoai_instance_by_gateway_id(db: Session, *, gateway_id: str) -> 
         payload = load_json(config.data_json)
         if not isinstance(payload, dict):
             continue
-        if str(payload.get("gateway_id") or "").strip() != normalized_gateway_id:
+        if str(payload.get(SPEAKER_GATEWAY_CONFIG_FIELD) or "").strip() != normalized_gateway_id:
             continue
         if not config.integration_instance_id:
             continue
@@ -64,9 +68,10 @@ def find_open_xiaoai_instance_by_gateway_id(db: Session, *, gateway_id: str) -> 
     return None
 
 
-def upsert_open_xiaoai_discovery(
+def upsert_speaker_discovery(
     db: Session,
     *,
+    plugin_id: str,
     gateway_id: str,
     fingerprint: str,
     model: str,
@@ -78,7 +83,7 @@ def upsert_open_xiaoai_discovery(
     last_seen_at: str | None,
     connection_status: str,
 ) -> tuple[IntegrationDiscovery | None, VoiceTerminalBindingSnapshot | None]:
-    instance = find_open_xiaoai_instance_by_gateway_id(db, gateway_id=gateway_id)
+    instance = find_speaker_instance_by_gateway_id(db, plugin_id=plugin_id, gateway_id=gateway_id)
     binding = get_voice_terminal_binding(db, fingerprint=fingerprint)
     now = utc_now_iso()
 
@@ -92,6 +97,7 @@ def upsert_open_xiaoai_discovery(
     normalized_last_seen_at = last_seen_at or now
 
     payload = {
+        "plugin_id": plugin_id,
         "gateway_id": normalized_gateway_id,
         "fingerprint": normalized_fingerprint,
         "model": normalized_model,
@@ -106,7 +112,7 @@ def upsert_open_xiaoai_discovery(
 
     discovery = integration_repository.get_integration_discovery_by_plugin_and_key(
         db,
-        plugin_id=OPEN_XIAOAI_PLUGIN_ID,
+        plugin_id=plugin_id,
         discovery_key=normalized_fingerprint,
     )
     if discovery is None:
@@ -114,17 +120,17 @@ def upsert_open_xiaoai_discovery(
             id=new_uuid(),
             household_id=(instance.household_id if instance is not None else None),
             integration_instance_id=(instance.id if instance is not None else None),
-            plugin_id=OPEN_XIAOAI_PLUGIN_ID,
+            plugin_id=plugin_id,
             gateway_id=normalized_gateway_id,
             discovery_key=normalized_fingerprint,
-            discovery_type=OPEN_XIAOAI_DISCOVERY_TYPE,
+            discovery_type=SPEAKER_DISCOVERY_TYPE,
             resource_type="device",
             status=("claimed" if binding is not None else "pending"),
             title=title,
             subtitle=subtitle,
             external_device_id=normalized_sn,
             external_entity_id=normalized_fingerprint,
-            adapter_type=OPEN_XIAOAI_BINDING_PLATFORM,
+            adapter_type=plugin_id,
             capability_tags_json=dump_json(normalized_capabilities) or "[]",
             metadata_json=dump_json(
                 {
@@ -157,7 +163,7 @@ def upsert_open_xiaoai_discovery(
     discovery.status = "claimed" if binding is not None else "pending"
     discovery.external_device_id = normalized_sn
     discovery.external_entity_id = normalized_fingerprint
-    discovery.adapter_type = OPEN_XIAOAI_BINDING_PLATFORM
+    discovery.adapter_type = plugin_id
     discovery.capability_tags_json = dump_json(normalized_capabilities) or "[]"
     discovery.metadata_json = dump_json(
         {
@@ -179,11 +185,16 @@ def upsert_open_xiaoai_discovery(
     return discovery, binding
 
 
-def list_unbound_open_xiaoai_gateway_ids(db: Session) -> list[str]:
+def list_unbound_speaker_gateway_ids(
+    db: Session,
+    *,
+    plugin_id: str,
+) -> list[str]:
     stmt = (
         select(IntegrationDiscovery.gateway_id)
         .where(
-            IntegrationDiscovery.plugin_id == OPEN_XIAOAI_PLUGIN_ID,
+            IntegrationDiscovery.plugin_id == plugin_id,
+            IntegrationDiscovery.discovery_type == SPEAKER_DISCOVERY_TYPE,
             IntegrationDiscovery.integration_instance_id.is_(None),
             IntegrationDiscovery.gateway_id.is_not(None),
         )
@@ -193,11 +204,12 @@ def list_unbound_open_xiaoai_gateway_ids(db: Session) -> list[str]:
     return [item.strip() for item in db.scalars(stmt).all() if isinstance(item, str) and item.strip()]
 
 
-def attach_open_xiaoai_discoveries_to_instance(
+def attach_speaker_discoveries_to_instance(
     db: Session,
     *,
     household_id: str,
     integration_instance_id: str,
+    plugin_id: str,
     gateway_id: str,
 ) -> None:
     normalized_gateway_id = gateway_id.strip()
@@ -205,7 +217,8 @@ def attach_open_xiaoai_discoveries_to_instance(
         return
 
     stmt = select(IntegrationDiscovery).where(
-        IntegrationDiscovery.plugin_id == OPEN_XIAOAI_PLUGIN_ID,
+        IntegrationDiscovery.plugin_id == plugin_id,
+        IntegrationDiscovery.discovery_type == SPEAKER_DISCOVERY_TYPE,
         IntegrationDiscovery.gateway_id == normalized_gateway_id,
     )
     now = utc_now_iso()
@@ -247,6 +260,21 @@ def mark_discovery_claimed(
             db.add(row)
 
 
+def _is_visible_unbound_speaker_discovery(
+    db: Session,
+    *,
+    household_id: str,
+    row: IntegrationDiscovery,
+) -> bool:
+    if row.household_id is not None or row.discovery_type != SPEAKER_DISCOVERY_TYPE:
+        return False
+    try:
+        plugin = get_household_plugin(db, household_id=household_id, plugin_id=row.plugin_id)
+    except PluginServiceError:
+        return False
+    return plugin_uses_speaker_gateway_discovery(plugin)
+
+
 def _to_discovery_read(row: IntegrationDiscovery) -> IntegrationDiscoveryItemRead:
     metadata = load_json(row.metadata_json)
     capability_tags = load_json(row.capability_tags_json)
@@ -269,7 +297,7 @@ def _to_discovery_read(row: IntegrationDiscovery) -> IntegrationDiscoveryItemRea
 
 
 def _build_terminal_title(*, model: str, sn: str) -> str:
-    normalized_model = model.strip() or "小爱音箱"
+    normalized_model = model.strip() or "音箱终端"
     normalized_sn = sn.strip()
     if not normalized_sn:
         return normalized_model

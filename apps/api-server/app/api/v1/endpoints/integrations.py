@@ -23,7 +23,7 @@ from app.modules.integration import (
     IntegrationResourceListRead,
 )
 from app.modules.integration import repository as integration_repository
-from app.modules.integration.discovery_service import upsert_open_xiaoai_discovery
+from app.modules.integration.discovery_service import upsert_speaker_discovery
 from app.modules.integration.service import (
     build_integration_page_view,
     create_integration_instance,
@@ -42,10 +42,10 @@ from app.modules.voice.protocol import sanitize_terminal_capabilities
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
-class VoiceGatewayDiscoveryReportPayload(BaseModel):
+class SpeakerDiscoveryReportPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    plugin_id: Literal["open-xiaoai-speaker"] = "open-xiaoai-speaker"
+    plugin_id: str = Field(min_length=1, max_length=64)
     gateway_id: str = Field(min_length=1, max_length=100)
     fingerprint: str = Field(min_length=1)
     model: str = Field(min_length=1)
@@ -70,7 +70,7 @@ class VoiceDiscoveryBindingRead(BaseModel):
     pending_voiceprint_enrollment: dict | None = None
 
 
-class VoiceGatewayDiscoveryReportResponse(BaseModel):
+class SpeakerDiscoveryReportResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     gateway_id: str
@@ -94,14 +94,15 @@ def _binding_to_read(binding: VoiceTerminalBindingSnapshot | None) -> VoiceDisco
     return VoiceDiscoveryBindingRead.model_validate(binding.model_dump(mode="json"))
 
 
-@router.post("/discoveries/report", response_model=VoiceGatewayDiscoveryReportResponse)
-def report_open_xiaoai_discovery(
-    payload: VoiceGatewayDiscoveryReportPayload,
+@router.post("/discoveries/report", response_model=SpeakerDiscoveryReportResponse)
+def report_speaker_discovery(
+    payload: SpeakerDiscoveryReportPayload,
     _gateway_auth: None = Depends(require_voice_gateway_token),
     db: Session = Depends(get_db),
-) -> VoiceGatewayDiscoveryReportResponse:
-    _discovery, binding = upsert_open_xiaoai_discovery(
+) -> SpeakerDiscoveryReportResponse:
+    _discovery, binding = upsert_speaker_discovery(
         db,
+        plugin_id=payload.plugin_id,
         gateway_id=payload.gateway_id,
         fingerprint=payload.fingerprint,
         model=payload.model,
@@ -114,7 +115,7 @@ def report_open_xiaoai_discovery(
         connection_status=payload.connection_status,
     )
     db.commit()
-    return VoiceGatewayDiscoveryReportResponse(
+    return SpeakerDiscoveryReportResponse(
         gateway_id=payload.gateway_id,
         fingerprint=payload.fingerprint,
         claimed=binding is not None,
