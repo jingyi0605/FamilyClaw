@@ -33,5 +33,6 @@ apps/familyclaw-marketplace/
 tmp/*
 apps/api-server/tests/*
 !apps/api-server/tests/test_integration_plugin_state.py
+!apps/api-server/tests/test_migpt_speaker_runtime_worker.py
 !apps/api-server/tests/test_plugin_import_path.py
 !apps/api-server/tests/test_scheduler_plugin_state.py

@@ -1112,9 +1112,12 @@ class PluginManifestFieldUiSchema(BaseModel):
     placeholder_key: str | None = Field(default=None, max_length=255)
     help_text: str | None = Field(default=None, max_length=255)
     help_text_key: str | None = Field(default=None, max_length=255)
+    help_text_collapsible: bool = False
+    help_text_toggle_label: str | None = Field(default=None, max_length=100)
+    help_text_toggle_label_key: str | None = Field(default=None, max_length=255)
     visible_when: list[PluginManifestVisibilityRule] = Field(default_factory=list)
 
-    @field_validator("placeholder", "help_text")
+    @field_validator("placeholder", "help_text", "help_text_toggle_label")
     @classmethod
     def validate_optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -1124,10 +1127,20 @@ class PluginManifestFieldUiSchema(BaseModel):
             raise ValueError("字段不能为空")
         return normalized
 
-    @field_validator("placeholder_key", "help_text_key")
+    @field_validator("placeholder_key", "help_text_key", "help_text_toggle_label_key")
     @classmethod
     def validate_i18n_key(cls, value: str | None) -> str | None:
         return _normalize_i18n_key(value)
+
+    @model_validator(mode="after")
+    def validate_collapsible_help(self) -> "PluginManifestFieldUiSchema":
+        if not self.help_text_collapsible:
+            return self
+        if not self.help_text and not self.help_text_key:
+            raise ValueError("help_text_collapsible = true 时，必须提供 help_text 或 help_text_key")
+        if not self.help_text_toggle_label and not self.help_text_toggle_label_key:
+            raise ValueError("help_text_collapsible = true 时，必须提供 help_text_toggle_label 或 help_text_toggle_label_key")
+        return self
 
 
 class PluginManifestUiSection(BaseModel):

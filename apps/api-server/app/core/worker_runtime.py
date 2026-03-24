@@ -63,6 +63,8 @@ class WorkerRuntime:
         self._health = WorkerHealthSnapshot(worker_name=self.worker_id, state="stopped")
 
     async def start(self, tick_fn: Callable[[], Awaitable[bool]]) -> None:
+        if self._task is not None and self._task.done():
+            self._task = None
         if self._task is not None:
             return
         self._stop_event.clear()
@@ -76,6 +78,15 @@ class WorkerRuntime:
         await self._task
         self._task = None
         self._health = replace(self._health, state="stopped")
+
+    async def run_once(self, tick_fn: Callable[[], Awaitable[bool]]) -> bool:
+        if self.is_running():
+            raise RuntimeError(f"worker 已在运行中: {self.worker_id}")
+        self._stop_event.clear()
+        return await self._run_tick(tick_fn)
+
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
 
     async def run_forever(self, tick_fn: Callable[[], Awaitable[bool]]) -> None:
         self._health = replace(self._health, state="starting")

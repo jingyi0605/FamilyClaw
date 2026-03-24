@@ -657,6 +657,9 @@ export type PluginManifestFieldUiSchema = {
   placeholder_key?: string | null;
   help_text?: string | null;
   help_text_key?: string | null;
+  help_text_collapsible?: boolean;
+  help_text_toggle_label?: string | null;
+  help_text_toggle_label_key?: string | null;
   visible_when?: PluginManifestVisibilityRule[];
 };
 

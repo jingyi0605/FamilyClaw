@@ -15,6 +15,7 @@ import {
   resolvePluginMaybeKey,
   resolvePluginOptionLabel,
   resolvePluginTextValue,
+  resolvePluginWidgetHelpToggleLabel,
   resolvePluginWidgetHelpText,
   resolvePluginWidgetPlaceholder,
 } from '../pluginConfigI18n';
@@ -1538,6 +1539,30 @@ function SettingsIntegrationsContent() {
 
   function renderField(field: PluginManifestConfigField, widget?: PluginManifestFieldUiSchema) {
     const fieldError = createDraft.fieldErrors[field.key];
+    const renderFieldHelp = () => {
+      const helpText = resolvePluginWidgetHelpText(widget, field, t);
+      if (!helpText) {
+        return null;
+      }
+      const toggleLabel = resolvePluginWidgetHelpToggleLabel(widget, t);
+      if (widget?.help_text_collapsible && toggleLabel) {
+        return (
+          <details className="form-help">
+            <summary
+              style={{
+                cursor: 'pointer',
+                color: 'var(--brand-primary)',
+                userSelect: 'none',
+              }}
+            >
+              {toggleLabel}
+            </summary>
+            <div style={{ marginTop: '8px', whiteSpace: 'pre-line' }}>{helpText}</div>
+          </details>
+        );
+      }
+      return <div className="form-help">{helpText}</div>;
+    };
     if (widget?.widget === 'display') {
       const rawValue = createDraft.values[field.key] ?? field.default;
       const displayValue = typeof rawValue === 'string'
@@ -1551,7 +1576,7 @@ function SettingsIntegrationsContent() {
           <pre className="channel-config-field__display">
             {displayValue || resolvePluginWidgetHelpText(widget, field, t) || page('settings.integrations.modal.config.displayEmpty')}
           </pre>
-          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {renderFieldHelp()}
           {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
@@ -1585,7 +1610,7 @@ function SettingsIntegrationsContent() {
               })}
             </label>
           ) : null}
-          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {renderFieldHelp()}
           {keepExisting ? (
             <div className="form-help">
               {page('settings.integrations.modal.instance.secret.keepHint', {
@@ -1609,7 +1634,7 @@ function SettingsIntegrationsContent() {
             <option value="false">{page('settings.integrations.modal.config.booleanFalse')}</option>
             <option value="true">{page('settings.integrations.modal.config.booleanTrue')}</option>
           </select>
-          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {renderFieldHelp()}
           {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
@@ -1628,7 +1653,7 @@ function SettingsIntegrationsContent() {
               <option key={option.value} value={option.value}>{resolvePluginOptionLabel(option, t)}</option>
             ))}
           </select>
-          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {renderFieldHelp()}
           {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
@@ -1650,7 +1675,7 @@ function SettingsIntegrationsContent() {
               <option key={option.value} value={option.value}>{resolvePluginOptionLabel(option, t)}</option>
             ))}
           </select>
-          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {renderFieldHelp()}
           <div className="form-help">{page('settings.integrations.modal.config.multiSelectHint')}</div>
           {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
@@ -1668,7 +1693,7 @@ function SettingsIntegrationsContent() {
             spellCheck={false}
             rows={8}
           />
-          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {renderFieldHelp()}
           <div className="form-help">{page('settings.integrations.modal.config.jsonHint')}</div>
           {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
@@ -1684,7 +1709,7 @@ function SettingsIntegrationsContent() {
             onChange={(event) => void updateValue(field.key, event.target.value)}
             placeholder={resolvePluginWidgetPlaceholder(widget, t) || undefined}
           />
-          <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+          {renderFieldHelp()}
           {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
         </div>
       );
@@ -1699,7 +1724,7 @@ function SettingsIntegrationsContent() {
           onChange={(event) => void updateValue(field.key, event.target.value)}
           placeholder={resolvePluginWidgetPlaceholder(widget, t) || undefined}
         />
-        <div className="form-help">{resolvePluginWidgetHelpText(widget, field, t)}</div>
+        {renderFieldHelp()}
         {fieldError ? <div className="form-help">{resolvePluginMaybeKey(fieldError, t)}</div> : null}
       </div>
     );

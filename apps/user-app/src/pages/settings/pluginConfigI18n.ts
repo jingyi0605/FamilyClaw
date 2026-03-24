@@ -84,3 +84,10 @@ export function resolvePluginWidgetHelpText(
   }
   return resolvePluginFieldDescription(field, translate);
 }
+
+export function resolvePluginWidgetHelpToggleLabel(
+  widget: PluginManifestFieldUiSchema | undefined,
+  translate: Translate,
+): string {
+  return resolvePluginText(widget?.help_text_toggle_label, widget?.help_text_toggle_label_key, translate);
+}

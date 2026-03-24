@@ -15,6 +15,8 @@ from app.modules.voice.protocol import (
 __all__ = [
     "VOICE_TERMINAL_CAPABILITY_BLACKLIST",
     "VOICE_TERMINAL_CAPABILITY_WHITELIST",
+    "SpeakerHostService",
+    "speaker_host_service",
     "VoiceCommandEvent",
     "VoiceGatewayEvent",
     "VoicePlaybackService",
@@ -34,6 +36,12 @@ def __getattr__(name: str):
     """Lazy import modules that have circular dependencies."""
     if name == "voice_conversation_bridge":
         from app.modules.voice.conversation_bridge import voice_conversation_bridge as obj
+        return obj
+    if name == "speaker_host_service":
+        from app.modules.voice.speaker_host_service import speaker_host_service as obj
+        return obj
+    if name == "SpeakerHostService":
+        from app.modules.voice.speaker_host_service import SpeakerHostService as obj
         return obj
     if name == "voice_fast_action_service":
         from app.modules.voice.fast_action_service import voice_fast_action_service as obj
