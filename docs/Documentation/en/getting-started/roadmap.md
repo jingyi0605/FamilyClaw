@@ -47,7 +47,7 @@ Do not treat it like marketing copy. It is split directly into what is already f
 | Layered long-term memory and recall | In development | Push memory beyond basic storage into layered recall, ranking, and real prompt injection | This is still an active mainline effort |
 | Persona-based Agent assistant | In development | The family memory center is already done; the current work is the persona system, role config, and member awareness around the Agent | The unfinished part is the Agent persona itself |
 | Voiceprint recognition optimization | In development | Continue improving capture quality, recognition accuracy, and device-side experience | The voice chain is still being tuned |
-| Multi-channel communication access | In development | Focus on real channels such as WeCom and QQ so the product is not limited to the web entry | Current focus is WeCom and QQ |
+| Multi-channel communication access | In development | Keep expanding real message channels so the product is not limited to the web entry | Current focus is tightening the retained channels and evaluating later platforms |
 | Mobile clients | In development | Keep tightening Android and iOS into full product-grade mobile clients instead of stopping at the existing cross-platform shell | Current focus is Android and iOS |
 | Xiaomi camera face recognition and visual analysis | In development | Add face recognition, visual analysis, and related household scenarios around Xiaomi cameras | This is an explicitly active vision track |
 
