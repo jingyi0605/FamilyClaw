@@ -97,6 +97,12 @@ Decide whether it is:
 
 If the type is wrong, the manifest, execution path, and config scope all go wrong with it.
 
+For browser-token or vendor-account plugins of this kind, there is one practical trap worth stating early:
+
+- the `passToken` flow often also needs the numeric `userId` from the same browser cookie jar
+- do not vaguely label the field as “account” if email or phone number will not actually work
+- name it as an account ID field and explain clearly in the help text that users should copy the `userId` cookie value
+
 ### 2. Write `manifest.json` first
 
 The host reads the manifest first and decides how your plugin is loaded.
@@ -164,7 +170,7 @@ For flows such as "log in and load devices", do not patch the host page. The plu
 - use `candidate_select` when the user needs to choose one item and persist the result into a real config field such as `device_selector`
 - keep all plugin-specific `label / description / help_text / placeholder / runtime` copy in the plugin's own `manifest + locales`; the host only performs generic rendering
 
-That keeps the host generic. The host renders buttons, calls `config_preview`, shows runtime output, and writes selected values back into the config draft. It does not know what "Xiaomi login", "secondary verification", or "device binding" means.
+That keeps the host generic. The host renders buttons, calls `config_preview`, shows runtime output, and writes selected values back into the config draft. It does not know what a provider login flow, secondary verification, or vendor device binding means.
 
 ### What `config_preview` should return now
 
@@ -174,21 +180,19 @@ The host now formally recognizes these preview fields:
 - `runtime_state`
 - `preview_artifacts`
 
-For multi-step auth flows, there is now one more host-managed runtime contract inside `runtime_state`:
+If a staged login flow hits third-party verification, keep the vendor-specific recovery logic inside the plugin.
 
-- `runtime_state.auth_session`
+The recommended pattern is:
 
-The host creates this session only for explicit preview actions, exposes a callback URL to the plugin, records callback payloads at a host-owned endpoint, and lets the frontend poll unified session status. The plugin should use it like this:
+- return the real verification link through `runtime_state`
+- let the user paste the final provider redirect URL back into a plugin-owned form field
+- let the plugin persist its own pending login context and resume the flow itself on the next `config_preview`
 
-- on the first preview action, generate the provider verification URL from `auth_session.callback_url`
-- store only the provider-specific resume payload in `auth_session.payload`
-- after the host callback is received, consume `auth_session.callback_payload` and continue the login flow
-- when the flow finishes, return an `auth_session` mutation with `completed`, `failed`, `expired`, or another terminal state
+The host should stay generic here:
 
-Treat `auth_session.callback_url` as a public app callback URL under the current user-facing site origin.
-Do not assume it will always use the backend process origin directly; in split frontend/backend deployments the host prefers the current frontend origin when building this URL.
-
-Do not make users manually paste a callback URL back into the form as the primary flow. That can exist only as a temporary debug fallback.
+- it renders `runtime_state` and `preview_artifacts`
+- it does not own provider callback contracts
+- it does not pretend every vendor flow can be normalized into one automatic callback protocol
 
 `preview_artifacts` is the host-rendered list for temporary setup output. The current kinds are:
 
@@ -225,61 +229,54 @@ Keep the boundary clean:
 
 - `preview_artifacts` is for host rendering, not for pushing vendor protocol details back into the host
 - `image_url` must point to an actual image resource; if an upstream service only gives you a landing page or H5 URL, the plugin must turn it into a real image before handing it to the host
-- do not send platform-private fields such as `qr_code_url` or `weixin_login_status` to host pages
+- do not send platform-private fields such as `qr_code_url` or `provider_login_status` to host pages
 - persisted config still belongs to the normal save flow; preview artifacts are temporary only
 
-#### How to call `plugin-config-auth` now
+#### How staged login should be called now
 
-If your `config_preview` flow triggers a real third-party verification step, use the formal host contract instead of inventing a plugin-private callback flow.
-
-The formal endpoints are:
+If your `config_preview` flow triggers a real third-party verification step, the formal host endpoint is still just:
 
 - `POST /api/v1/ai-config/{household_id}/plugins/{plugin_id}/config/preview`
-- `GET /api/v1/ai-config/{household_id}/plugins/{plugin_id}/config/auth-sessions/{session_id}`
-- `GET/POST /api/v1/ai-config/plugin-config-auth-sessions/{session_id}/callback?token=...`
 
 Minimal sequence:
 
 1. the user clicks a button declared in `ui_schema.actions`
 2. the frontend calls `config/preview` with `action_key`
-3. the host returns `view.runtime_state.auth_session`
-4. the plugin uses `auth_session.callback_url` to build the real provider auth URL or QR code
-5. the frontend polls `config/auth-sessions/{session_id}`
-6. the provider calls the host callback endpoint
-7. the plugin continues the flow on the next `config_preview` run by sending `auth_session_id`
+3. the plugin returns `runtime_state.verification_url` or other temporary runtime output
+4. after the user finishes the vendor verification, they paste the final redirect URL back into a plugin-owned field
+5. the frontend calls the same `config/preview` action again
+6. the plugin parses that URL and resumes the rest of the staged login flow itself
 
-Minimal request:
+### Worker and heartbeat boundaries for `speaker_adapter`
 
-```json
-{
-  "scope_type": "channel_account",
-  "scope_key": "draft",
-  "values": {
-    "account_label": "My account"
-  },
-  "action_key": "start-login"
-}
-```
+If the manifest declares `capabilities.speaker_adapter.requires_runtime_worker=true`, the plugin must own a real long-running worker. Do not expect the host to poll the third-party speaker platform for you.
 
-Resume request:
+That worker should at least:
 
-```json
-{
-  "scope_type": "channel_account",
-  "scope_key": "draft",
-  "values": {
-    "account_label": "My account"
-  },
-  "action_key": "start-login",
-  "auth_session_id": "session-123"
-}
-```
+- poll or consume provider-side events
+- submit incoming text queries through `speaker text_turn`
+- play the host reply back to the device using `reply_text` or `audio_url`
+- emit `SpeakerRuntimeHeartbeat` on a regular basis
 
-Boundary reminder:
+Recommended heartbeat state usage:
 
-- the host owns `session_id`, `callback_url`, callback recording, and session polling
-- the plugin owns provider URL generation, provider callback consumption, and the rest of the vendor login flow
-- manual copy-paste callback handling can only remain as a debug fallback
+- `idle`: healthy but no new work in the latest tick
+- `running`: healthy and the latest handling succeeded
+- `degraded`: still alive, but already running in fallback mode
+- `error`: the latest critical handling failed
+- `stopped`: intentionally stopped or unable to continue
+
+The host only closes those states into stable instance statuses:
+
+- `running` / `idle` become `active`
+- `degraded` / `error` / `stopped` become `degraded`
+- disabled plugins force the instance to `disabled`
+
+The boundary matters:
+
+- the host does not keep vendor sessions alive for the plugin
+- the host does not poll third-party platforms for the plugin
+- the host only owns `text_turn`, `heartbeat`, generic config rendering, and instance status presentation
 
 ### Read-only display widgets
 
@@ -422,7 +419,7 @@ The common rule is:
 - Submit the real `plugin_id` when creating an account; never synthesize `channel-${platformCode}` in the UI
 - Reuse host branding and logos for known platforms; for unknown platforms, fall back to `plugin.name` plus a generic icon instead of pretending everything is Telegram
 
-This is host-wide behavior, not a Weixin special case. Today it is Weixin claw. Tomorrow it may be another third-party channel. The entry should keep working without more host patches.
+This is host-wide behavior, not a one-platform special case. Today it may be one third-party channel. Tomorrow it may be another. The entry should keep working without more host patches.
 
 ## How a `channel` plugin declares account actions and status summaries
 
@@ -444,7 +441,7 @@ Minimal example:
   },
   "capabilities": {
     "channel": {
-      "platform_code": "weixin-claw",
+      "platform_code": "third-party-chat",
       "inbound_modes": ["polling"],
       "delivery_modes": ["reply"],
       "ui": {

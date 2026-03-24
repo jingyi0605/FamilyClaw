@@ -115,6 +115,69 @@ Current common widgets:
 - `multi_select`
 - `json_editor`
 
+If a field needs a long user-facing guide, do not dump the whole tutorial inline under the input. Widget help can now be rendered as a collapsed block by default:
+
+```json
+{
+  "widgets": {
+    "pass_token_secret_ref": {
+      "widget": "password",
+      "help_text": "1. Log in in the browser\n2. Open DevTools\n3. Find passToken in Cookies",
+      "help_text_collapsible": true,
+      "help_text_toggle_label": "Show how to get passToken"
+    }
+  }
+}
+```
+
+The rule is simple:
+
+- `help_text_collapsible = true` means the help stays collapsed by default
+- `help_text_toggle_label` is the text shown to the user on the toggle
+- the actual body still comes from `help_text` or `help_text_key`
+- this is a host-wide generic form capability, not a plugin-specific hack
+
+## How to declare `speaker_adapter`
+
+If a plugin bridges speaker polling, device discovery, or command execution into the host, use the formal manifest fields instead of private ad-hoc keys:
+
+```json
+"entrypoints": {
+  "integration": "speaker_gateway_adapter_demo.integration.sync",
+  "action": "speaker_gateway_adapter_demo.action.execute",
+  "speaker_adapter": "speaker_gateway_adapter_demo.speaker_adapter.create_adapter"
+},
+"capabilities": {
+  "speaker_adapter": {
+    "adapter_code": "speaker_gateway_adapter_demo",
+    "supported_modes": ["text_turn"],
+    "supported_domains": ["speaker"],
+    "requires_runtime_worker": true,
+    "supports_discovery": true,
+    "supports_commands": true
+  }
+}
+```
+
+The important parts are:
+
+- `entrypoints.speaker_adapter`: the Python entry used to build the adapter
+- `capabilities.speaker_adapter.adapter_code`: the adapter's own stable code, not a replacement for `plugin_id`
+- `supported_modes`: the bridge modes this adapter actually supports
+- `supported_domains`: must include `speaker`
+- `requires_runtime_worker`: whether the plugin must keep its own long-running worker alive
+- `supports_discovery`: whether the plugin is responsible for candidate discovery
+- `supports_commands`: whether the adapter also supports unified action execution
+
+Current host validation is strict:
+
+- declaring `capabilities.speaker_adapter` also requires plugin type `integration`
+- `entrypoints.integration` and `entrypoints.speaker_adapter` must both exist
+- `supported_modes` cannot be empty
+- `supported_domains` cannot be empty and must include `speaker`
+- if `supports_commands=true`, the plugin must also declare type `action` and `entrypoints.action`
+- declaring only `entrypoints.speaker_adapter` without `capabilities.speaker_adapter` fails manifest loading
+
 ## Multi-step setup forms
 
 For multi-section forms in devices and integrations, the frontend now renders `ui_schema.sections` as staged steps:
@@ -139,47 +202,15 @@ The recommended pattern is:
 - keep returning the standard `PluginConfigFormRead`
 - put temporary runtime output in `view.runtime_state`
 
-If the preview flow includes third-party verification callbacks, do not invent a plugin-private callback endpoint. The host now provides a unified auth-session runtime object through `view.runtime_state.auth_session`.
+If the preview flow includes third-party verification, keep the recovery contract inside the plugin instead of asking the host to own a provider callback session.
 
-The plugin side should treat it as a generic contract:
+The recommended shape is:
 
-- read `auth_session.callback_url` and use it as the provider callback target
-- write provider resume data into `auth_session.payload`
-- wait for the host to move the session into `callback_received`
-- consume `auth_session.callback_payload` on the next preview run and continue the flow
-- mark the session `completed` or `failed` when the staged setup is done
+- expose verification links and staged status through `view.runtime_state`
+- add a normal plugin-owned field for the final provider redirect URL or similar recovery input
+- let the plugin persist its own pending login context and resume itself on the next preview action
 
-The host part of `auth_session.callback_url` should be treated as the current public app/site address.
-In split frontend/backend deployments, the host prefers the current frontend origin instead of exposing the backend process origin directly.
-
-That keeps the saved config schema clean while still allowing staged setup flows with real login, verification links, and live device lists.
-
-Do not miss these two formal fields:
-
-- `PluginConfigPreviewRequest.auth_session_id`
-  Use this when a staged action enters its second or later preview round and needs to continue the same auth session.
-- `PluginConfigPreviewHookResult.auth_session`
-  Use this when the plugin needs to update auth-session status, write resume payload, or mark the flow completed or failed.
-
-Minimal examples:
-
-```json
-{
-  "action_key": "start-login",
-  "auth_session_id": "session-123"
-}
-```
-
-```json
-{
-  "auth_session": {
-    "status": "completed",
-    "payload": {
-      "vendor_state": "ok"
-    }
-  }
-}
-```
+That keeps the saved config schema generic while still allowing staged setup flows with real login, verification links, and live device lists.
 
 ## How `ui_schema.actions` and `runtime_sections` work now
 
@@ -200,7 +231,52 @@ Keep the boundary strict:
 
 - persisted values still belong in real config fields such as `device_selector`
 - `runtime_state` is temporary output, not saved config
-- the host renders a generic contract, not Xiaomi-specific or Weixin-specific setup logic
+- the host renders a generic contract, not provider-specific setup logic
+
+## `speaker` runtime worker and heartbeat
+
+If `capabilities.speaker_adapter.requires_runtime_worker=true`, that does not mean the host will start a vendor-specific worker for you. It means the plugin itself must own the long-running runtime worker.
+
+That worker is expected to do at least four things:
+
+- poll or consume third-party speaker-side events
+- submit real text queries to the host through `speaker text_turn`
+- play the host reply back to the device using `reply_text` or `audio_url`
+- report `SpeakerRuntimeHeartbeat` on a regular basis
+
+The heartbeat payload currently looks like this:
+
+```json
+{
+  "plugin_id": "speaker_gateway_adapter_demo",
+  "integration_instance_id": "integration-instance-id",
+  "state": "running",
+  "consecutive_failures": 0,
+  "last_succeeded_at": "2026-03-24T00:00:00Z",
+  "last_failed_at": null,
+  "last_error_summary": null
+}
+```
+
+Use the states honestly:
+
+- `idle`: the worker is alive, but the latest tick had no new work
+- `running`: the worker is healthy and the latest handling succeeded
+- `degraded`: the worker is still alive, but already running in fallback or partial-failure mode
+- `error`: the latest critical handling failed, but the runtime is still reporting
+- `stopped`: the worker intentionally stopped or can no longer continue
+
+The host only closes these states into stable integration statuses:
+
+- `running` / `idle` -> `integration_instance.status = active`
+- `degraded` / `error` / `stopped` -> `integration_instance.status = degraded`
+- disabled plugins always force the instance into `disabled`
+
+Keep the boundary clean:
+
+- the host only reads health summary and error summary from heartbeat
+- the host does not understand vendor session renewal, retry policy, or provider protocol details
+- those details stay inside the plugin runtime
 
 ## Dynamic option fields
 
