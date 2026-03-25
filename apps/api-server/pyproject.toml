@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "familyclaw-api-server"
-version = "0.1.1"
+version = "0.1.2"
 description = "FamilyClaw API server for household foundation and member center"
 requires-python = ">=3.11"
 dependencies = [
