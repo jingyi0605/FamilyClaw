@@ -1550,6 +1550,25 @@ def _resolve_archive_source_root(extracted_root: Path) -> Path:
     return extracted_root.resolve()
 
 
+def _resolve_install_content_root(
+    *,
+    source_root: Path,
+    package_root: Path,
+    manifest_path: Path,
+) -> Path:
+    source_root_resolved = source_root.resolve()
+    relative_manifest_dir = manifest_path.resolve().parent.relative_to(source_root_resolved)
+    relative_package_root = package_root.resolve().relative_to(source_root_resolved)
+    common_parts: list[str] = []
+    for manifest_part, package_part in zip(relative_manifest_dir.parts, relative_package_root.parts):
+        if manifest_part != package_part:
+            break
+        common_parts.append(manifest_part)
+    if not common_parts:
+        return source_root_resolved
+    return (source_root_resolved / Path(*common_parts)).resolve()
+
+
 def _validate_manifest_consistency(
     *,
     source_root: Path,
@@ -1583,7 +1602,7 @@ def _validate_manifest_consistency(
             error_code="manifest_mismatch",
             status_code=409,
         )
-    _require_path_within_root(manifest_path, package_root, field_name="manifest_path")
+    _require_path_within_root(manifest_path, source_root, field_name="manifest_path")
     readme_path = _resolve_child_path(source_root, entry.install.readme_path, field_name="install.readme_path")
     requirements_path = _resolve_child_path(
         source_root,
@@ -1918,6 +1937,11 @@ def create_marketplace_install_task(
                 entry=entry,
                 installed_version=version_entry.version,
             )
+            install_root = _resolve_install_content_root(
+                source_root=source_root,
+                package_root=package_root,
+                manifest_path=manifest_path,
+            )
             _log_install_debug(
                 "插件市场安装产物校验完成",
                 task_id=task.id,
@@ -1930,6 +1954,7 @@ def create_marketplace_install_task(
                     "elapsed_ms": round((time.perf_counter() - validation_started_at) * 1000, 2),
                     "temp_root": str(extracted_root),
                     "source_root": str(source_root),
+                    "install_root": str(install_root),
                     "package_root": str(package_root),
                     "manifest_path": str(manifest_path),
                 },
@@ -1958,9 +1983,9 @@ def create_marketplace_install_task(
             if target_root.exists():
                 shutil.rmtree(target_root)
             target_root.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(package_root, target_root)
+            shutil.copytree(install_root, target_root)
 
-        relative_manifest_path = manifest_path.resolve().relative_to(package_root.resolve())
+        relative_manifest_path = manifest_path.resolve().relative_to(install_root.resolve())
         target_manifest_path = (target_root / relative_manifest_path).resolve()
         _log_install_debug(
             "插件市场安装开始处理挂载记录",
@@ -2242,6 +2267,11 @@ def _switch_marketplace_instance_version(
                 entry=entry,
                 installed_version=target_version_entry.version,
             )
+            install_root = _resolve_install_content_root(
+                source_root=source_root,
+                package_root=package_root,
+                manifest_path=manifest_path,
+            )
 
             target_root = _get_marketplace_install_target_root(
                 household_id=instance.household_id,
@@ -2251,9 +2281,9 @@ def _switch_marketplace_instance_version(
             if target_root.exists():
                 shutil.rmtree(target_root)
             target_root.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(package_root, target_root)
+            shutil.copytree(install_root, target_root)
 
-        relative_manifest_path = manifest_path.resolve().relative_to(package_root.resolve())
+        relative_manifest_path = manifest_path.resolve().relative_to(install_root.resolve())
         target_manifest_path = (target_root / relative_manifest_path).resolve()
         instance.source_id = source.source_id
         instance.installed_version = target_version_entry.version

@@ -795,6 +795,66 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self.assertTrue(Path(task.manifest_path).resolve().is_file())
         self.assertEqual("manifest.json", Path(task.manifest_path).name)
 
+    def test_install_accepts_repo_root_manifest_with_nested_plugin_package(self) -> None:
+        archive = self._build_plugin_archive(
+            manifest_version="1.0.0",
+            package_root="plugin",
+            repo_root_manifest=True,
+            repo_root_readme=True,
+            repo_root_requirements=True,
+        )
+        client = FakeGitHubMarketplaceClient(
+            files={
+                (MARKET_REPO_URL, "market.json", "main"): self._build_market_manifest(),
+                (
+                    MARKET_REPO_URL,
+                    "plugins/demo-plugin/entry.json",
+                    "main",
+                ): self._build_entry_payload(
+                    manifest_path="manifest.json",
+                    package_root="plugin",
+                    readme_path="README.md",
+                    requirements_path="requirements.txt",
+                ),
+            },
+            directories={
+                (MARKET_REPO_URL, "plugins", "main"): [
+                    {"name": "demo-plugin", "type": "dir"},
+                ],
+            },
+            metadata={
+                MARKET_REPO_URL: {"default_branch": "main", "stargazers_count": 10, "forks_count": 2},
+                PLUGIN_REPO_URL: {"default_branch": "main", "stargazers_count": 8, "forks_count": 1},
+            },
+            downloads={
+                "https://example.com/demo-plugin-1.0.0.zip": archive,
+            },
+        )
+
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        task = create_marketplace_install_task(
+            self.db,
+            payload=MarketplaceInstallTaskCreateRequest(
+                household_id=self.household_id,
+                source_id=source.source_id,
+                plugin_id="demo-plugin",
+                version="1.0.0",
+            ),
+            client=client,
+        )
+        self.db.commit()
+
+        installed_root = Path(task.plugin_root).resolve()
+        self.assertEqual("installed", task.install_status)
+        self.assertEqual(installed_root / "manifest.json", Path(task.manifest_path).resolve())
+        self.assertTrue((installed_root / "plugin" / "__init__.py").is_file())
+        self.assertTrue((installed_root / "requirements.txt").is_file())
+
     def test_version_options_mark_installable_versions_for_uninstalled_plugin(self) -> None:
         client = self._build_client_for_version_options()
 
@@ -1345,6 +1405,52 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             get_household_plugin(self.db, household_id=self.household_id, plugin_id="demo-plugin").execution_backend,
         )
 
+    def test_version_switch_accepts_repo_root_manifest_with_nested_plugin_package(self) -> None:
+        client = self._build_client_for_repo_root_manifest_version_switch()
+        source = add_marketplace_source(
+            self.db,
+            payload=MarketplaceSourceCreateRequest(repo_url=MARKET_REPO_URL),
+            client=client,
+        )
+        sync_marketplace_source(self.db, source_id=source.source_id, client=client)
+        create_marketplace_install_task(
+            self.db,
+            payload=MarketplaceInstallTaskCreateRequest(
+                household_id=self.household_id,
+                source_id=source.source_id,
+                plugin_id="demo-plugin",
+                version="1.0.0",
+            ),
+            client=client,
+        )
+        self.db.commit()
+
+        instance = get_marketplace_instance_for_household_plugin(
+            self.db,
+            household_id=self.household_id,
+            plugin_id="demo-plugin",
+        )
+        assert instance is not None
+
+        upgrade_result = operate_marketplace_instance_version(
+            self.db,
+            instance_id=instance.id,
+            payload=PluginVersionOperationRequest(
+                household_id=self.household_id,
+                source_id=source.source_id,
+                plugin_id="demo-plugin",
+                target_version="1.1.0",
+                operation="upgrade",
+            ),
+            client=client,
+        )
+        self.db.commit()
+
+        upgraded_root = Path(upgrade_result.instance.plugin_root).resolve()
+        self.assertEqual("1.1.0", upgrade_result.instance.installed_version)
+        self.assertEqual(upgraded_root / "manifest.json", Path(upgrade_result.instance.manifest_path).resolve())
+        self.assertTrue((upgraded_root / "plugin" / "__init__.py").is_file())
+
     def test_upgrade_keeps_plugin_enabled_even_when_new_config_schema_breaks_old_config(self) -> None:
         client = self._build_client_for_config_breaking_upgrade()
         source = add_marketplace_source(
@@ -1790,6 +1896,59 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         }
         return FakeGitHubMarketplaceClient(files=files, directories=directories, metadata=metadata, downloads=downloads)
 
+    def _build_client_for_repo_root_manifest_version_switch(self) -> FakeGitHubMarketplaceClient:
+        versions = [
+            {
+                "version": "1.0.0",
+                "git_ref": "refs/tags/v1.0.0",
+                "artifact_type": "source_archive",
+                "artifact_url": "https://example.com/demo-plugin-1.0.0.zip",
+                "min_app_version": "0.1.0",
+            },
+            {
+                "version": "1.1.0",
+                "git_ref": "refs/tags/v1.1.0",
+                "artifact_type": "source_archive",
+                "artifact_url": "https://example.com/demo-plugin-1.1.0.zip",
+                "min_app_version": "0.1.0",
+            },
+        ]
+        files = {
+            (MARKET_REPO_URL, "market.json", "main"): self._build_market_manifest(),
+            (MARKET_REPO_URL, "plugins/demo-plugin/entry.json", "main"): self._build_entry_payload(
+                versions=versions,
+                latest_version="1.1.0",
+                manifest_path="manifest.json",
+                package_root="plugin",
+                readme_path="README.md",
+                requirements_path="requirements.txt",
+            ),
+        }
+        directories = {
+            (MARKET_REPO_URL, "plugins", "main"): [{"name": "demo-plugin", "type": "dir"}],
+        }
+        metadata = {
+            MARKET_REPO_URL: {"default_branch": "main", "stargazers_count": 10, "forks_count": 2},
+            PLUGIN_REPO_URL: {"default_branch": "main", "stargazers_count": 8, "forks_count": 1},
+        }
+        downloads = {
+            "https://example.com/demo-plugin-1.0.0.zip": self._build_plugin_archive(
+                manifest_version="1.0.0",
+                package_root="plugin",
+                repo_root_manifest=True,
+                repo_root_readme=True,
+                repo_root_requirements=True,
+            ),
+            "https://example.com/demo-plugin-1.1.0.zip": self._build_plugin_archive(
+                manifest_version="1.1.0",
+                package_root="plugin",
+                repo_root_manifest=True,
+                repo_root_readme=True,
+                repo_root_requirements=True,
+            ),
+        }
+        return FakeGitHubMarketplaceClient(files=files, directories=directories, metadata=metadata, downloads=downloads)
+
     def _build_client_for_version_options(self) -> FakeGitHubMarketplaceClient:
         versions = [
             {
@@ -2018,6 +2177,7 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         include_readme: bool = True,
         include_requirements: bool = True,
         package_root: str | None = None,
+        repo_root_manifest: bool = False,
         repo_root_readme: bool = False,
         repo_root_requirements: bool = False,
         plugin_scope_uses_defaults: bool = False,
@@ -2118,7 +2278,9 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         with zipfile.ZipFile(buffer, "w") as archive:
             archive_root = f"demo-plugin-{manifest_version}"
             package_root_path = f"{archive_root}/{package_root}" if package_root else archive_root
-            archive.writestr(f"{package_root_path}/manifest.json", json.dumps(manifest, ensure_ascii=False))
+            manifest_archive_path = f"{archive_root}/manifest.json" if repo_root_manifest else f"{package_root_path}/manifest.json"
+            runtime_package_path = package_root_path if repo_root_manifest and package_root else f"{package_root_path}/plugin"
+            archive.writestr(manifest_archive_path, json.dumps(manifest, ensure_ascii=False))
             if include_readme:
                 readme_archive_path = f"{archive_root}/README.md" if repo_root_readme else f"{package_root_path}/README.md"
                 archive.writestr(readme_archive_path, "# Demo Plugin\n")
@@ -2127,9 +2289,9 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
                     f"{archive_root}/requirements.txt" if repo_root_requirements else f"{package_root_path}/requirements.txt"
                 )
                 archive.writestr(requirements_archive_path, "httpx>=0.28\n")
-            archive.writestr(f"{package_root_path}/plugin/__init__.py", "")
+            archive.writestr(f"{runtime_package_path}/__init__.py", "")
             archive.writestr(
-                f"{package_root_path}/plugin/integration.py",
+                f"{runtime_package_path}/integration.py",
                 "def sync(payload=None):\n    return {'ok': True, 'payload': payload or {}}\n",
             )
         return buffer.getvalue()
