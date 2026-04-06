@@ -45,6 +45,7 @@ The wizard entry is `/pages/setup/index`. Guard redirects here automatically whe
    - Fill in fields such as `base_url`, `secret_ref`, `model_name`, privacy level, and timeout.
    - The ChatGPT provider now supports both `Responses` and `Chat Completions`. In `Auto` mode it tries `Responses` first and falls back to the legacy compatibility route when needed.
    - If you only enter a site root such as `https://example.com`, the driver automatically expands it to `https://example.com/v1` before making API calls.
+   - If you move on and later realize you picked the wrong platform, go back to this step and reopen the provider selector card. Saving again replaces the current default AI service for the household.
 
 ![fc-doc-20260319T234425.webp](../../使用指南/assets/fc-doc-20260319T234425.webp)
 
@@ -67,6 +68,7 @@ Many AI providers are supported, including local options such as Ollama, LM Stud
 
 - If you leave halfway through, logging in again continues the wizard from the current progress.
 - If FamilyClaw determines that initialization is already complete, it redirects you back to the dashboard automatically.
+- Even after AI setup is done, returning to the provider step still lets you edit the current values or choose another platform. You do not need to delete the family and start over.
 
 ## Common issues
 
