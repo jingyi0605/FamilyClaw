@@ -61,6 +61,7 @@
 .setup-provider-trigger__desc { color: var(--text-secondary); font-size: 12px; line-height: 1.25; display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .setup-provider-trigger__placeholder { color: var(--text-tertiary); font-size: var(--font-size-sm); }
 .setup-provider-trigger__action { color: var(--brand-primary); font-size: 11px; font-weight: 700; white-space: nowrap; padding: 0.24rem 0.5rem; border-radius: 999px; background: color-mix(in srgb, var(--brand-primary) 10%, white); align-self: center; }
+.setup-provider-trigger__hint { margin-top: 0.5rem; }
 .setup-form-status { padding: 0.75rem 0.875rem; border-radius: var(--radius-md); background: rgba(56, 171, 117, 0.12); color: var(--color-success); }
 .ai-config-detail-card { display: flex; flex-direction: column; gap: var(--spacing-sm); background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius-xl); padding: 1.25rem; box-shadow: var(--shadow-sm); }
 .ai-config-detail-card .form-group { margin-bottom: 0; }

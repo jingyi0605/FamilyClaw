@@ -149,6 +149,7 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
     discoverModels: setupApi.discoverAiProviderModels,
   });
   const sections = currentAdapter ? getProviderFieldSections(currentAdapter) : [];
+  const hasConfiguredProvider = Boolean(editingProviderId);
 
   useEffect(() => {
     let cancelled = false;
@@ -207,8 +208,26 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
     }
   }
 
+  function handleOpenSelect() {
+    if (saving) {
+      return;
+    }
+
+    setError('');
+    setStatus('');
+    setSelectOpen(true);
+  }
+
   function handleSelectAdapter(adapterCode: string) {
-    setForm(buildProviderFormState(adapters.find(item => item.adapter_code === adapterCode) ?? null));
+    const nextAdapter = adapters.find(item => item.adapter_code === adapterCode) ?? null;
+    if (nextAdapter?.adapter_code === form.adapterCode) {
+      setSelectOpen(false);
+      return;
+    }
+
+    setForm(buildProviderFormState(nextAdapter));
+    setError('');
+    setStatus('');
     setSelectOpen(false);
   }
 
@@ -223,8 +242,8 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
             id={`provider-adapter-trigger-${props.householdId}`}
             type="button"
             className="setup-provider-trigger"
-            onClick={() => setSelectOpen(true)}
-            disabled={Boolean(editingProviderId)}
+            onClick={handleOpenSelect}
+            disabled={saving}
             aria-haspopup="dialog"
             aria-expanded={selectOpen}
           >
@@ -244,9 +263,16 @@ export function SimpleAiProviderSetup(props: { householdId: string; onCompleted?
               </span>
             )}
             <span className="setup-provider-trigger__action">
-              {editingProviderId ? t('setup.providerSetup.selectedState') : t('setup.providerSetup.changeAction')}
+              {hasConfiguredProvider
+                ? t('setup.providerSetup.reconfigureAction')
+                : t('setup.providerSetup.changeAction')}
             </span>
           </button>
+          {hasConfiguredProvider ? (
+            <p className="ai-config-muted setup-provider-trigger__hint">
+              {t('setup.providerSetup.reconfigureHint')}
+            </p>
+          ) : null}
         </div>
         {currentAdapter ? (
           <>
