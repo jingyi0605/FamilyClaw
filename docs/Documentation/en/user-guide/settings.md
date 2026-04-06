@@ -31,6 +31,7 @@ outline: deep
 - **ChatGPT protocol mode**: the built-in ChatGPT provider can now use either `Responses` or `Chat Completions`, and `Auto` will try `Responses` first before falling back when the gateway only exposes the legacy route.
 - **ChatGPT base URL normalization**: entering a site root such as `https://example.com` is supported. The driver expands it to `https://example.com/v1` automatically before calling the API.
 - **Routes**: choose primary and fallback models for abilities such as `text` and `qa_generation`, then configure timeout and retry behavior.
+- **Detail actions**: after opening a model provider detail, you can close it, delete it, or continue editing from the footer. Deletion asks for confirmation before the request is sent.
 - **Initialization progress hints**: if setup is incomplete, the page shows which steps are still missing.
 
 ### Local model providers

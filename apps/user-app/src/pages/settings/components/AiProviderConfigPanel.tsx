@@ -44,6 +44,7 @@ export function AiProviderConfigPanel(props: {
   const [editorOpen, setEditorOpen] = useState(false);
   const [detailProviderId, setDetailProviderId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [detailActionError, setDetailActionError] = useState('');
   const [form, setForm] = useState<ProviderFormState>(buildProviderFormState());
   const [assignedCapabilities, setAssignedCapabilities] = useState<AiCapability[]>([]);
   const [loading, setLoading] = useState(false);
@@ -106,6 +107,7 @@ export function AiProviderConfigPanel(props: {
     saveFailed: getPageMessage(locale, 'settings.ai.provider.saveFailed'),
     deletedStatus: getPageMessage(locale, 'settings.ai.provider.deletedStatus'),
     deleteFailed: getPageMessage(locale, 'settings.ai.provider.deleteFailed'),
+    deleting: getPageMessage(locale, 'settings.ai.provider.deleting'),
     addProvider: getPageMessage(locale, 'settings.ai.provider.addProvider'),
     editProvider: getPageMessage(locale, 'settings.ai.provider.editProvider'),
     deleteProvider: getPageMessage(locale, 'settings.ai.provider.deleteProvider'),
@@ -213,6 +215,7 @@ export function AiProviderConfigPanel(props: {
     setForm(buildProviderFormState());
     setAssignedCapabilities([]);
     setError('');
+    setDetailActionError('');
     setSelectOpen(true);
   }
 
@@ -242,7 +245,7 @@ export function AiProviderConfigPanel(props: {
       sortCapabilities(routeCapabilities.length > 0 ? routeCapabilities : provider.supported_capabilities) as AiCapability[],
     );
     setError('');
-    setDetailOpen(false);
+    resetDetailDialog();
     setEditorOpen(true);
   }
 
@@ -257,12 +260,22 @@ export function AiProviderConfigPanel(props: {
   }
 
   function openDetail(provider: AiProviderProfile) {
+    setDetailActionError('');
     setDetailProviderId(provider.id);
     setDetailOpen(true);
   }
 
-  function closeDetail() {
+  function resetDetailDialog() {
     setDetailOpen(false);
+    setDetailProviderId(null);
+    setDetailActionError('');
+  }
+
+  function closeDetail() {
+    if (saving) {
+      return;
+    }
+    resetDetailDialog();
   }
 
   function handleAdapterChange(adapterCode: string) {
@@ -380,13 +393,14 @@ export function AiProviderConfigPanel(props: {
     setSaving(true);
     setError('');
     setStatus('');
+    setDetailActionError('');
     try {
       await settingsApi.deleteHouseholdAiProvider(householdId, provider.id);
       setStatus(copy.deletedStatus);
-      setDetailOpen(false);
+      resetDetailDialog();
       await reload();
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : copy.deleteFailed);
+      setDetailActionError(deleteError instanceof Error ? deleteError.message : copy.deleteFailed);
     } finally {
       setSaving(false);
     }
@@ -473,6 +487,8 @@ export function AiProviderConfigPanel(props: {
         plugin={detailPlugin}
         routes={routes}
         locale={locale}
+        deleting={saving}
+        actionError={detailActionError}
         copy={{
           enabled: copy.enabled,
           disabled: copy.disabled,
@@ -489,9 +505,16 @@ export function AiProviderConfigPanel(props: {
           summaryRouteEmpty: copy.summaryRouteEmpty,
           summaryConfigTitle: copy.summaryConfigTitle,
           close: copy.close,
+          delete: copy.deleteProvider,
+          deleting: copy.deleting,
           edit: copy.editProvider,
         }}
         onClose={closeDetail}
+        onDelete={() => {
+          if (detailProvider) {
+            void handleDelete(detailProvider);
+          }
+        }}
         onEdit={() => {
           if (detailProvider) {
             startEdit(detailProvider);

@@ -72,6 +72,8 @@ export function AiProviderDetailDialog(props: {
   plugin: PluginRegistryItem | null;
   routes: AiCapabilityRoute[];
   locale: string | undefined;
+  deleting?: boolean;
+  actionError?: string;
   copy: {
     enabled: string;
     disabled: string;
@@ -88,12 +90,28 @@ export function AiProviderDetailDialog(props: {
     summaryRouteEmpty: string;
     summaryConfigTitle: string;
     close: string;
+    delete: string;
+    deleting: string;
     edit: string;
   };
   onClose: () => void;
+  onDelete: () => void;
   onEdit: () => void;
 }) {
-  const { open, provider, adapter, plugin, routes, locale, copy, onClose, onEdit } = props;
+  const {
+    open,
+    provider,
+    adapter,
+    plugin,
+    routes,
+    locale,
+    deleting = false,
+    actionError = '',
+    copy,
+    onClose,
+    onDelete,
+    onEdit,
+  } = props;
 
   if (!open || !provider) {
     return null;
@@ -127,6 +145,7 @@ export function AiProviderDetailDialog(props: {
     <SettingsDialog
       title={provider.display_name}
       description={adapterMeta?.description ?? ''}
+      closeDisabled={deleting}
       headerExtra={(
         <div className="ai-config-chip-list">
           <span className={`ai-pill ${provider.enabled ? 'ai-pill--success' : 'ai-pill--muted'}`}>
@@ -143,15 +162,24 @@ export function AiProviderDetailDialog(props: {
       onClose={onClose}
       actions={(
         <>
-          <button className="btn btn--outline btn--sm" type="button" onClick={onClose}>
+          <button className="btn btn--outline btn--sm" type="button" onClick={onClose} disabled={deleting}>
             {copy.close}
           </button>
-          <button className="btn btn--primary btn--sm" type="button" onClick={onEdit}>
+          <button className="btn btn--danger btn--sm" type="button" onClick={() => void onDelete()} disabled={deleting}>
+            {deleting ? copy.deleting : copy.delete}
+          </button>
+          <button className="btn btn--primary btn--sm" type="button" onClick={onEdit} disabled={deleting}>
             {copy.edit}
           </button>
         </>
       )}
     >
+      {actionError ? (
+        <div className="settings-note settings-note--error">
+          {actionError}
+        </div>
+      ) : null}
+
       {provider.plugin_enabled === false ? (
         <div className="settings-note settings-note--warning">
           <strong>{copy.pluginDisabledTitle}</strong>
