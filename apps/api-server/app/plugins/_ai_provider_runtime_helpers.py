@@ -85,6 +85,8 @@ def read_provider_extra_config(provider_profile: AiProviderProfile) -> dict[str,
 def clone_provider_profile_with_extra_config(
     provider_profile: AiProviderProfile,
     extra_config: dict[str, object],
+    *,
+    base_url: str | None = None,
 ) -> AiProviderProfile:
     return AiProviderProfile(
         id=provider_profile.id,
@@ -92,7 +94,7 @@ def clone_provider_profile_with_extra_config(
         display_name=provider_profile.display_name,
         transport_type=provider_profile.transport_type,
         api_family=provider_profile.api_family,
-        base_url=provider_profile.base_url,
+        base_url=provider_profile.base_url if base_url is None else base_url,
         api_version=provider_profile.api_version,
         secret_ref=provider_profile.secret_ref,
         enabled=provider_profile.enabled,

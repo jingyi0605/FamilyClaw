@@ -1,4 +1,4 @@
 {
-  "zh-CN": "OpenAI 官方兼容接口，适合通用文本、视觉、语音和图像生成能力。",
-  "en-US": "Official OpenAI-compatible endpoint for general text, vision, speech, and image generation workloads."
+  "zh-CN": "OpenAI 官方接口适配器，同时支持 Responses 和 Chat Completions，并且会自动把站点根地址补成可用的 /v1 API 地址。",
+  "en-US": "OpenAI provider adapter with both Responses and Chat Completions support, plus automatic /v1 completion when users enter a site root."
 }

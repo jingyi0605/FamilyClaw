@@ -28,6 +28,8 @@ outline: deep
 
 - **AI assistants**: create or edit the family butler and other assistant roles. Model provider configuration must be completed first.
 - **Provider Profiles**: plugin-driven provider forms with fields such as `base_url`, `secret_ref`, and `model_name`, plus enable and disable support.
+- **ChatGPT protocol mode**: the built-in ChatGPT provider can now use either `Responses` or `Chat Completions`, and `Auto` will try `Responses` first before falling back when the gateway only exposes the legacy route.
+- **ChatGPT base URL normalization**: entering a site root such as `https://example.com` is supported. The driver expands it to `https://example.com/v1` automatically before calling the API.
 - **Routes**: choose primary and fallback models for abilities such as `text` and `qa_generation`, then configure timeout and retry behavior.
 - **Initialization progress hints**: if setup is incomplete, the page shows which steps are still missing.
 

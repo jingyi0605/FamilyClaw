@@ -43,6 +43,8 @@ Good for learning:
 - how to design `ai-provider` field schemas
 - how to declare runtime capability
 - how to express the capability boundary for an OpenAI-compatible provider
+- how to add provider-side protocol selection without mutating the shared OpenAI driver contract
+- how to normalize a user-entered site root into a usable `/v1` API base in the provider layer
 
 This kind of plugin is not the best place to learn business logic. It is the best place to learn the division of labor: the host governs, the plugin adapts.
 

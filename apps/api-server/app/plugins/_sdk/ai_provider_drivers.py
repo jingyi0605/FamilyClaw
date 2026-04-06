@@ -117,6 +117,15 @@ def build_openai_compatible_driver(plugin: PluginRegistryItem | None = None) -> 
     )
 
 
+def build_openai_responses_driver(plugin: PluginRegistryItem | None = None) -> ProtocolBackedAiProviderDriver:
+    _ = plugin
+    return ProtocolBackedAiProviderDriver(
+        sync_invoke=_invoke_openai_responses,
+        async_invoke=_ainvoke_openai_responses,
+        stream_invoke=_stream_openai_responses,
+    )
+
+
 def build_anthropic_messages_driver(plugin: PluginRegistryItem | None = None) -> ProtocolBackedAiProviderDriver:
     _ = plugin
     return ProtocolBackedAiProviderDriver(
@@ -429,6 +438,248 @@ async def _stream_openai_compatible(
                     chunk_count,
                     yielded_char_count,
                 )
+    except httpx.TimeoutException as exc:
+        raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+    except httpx.RequestError as exc:
+        raise ProviderRuntimeError("provider_failed", str(exc)) from exc
+
+
+def _invoke_openai_responses(
+    *,
+    capability: AiCapability,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None,
+    honor_timeout_override: bool = False,
+) -> ProviderInvokeResult:
+    started_at = perf_counter()
+    logger = logging.getLogger(__name__)
+    extra_config = load_json(provider_profile.extra_config_json) or {}
+    model_name = _resolve_model_name(provider_profile)
+    request_context = _read_request_context(payload)
+    api_key = _resolve_provider_secret(provider_profile, extra_config)
+    endpoint = _resolve_responses_endpoint(provider_profile, extra_config)
+    if not endpoint:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} missing endpoint")
+
+    request_body = _build_openai_responses_request_body(
+        capability=capability,
+        provider_profile=provider_profile,
+        payload=payload,
+        extra_config=extra_config,
+        stream=False,
+    )
+    request_headers = _build_openai_headers(api_key=api_key, extra_config=extra_config)
+
+    try:
+        effective_timeout_ms = _resolve_effective_timeout_ms(
+            provider_profile=provider_profile,
+            extra_config=extra_config,
+            requested_timeout_ms=timeout_ms,
+            honor_requested_timeout=honor_timeout_override,
+        )
+        logger.info(
+            "[Invoke] provider=%s model=%s timeout_ms=%s request_id=%s trace_id=%s session_id=%s channel=%s endpoint=%s api=responses",
+            provider_profile.provider_code,
+            model_name,
+            effective_timeout_ms,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            request_context.channel,
+            endpoint,
+        )
+        raw_request = request.Request(
+            endpoint,
+            data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
+            headers=request_headers,
+            method="POST",
+        )
+        with request.urlopen(raw_request, timeout=effective_timeout_ms / 1000) as response:
+            response_text = response.read().decode("utf-8")
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        raise ProviderRuntimeError(_map_http_status_to_error_code(exc.code), detail or str(exc)) from exc
+    except socket.timeout as exc:
+        raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+    except error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError | socket.timeout):
+            raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+        raise ProviderRuntimeError("provider_failed", str(exc.reason)) from exc
+
+    response_json = _parse_json_object(response_text)
+    normalized_text = _extract_openai_responses_text(response_json)
+    latency_ms = max(int((perf_counter() - started_at) * 1000), 1)
+    response_model_name = str(response_json.get("model") or model_name)
+    finish_reason = _extract_openai_responses_finish_reason(response_json)
+    return ProviderInvokeResult(
+        provider_code=provider_profile.provider_code,
+        model_name=response_model_name,
+        latency_ms=latency_ms,
+        finish_reason=finish_reason,
+        normalized_output={
+            "text": normalized_text,
+            "provider_code": provider_profile.provider_code,
+            "model_name": response_model_name,
+        },
+        raw_response_ref=f"http://{provider_profile.provider_code}/responses",
+    )
+
+
+async def _ainvoke_openai_responses(
+    *,
+    capability: AiCapability,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None,
+    honor_timeout_override: bool = False,
+) -> ProviderInvokeResult:
+    started_at = perf_counter()
+    logger = logging.getLogger(__name__)
+    extra_config = load_json(provider_profile.extra_config_json) or {}
+    model_name = _resolve_model_name(provider_profile)
+    request_context = _read_request_context(payload)
+    api_key = _resolve_provider_secret(provider_profile, extra_config)
+    endpoint = _resolve_responses_endpoint(provider_profile, extra_config)
+    if not endpoint:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} missing endpoint")
+
+    request_body = _build_openai_responses_request_body(
+        capability=capability,
+        provider_profile=provider_profile,
+        payload=payload,
+        extra_config=extra_config,
+        stream=False,
+    )
+    request_headers = _build_openai_headers(api_key=api_key, extra_config=extra_config)
+    effective_timeout_ms = _resolve_effective_timeout_ms(
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+        requested_timeout_ms=timeout_ms,
+        honor_requested_timeout=honor_timeout_override,
+    )
+
+    try:
+        logger.info(
+            "[AsyncInvoke] provider=%s model=%s timeout_ms=%s request_id=%s trace_id=%s session_id=%s channel=%s endpoint=%s api=responses",
+            provider_profile.provider_code,
+            model_name,
+            effective_timeout_ms,
+            request_context.request_id,
+            request_context.trace_id,
+            request_context.session_id,
+            request_context.channel,
+            endpoint,
+        )
+        async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout_ms / 1000)) as client:
+            response = await client.post(endpoint, json=request_body, headers=request_headers)
+        response.raise_for_status()
+        response_text = response.text
+    except httpx.HTTPStatusError as exc:
+        raise ProviderRuntimeError(
+            _map_http_status_to_error_code(exc.response.status_code),
+            exc.response.text or str(exc),
+        ) from exc
+    except httpx.TimeoutException as exc:
+        raise ProviderRuntimeError("timeout", "provider request timeout") from exc
+    except httpx.RequestError as exc:
+        raise ProviderRuntimeError("provider_failed", str(exc)) from exc
+
+    response_json = _parse_json_object(response_text)
+    normalized_text = _extract_openai_responses_text(response_json)
+    latency_ms = max(int((perf_counter() - started_at) * 1000), 1)
+    response_model_name = str(response_json.get("model") or model_name)
+    finish_reason = _extract_openai_responses_finish_reason(response_json)
+    return ProviderInvokeResult(
+        provider_code=provider_profile.provider_code,
+        model_name=response_model_name,
+        latency_ms=latency_ms,
+        finish_reason=finish_reason,
+        normalized_output={
+            "text": normalized_text,
+            "provider_code": provider_profile.provider_code,
+            "model_name": response_model_name,
+        },
+        raw_response_ref=f"http://{provider_profile.provider_code}/responses",
+    )
+
+
+async def _stream_openai_responses(
+    *,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    timeout_ms: int | None,
+    honor_timeout_override: bool = False,
+) -> AsyncIterator[str]:
+    logger = logging.getLogger(__name__)
+    started_at = perf_counter()
+    extra_config = load_json(provider_profile.extra_config_json) or {}
+    model_name = _resolve_model_name(provider_profile)
+    request_context = _read_request_context(payload)
+    api_key = _resolve_provider_secret(provider_profile, extra_config)
+    endpoint = _resolve_responses_endpoint(provider_profile, extra_config)
+    if not endpoint:
+        raise ProviderRuntimeError("provider_failed", f"{provider_profile.provider_code} missing endpoint")
+
+    request_body = _build_openai_responses_request_body(
+        capability="text",
+        provider_profile=provider_profile,
+        payload=payload,
+        extra_config=extra_config,
+        stream=True,
+    )
+    request_headers = _build_openai_headers(api_key=api_key, extra_config=extra_config)
+    effective_timeout_ms = _resolve_effective_timeout_ms(
+        provider_profile=provider_profile,
+        extra_config=extra_config,
+        requested_timeout_ms=timeout_ms,
+        honor_requested_timeout=honor_timeout_override,
+    )
+
+    logger.info(
+        "[Stream] provider=%s model=%s request_id=%s trace_id=%s session_id=%s channel=%s endpoint=%s body_keys=%s api=responses",
+        provider_profile.provider_code,
+        model_name,
+        request_context.request_id,
+        request_context.trace_id,
+        request_context.session_id,
+        request_context.channel,
+        endpoint,
+        list(request_body.keys()),
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout_ms / 1000)) as client:
+            async with client.stream("POST", endpoint, json=request_body, headers=request_headers) as response:
+                if response.is_error:
+                    detail = (await response.aread()).decode("utf-8", errors="ignore")
+                    raise ProviderRuntimeError(
+                        _map_http_status_to_error_code(response.status_code),
+                        detail or response.reason_phrase,
+                    )
+
+                event_count = 0
+                first_content_ms: int | None = None
+                async for _event_name, data_str in _iter_sse_events(response):
+                    event_count += 1
+                    if data_str == "[DONE]":
+                        return
+                    data = _parse_optional_json(data_str)
+                    if not isinstance(data, dict):
+                        continue
+                    content = _extract_openai_responses_stream_text(data)
+                    if not content:
+                        continue
+                    if first_content_ms is None:
+                        first_content_ms = max(int((perf_counter() - started_at) * 1000), 1)
+                        logger.info(
+                            "[Stream] first_content provider=%s model=%s first_content_ms=%s event_count=%s api=responses",
+                            provider_profile.provider_code,
+                            model_name,
+                            first_content_ms,
+                            event_count,
+                        )
+                    yield content
     except httpx.TimeoutException as exc:
         raise ProviderRuntimeError("timeout", "provider request timeout") from exc
     except httpx.RequestError as exc:
@@ -768,6 +1019,40 @@ def _build_openai_request_body(
     return request_body
 
 
+def _build_openai_responses_request_body(
+    *,
+    capability: AiCapability,
+    provider_profile: AiProviderProfile,
+    payload: Mapping[str, object],
+    extra_config: dict[str, object],
+    stream: bool,
+) -> dict[str, object]:
+    model_name = _resolve_model_name(provider_profile)
+    system_prompt, messages = split_system_and_messages(build_messages(capability=capability, payload=payload))
+    request_body: dict[str, object] = {
+        "model": model_name,
+        "input": messages,
+        "temperature": payload.get("temperature", extra_config.get("temperature", 0.2 if not stream else 0.7)),
+        "stream": stream,
+    }
+    if system_prompt:
+        request_body["instructions"] = system_prompt
+
+    if stream:
+        request_body["max_output_tokens"] = payload.get("max_tokens", extra_config.get("max_tokens", 512))
+    elif "max_tokens" in extra_config:
+        request_body["max_output_tokens"] = extra_config["max_tokens"]
+    else:
+        request_body["max_output_tokens"] = _default_max_tokens_for_capability(capability)
+
+    if isinstance(extra_config.get("default_request_body"), dict):
+        request_body = {
+            **extra_config["default_request_body"],
+            **request_body,
+        }
+    return request_body
+
+
 def _build_openai_headers(*, api_key: str | None, extra_config: dict[str, object]) -> dict[str, str]:
     request_headers = {"Content-Type": "application/json"}
     if api_key:
@@ -836,6 +1121,23 @@ def _resolve_chat_endpoint(
     if endpoint.endswith("/chat/completions"):
         return endpoint
     return endpoint.rstrip("/") + "/chat/completions"
+
+
+def _resolve_responses_endpoint(
+    provider_profile: AiProviderProfile,
+    extra_config: dict[str, object],
+) -> str:
+    endpoint = str(extra_config.get("responses_url") or provider_profile.base_url or "").strip()
+    if not endpoint:
+        runtime_config = settings.ai_runtime.provider_configs.get(provider_profile.provider_code)
+        endpoint = (runtime_config.base_url or "").strip() if runtime_config else ""
+    if not endpoint:
+        return ""
+    if endpoint.endswith("/responses"):
+        return endpoint
+    if endpoint.endswith("/chat/completions"):
+        return endpoint[: -len("/chat/completions")] + "/responses"
+    return endpoint.rstrip("/") + "/responses"
 
 
 def _resolve_native_endpoint(
@@ -964,6 +1266,42 @@ def _parse_optional_json(text: str) -> object | None:
         return json.loads(text)
     except json.JSONDecodeError:
         return None
+
+
+def _extract_openai_responses_text(response_json: dict[str, object]) -> str:
+    output = response_json.get("output")
+    if not isinstance(output, list) or not output:
+        raise ProviderRuntimeError("validation_error", "provider response missing output")
+    text_parts: list[str] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "output_text" and isinstance(part.get("text"), str):
+                text_parts.append(str(part.get("text")))
+    if text_parts:
+        return "\n".join(text_parts)
+    raise ProviderRuntimeError("validation_error", "provider response missing output text")
+
+
+def _extract_openai_responses_stream_text(response_json: dict[str, object]) -> str:
+    event_type = response_json.get("type")
+    if event_type != "response.output_text.delta":
+        return ""
+    delta = response_json.get("delta")
+    return delta if isinstance(delta, str) else ""
+
+
+def _extract_openai_responses_finish_reason(response_json: dict[str, object]) -> str:
+    status = response_json.get("status")
+    if isinstance(status, str) and status == "completed":
+        return "stop"
+    if isinstance(status, str) and status:
+        return status
+    return "stop"
 
 
 def _extract_openai_response_text(response_json: dict[str, object]) -> str:

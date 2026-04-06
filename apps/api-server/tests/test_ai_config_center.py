@@ -96,6 +96,7 @@ class AiConfigCenterTests(unittest.TestCase):
         field_keys = {field.key for field in chatgpt.field_schema}
         self.assertNotIn("provider_code", field_keys)
         self.assertIn("model_name", field_keys)
+        self.assertIn("api_protocol", field_keys)
         self.assertIn("secret_ref", field_keys)
         self.assertTrue(chatgpt.branding.logo_url.startswith("data:image/svg+xml"))
         self.assertIn("zh-CN", chatgpt.branding.description_locales)

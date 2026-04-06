@@ -43,6 +43,8 @@ The wizard entry is `/pages/setup/index`. Guard redirects here automatically whe
 3. **Provider setup (`provider_setup`)**
    - Select an installed AI provider adapter such as ChatGPT or another OpenAI-compatible gateway.
    - Fill in fields such as `base_url`, `secret_ref`, `model_name`, privacy level, and timeout.
+   - The ChatGPT provider now supports both `Responses` and `Chat Completions`. In `Auto` mode it tries `Responses` first and falls back to the legacy compatibility route when needed.
+   - If you only enter a site root such as `https://example.com`, the driver automatically expands it to `https://example.com/v1` before making API calls.
 
 ![fc-doc-20260319T234425.webp](../../使用指南/assets/fc-doc-20260319T234425.webp)
 
@@ -69,7 +71,7 @@ Many AI providers are supported, including local options such as Ollama, LM Stud
 ## Common issues
 
 - **Cannot enter the wizard or get stuck in a redirect loop**: clear the browser cache and try again, then confirm the backend health endpoint `/api/v1/healthz` is normal.
-- **Provider form is missing fields**: make sure your `base_url` and API key are correct. If a provider still looks unusable, report it through GitHub issues.
+- **Provider form is missing fields**: make sure your `base_url` and API key are correct. If you use the ChatGPT provider, also verify that the protocol mode matches your gateway. If a provider still looks unusable, report it through GitHub issues.
 - **Still shown as uninitialized after finishing**: check whether the current family context switched successfully. If needed, log in again.
 
 ## Completion standard

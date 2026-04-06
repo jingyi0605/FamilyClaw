@@ -21,9 +21,22 @@
       "field_schema": [
         { "key": "display_name", "label": "Display Name", "field_type": "text", "required": true, "placeholder": "ChatGPT Main", "options": [] },
         { "key": "provider_code", "label": "Provider Code", "field_type": "text", "required": true, "placeholder": "family-chatgpt-main", "options": [] },
-        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "https://api.openai.com/v1", "help_text": "Defaults to the common official endpoint. Change it only when you use a proxy or gateway.", "default_value": "https://api.openai.com/v1", "options": [] },
+        { "key": "base_url", "label": "Base URL", "field_type": "text", "required": false, "placeholder": "https://api.openai.com/v1", "help_text": "Supports either the API base URL or the site root. If you only enter https://example.com, the driver will call https://example.com/v1 automatically.", "default_value": "https://api.openai.com/v1", "options": [] },
         { "key": "secret_ref", "label": "Secret Reference", "field_type": "secret", "required": true, "placeholder": "OPENAI_API_KEY", "options": [] },
         { "key": "model_name", "label": "Model Name", "field_type": "text", "required": true, "placeholder": "gpt-4o-mini", "default_value": "gpt-4o-mini", "options": [] },
+        {
+          "key": "api_protocol",
+          "label": "API Protocol",
+          "field_type": "select",
+          "required": true,
+          "default_value": "auto",
+          "help_text": "Auto tries Responses first and falls back to Chat Completions when the gateway only exposes the legacy compatibility route.",
+          "options": [
+            { "label": "Auto", "value": "auto" },
+            { "label": "Responses", "value": "responses" },
+            { "label": "Chat Completions", "value": "chat_completions" }
+          ]
+        },
         {
           "key": "privacy_level",
           "label": "Privacy Level",
@@ -39,13 +52,13 @@
         { "key": "latency_budget_ms", "label": "Latency Budget (ms)", "field_type": "number", "required": false, "placeholder": "15000", "options": [] }
       ],
       "config_ui": {
-        "field_order": ["display_name", "base_url", "secret_ref", "model_name", "privacy_level", "latency_budget_ms"],
+        "field_order": ["display_name", "base_url", "secret_ref", "model_name", "api_protocol", "privacy_level", "latency_budget_ms"],
         "sections": [
           {
             "key": "connection",
             "title": "Connection",
-            "description": "Enter the OpenAI-compatible endpoint and API key.",
-            "fields": ["display_name", "base_url", "secret_ref"]
+            "description": "Enter the OpenAI-compatible endpoint or site root, then choose whether to use Responses, Chat Completions, or automatic fallback.",
+            "fields": ["display_name", "base_url", "secret_ref", "api_protocol"]
           },
           {
             "key": "model",
@@ -81,6 +94,6 @@
     "provider_profile_schema_version": 1,
     "transport_type": "openai_compatible",
     "api_family": "openai_chat_completions",
-    "description": "Best for the official OpenAI API and OpenAI-compatible gateways."
+    "description": "Best for the official OpenAI API and OpenAI-compatible gateways, with both Responses and Chat Completions support."
   }
 }
