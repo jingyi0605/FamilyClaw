@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Taro from '@tarojs/taro';
 import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealtimeEvent } from '@familyclaw/user-platform/web';
 import { EmptyStateCard, PageHeader, userAppFoundationTokens } from '@familyclaw/user-ui';
 import { Bot, ChevronDown, Construction, Info, Menu, MessageSquarePlus } from 'lucide-react';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
+import remarkGfm from 'remark-gfm';
 import { assistantApi } from './assistant.api';
 import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel, isConversationAgent, pickDefaultConversationAgent } from './assistant.agents';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
@@ -97,114 +100,101 @@ function formatMessageTime(value: string, locale: string) {
   });
 }
 
+function joinClassNames(...names: Array<string | false | null | undefined>) {
+  return names.filter(Boolean).join(' ');
+}
+
+function getMarkdownLanguage(className?: string) {
+  return className?.match(/language-([\w-]+)/)?.[1];
+}
+
+function getMarkdownPreLanguage(children: ReactNode) {
+  const firstChild = Array.isArray(children) ? children[0] : children;
+  if (!isValidElement(firstChild)) return undefined;
+  const childProps = (firstChild.props ?? {}) as { className?: unknown };
+  return getMarkdownLanguage(typeof childProps.className === 'string' ? childProps.className : undefined);
+}
+
+const markdownComponents: Components = {
+  p: ({ className, children, ...props }) => (
+    <p className={joinClassNames('md-paragraph', className)} {...props}>
+      {children}
+    </p>
+  ),
+  h1: ({ className, children, ...props }) => <h1 className={joinClassNames('md-heading', 'md-heading--h1', className)} {...props}>{children}</h1>,
+  h2: ({ className, children, ...props }) => <h2 className={joinClassNames('md-heading', 'md-heading--h2', className)} {...props}>{children}</h2>,
+  h3: ({ className, children, ...props }) => <h3 className={joinClassNames('md-heading', 'md-heading--h3', className)} {...props}>{children}</h3>,
+  h4: ({ className, children, ...props }) => <h4 className={joinClassNames('md-heading', 'md-heading--h4', className)} {...props}>{children}</h4>,
+  h5: ({ className, children, ...props }) => <h5 className={joinClassNames('md-heading', 'md-heading--h5', className)} {...props}>{children}</h5>,
+  h6: ({ className, children, ...props }) => <h6 className={joinClassNames('md-heading', 'md-heading--h6', className)} {...props}>{children}</h6>,
+  strong: ({ className, children, ...props }) => <strong className={joinClassNames('md-bold', className)} {...props}>{children}</strong>,
+  em: ({ className, children, ...props }) => <em className={joinClassNames('md-italic', className)} {...props}>{children}</em>,
+  del: ({ className, children, ...props }) => <del className={joinClassNames('md-strikethrough', className)} {...props}>{children}</del>,
+  a: ({ className, children, href, ...props }) => {
+    const isAnchorLink = typeof href === 'string' && href.startsWith('#');
+    return (
+      <a
+        className={joinClassNames('md-link', className)}
+        href={href}
+        rel={isAnchorLink ? undefined : 'noreferrer'}
+        target={isAnchorLink ? undefined : '_blank'}
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  },
+  blockquote: ({ className, children, ...props }) => <blockquote className={joinClassNames('md-blockquote', className)} {...props}>{children}</blockquote>,
+  pre: ({ className, children, ...props }) => (
+    <pre className={joinClassNames('md-code-block', className)} data-lang={getMarkdownPreLanguage(children)} {...props}>
+      {children}
+    </pre>
+  ),
+  code: ({ inline, className, children, ...props }: any) => {
+    if (inline) {
+      return <code className={joinClassNames('md-inline-code', className)} {...props}>{children}</code>;
+    }
+    return <code className={joinClassNames('md-code', className)} {...props}>{String(children).replace(/\n$/, '')}</code>;
+  },
+  ul: ({ className, children, ...props }) => <ul className={joinClassNames('md-list', className)} {...props}>{children}</ul>,
+  ol: ({ className, children, ...props }) => <ol className={joinClassNames('md-list', 'md-list--ordered', className)} {...props}>{children}</ol>,
+  li: ({ className, children, ...props }) => <li className={joinClassNames('md-list-item', className)} {...props}>{children}</li>,
+  hr: ({ className, ...props }) => <hr className={joinClassNames('md-divider', className)} {...props} />,
+  table: ({ className, children, ...props }) => (
+    <div className="md-table-wrap">
+      <table className={joinClassNames('md-table', className)} {...props}>{children}</table>
+    </div>
+  ),
+  th: ({ className, children, ...props }) => <th className={joinClassNames('md-table-head', className)} {...props}>{children}</th>,
+  td: ({ className, children, ...props }) => <td className={joinClassNames('md-table-cell', className)} {...props}>{children}</td>,
+  img: ({ className, alt, src, ...props }) => (
+    <img className={joinClassNames('md-image', className)} alt={alt ?? ''} src={src ?? ''} loading="lazy" {...props} />
+  ),
+  input: ({ className, type, checked, ...props }: any) => {
+    if (type !== 'checkbox') return <input className={className} type={type} {...props} />;
+    return <input className={joinClassNames('md-task-checkbox', className)} type="checkbox" checked={checked} disabled readOnly {...props} />;
+  },
+};
+
 function normalizeContent(content: string): string {
   if (!content) return '';
-  let normalized = content
+  return content
     .replace(/\r\n/g, '\n')
-    .replace(/\n[ \t]+\n/g, '\n\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/^[\s\t]*\n/gm, '\n')
-    .replace(/\n[\s\t]*$/gm, '\n')
     .trim();
-
-  // 列表项之间如果混入重复空行，统一收敛成一行，避免被错误拆成多个段落。
-  while (true) {
-    const next = normalized
-      .replace(/((?:^|\n)\s*[-*+]\s+.+)\n{2,}(?=\s*[-*+]\s+)/g, '$1\n')
-      .replace(/((?:^|\n)\s*\d+\.\s+.+)\n{2,}(?=\s*\d+\.\s+)/g, '$1\n');
-    if (next === normalized) {
-      return normalized;
-    }
-    normalized = next;
-  }
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+function renderMarkdown(content: string) {
+  const normalized = normalizeContent(content);
+  if (!normalized) return null;
+  return (
+    <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm, remarkBreaks]}>
+      {normalized}
+    </ReactMarkdown>
+  );
 }
-
-function restoreTokens(text: string, tokenMap: Map<string, string>): string {
-  let restored = text;
-  tokenMap.forEach((value, key) => {
-    restored = restored.split(key).join(value);
-  });
-  return restored;
-}
-
-function renderInlineMarkdown(text: string): string {
-  if (!text) return '';
-
-  const inlineCodeTokens = new Map<string, string>();
-  let tokenIndex = 0;
-  let result = escapeHtml(text).replace(/`([^`]+)`/g, (_, code: string) => {
-    const token = `__FC_INLINE_CODE_${tokenIndex += 1}__`;
-    inlineCodeTokens.set(token, `<code class="md-inline-code">${code}</code>`);
-    return token;
-  });
-
-  result = result.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  result = result.replace(/\*\*(.+?)\*\*/g, '<strong class="md-bold">$1</strong>');
-  result = result.replace(/\*(.+?)\*/g, '<em class="md-italic">$1</em>');
-  result = result.replace(/~~(.+?)~~/g, '<del class="md-strikethrough">$1</del>');
-
-  return restoreTokens(result, inlineCodeTokens);
-}
-
-function renderMarkdown(text: string): string {
-  const normalized = normalizeContent(text);
-  if (!normalized) return '';
-
-  const codeBlockTokens = new Map<string, string>();
-  let tokenIndex = 0;
-  const tokenized = normalized.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang: string, code: string) => {
-    const token = `__FC_CODE_BLOCK_${tokenIndex += 1}__`;
-    const langAttr = lang ? ` data-lang="${lang}"` : '';
-    codeBlockTokens.set(token, `<pre class="md-code-block"${langAttr}><code>${escapeHtml(code.trim())}</code></pre>`);
-    return token;
-  });
-
-  const blocks = tokenized
-    .split(/\n{2,}/)
-    .map(block => block.trim())
-    .filter(Boolean);
-
-  return blocks.map(block => {
-    if (codeBlockTokens.has(block)) {
-      return codeBlockTokens.get(block) ?? '';
-    }
-
-    const headingMatch = block.match(/^(#{1,3})\s+(.+)$/);
-    if (headingMatch && !block.includes('\n')) {
-      const level = Math.min(headingMatch[1].length + 1, 4);
-      return `<h${level} class="md-heading md-heading--h${level}">${renderInlineMarkdown(headingMatch[2])}</h${level}>`;
-    }
-
-    const lines = block.split('\n').map(line => line.trim()).filter(Boolean);
-    const unorderedItems = lines.map(line => line.match(/^[-*+]\s+(.+)$/));
-    if (unorderedItems.length > 0 && unorderedItems.every(Boolean)) {
-      const items = unorderedItems
-        .map(match => `<li class="md-list-item">${renderInlineMarkdown(match?.[1] ?? '')}</li>`)
-        .join('');
-      return `<ul class="md-list">${items}</ul>`;
-    }
-
-    const orderedItems = lines.map(line => line.match(/^\d+\.\s+(.+)$/));
-    if (orderedItems.length > 0 && orderedItems.every(Boolean)) {
-      const items = orderedItems
-        .map(match => `<li class="md-list-item md-list-item--ordered">${renderInlineMarkdown(match?.[1] ?? '')}</li>`)
-        .join('');
-      return `<ol class="md-list md-list--ordered">${items}</ol>`;
-    }
-
-    return `<p class="md-paragraph">${renderInlineMarkdown(block).replace(/\n/g, '<br/>')}</p>`;
-  }).join('');
-}
-
 function formatLocalizedList(items: string[], locale: string) {
   const normalizedLocale = locale.toLowerCase().startsWith('en') ? 'en-US' : locale.toLowerCase().startsWith('zh-tw') ? 'zh-TW' : 'zh-CN';
+ 
   if (typeof Intl.ListFormat === 'function') {
     return new Intl.ListFormat(normalizedLocale, { style: 'long', type: 'conjunction' }).format(items);
   }
@@ -284,9 +274,9 @@ function buildPendingMessages(
 }
 
 function getActionIcon(action: ConversationActionRecord) {
-  if (action.action_name === 'reminder.create') return '⏰';
-  if (action.action_category === 'config') return '⚙️';
-  return '🧠';
+  if (action.action_name === 'reminder.create') return 'REM';
+  if (action.action_category === 'config') return 'CFG';
+  return 'ACT';
 }
 
 function getActionStatusText(action: ConversationActionRecord, locale: string) {
@@ -309,14 +299,14 @@ function buildActionResultText(action: ConversationActionRecord, locale: string)
 }
 
 function getProposalIcon(item: ConversationProposalItem) {
-  if (item.proposal_kind === 'scheduled_task_create') return '🗓️';
-  if (item.proposal_kind === 'scheduled_task_update') return '🛠️';
-  if (item.proposal_kind === 'scheduled_task_pause') return '⏸️';
-  if (item.proposal_kind === 'scheduled_task_resume') return '▶️';
-  if (item.proposal_kind === 'scheduled_task_delete') return '🗑️';
-  if (item.proposal_kind === 'reminder_create') return '🔔';
-  if (item.proposal_kind === 'config_apply') return '⚙️';
-  return '🧠';
+  if (item.proposal_kind === 'scheduled_task_create') return 'NEW';
+  if (item.proposal_kind === 'scheduled_task_update') return 'UPD';
+  if (item.proposal_kind === 'scheduled_task_pause') return 'PAUSE';
+  if (item.proposal_kind === 'scheduled_task_resume') return 'RUN';
+  if (item.proposal_kind === 'scheduled_task_delete') return 'DEL';
+  if (item.proposal_kind === 'reminder_create') return 'REM';
+  if (item.proposal_kind === 'config_apply') return 'CFG';
+  return 'ACT';
 }
 
 function getProposalStatusText(item: ConversationProposalItem, locale: string) {
@@ -430,8 +420,7 @@ function AssistantPageContent() {
   const latestConfigMutationRef = useRef('');
   const sendingRef = useRef(false);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
-  const listBullet = '•';
-
+  const listBullet = '-';
   const conversationAgents = useMemo(() => agents.filter(isConversationAgent), [agents]);
   const defaultAgent = useMemo(() => pickDefaultConversationAgent(agents), [agents]);
   const selectedAgent = useMemo(
@@ -520,7 +509,7 @@ function AssistantPageContent() {
       const nextSelectedAgentId = preferredIsValid ? preferred : fallbackAgentId;
       setSelectedAgentId(current => (current === nextSelectedAgentId ? current : nextSelectedAgentId));
     } catch {
-      // 忽略刷新失败，避免打断主对话流程
+      // 蹇界暐鍒锋柊澶辫触锛岄伩鍏嶆墦鏂富瀵硅瘽娴佺▼銆?
     }
   }
 
@@ -548,7 +537,7 @@ function AssistantPageContent() {
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
-    // 使用平滑滚动，并在下一帧执行确保 DOM 已更新
+    // 浣跨敤骞虫粦婊氬姩锛屽苟鍦ㄤ笅涓€甯ф墽琛岋紝纭繚 DOM 宸茬粡鏇存柊銆?
     requestAnimationFrame(() => {
       container.scrollTo({
         top: container.scrollHeight,
@@ -1153,7 +1142,7 @@ function AssistantPageContent() {
   if (!currentHouseholdId && !loading) {
     return (
       <div className="page page--assistant">
-        <EmptyState icon="💬" title={t('assistant.noSessions')} description={t('assistant.noSessionsHint')} />
+        <EmptyState icon="CHAT" title={t('assistant.noSessions')} description={t('assistant.noSessionsHint')} />
       </div>
     );
   }
@@ -1162,7 +1151,7 @@ function AssistantPageContent() {
     return (
       <div className="page page--assistant">
         <EmptyState
-          icon="🤖"
+          icon="BOT"
           title={t('assistant.noAgents')}
           description={t('assistant.noAgentsHint')}
           action={(
@@ -1222,7 +1211,7 @@ function AssistantPageContent() {
         <div className="assistant-panel__header">
           <h3>{t('assistant.panel.details')}</h3>
           <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(false)}>
-            ✕
+            x
           </button>
         </div>
         <div className="assistant-panel__content">
@@ -1300,7 +1289,7 @@ function AssistantPageContent() {
       </div>
 
       <div className="assistant-main">
-        {/* PC端合并后的标题栏：左边Agent信息、中间会话标题（点击弹出会话列表）、右侧操作按钮 */}
+        {/* PC 绔悎骞跺悗鐨勬爣棰樻爮锛氬乏杈规槸鍔╂墜淇℃伅锛屼腑闂存槸浼氳瘽鏍囬锛屽彸杈规槸鎿嶄綔鎸夐挳銆?*/}
         <div className="assistant-toolbar">
           <div className="assistant-toolbar__agent">
             <button
@@ -1342,7 +1331,7 @@ function AssistantPageContent() {
           </div>
         </div>
 
-        {/* 移动端合并后的标题栏 */}
+        {/* 绉诲姩绔悎骞跺悗鐨勬爣棰樻爮銆?*/}
         <div className="assistant-mobile-header">
           <div className="assistant-mobile-header__agent">
             <button
@@ -1388,11 +1377,11 @@ function AssistantPageContent() {
               <div className="assistant-popover__content">
                 {loading ? (
                   <div className="context-memory-item">
-                    <span>⏳</span> {t('assistant.error.loadConversations')}
+                    <span>!</span> {t('assistant.error.loadConversations')}
                   </div>
                 ) : sessions.length === 0 ? (
                   <div className="context-memory-item">
-                    <span>📝</span> {t('assistant.noSessions')}
+                    <span>[ ]</span> {t('assistant.noSessions')}
                   </div>
                 ) : (
                   sessions.map(session => (
@@ -1425,22 +1414,19 @@ function AssistantPageContent() {
                   <div key={message.id} className={`message message--${message.role}`.trim()}>
                     <div className={`message__avatar ${message.role === 'assistant' ? 'message__avatar--assistant' : 'message__avatar--user'}`.trim()}>
                       {message.role === 'assistant' ? (
-                        <span>{selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : '🤖'}</span>
+                        <span>{selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : 'AI'}</span>
                       ) : (
                         <span>{t('assistant.you')}</span>
                       )}
                     </div>
                     <div className="message__content-wrapper">
                       <div className="message__bubble">
-                        <div
-                          className="message__content"
-                          dangerouslySetInnerHTML={{
-                            __html: renderMarkdown(normalizeContent(message.content || (message.status === 'pending' ? t('assistant.message.preparingReply') : ''))),
-                          }}
-                        />
-                        {message.degraded ? <span className="message__memory-tag">⚠️ {t('assistant.message.responseDegraded')}</span> : null}
-                        {message.status === 'streaming' ? <span className="message__memory-tag">⏳ {t('assistant.message.generating')}</span> : null}
-                        {message.status === 'failed' ? <span className="message__memory-tag">❌ {t('assistant.message.turnFailed')}</span> : null}
+                        <div className="message__content">
+                          {renderMarkdown(message.content || (message.status === 'pending' ? t('assistant.message.preparingReply') : ''))}
+                        </div>
+                        {message.degraded ? <span className="message__memory-tag">[!] {t('assistant.message.responseDegraded')}</span> : null}
+                        {message.status === 'streaming' ? <span className="message__memory-tag">[...] {t('assistant.message.generating')}</span> : null}
+                        {message.status === 'failed' ? <span className="message__memory-tag">[x] {t('assistant.message.turnFailed')}</span> : null}
                         {message.created_at ? (
                           <div className="message__time">{formatMessageTime(message.created_at, locale)}</div>
                         ) : null}
@@ -1469,7 +1455,7 @@ function AssistantPageContent() {
                 ))
               ) : (
                 <EmptyState
-                  icon="💬"
+            icon="CHAT"
                   title={t('assistant.welcome')}
                   description={t('assistant.welcomeHint')}
                 />
@@ -1514,7 +1500,7 @@ function AssistantPageContent() {
           </>
         ) : (
           <EmptyState
-            icon="💬"
+            icon="CHAT"
             title={t('assistant.noSessions')}
             description={t('assistant.noSessionsHint')}
             action={<button className="btn btn--primary" onClick={() => void handleNewChat()}>{t('assistant.newChat')}</button>}

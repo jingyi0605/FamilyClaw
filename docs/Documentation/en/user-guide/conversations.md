@@ -235,3 +235,15 @@ Because those two tabs are still in the coming-soon state. The truly available w
 - You understand that the conversation page is already a working page, not a migration placeholder.
 - You know it can already handle session creation, session switching, real-time chat, suggestions, proposal confirmation, action undo, and context inspection.
 - You also know the real unfinished parts are extended tabs such as `Public` and `Moments`, not the whole page.
+
+## Message formatting
+
+Assistant replies now render common Markdown directly inside the message bubble. The page correctly handles:
+
+- ATX headings such as `#` and `##`
+- bold, italic, strikethrough, inline code, and fenced code blocks
+- unordered lists, ordered lists, and task lists
+- blockquotes, thematic breaks, and tables
+- links and images
+
+Single line breaks inside a paragraph are also preserved in the conversation view, which is better aligned with how AI replies are usually written in chat.
