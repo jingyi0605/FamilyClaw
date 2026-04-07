@@ -19,7 +19,7 @@ RUN npm ci --legacy-peer-deps && npm run build:h5
 
 # Python 依赖构建阶段
 FROM python:3.11-slim-bookworm AS python-builder
-
+RUN sed -i 's|http://deb.debian.org|https://mirrors.hust.edu.cn|g' /etc/apt/sources.list.d/debian.sources
 WORKDIR /build
 
 # 安装编译依赖
@@ -33,6 +33,8 @@ COPY apps/open-xiaoai-gateway /build/apps/open-xiaoai-gateway
 
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip config set global.index-url "https://mirrors.hust.edu.cn/pypi/web/simple/"
 
 RUN pip install --upgrade pip \
     && pip install /build/apps/api-server \
@@ -62,6 +64,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FAMILYCLAW_RELEASE_URL=${RELEASE_URL} \
     FAMILYCLAW_RELEASE_MANIFEST_PATH=/opt/familyclaw/release-manifest.json \
     PATH=/opt/venv/bin:/usr/lib/postgresql/15/bin:/opt/familyclaw/bin:${PATH}
+
+RUN sed -i 's|http://deb.debian.org|https://mirrors.hust.edu.cn|g' /etc/apt/sources.list.d/debian.sources
 
 # 安装运行时依赖
 RUN apt-get update \
