@@ -67,6 +67,22 @@ Exclusive slots:
 - host-wide scheduling
 - host-wide standard entity, card, and action semantics
 
+## Backend runtime boundary
+
+Keep this rule explicit:
+
+- backend plugin logic must be implemented in Python
+- do not add a second backend runtime such as Node, a JS sidecar, or another language runtime just for one plugin
+- if a provider protocol is messy, keep that complexity inside the Python plugin instead of hiding it behind cross-language glue
+
+Keep the third-party Python dependency model explicit as well:
+
+- installed third-party plugins prepare their own Python venv
+- the plugin `requirements.txt` is installed into that plugin-specific environment
+- the runner uses the plugin's own `python_path`, not the host `sys.executable`
+- `plugins-dev` plugins should follow the same model instead of silently borrowing the host environment
+- third-party plugin-specific packages should not be added back into the host `pyproject.toml`; they belong in the plugin environment that needs them
+
 ## What already exists in the repository
 
 Built-in plugins live under:
