@@ -3,7 +3,7 @@ layout: home
 title: FamilyClaw 文档中心
 titleTemplate: FamilyClaw 文档中心
 docId: home
-version: v0.1.1
+version: v0.1.3
 status: active
 hero:
   name: FamilyClaw 文档中心

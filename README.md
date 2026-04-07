@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.1-blue" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.1.3-blue" alt="Version" />
   <img src="https://img.shields.io/badge/python-3.11+-green" alt="Python" />
   <img src="https://img.shields.io/badge/node-20+-green" alt="Node" />
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="License" />
@@ -191,7 +191,7 @@ docker run -d \
 # http://你的设备IP:8080
 ```
 
-默认安装入口统一使用 `latest`。只有在需要精确回滚、复现某个旧版本问题，或者明确锁定发布版本时，才手动改成具体标签，例如 `jingyi0605/familyclaw:0.1.1`。
+默认安装入口统一使用 `latest`。只有在需要精确回滚、复现某个旧版本问题，或者明确锁定发布版本时，才手动改成具体标签，例如 `jingyi0605/familyclaw:0.1.3`。
 
 **初始账号：**
 - 管理员：`user` / `user`（初始化后即失效）
@@ -548,7 +548,7 @@ docker run -d \
 # http://your-device-ip:8080
 ```
 
-Use `latest` as the default installation entry. Only pin a concrete image tag such as `jingyi0605/familyclaw:0.1.1` when you need precise rollback, issue reproduction, or a fixed release target.
+Use `latest` as the default installation entry. Only pin a concrete image tag such as `jingyi0605/familyclaw:0.1.3` when you need precise rollback, issue reproduction, or a fixed release target.
 
 **Default credentials:**
 - Admin: `user` / `user` (invalid immediately after initialization)

@@ -3,7 +3,7 @@ layout: home
 title: FamilyClaw Docs
 titleTemplate: FamilyClaw Docs
 docId: en-home
-version: v0.1.1
+version: v0.1.3
 status: active
 hero:
   name: FamilyClaw Docs
