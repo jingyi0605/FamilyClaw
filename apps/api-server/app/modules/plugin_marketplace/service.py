@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-import sys
 import tarfile
 import tempfile
 import time
@@ -24,6 +23,7 @@ from app.core.config import (
 )
 from app.db.utils import dump_json, load_json, new_uuid, utc_now_iso
 from app.modules.plugin.models import PluginMount
+from app.modules.plugin.python_env import PluginPythonEnvError, prepare_plugin_python_env
 from app.modules.plugin.schemas import (
     PluginMountCreate,
     PluginStateUpdateRequest,
@@ -1501,6 +1501,25 @@ def _extract_archive_bytes(*, content: bytes, destination: Path) -> None:
     )
 
 
+def _prepare_plugin_env_or_raise(
+    *,
+    plugin_root: Path,
+    requirements_path: str | Path | None = None,
+) -> str:
+    try:
+        result = prepare_plugin_python_env(
+            plugin_root=plugin_root,
+            requirements_path=requirements_path,
+        )
+    except PluginPythonEnvError as exc:
+        raise PluginMarketplaceServiceError(
+            exc.detail,
+            error_code=exc.error_code,
+            status_code=409,
+        ) from exc
+    return result.python_path
+
+
 def _ensure_archive_member_safe(*, destination: Path, member_path: str) -> None:
     normalized = PurePosixPath(member_path)
     if normalized.is_absolute() or ".." in normalized.parts:
@@ -1930,6 +1949,11 @@ def create_marketplace_install_task(
             source_root = _resolve_archive_source_root(extracted_root)
             package_root = _resolve_extracted_package_root(extracted_root=source_root, install_spec=entry.install)
             manifest_path = _resolve_child_path(source_root, entry.manifest_path, field_name="manifest_path")
+            requirements_path = _resolve_child_path(
+                source_root,
+                entry.install.requirements_path,
+                field_name="install.requirements_path",
+            )
             _validate_manifest_consistency(
                 source_root=source_root,
                 package_root=package_root,
@@ -1984,6 +2008,10 @@ def create_marketplace_install_task(
                 shutil.rmtree(target_root)
             target_root.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(install_root, target_root)
+            target_python_path = _prepare_plugin_env_or_raise(
+                plugin_root=target_root,
+                requirements_path=requirements_path,
+            )
 
         relative_manifest_path = manifest_path.resolve().relative_to(install_root.resolve())
         target_manifest_path = (target_root / relative_manifest_path).resolve()
@@ -2015,7 +2043,7 @@ def create_marketplace_install_task(
                     install_method="marketplace",
                     plugin_root=str(target_root),
                     manifest_path=str(target_manifest_path),
-                    python_path=sys.executable,
+                    python_path=target_python_path,
                     working_dir=str(target_root),
                     enabled=False,
                 ),
@@ -2026,7 +2054,7 @@ def create_marketplace_install_task(
             mount_row.execution_backend = "subprocess_runner"
             mount_row.manifest_path = str(target_manifest_path)
             mount_row.plugin_root = str(target_root)
-            mount_row.python_path = sys.executable
+            mount_row.python_path = target_python_path
             mount_row.working_dir = str(target_root)
             mount_row.enabled = False
             mount_row.updated_at = utc_now_iso()
@@ -2065,7 +2093,7 @@ def create_marketplace_install_task(
                 market_repo=source.repo_url,
                 plugin_root=str(target_root),
                 manifest_path=str(target_manifest_path),
-                python_path=sys.executable,
+                python_path=target_python_path,
                 working_dir=str(target_root),
                 installed_at=utc_now_iso(),
                 created_at=utc_now_iso(),
@@ -2082,7 +2110,7 @@ def create_marketplace_install_task(
             instance.market_repo = source.repo_url
             instance.plugin_root = str(target_root)
             instance.manifest_path = str(target_manifest_path)
-            instance.python_path = sys.executable
+            instance.python_path = target_python_path
             instance.working_dir = str(target_root)
             instance.installed_at = utc_now_iso()
             instance.updated_at = utc_now_iso()
@@ -2260,6 +2288,11 @@ def _switch_marketplace_instance_version(
             source_root = _resolve_archive_source_root(extracted_root)
             package_root = _resolve_extracted_package_root(extracted_root=source_root, install_spec=entry.install)
             manifest_path = _resolve_child_path(source_root, entry.manifest_path, field_name="manifest_path")
+            requirements_path = _resolve_child_path(
+                source_root,
+                entry.install.requirements_path,
+                field_name="install.requirements_path",
+            )
             _validate_manifest_consistency(
                 source_root=source_root,
                 package_root=package_root,
@@ -2282,6 +2315,10 @@ def _switch_marketplace_instance_version(
                 shutil.rmtree(target_root)
             target_root.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(install_root, target_root)
+            target_python_path = _prepare_plugin_env_or_raise(
+                plugin_root=target_root,
+                requirements_path=requirements_path,
+            )
 
         relative_manifest_path = manifest_path.resolve().relative_to(install_root.resolve())
         target_manifest_path = (target_root / relative_manifest_path).resolve()
@@ -2294,7 +2331,7 @@ def _switch_marketplace_instance_version(
         instance.market_repo = source.repo_url
         instance.plugin_root = str(target_root)
         instance.manifest_path = str(target_manifest_path)
-        instance.python_path = sys.executable
+        instance.python_path = target_python_path
         instance.working_dir = str(target_root)
         instance.installed_at = utc_now_iso()
         instance.updated_at = utc_now_iso()
@@ -2304,7 +2341,7 @@ def _switch_marketplace_instance_version(
         mount.execution_backend = "subprocess_runner"
         mount.manifest_path = str(target_manifest_path)
         mount.plugin_root = str(target_root)
-        mount.python_path = sys.executable
+        mount.python_path = target_python_path
         mount.working_dir = str(target_root)
         mount.enabled = previous_enabled
         mount.updated_at = utc_now_iso()

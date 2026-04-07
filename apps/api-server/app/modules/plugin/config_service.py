@@ -16,7 +16,7 @@ from app.modules.region.service import RegionServiceError, list_region_catalog
 
 from . import repository
 from .config_crypto import decrypt_plugin_config_secrets, encrypt_plugin_config_secrets
-from .executors import load_entrypoint_callable
+from .executors import execute_entrypoint_in_subprocess_runner, load_entrypoint_callable
 from .import_path import collect_plugin_import_roots, plugin_runtime_import_path
 from .models import PluginConfigInstance
 from .schemas import (
@@ -810,12 +810,21 @@ def _run_plugin_config_preview_hook(
         ),
     }
     try:
-        with plugin_runtime_import_path(
-            plugin.runner_config.plugin_root if plugin.runner_config is not None else None,
-            package_names=collect_plugin_import_roots(plugin),
-        ):
-            handler = load_entrypoint_callable(entrypoint_path)
-            result = handler(payload)
+        if plugin.source_type == "third_party" and plugin.execution_backend == "subprocess_runner":
+            result = execute_entrypoint_in_subprocess_runner(
+                plugin,
+                entrypoint_path=entrypoint_path,
+                payload=payload,
+                trigger="config_preview",
+                plugin_type="config_preview",
+            )
+        else:
+            with plugin_runtime_import_path(
+                plugin.runner_config.plugin_root if plugin.runner_config is not None else None,
+                package_names=collect_plugin_import_roots(plugin),
+            ):
+                handler = load_entrypoint_callable(entrypoint_path)
+                result = handler(payload)
     except PluginServiceError:
         raise
     except Exception as exc:

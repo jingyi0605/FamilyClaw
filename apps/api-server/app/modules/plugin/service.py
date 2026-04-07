@@ -29,9 +29,20 @@ from app.modules.memory.service import (
     upsert_plugin_observation_memory,
 )
 from app.modules.plugin.import_path import collect_plugin_import_roots, plugin_runtime_import_path
+from app.modules.plugin.python_env import (
+    PluginPythonEnvError,
+    plugin_python_env_needs_repair,
+    plugin_python_path_is_host_path,
+    prepare_plugin_python_env,
+)
 from app.modules.region.plugin_runtime import get_runtime_region_provider_spec, sync_household_plugin_region_providers
 from app.modules.region.service import resolve_household_region_context
-from app.modules.plugin.executors import get_executor, load_entrypoint_callable, resolve_execution_backend
+from app.modules.plugin.executors import (
+    execute_entrypoint_in_subprocess_runner,
+    get_executor,
+    load_entrypoint_callable,
+    resolve_execution_backend,
+)
 from app.modules.plugin.private_migration_service import ensure_plugin_private_migrations
 from . import repository
 from app.modules.plugin.models import PluginMount, PluginRawRecord, PluginRun, PluginStateOverride
@@ -726,7 +737,7 @@ def _apply_execution_overrides(
             next_install_method = "local"
         if next_execution_backend is None:
             next_execution_backend = plugin.execution_backend or "subprocess_runner"
-    return plugin.model_copy(
+    updated = plugin.model_copy(
         update={
             "source_type": source_type,
             "install_method": next_install_method,
@@ -734,6 +745,7 @@ def _apply_execution_overrides(
             "runner_config": runner_config,
         }
     )
+    return _ensure_third_party_runner_config_ready(updated)
 
 
 def _to_plugin_mount_read(row: PluginMount, *, manifest: PluginManifest | None = None) -> PluginMountRead:
@@ -799,14 +811,66 @@ def _get_plugin_dev_root() -> Path:
 
 def _build_runner_config_from_plugin_root(plugin_root: Path) -> PluginRunnerConfig:
     resolved_root = plugin_root.resolve()
+    python_path = _prepare_managed_python_env_or_raise(plugin_root=resolved_root)
     return PluginRunnerConfig(
         plugin_root=str(resolved_root),
-        python_path=sys.executable,
+        python_path=python_path,
         working_dir=str(resolved_root),
         timeout_seconds=30,
         stdout_limit_bytes=65536,
         stderr_limit_bytes=65536,
     )
+
+
+def _ensure_third_party_runner_config_ready(plugin: PluginRegistryItem) -> PluginRegistryItem:
+    if plugin.source_type != "third_party":
+        return plugin
+    if plugin.execution_backend != "subprocess_runner":
+        return plugin
+    runner_config = plugin.runner_config
+    if runner_config is None or not runner_config.plugin_root:
+        return plugin
+
+    plugin_root = Path(runner_config.plugin_root).resolve()
+    python_path = runner_config.python_path
+    needs_prepare = python_path is None or plugin_python_path_is_host_path(python_path)
+    if not needs_prepare and python_path is not None:
+        needs_prepare = plugin_python_env_needs_repair(
+            plugin_root=plugin_root,
+            python_path=python_path,
+        )
+    if not needs_prepare:
+        return plugin
+
+    prepared_python_path = _prepare_managed_python_env_or_raise(plugin_root=plugin_root)
+    next_runner_config = runner_config.model_copy(
+        update={
+            "plugin_root": str(plugin_root),
+            "python_path": prepared_python_path,
+            "working_dir": runner_config.working_dir or str(plugin_root),
+        }
+    )
+    return plugin.model_copy(update={"runner_config": next_runner_config})
+
+
+def _prepare_managed_python_env_or_raise(
+    *,
+    plugin_root: Path,
+    requirements_path: str | Path | None = None,
+) -> str:
+    try:
+        result = prepare_plugin_python_env(
+            plugin_root=plugin_root,
+            requirements_path=requirements_path,
+        )
+    except PluginPythonEnvError as exc:
+        raise PluginServiceError(
+            exc.detail,
+            error_code=exc.error_code,
+            field="plugin_root",
+            status_code=409,
+        ) from exc
+    return result.python_path
 
 
 def _build_dev_registry_item(manifest_path: Path, manifest: PluginManifest) -> PluginRegistryItem:
@@ -835,10 +899,16 @@ def _discover_plugin_dev_registry_items() -> list[PluginRegistryItem]:
         )
         return []
 
-    return [
-        _build_dev_registry_item(manifest_path, manifest)
-        for manifest_path, manifest in _discover_manifest_entries(dev_root)
-    ]
+    items: list[PluginRegistryItem] = []
+    for manifest_path, manifest in _discover_manifest_entries(dev_root):
+        try:
+            items.append(_build_dev_registry_item(manifest_path, manifest))
+        except PluginServiceError as exc:
+            _log_plugin_registry_issue_once(
+                issue_key=f"plugin-dev-env-invalid:{manifest.id}:{manifest_path}",
+                message=f"plugins-dev 插件运行环境准备失败，已跳过: {manifest.id} {manifest_path} error={exc}",
+            )
+    return items
 
 
 def _copy_plugin_tree(*, source_root: Path, target_root: Path) -> None:
@@ -1725,6 +1795,7 @@ def register_plugin_mount(
         manifest=manifest,
         manifest_path=manifest_path,
     )
+    managed_python_path = _prepare_managed_python_env_or_raise(plugin_root=managed_plugin_root)
 
     row = PluginMount(
         id=new_uuid(),
@@ -1735,7 +1806,7 @@ def register_plugin_mount(
         execution_backend=payload.execution_backend,
         manifest_path=str(managed_manifest_path),
         plugin_root=str(managed_plugin_root),
-        python_path=payload.python_path.strip(),
+        python_path=managed_python_path,
         working_dir=managed_working_dir,
         timeout_seconds=payload.timeout_seconds,
         stdout_limit_bytes=payload.stdout_limit_bytes,
@@ -1885,6 +1956,7 @@ def install_plugin_package(
             relative_manifest_path = manifest_path.resolve().relative_to(package_root.resolve())
             _copy_plugin_tree(source_root=package_root, target_root=target_root)
             target_manifest_path = (target_root / relative_manifest_path).resolve()
+            target_python_path = _prepare_managed_python_env_or_raise(plugin_root=target_root)
 
             with db.begin_nested():
                 if existing_mount is None:
@@ -1897,7 +1969,7 @@ def install_plugin_package(
                         execution_backend="subprocess_runner",
                         manifest_path=str(target_manifest_path),
                         plugin_root=str(target_root),
-                        python_path=sys.executable,
+                        python_path=target_python_path,
                         working_dir=str(target_root),
                         timeout_seconds=30,
                         stdout_limit_bytes=65536,
@@ -1915,7 +1987,7 @@ def install_plugin_package(
                     existing_mount.execution_backend = "subprocess_runner"
                     existing_mount.manifest_path = str(target_manifest_path)
                     existing_mount.plugin_root = str(target_root)
-                    existing_mount.python_path = sys.executable
+                    existing_mount.python_path = target_python_path
                     existing_mount.working_dir = _remap_existing_mount_working_dir(
                         previous_plugin_root=previous_plugin_root,
                         previous_working_dir=previous_working_dir,
@@ -2848,6 +2920,17 @@ def _load_plugin_observation_transform(plugin: PluginRegistryItem):
     package_path, package_separator, _ = module_path.rpartition(".")
     if not package_separator or not package_path:
         return None
+    if plugin.source_type == "third_party" and plugin.execution_backend == "subprocess_runner":
+        def _runner_transform(payload: dict[str, Any] | None = None):
+            return execute_entrypoint_in_subprocess_runner(
+                plugin,
+                entrypoint_path=f"{package_path}.ingestor.transform",
+                payload=payload or {},
+                trigger="memory_ingest",
+                plugin_type="integration",
+            )
+
+        return _runner_transform
     try:
         with plugin_runtime_import_path(
             plugin.runner_config.plugin_root if plugin.runner_config is not None else None,

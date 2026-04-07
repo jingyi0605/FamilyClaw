@@ -55,64 +55,80 @@ class SubprocessRunnerPluginExecutor(PluginExecutor):
     backend: PluginExecutionBackend = "subprocess_runner"
 
     def execute(self, plugin: PluginRegistryItem, request: PluginExecutionRequest):
-        runner_config = plugin.runner_config
-        if runner_config is None:
-            raise PluginRunnerError(PLUGIN_RUNNER_NOT_CONFIGURED, f"插件 {plugin.id} 没有配置 runner")
-        if not runner_config.python_path:
-            raise PluginRunnerError(PLUGIN_RUNNER_NOT_CONFIGURED, f"插件 {plugin.id} 缺少 runner Python 路径")
-        if not runner_config.plugin_root:
-            raise PluginRunnerError(PLUGIN_RUNNER_NOT_CONFIGURED, f"插件 {plugin.id} 缺少第三方插件目录")
-
-        entrypoint_path = get_entrypoint_path(plugin, request.plugin_type)
-        runner_request = RunnerExecutionRequest(
-            plugin_id=plugin.id,
-            plugin_type=request.plugin_type,
-            entrypoint=entrypoint_path,
+        return execute_entrypoint_in_subprocess_runner(
+            plugin,
+            entrypoint_path=get_entrypoint_path(plugin, request.plugin_type),
             payload=request.payload,
             trigger=request.trigger,
-            plugin_root=runner_config.plugin_root,
+            plugin_type=request.plugin_type,
         )
 
-        env = os.environ.copy()
-        command = [runner_config.python_path, "-m", RUNNER_MODULE]
-        cwd = runner_config.working_dir or runner_config.plugin_root
 
-        try:
-            with plugin_runtime_paths(
-                runner_config.plugin_root,
-                package_names=collect_plugin_import_roots(plugin),
-            ) as runtime_paths:
-                env["PYTHONPATH"] = _build_pythonpath(runtime_paths)
-                completed = subprocess.run(
-                    command,
-                    input=runner_request.model_dump_json(),
-                    text=True,
-                    capture_output=True,
-                    timeout=runner_config.timeout_seconds,
-                    cwd=cwd,
-                    env=env,
-                    check=False,
-                )
-        except FileNotFoundError as exc:
-            raise PluginRunnerError(PLUGIN_RUNNER_START_FAILED, f"runner 启动失败: {exc}") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise PluginRunnerError(PLUGIN_RUNNER_TIMEOUT, f"runner 执行超时: {plugin.id}") from exc
-        except OSError as exc:
-            raise PluginRunnerError(PLUGIN_RUNNER_START_FAILED, f"runner 启动失败: {exc}") from exc
+def execute_entrypoint_in_subprocess_runner(
+    plugin: PluginRegistryItem,
+    *,
+    entrypoint_path: str,
+    payload: dict[str, Any],
+    trigger: str,
+    plugin_type: str = "integration",
+):
+    runner_config = plugin.runner_config
+    if runner_config is None:
+        raise PluginRunnerError(PLUGIN_RUNNER_NOT_CONFIGURED, f"插件 {plugin.id} 没有配置 runner")
+    if not runner_config.python_path:
+        raise PluginRunnerError(PLUGIN_RUNNER_NOT_CONFIGURED, f"插件 {plugin.id} 缺少 runner Python 路径")
+    if not runner_config.plugin_root:
+        raise PluginRunnerError(PLUGIN_RUNNER_NOT_CONFIGURED, f"插件 {plugin.id} 缺少第三方插件目录")
 
-        stdout = _trim_output(completed.stdout, runner_config.stdout_limit_bytes)
-        stderr = _trim_output(completed.stderr, runner_config.stderr_limit_bytes)
-        if completed.returncode != 0:
-            error_code = PLUGIN_RUNNER_START_FAILED
-            if "ModuleNotFoundError" in stderr or "No module named" in stderr:
-                error_code = PLUGIN_RUNNER_DEPENDENCY_MISSING
-            message = stderr or stdout or f"runner 执行失败，退出码: {completed.returncode}"
-            raise PluginRunnerError(error_code, message)
+    runner_request = RunnerExecutionRequest(
+        plugin_id=plugin.id,
+        plugin_type=plugin_type,
+        entrypoint=entrypoint_path,
+        payload=payload,
+        trigger=trigger,
+        plugin_root=runner_config.plugin_root,
+    )
 
-        try:
-            return json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise PluginRunnerError(PLUGIN_RUNNER_INVALID_OUTPUT, f"runner 返回了非法 JSON: {exc.msg}") from exc
+    env = os.environ.copy()
+    command = [runner_config.python_path, "-m", RUNNER_MODULE]
+    cwd = runner_config.working_dir or runner_config.plugin_root
+
+    try:
+        with plugin_runtime_paths(
+            runner_config.plugin_root,
+            package_names=collect_plugin_import_roots(plugin),
+        ) as runtime_paths:
+            env["PYTHONPATH"] = _build_pythonpath(runtime_paths)
+            completed = subprocess.run(
+                command,
+                input=runner_request.model_dump_json(),
+                text=True,
+                capture_output=True,
+                timeout=runner_config.timeout_seconds,
+                cwd=cwd,
+                env=env,
+                check=False,
+            )
+    except FileNotFoundError as exc:
+        raise PluginRunnerError(PLUGIN_RUNNER_START_FAILED, f"runner 启动失败: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise PluginRunnerError(PLUGIN_RUNNER_TIMEOUT, f"runner 执行超时: {plugin.id}") from exc
+    except OSError as exc:
+        raise PluginRunnerError(PLUGIN_RUNNER_START_FAILED, f"runner 启动失败: {exc}") from exc
+
+    stdout = _trim_output(completed.stdout, runner_config.stdout_limit_bytes)
+    stderr = _trim_output(completed.stderr, runner_config.stderr_limit_bytes)
+    if completed.returncode != 0:
+        error_code = PLUGIN_RUNNER_START_FAILED
+        if "ModuleNotFoundError" in stderr or "No module named" in stderr:
+            error_code = PLUGIN_RUNNER_DEPENDENCY_MISSING
+        message = stderr or stdout or f"runner 执行失败，退出码: {completed.returncode}"
+        raise PluginRunnerError(error_code, message)
+
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise PluginRunnerError(PLUGIN_RUNNER_INVALID_OUTPUT, f"runner 返回了非法 JSON: {exc.msg}") from exc
 
 
 def get_executor(backend: PluginExecutionBackend) -> PluginExecutor:

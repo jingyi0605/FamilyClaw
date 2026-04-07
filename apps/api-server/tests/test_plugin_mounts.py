@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sqlalchemy.orm import Session
@@ -56,9 +57,15 @@ class PluginMountTests(unittest.TestCase):
         self.engine = self._db_helper.engine
         self.SessionLocal = self._db_helper.SessionLocal
         self.db: Session = self.SessionLocal()
+        self._env_patch = patch(
+            "app.modules.plugin.service.prepare_plugin_python_env",
+            side_effect=self._fake_prepare_plugin_python_env,
+        )
+        self._env_patch.start()
 
     def tearDown(self) -> None:
         self.db.close()
+        self._env_patch.stop()
         self._db_helper.close()
         settings.plugin_storage_root = self._previous_plugin_storage_root
         settings.plugin_dev_root = self._previous_plugin_dev_root
@@ -94,6 +101,7 @@ class PluginMountTests(unittest.TestCase):
                 str((self._plugin_storage_root() / "third_party" / "local" / household.id).resolve()),
                 str(Path(created.plugin_root).resolve()),
             )
+            self.assertNotEqual(sys.executable, created.python_path)
 
             mounted = list_plugin_mounts(self.db, household_id=household.id)
             self.assertEqual(1, len(mounted))
@@ -228,6 +236,7 @@ class PluginMountTests(unittest.TestCase):
         self.assertTrue(plugin.is_dev_active)
         assert plugin.runner_config is not None
         self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
+        self.assertNotEqual(sys.executable, plugin.runner_config.python_path)
         self.assertEqual(str((dev_root / "manifest.json").resolve()), str(Path(plugin.manifest_path).resolve()))
 
         switched = set_household_plugin_enabled(
@@ -275,6 +284,7 @@ class PluginMountTests(unittest.TestCase):
         self.assertEqual("plugins_dev", plugin_after_delete.runtime_source)
         self.assertTrue(plugin_after_delete.is_dev_active)
         self.assertEqual(str(dev_root.resolve()), str(Path(plugin_after_delete.runner_config.plugin_root).resolve()))
+        self.assertNotEqual(sys.executable, plugin_after_delete.runner_config.python_path)
         self.assertTrue(dev_root.exists())
 
     def test_plugins_dev_cannot_override_builtin_plugin(self) -> None:
@@ -328,6 +338,7 @@ class PluginMountTests(unittest.TestCase):
         self.assertEqual(result.plugin_root, mounts[0].plugin_root)
         self.assertEqual("subprocess_runner", mounts[0].execution_backend)
         self.assertFalse(mounts[0].enabled)
+        self.assertNotEqual(sys.executable, mounts[0].python_path)
 
         plugin = get_household_plugin(self.db, household_id=household.id, plugin_id="zip-sync-plugin")
         self.assertEqual("1.0.0", plugin.version)
@@ -369,6 +380,7 @@ class PluginMountTests(unittest.TestCase):
         self.assertEqual(1, len(mounts))
         self.assertEqual(second_result.plugin_root, mounts[0].plugin_root)
         self.assertEqual("subprocess_runner", mounts[0].execution_backend)
+        self.assertNotEqual(sys.executable, mounts[0].python_path)
 
         plugin = get_household_plugin(self.db, household_id=household.id, plugin_id="zip-sync-plugin")
         self.assertEqual("1.1.0", plugin.version)
@@ -738,6 +750,7 @@ class PluginMountTests(unittest.TestCase):
             "def transform(payload=None):\n    return []\n",
             encoding="utf-8",
         )
+        (plugin_root / "requirements.txt").write_text("", encoding="utf-8")
         return plugin_root
 
     def _create_plugin_fixture(
@@ -778,6 +791,7 @@ class PluginMountTests(unittest.TestCase):
             "def transform(payload=None):\n    return []\n",
             encoding="utf-8",
         )
+        (plugin_root / "requirements.txt").write_text("", encoding="utf-8")
         return plugin_root
 
     def _build_plugin_archive(self, *, plugin_id: str, version: str) -> bytes:
@@ -797,12 +811,30 @@ class PluginMountTests(unittest.TestCase):
         with zipfile.ZipFile(buffer, "w") as archive:
             archive_root = f"{plugin_id}-{version}"
             archive.writestr(f"{archive_root}/manifest.json", json.dumps(manifest, ensure_ascii=False))
+            archive.writestr(f"{archive_root}/requirements.txt", "")
             archive.writestr(f"{archive_root}/plugin/__init__.py", "")
             archive.writestr(
                 f"{archive_root}/plugin/integration.py",
                 "def sync(payload=None):\n    return {'records': []}\n",
             )
         return buffer.getvalue()
+
+    @staticmethod
+    def _fake_prepare_plugin_python_env(*, plugin_root, requirements_path=None, timeout_seconds=300, recreate=False):
+        resolved_root = Path(plugin_root).resolve()
+        venv_dir = resolved_root / ".familyclaw-venv"
+        python_path = venv_dir / ("Scripts/python.exe" if sys.platform.startswith("win") else "bin/python")
+        python_path.parent.mkdir(parents=True, exist_ok=True)
+        python_path.write_text("", encoding="utf-8")
+        return SimpleNamespace(
+            plugin_root=str(resolved_root),
+            venv_dir=str(venv_dir),
+            python_path=str(python_path),
+            requirements_path=str(requirements_path or (resolved_root / "requirements.txt")),
+            requirements_hash="test-hash",
+            created=True,
+            installed=True,
+        )
 
 
 if __name__ == "__main__":

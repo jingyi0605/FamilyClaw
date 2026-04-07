@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -19,6 +18,7 @@ from app.db.utils import new_uuid, utc_now_iso
 from app.modules.household.models import Household
 from app.modules.plugin import repository as plugin_repository
 from app.modules.plugin.models import PluginMount
+from app.modules.plugin.python_env import PluginPythonEnvError, prepare_plugin_python_env
 from app.modules.plugin.service import (
     PluginManifestValidationError,
     _validate_region_provider_mount_conflicts,
@@ -442,7 +442,18 @@ def _upsert_plugin_mount_from_disk(
     plugin_root_value = str(plugin_root.resolve())
     manifest_path_value = str(manifest_path.resolve())
     working_dir_value = plugin_root_value
-    python_path_value = sys.executable
+    try:
+        env_result = prepare_plugin_python_env(plugin_root=plugin_root.resolve())
+    except PluginPythonEnvError as exc:
+        logger.warning(
+            "Startup plugin sync skipped mount because Python env prepare failed household_id=%s plugin_id=%s plugin_root=%s error=%s",
+            household_id,
+            current_manifest.id,
+            plugin_root,
+            exc,
+        )
+        return "skipped"
+    python_path_value = env_result.python_path
     execution_backend_value = execution_backend or "subprocess_runner"
     now = utc_now_iso()
 
@@ -642,7 +653,18 @@ def _upsert_marketplace_instance_from_disk(
     plugin_root_value = str(plugin_root.resolve())
     manifest_path_value = str(manifest_path.resolve())
     working_dir_value = plugin_root_value
-    python_path_value = sys.executable
+    try:
+        env_result = prepare_plugin_python_env(plugin_root=plugin_root.resolve())
+    except PluginPythonEnvError as exc:
+        logger.warning(
+            "Startup plugin sync skipped marketplace instance because Python env prepare failed household_id=%s plugin_id=%s plugin_root=%s error=%s",
+            household_id,
+            plugin_id,
+            plugin_root,
+            exc,
+        )
+        return "skipped"
+    python_path_value = env_result.python_path
     now = utc_now_iso()
 
     existing = marketplace_repository.get_marketplace_instance_for_plugin(

@@ -1,6 +1,7 @@
 ﻿import io
 import hashlib
 import json
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -203,6 +204,16 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
         self.db: Session = self._db_helper.SessionLocal()
+        self._market_env_patch = patch(
+            "app.modules.plugin_marketplace.service.prepare_plugin_python_env",
+            side_effect=self._fake_prepare_plugin_python_env,
+        )
+        self._market_env_patch.start()
+        self._service_env_patch = patch(
+            "app.modules.plugin.service.prepare_plugin_python_env",
+            side_effect=self._fake_prepare_plugin_python_env,
+        )
+        self._service_env_patch.start()
         household = create_household(
             self.db,
             HouseholdCreate(
@@ -217,6 +228,8 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
+        self._service_env_patch.stop()
+        self._market_env_patch.stop()
         self._db_helper.close()
         settings.plugin_dev_root = self._previous_plugin_dev_root
         self._tempdir.cleanup()
@@ -1106,6 +1119,8 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             self.assertEqual("marketplace", installed_plugin.install_method)
             self.assertEqual("subprocess_runner", installed_plugin.execution_backend)
             self.assertEqual("1.0.0", installed_plugin.version)
+            assert installed_plugin.runner_config is not None
+            self.assertNotEqual(sys.executable, installed_plugin.runner_config.python_path)
 
             instance = get_marketplace_instance_for_household_plugin(
                 self.db,
@@ -1132,6 +1147,8 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             self.assertEqual("marketplace", upgraded_plugin.install_method)
             self.assertEqual("subprocess_runner", upgraded_plugin.execution_backend)
             self.assertEqual("1.1.0", upgraded_plugin.version)
+            assert upgraded_plugin.runner_config is not None
+            self.assertNotEqual(sys.executable, upgraded_plugin.runner_config.python_path)
         finally:
             marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_REPO_URL = previous_repo
             marketplace_service.SYSTEM_PLUGIN_MARKETPLACE_BRANCH = previous_branch
@@ -2317,11 +2334,29 @@ class PluginMarketplaceServiceTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        (plugin_root / "requirements.txt").write_text("", encoding="utf-8")
         (package_dir / "integration.py").write_text(
             "def sync(payload=None):\n    return {'ok': True}\n",
             encoding="utf-8",
         )
         return plugin_root
+
+    @staticmethod
+    def _fake_prepare_plugin_python_env(*, plugin_root, requirements_path=None, timeout_seconds=300, recreate=False):
+        resolved_root = Path(plugin_root).resolve()
+        venv_dir = resolved_root / ".familyclaw-venv"
+        python_path = venv_dir / ("Scripts/python.exe" if sys.platform.startswith("win") else "bin/python")
+        python_path.parent.mkdir(parents=True, exist_ok=True)
+        python_path.write_text("", encoding="utf-8")
+        return SimpleNamespace(
+            plugin_root=str(resolved_root),
+            venv_dir=str(venv_dir),
+            python_path=str(python_path),
+            requirements_path=str(requirements_path or (resolved_root / "requirements.txt")),
+            requirements_hash="test-hash",
+            created=True,
+            installed=True,
+        )
 
     @staticmethod
     def _sha256(content: bytes) -> str:

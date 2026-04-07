@@ -3,6 +3,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from sqlalchemy.orm import Session
 
@@ -42,9 +44,15 @@ class PluginStartupSyncTests(unittest.TestCase):
         self._db_helper = PostgresTestDatabase(test_id=self.id())
         self._db_helper.setup()
         self.db: Session = self._db_helper.SessionLocal()
+        self._env_patch = patch(
+            "app.modules.plugin.startup_sync_service.prepare_plugin_python_env",
+            side_effect=self._fake_prepare_plugin_python_env,
+        )
+        self._env_patch.start()
 
     def tearDown(self) -> None:
         self.db.close()
+        self._env_patch.stop()
         self._db_helper.close()
         settings.plugin_storage_root = self._previous_plugin_storage_root
         settings.plugin_marketplace_install_root = self._previous_marketplace_install_root
@@ -118,8 +126,10 @@ class PluginStartupSyncTests(unittest.TestCase):
         created = mounts["manual-created-plugin"]
         self.assertEqual(str(manual_root.resolve()), str(Path(repaired.plugin_root).resolve()))
         self.assertFalse(repaired.enabled)
+        self.assertNotEqual(sys.executable, repaired.python_path)
         self.assertEqual(str(missing_row_root.resolve()), str(Path(created.plugin_root).resolve()))
         self.assertFalse(created.enabled)
+        self.assertNotEqual(sys.executable, created.python_path)
 
     def test_sync_manual_plugins_recognizes_release_directory_layout(self) -> None:
         household = self._create_household("手工发布目录家庭")
@@ -175,6 +185,7 @@ class PluginStartupSyncTests(unittest.TestCase):
         self.assertEqual("9.9.9", plugin.version)
         assert plugin.runner_config is not None
         self.assertEqual(str(dev_root.resolve()), str(Path(plugin.runner_config.plugin_root).resolve()))
+        self.assertNotEqual(sys.executable, plugin.runner_config.python_path)
         self.assertEqual(str((dev_root / "manifest.json").resolve()), str(Path(plugin.manifest_path).resolve()))
 
     def test_sync_legacy_official_theme_pack_plugins_are_ignored(self) -> None:
@@ -319,6 +330,7 @@ class PluginStartupSyncTests(unittest.TestCase):
         self.assertEqual("https://github.com/demo/demo-plugin", restored_instance.source_repo)
         self.assertEqual("https://github.com/demo/marketplace", restored_instance.market_repo)
         self.assertEqual(str(plugin_root.resolve()), str(Path(restored_instance.plugin_root).resolve()))
+        self.assertNotEqual(sys.executable, restored_instance.python_path)
         self.assertTrue(restored_instance.enabled)
 
     def test_startup_sync_normalizes_legacy_builtin_marketplace_source_id(self) -> None:
@@ -543,7 +555,25 @@ class PluginStartupSyncTests(unittest.TestCase):
                     encoding="utf-8",
                 )
         (root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        (root / "requirements.txt").write_text("", encoding="utf-8")
         return root
+
+    @staticmethod
+    def _fake_prepare_plugin_python_env(*, plugin_root, requirements_path=None, timeout_seconds=300, recreate=False):
+        resolved_root = Path(plugin_root).resolve()
+        venv_dir = resolved_root / ".familyclaw-venv"
+        python_path = venv_dir / ("Scripts/python.exe" if sys.platform.startswith("win") else "bin/python")
+        python_path.parent.mkdir(parents=True, exist_ok=True)
+        python_path.write_text("", encoding="utf-8")
+        return SimpleNamespace(
+            plugin_root=str(resolved_root),
+            venv_dir=str(venv_dir),
+            python_path=str(python_path),
+            requirements_path=str(requirements_path or (resolved_root / "requirements.txt")),
+            requirements_hash="test-hash",
+            created=True,
+            installed=True,
+        )
 
     def _create_theme_pack_dir(
         self,
