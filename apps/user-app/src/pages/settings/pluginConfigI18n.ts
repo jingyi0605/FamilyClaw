@@ -17,12 +17,21 @@ export function resolvePluginMaybeKey(value: string | null | undefined, translat
   return translated !== normalized ? translated : normalized;
 }
 
+function resolvePluginTranslatedKey(key: string | null | undefined, translate: Translate): string {
+  const normalized = typeof key === 'string' ? key.trim() : '';
+  if (!normalized) {
+    return '';
+  }
+  const translated = translate(normalized);
+  return translated !== normalized ? translated : '';
+}
+
 function resolvePluginText(
   text: string | null | undefined,
   key: string | null | undefined,
   translate: Translate,
 ): string {
-  const translated = resolvePluginMaybeKey(key, translate);
+  const translated = resolvePluginTranslatedKey(key, translate);
   if (translated) {
     return translated;
   }

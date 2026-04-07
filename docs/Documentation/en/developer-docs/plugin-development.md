@@ -169,6 +169,7 @@ For flows such as "log in and load devices", do not patch the host page. The plu
 - expose post-action runtime output through `ui_schema.runtime_sections`
 - use `candidate_select` when the user needs to choose one item and persist the result into a real config field such as `device_selector`
 - keep all plugin-specific `label / description / help_text / placeholder / runtime` copy in the plugin's own `manifest + locales`; the host only performs generic rendering
+- when both raw text and `*_key` are present, keep the raw text usable; the host resolves the translated key first and falls back to the raw manifest text if that key is missing for the current session
 
 That keeps the host generic. The host renders buttons, calls `config_preview`, shows runtime output, and writes selected values back into the config draft. It does not know what a provider login flow, secondary verification, or vendor device binding means.
 
