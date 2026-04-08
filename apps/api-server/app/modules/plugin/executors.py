@@ -99,10 +99,14 @@ def execute_entrypoint_in_subprocess_runner(
             package_names=collect_plugin_import_roots(plugin),
         ) as runtime_paths:
             env["PYTHONPATH"] = _build_pythonpath(runtime_paths)
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
             completed = subprocess.run(
                 command,
                 input=runner_request.model_dump_json(),
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=runner_config.timeout_seconds,
                 cwd=cwd,

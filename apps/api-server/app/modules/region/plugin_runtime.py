@@ -121,6 +121,8 @@ class MountedPluginRegionProvider(RegionProvider):
         )
         env = os.environ.copy()
         env["PYTHONPATH"] = _build_pythonpath(self.mount.plugin_root)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         command = [self.mount.python_path, "-m", RUNNER_MODULE]
         cwd = self.mount.working_dir or self.mount.plugin_root
 
@@ -129,6 +131,8 @@ class MountedPluginRegionProvider(RegionProvider):
                 command,
                 input=runner_request.model_dump_json(),
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=self.mount.timeout_seconds,
                 cwd=cwd,

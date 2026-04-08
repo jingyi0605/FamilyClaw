@@ -1677,6 +1677,30 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual("demo-third-party-plugin", result.output["source"])
         self.assertEqual("member-001", result.output["echo"]["member_id"])
 
+    def test_execute_plugin_allows_emoji_payload_for_third_party_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            plugin_root = self._create_third_party_integration_plugin(Path(tempdir), plugin_id="runner-emoji-plugin")
+
+            result = execute_plugin(
+                PluginExecutionRequest(
+                    plugin_id="runner-emoji-plugin",
+                    plugin_type="integration",
+                    payload={"text": "今天真开心😄"},
+                ),
+                root_dir=plugin_root,
+                source_type="third_party",
+                runner_config=PluginRunnerConfig(
+                    plugin_root=str(plugin_root),
+                    python_path=sys.executable,
+                    working_dir=str(plugin_root),
+                    timeout_seconds=10,
+                ),
+            )
+
+        self.assertTrue(result.success)
+        assert isinstance(result.output, dict)
+        self.assertEqual("今天真开心😄", result.output["echo"]["text"])
+
     def test_execute_plugin_returns_timeout_error_for_runner(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             plugin_root = self._create_third_party_integration_plugin(Path(tempdir), plugin_id="runner-timeout-plugin")
@@ -1734,6 +1758,10 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual("plugin_runner_invalid_output", result.error_code)
+        self.assertEqual("utf-8", mock_run.call_args.kwargs["encoding"])
+        self.assertEqual("replace", mock_run.call_args.kwargs["errors"])
+        self.assertEqual("utf-8", mock_run.call_args.kwargs["env"]["PYTHONIOENCODING"])
+        self.assertEqual("1", mock_run.call_args.kwargs["env"]["PYTHONUTF8"])
 
     def test_execute_plugin_returns_dependency_missing_error_for_runner(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -1765,6 +1793,10 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual("plugin_runner_dependency_missing", result.error_code)
+        self.assertEqual("utf-8", mock_run.call_args.kwargs["encoding"])
+        self.assertEqual("replace", mock_run.call_args.kwargs["errors"])
+        self.assertEqual("utf-8", mock_run.call_args.kwargs["env"]["PYTHONIOENCODING"])
+        self.assertEqual("1", mock_run.call_args.kwargs["env"]["PYTHONUTF8"])
 
     def test_ingest_plugin_raw_records_to_memory_uses_subprocess_runner_for_third_party_plugin(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
