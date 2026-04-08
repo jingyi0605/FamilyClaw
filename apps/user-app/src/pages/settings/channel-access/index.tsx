@@ -415,6 +415,14 @@ function resolveDefaultConnectionMode(plugin: PluginRegistryItem | null): Channe
   return getSupportedConnectionModes(plugin)[0] ?? 'polling';
 }
 
+function resolveChannelAccountDisplayNameForSubmit(form: AccountFormState, fallback: string): string {
+  const accountLabel = getScalarValue(form.config, 'account_label').trim();
+  if (accountLabel) return accountLabel;
+  const displayName = form.display_name.trim();
+  if (displayName) return displayName;
+  return fallback;
+}
+
 function SettingsChannelAccessContent() {
   const { currentHouseholdId } = useHouseholdContext();
   const { locale, t: translate } = useI18n();
@@ -606,7 +614,10 @@ function SettingsChannelAccessContent() {
         plugin_id: draftAccount.plugin_id,
         display_name: draftAccount.display_name,
         connection_mode: draftAccount.connection_mode,
-        config: draftAccount.config,
+        config: {
+          ...draftAccount.config,
+          account_label: getScalarValue(draftAccount.config, 'account_label') || draftAccount.display_name,
+        },
         status: draftAccount.status,
       });
       setAccountFieldErrors({});
@@ -635,7 +646,10 @@ function SettingsChannelAccessContent() {
       plugin_id: account.plugin_id,
       display_name: account.display_name,
       connection_mode: account.connection_mode,
-      config: account.config,
+      config: {
+        ...account.config,
+        account_label: getScalarValue(account.config, 'account_label') || account.display_name,
+      },
       status: account.status,
     });
     setAccountFieldErrors({});
@@ -665,8 +679,12 @@ function SettingsChannelAccessContent() {
     setError('');
     setStatus('');
     try {
+      const nextDisplayName = resolveChannelAccountDisplayNameForSubmit(
+        accountForm,
+        editingAccount.display_name,
+      );
       const payload: ChannelAccountUpdate = {
-        display_name: accountForm.display_name,
+        display_name: nextDisplayName,
         connection_mode: accountForm.connection_mode,
         config: accountForm.config,
         status: accountForm.status,
@@ -1809,46 +1827,9 @@ function SettingsChannelAccessContent() {
             </>
           )}
         >
-          <div className="form-group">
-            <label>{t('settings.channelAccess.form.platformType')}</label>
-            <select
-              className="form-select"
-              value={accountForm.plugin_id}
-              onChange={(event) => {
-                const nextPlugin = channelPluginMap.get(event.target.value) ?? null;
-                setAccountForm((current) => ({
-                  ...current,
-                  plugin_id: event.target.value,
-                  connection_mode: resolveDefaultConnectionMode(nextPlugin),
-                }));
-                setConfigPreview(null);
-                setPreviewLoadingActionKey(null);
-                setPreviewResultActionKey(null);
-              }}
-              disabled
-              required
-            >
-              <option value="">{t('settings.channelAccess.form.platformPlaceholder')}</option>
-              {availableChannelPlugins.map((plugin) => (
-                <option key={plugin.pluginId} value={plugin.pluginId}>
-                  {plugin.displayName}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>{t('settings.channelAccess.form.displayName')}</label>
-            <input
-              className="form-input"
-              value={accountForm.display_name}
-              onChange={(event) => setAccountForm((current) => ({ ...current, display_name: event.target.value }))}
-              placeholder={t('settings.channelAccess.form.displayNamePlaceholder')}
-              required
-            />
-          </div>
-          <div className="form-group">
-            <label>{t('settings.channelAccess.form.connectionMode')}</label>
-            {supportedConnectionModes.length > 1 ? (
+          {supportedConnectionModes.length > 1 ? (
+            <div className="form-group">
+              <label>{t('settings.channelAccess.form.connectionMode')}</label>
               <select
                 className="form-select"
                 value={accountForm.connection_mode}
@@ -1861,30 +1842,11 @@ function SettingsChannelAccessContent() {
                   <option key={mode} value={mode}>{formatConnectionMode(mode, locale)}</option>
                 ))}
               </select>
-            ) : (
-              <div className="form-input form-input--readonly">{formatConnectionMode(accountForm.connection_mode, locale)}</div>
-            )}
-            <div className="form-help">
-              {supportedConnectionModes.length <= 1
-                ? t('settings.channelAccess.form.connectionModeSingleHelp')
-                : t('settings.channelAccess.form.connectionModeMultiHelp')}
+              <div className="form-help">
+                {t('settings.channelAccess.form.connectionModeMultiHelp')}
+              </div>
             </div>
-          </div>
-          <div className="form-group">
-            <label>{t('settings.channelAccess.form.status')}</label>
-            <select
-              className="form-select"
-              value={accountForm.status}
-              onChange={(event) => setAccountForm((current) => ({
-                ...current,
-                status: event.target.value as ChannelAccountStatus,
-              }))}
-            >
-              <option value="draft">{t('settings.channelAccess.accountStatus.draft')}</option>
-              <option value="active">{t('settings.channelAccess.accountStatus.active')}</option>
-              <option value="disabled">{t('settings.channelAccess.accountStatus.disabled')}</option>
-            </select>
-          </div>
+          ) : null}
           {pluginConfigSpec ? (
             visiblePluginSections.map(({ section, fields }) => (
               <div key={section.id} className="form-group channel-config-section">
