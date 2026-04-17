@@ -84,6 +84,8 @@ The page uses a real-time connection for replies, so the usual behavior is:
 - the assistant message enters a generating state
 - content streams in and then finishes
 
+To reduce visible flicker during long replies, the page keeps the in-progress message in a stable plain-text view while content is still streaming. After that reply is actually finished, the page renders the final Markdown version once.
+
 ### 4. Use suggested questions to move faster
 
 The page automatically fetches a group of suggested questions that fit the current family and the current assistant.
