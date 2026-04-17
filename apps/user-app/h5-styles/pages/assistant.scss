@@ -142,6 +142,13 @@
   }
 }
 
+.message__streaming-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
 .message__time {
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);

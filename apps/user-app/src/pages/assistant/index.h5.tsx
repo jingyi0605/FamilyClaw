@@ -13,6 +13,7 @@ import type {
   AgentSummary,
   ConversationActionRecord,
   ConversationMessage,
+  ConversationMessageStatus,
   ConversationProposalItem,
   ConversationSession,
   ConversationSessionDetail,
@@ -31,6 +32,9 @@ type EmptyStateProps = {
 };
 
 type ConversationRealtimeClient = ReturnType<typeof createConversationRealtimeClient>;
+
+const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 96;
+const STREAM_DONE_SYNC_DELAY_MS = 800;
 
 function EmptyState({ icon, title, description, action, className = '' }: EmptyStateProps) {
   return <EmptyStateCard className={`empty-state ${className}`.trim()} icon={icon} title={title} description={description ?? ''} action={action} />;
@@ -183,6 +187,11 @@ function normalizeContent(content: string): string {
     .trim();
 }
 
+function normalizeStreamingContent(content: string): string {
+  if (!content) return '';
+  return content.replace(/\r\n/g, '\n');
+}
+
 function renderMarkdown(content: string) {
   const normalized = normalizeContent(content);
   if (!normalized) return null;
@@ -191,6 +200,95 @@ function renderMarkdown(content: string) {
       {normalized}
     </ReactMarkdown>
   );
+}
+
+function getMessageStatusPriority(status: ConversationMessageStatus): number {
+  if (status === 'failed') return 3;
+  if (status === 'completed') return 2;
+  if (status === 'streaming') return 1;
+  return 0;
+}
+
+function pickPreferredMessageStatus(currentStatus: ConversationMessageStatus, incomingStatus: ConversationMessageStatus): ConversationMessageStatus {
+  return getMessageStatusPriority(incomingStatus) >= getMessageStatusPriority(currentStatus) ? incomingStatus : currentStatus;
+}
+
+function shouldPreserveCurrentAssistantMessage(currentMessage: ConversationMessage, incomingMessage: ConversationMessage): boolean {
+  if (currentMessage.role !== 'assistant' || incomingMessage.role !== 'assistant') return false;
+  if (currentMessage.id !== incomingMessage.id && currentMessage.request_id !== incomingMessage.request_id) return false;
+
+  const currentContent = normalizeStreamingContent(currentMessage.content);
+  const incomingContent = normalizeStreamingContent(incomingMessage.content);
+  if (!currentContent || currentContent === incomingContent) return false;
+
+  return currentContent.length > incomingContent.length
+    && getMessageStatusPriority(currentMessage.status) >= getMessageStatusPriority(incomingMessage.status);
+}
+
+function areStringArraysEqual(current: string[], incoming: string[]): boolean {
+  return current.length === incoming.length && current.every((item, index) => item === incoming[index]);
+}
+
+function areConversationMessagesEquivalent(currentMessage: ConversationMessage, incomingMessage: ConversationMessage): boolean {
+  return currentMessage.id === incomingMessage.id
+    && currentMessage.session_id === incomingMessage.session_id
+    && currentMessage.request_id === incomingMessage.request_id
+    && currentMessage.seq === incomingMessage.seq
+    && currentMessage.role === incomingMessage.role
+    && currentMessage.message_type === incomingMessage.message_type
+    && currentMessage.content === incomingMessage.content
+    && currentMessage.status === incomingMessage.status
+    && currentMessage.effective_agent_id === incomingMessage.effective_agent_id
+    && currentMessage.ai_provider_code === incomingMessage.ai_provider_code
+    && currentMessage.ai_trace_id === incomingMessage.ai_trace_id
+    && currentMessage.degraded === incomingMessage.degraded
+    && currentMessage.error_code === incomingMessage.error_code
+    && currentMessage.created_at === incomingMessage.created_at
+    && currentMessage.updated_at === incomingMessage.updated_at
+    && areStringArraysEqual(currentMessage.suggestions, incomingMessage.suggestions)
+    && currentMessage.facts.length === incomingMessage.facts.length
+    && currentMessage.facts.every((fact, index) => buildFactIdentity(fact) === buildFactIdentity(incomingMessage.facts[index]));
+}
+
+function mergeConversationMessage(currentMessage: ConversationMessage, incomingMessage: ConversationMessage): ConversationMessage {
+  const preserveCurrentMessage = shouldPreserveCurrentAssistantMessage(currentMessage, incomingMessage);
+  const mergedMessage: ConversationMessage = {
+    ...incomingMessage,
+    content: preserveCurrentMessage ? currentMessage.content : incomingMessage.content,
+    status: preserveCurrentMessage
+      ? currentMessage.status
+      : pickPreferredMessageStatus(currentMessage.status, incomingMessage.status),
+  };
+
+  return areConversationMessagesEquivalent(currentMessage, mergedMessage) ? currentMessage : mergedMessage;
+}
+
+function mergeConversationSessionDetail(
+  currentDetail: ConversationSessionDetail | null,
+  incomingDetail: ConversationSessionDetail,
+): ConversationSessionDetail {
+  if (!currentDetail || currentDetail.id !== incomingDetail.id) {
+    return incomingDetail;
+  }
+
+  const currentMessagesById = new Map(currentDetail.messages.map(message => [message.id, message]));
+  const currentMessagesByRequestKey = new Map(
+    currentDetail.messages
+      .filter(message => message.request_id)
+      .map(message => [`${message.role}:${message.request_id}`, message]),
+  );
+  return {
+    ...incomingDetail,
+    messages: incomingDetail.messages.map(message => {
+      const currentMessage = currentMessagesById.get(message.id)
+        ?? (message.request_id ? currentMessagesByRequestKey.get(`${message.role}:${message.request_id}`) : undefined);
+      return currentMessage ? mergeConversationMessage(currentMessage, message) : message;
+    }),
+  };
+}
+
+function isScrolledNearBottom(container: HTMLDivElement): boolean {
+  return container.scrollHeight - container.scrollTop - container.clientHeight <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
 }
 function formatLocalizedList(items: string[], locale: string) {
   const normalizedLocale = locale.toLowerCase().startsWith('en') ? 'en-US' : locale.toLowerCase().startsWith('zh-tw') ? 'zh-TW' : 'zh-CN';
@@ -418,6 +516,8 @@ function AssistantPageContent() {
   const realtimeClientRef = useRef<ConversationRealtimeClient | null>(null);
   const pendingSyncTimerRef = useRef<number | null>(null);
   const latestConfigMutationRef = useRef('');
+  const scrollFrameRef = useRef<number | null>(null);
+  const shouldStickToBottomRef = useRef(true);
   const sendingRef = useRef(false);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const listBullet = '-';
@@ -535,16 +635,41 @@ function AssistantPageContent() {
   }, [actor?.authenticated, currentHouseholdId, locale, setupStatus?.is_required, themeId]);
 
   useEffect(() => {
+    shouldStickToBottomRef.current = true;
+  }, [activeSessionId]);
+
+  useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
-    // 浣跨敤骞虫粦婊氬姩锛屽苟鍦ㄤ笅涓€甯ф墽琛岋紝纭繚 DOM 宸茬粡鏇存柊銆?
-    requestAnimationFrame(() => {
+    const updateStickToBottom = () => {
+      shouldStickToBottomRef.current = isScrolledNearBottom(container);
+    };
+    updateStickToBottom();
+    container.addEventListener('scroll', updateStickToBottom, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', updateStickToBottom);
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container || !shouldStickToBottomRef.current) return;
+
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+    }
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
       container.scrollTo({
         top: container.scrollHeight,
-        behavior: 'smooth',
+        behavior: 'auto',
       });
     });
-  }, [activeSessionDetail?.messages, activeSessionDetail?.action_records]);
+  }, [activeSessionDetail?.messages, activeSessionDetail?.action_records, activeSessionDetail?.proposal_batches]);
 
   useEffect(() => {
     if (!currentHouseholdId) {
@@ -606,8 +731,7 @@ function AssistantPageContent() {
     void assistantApi.getConversationSession(activeSessionId)
       .then(detail => {
         if (cancelled) return;
-        setActiveSessionDetail(detail);
-        setSessions(current => upsertSession(current, detail));
+        applyIncomingSessionDetail(detail);
       })
       .catch(detailError => {
         if (!cancelled) {
@@ -620,15 +744,26 @@ function AssistantPageContent() {
     };
   }, [activeSessionId]);
 
+  function applyIncomingSessionDetail(detail: ConversationSessionDetail) {
+    setActiveSessionDetail(current => {
+      if (activeSessionId !== detail.id && current?.id !== detail.id) {
+        return current;
+      }
+      return mergeConversationSessionDetail(current, detail);
+    });
+    setSessions(current => upsertSession(current, detail));
+    if (detail.id === activeSessionId) {
+      const latestMessage = [...detail.messages].reverse().find(item => item.role === 'assistant');
+      setSuggestions(latestMessage?.suggestions ?? []);
+    }
+  }
+
   async function syncActiveSessionDetail(sessionId?: string) {
     const targetSessionId = sessionId ?? activeSessionId;
     if (!targetSessionId) return;
     try {
       const detail = await assistantApi.getConversationSession(targetSessionId);
-      setActiveSessionDetail(detail);
-      setSessions(current => upsertSession(current, detail));
-      const latestMessage = [...detail.messages].reverse().find(item => item.role === 'assistant');
-      setSuggestions(latestMessage?.suggestions ?? []);
+      applyIncomingSessionDetail(detail);
     } catch {
       return;
     }
@@ -639,6 +774,17 @@ function AssistantPageContent() {
       window.clearTimeout(pendingSyncTimerRef.current);
       pendingSyncTimerRef.current = null;
     }
+  }
+
+  function schedulePendingSync(sessionId: string, delayMs: number, stopSendingAfterSync = false) {
+    resetPendingSyncTimer();
+    pendingSyncTimerRef.current = window.setTimeout(() => {
+      pendingSyncTimerRef.current = null;
+      void syncActiveSessionDetail(sessionId);
+      if (stopSendingAfterSync) {
+        setSending(false);
+      }
+    }, delayMs);
   }
 
   useEffect(() => {
@@ -676,10 +822,7 @@ function AssistantPageContent() {
       onEvent: event => {
         if (event.type === 'session.snapshot') {
           const nextSession = (event.payload as { snapshot: ConversationSessionDetail }).snapshot;
-          setActiveSessionDetail(nextSession);
-          setSessions(current => upsertSession(current, nextSession));
-          const latestMessage = [...nextSession.messages].reverse().find(item => item.role === 'assistant');
-          setSuggestions(latestMessage?.suggestions ?? []);
+          applyIncomingSessionDetail(nextSession);
           if (nextSession.messages.some(message => message.status === 'completed' || message.status === 'failed')) {
             resetPendingSyncTimer();
           }
@@ -731,7 +874,7 @@ function AssistantPageContent() {
               )),
             };
           });
-          void syncActiveSessionDetail(activeSessionId);
+          schedulePendingSync(activeSessionId, STREAM_DONE_SYNC_DELAY_MS);
           setSending(false);
           return;
         }
@@ -835,6 +978,7 @@ function AssistantPageContent() {
   async function submitQuestion(rawQuestion: string) {
     const question = rawQuestion.trim();
     if (!question) return;
+    shouldStickToBottomRef.current = true;
     setSending(true);
     setError('');
     setStatus('');
@@ -861,11 +1005,7 @@ function AssistantPageContent() {
           : current
       ));
       realtimeClientRef.current.sendUserMessage(requestId, question);
-      resetPendingSyncTimer();
-      pendingSyncTimerRef.current = window.setTimeout(() => {
-        void syncActiveSessionDetail(session.id);
-        setSending(false);
-      }, 20000);
+      schedulePendingSync(session.id, 20000, true);
       void refreshSessions(session.id).catch(() => undefined);
     } catch (submitError) {
       resetPendingSyncTimer();
@@ -1137,6 +1277,18 @@ function AssistantPageContent() {
         {completedProposals.map(renderCompletedProposalCard)}
       </div>
     );
+  }
+
+  function renderMessageBody(message: ConversationMessage) {
+    if (message.role === 'assistant' && message.status === 'streaming') {
+      return (
+        <div className="message__streaming-text">
+          {normalizeStreamingContent(message.content || t('assistant.message.preparingReply'))}
+        </div>
+      );
+    }
+
+    return renderMarkdown(message.content || (message.status === 'pending' ? t('assistant.message.preparingReply') : ''));
   }
 
   if (!currentHouseholdId && !loading) {
@@ -1422,7 +1574,7 @@ function AssistantPageContent() {
                     <div className="message__content-wrapper">
                       <div className="message__bubble">
                         <div className="message__content">
-                          {renderMarkdown(message.content || (message.status === 'pending' ? t('assistant.message.preparingReply') : ''))}
+                          {renderMessageBody(message)}
                         </div>
                         {message.degraded ? <span className="message__memory-tag">[!] {t('assistant.message.responseDegraded')}</span> : null}
                         {message.status === 'streaming' ? <span className="message__memory-tag">[...] {t('assistant.message.generating')}</span> : null}
