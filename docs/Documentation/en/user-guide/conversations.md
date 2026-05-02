@@ -220,6 +220,16 @@ That usually does not mean the conversation page is missing. It usually means th
 
 The page depends on a real-time connection for sending and receiving. If the connection is not ready yet, if you just switched sessions, or if the network is unstable, the send button may stay disabled for a while.
 
+### Why do I see "AI service authentication failed, please check whether the API key is correct"?
+
+That usually does not mean the conversation page itself is broken. It means the AI provider bound to the current conversation failed authentication. The most common causes are:
+
+- the API key is wrong
+- the provider key expired, was revoked, or was replaced
+- a proxy or gateway rewrote the auth header and the upstream provider rejected it
+
+When this message appears, go straight to `Settings -> AI Config` and check the provider API key, base URL, and proxy configuration. Repeating the same failed turn will not fix it.
+
 ### Why does switching assistants feel like starting over?
 
 That is the real current design. After switching assistants, the page starts a new session for the new assistant so contexts do not get mixed.
