@@ -30,6 +30,7 @@ export default defineConfig(async merge => {
     'user-core',
     'user-ui',
   ].map(packageName => path.resolve(process.cwd(), `../../packages/${packageName}/src`));
+  const appNodeModulesRoot = path.resolve(process.cwd(), 'node_modules');
 
   const workspacePackageEntries = {
     '@familyclaw/user-core': path.resolve(process.cwd(), '../../packages/user-core/src/index.ts'),
@@ -63,6 +64,10 @@ export default defineConfig(async merge => {
     plugins: taroEnv === 'harmony_cpp' ? ['@tarojs/plugin-platform-harmony-cpp'] : [],
     alias: {
       '@': path.resolve(process.cwd(), 'src'),
+      react: path.resolve(appNodeModulesRoot, 'react'),
+      'react-dom': path.resolve(appNodeModulesRoot, 'react-dom'),
+      'react/jsx-runtime': path.resolve(appNodeModulesRoot, 'react/jsx-runtime.js'),
+      'react/jsx-dev-runtime': path.resolve(appNodeModulesRoot, 'react/jsx-dev-runtime.js'),
       ...workspacePackageEntries,
     },
     appPath: taroEnv === 'rn' ? 'src/app.rn.ts' : 'src/app.ts',
@@ -72,6 +77,7 @@ export default defineConfig(async merge => {
       }
 
       chain.resolve.symlinks(false);
+      chain.resolve.modules.prepend(appNodeModulesRoot);
       chain.resolve.extensions.clear();
       ['.h5.tsx', '.h5.ts', '.h5.jsx', '.h5.js', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.vue'].forEach((extension: string) => {
         chain.resolve.extensions.add(extension);
