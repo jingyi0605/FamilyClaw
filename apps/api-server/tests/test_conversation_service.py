@@ -18,6 +18,7 @@ from app.modules.conversation.service import (
     _apply_config_proposal_item,
     _apply_policy_to_proposal_batch,
     create_conversation_session,
+    delete_conversation_session,
 )
 from app.modules.household.schemas import HouseholdCreate
 from app.modules.household.service import create_household
@@ -118,6 +119,50 @@ class ConversationServiceTests(unittest.TestCase):
                 actor=self.actor,
             )
         self.assertEqual(409, exc.exception.status_code)
+
+    def test_delete_conversation_session_removes_session(self) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        deleted = delete_conversation_session(
+            self.db,
+            session_id=session.id,
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        self.assertEqual(session.id, deleted.id)
+        self.assertIsNone(conversation_repository.get_session(self.db, session.id))
+
+    def test_delete_conversation_session_rejects_processing_session(self) -> None:
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+        session_row = conversation_repository.get_session(self.db, session.id)
+        assert session_row is not None
+        session_row.current_request_id = "req-processing"
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as exc:
+            delete_conversation_session(
+                self.db,
+                session_id=session.id,
+                actor=self.actor,
+            )
+        self.assertEqual(409, exc.exception.status_code)
+        self.assertIsNotNone(conversation_repository.get_session(self.db, session.id))
 
     def test_apply_config_proposal_item_updates_whitelisted_fields_only(self) -> None:
         session = create_conversation_session(

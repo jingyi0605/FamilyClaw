@@ -238,6 +238,23 @@ def get_conversation_session_detail(
     return _to_session_detail_read(db, row)
 
 
+def delete_conversation_session(
+    db: Session,
+    *,
+    session_id: str,
+    actor: ActorContext,
+) -> ConversationSession:
+    session = _get_visible_session(db, session_id=session_id, actor=actor)
+    if session.current_request_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="conversation session is still processing",
+        )
+    repository.delete_session(db, session)
+    db.flush()
+    return session
+
+
 def confirm_conversation_proposal(
     db: Session,
     *,

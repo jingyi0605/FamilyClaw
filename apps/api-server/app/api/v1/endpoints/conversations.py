@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from app.modules.conversation.service import (
     acreate_conversation_turn,
     create_conversation_session,
     create_conversation_turn,
+    delete_conversation_session,
     confirm_conversation_proposal,
     dismiss_conversation_proposal,
     get_conversation_session_detail,
@@ -93,6 +94,38 @@ def get_conversation_session_detail_endpoint(
         return result
     except ConversationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation session not found") from exc
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_conversation_session_endpoint(
+    session_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(require_bound_member_actor),
+) -> Response:
+    try:
+        session = delete_conversation_session(db, session_id=session_id, actor=actor)
+        write_audit_log(
+            db,
+            household_id=session.household_id,
+            actor=actor,
+            action="conversation.session.delete",
+            target_type="conversation_session",
+            target_id=session.id,
+            result="success",
+            details={
+                "session_mode": session.session_mode,
+                "title": session.title,
+                "active_agent_id": session.active_agent_id,
+            },
+        )
+        db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except ConversationNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation session not found") from exc
+    except HTTPException:
+        db.rollback()
+        raise
 
 
 @router.get("/sessions/{session_id}/debug-logs", response_model=ConversationDebugLogListRead)

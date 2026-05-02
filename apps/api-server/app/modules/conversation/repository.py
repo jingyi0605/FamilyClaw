@@ -23,6 +23,10 @@ def add_session(db: Session, row: ConversationSession) -> ConversationSession:
     return row
 
 
+def delete_session(db: Session, row: ConversationSession) -> None:
+    db.delete(row)
+
+
 def get_session(db: Session, session_id: str) -> ConversationSession | None:
     return db.get(ConversationSession, session_id)
 
