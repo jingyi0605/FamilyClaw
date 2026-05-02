@@ -1,13 +1,13 @@
 import { isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Taro from '@tarojs/taro';
 import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealtimeEvent } from '@familyclaw/user-platform/web';
-import { EmptyStateCard, PageHeader, userAppFoundationTokens } from '@familyclaw/user-ui';
-import { Bot, ChevronDown, Construction, Info, Menu, MessageSquarePlus } from 'lucide-react';
+import { EmptyStateCard, UiText, userAppComponentTokens } from '@familyclaw/user-ui';
+import { Bot, ChevronDown, Construction, Info, LoaderCircle, MessageSquarePlus, Wifi, WifiOff } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { assistantApi } from './assistant.api';
-import { getAgentStatusLabel, getAgentTypeEmoji, getAgentTypeLabel, isConversationAgent, pickDefaultConversationAgent } from './assistant.agents';
+import { getAgentStatusLabel, getAgentTypeEmoji, isConversationAgent, pickDefaultConversationAgent } from './assistant.agents';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import type {
   AgentSummary,
@@ -35,6 +35,9 @@ type ConversationRealtimeClient = ReturnType<typeof createConversationRealtimeCl
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 96;
 const STREAM_DONE_SYNC_DELAY_MS = 800;
+const REALTIME_RECONNECT_MAX_DELAY_MS = 15000;
+
+type RealtimeIndicatorState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
 function EmptyState({ icon, title, description, action, className = '' }: EmptyStateProps) {
   return <EmptyStateCard className={`empty-state ${className}`.trim()} icon={icon} title={title} description={description ?? ''} action={action} />;
@@ -504,22 +507,29 @@ function AssistantPageContent() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [isRealtimePopoverOpen, setIsRealtimePopoverOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [realtimeReady, setRealtimeReady] = useState(false);
+  const [realtimeState, setRealtimeState] = useState<RealtimeIndicatorState>('connecting');
+  const [realtimeReconnectNonce, setRealtimeReconnectNonce] = useState(0);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [actionBusyId, setActionBusyId] = useState('');
   const [expandedAutoMessageId, setExpandedAutoMessageId] = useState('');
   const [activeChatTab, setActiveChatTab] = useState<'personal' | 'public' | 'moments'>('personal');
   const realtimeClientRef = useRef<ConversationRealtimeClient | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const realtimeConnectionTokenRef = useRef(0);
   const pendingSyncTimerRef = useRef<number | null>(null);
   const latestConfigMutationRef = useRef('');
   const scrollFrameRef = useRef<number | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const sendingRef = useRef(false);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const realtimeSignalAnchorRef = useRef<HTMLDivElement | null>(null);
   const listBullet = '-';
   const conversationAgents = useMemo(() => agents.filter(isConversationAgent), [agents]);
   const defaultAgent = useMemo(() => pickDefaultConversationAgent(agents), [agents]);
@@ -528,6 +538,30 @@ function AssistantPageContent() {
     [agents, defaultAgent, selectedAgentId],
   );
   const canSwitchAgent = conversationAgents.length > 1;
+  const realtimeStatusLabel = useMemo(() => {
+    if (realtimeState === 'connected') return t('assistant.realtime.connected');
+    if (realtimeState === 'reconnecting') return t('assistant.realtime.reconnecting');
+    if (realtimeState === 'disconnected') return t('assistant.realtime.disconnected');
+    return t('assistant.realtime.connecting');
+  }, [realtimeState, t]);
+  const realtimeStatusClassName = useMemo(() => {
+    if (realtimeState === 'connected') return 'assistant-page-header__btn--signal-online';
+    if (realtimeState === 'reconnecting' || realtimeState === 'connecting') return 'assistant-page-header__btn--signal-pending';
+    return 'assistant-page-header__btn--signal-offline';
+  }, [realtimeState]);
+  const realtimeStatusIcon = useMemo(() => {
+    if (realtimeState === 'connected') return <Wifi size={18} />;
+    if (realtimeState === 'reconnecting' || realtimeState === 'connecting') return <LoaderCircle size={18} className="assistant-page-header__signal-spinner" />;
+    return <WifiOff size={18} />;
+  }, [realtimeState]);
+  const realtimeStatusDescription = useMemo(() => {
+    if (realtimeState === 'connected') return t('assistant.realtime.help.connected');
+    if (realtimeState === 'reconnecting') return t('assistant.realtime.help.reconnecting');
+    if (realtimeState === 'disconnected') return t('assistant.realtime.help.disconnected');
+    return t('assistant.realtime.help.connecting');
+  }, [realtimeState, t]);
+  const realtimeReconnectBusy = realtimeState === 'connecting' || realtimeState === 'reconnecting';
+  const realtimeReconnectAvailable = Boolean(currentHouseholdId && activeSessionId);
 
   useEffect(() => {
     if (!layoutMode.isTouchLayout) {
@@ -535,6 +569,34 @@ function AssistantPageContent() {
     }
     setContextPanelOpen(false);
   }, [layoutMode.isTouchLayout]);
+
+  useEffect(() => {
+    if (!layoutMode.isTouchLayout) {
+      return;
+    }
+    setIsRealtimePopoverOpen(false);
+  }, [layoutMode.isTouchLayout]);
+
+  useEffect(() => {
+    if (!isRealtimePopoverOpen) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (realtimeSignalAnchorRef.current?.contains(target)) {
+        return;
+      }
+      setIsRealtimePopoverOpen(false);
+    };
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [isRealtimePopoverOpen]);
+
   const recentFacts = useMemo(() => {
     const uniqueFacts: ConversationMessage['facts'] = [];
     const seen = new Set<string>();
@@ -744,15 +806,16 @@ function AssistantPageContent() {
     };
   }, [activeSessionId]);
 
-  function applyIncomingSessionDetail(detail: ConversationSessionDetail) {
+  function applyIncomingSessionDetail(detail: ConversationSessionDetail, expectedSessionId?: string) {
+    const targetSessionId = expectedSessionId ?? activeSessionId;
     setActiveSessionDetail(current => {
-      if (activeSessionId !== detail.id && current?.id !== detail.id) {
+      if (targetSessionId && targetSessionId !== detail.id && current?.id !== detail.id) {
         return current;
       }
       return mergeConversationSessionDetail(current, detail);
     });
     setSessions(current => upsertSession(current, detail));
-    if (detail.id === activeSessionId) {
+    if (detail.id === targetSessionId) {
       const latestMessage = [...detail.messages].reverse().find(item => item.role === 'assistant');
       setSuggestions(latestMessage?.suggestions ?? []);
     }
@@ -763,7 +826,7 @@ function AssistantPageContent() {
     if (!targetSessionId) return;
     try {
       const detail = await assistantApi.getConversationSession(targetSessionId);
-      applyIncomingSessionDetail(detail);
+      applyIncomingSessionDetail(detail, targetSessionId);
     } catch {
       return;
     }
@@ -773,6 +836,13 @@ function AssistantPageContent() {
     if (pendingSyncTimerRef.current !== null) {
       window.clearTimeout(pendingSyncTimerRef.current);
       pendingSyncTimerRef.current = null;
+    }
+  }
+
+  function resetRealtimeReconnectTimer() {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
     }
   }
 
@@ -789,112 +859,156 @@ function AssistantPageContent() {
 
   useEffect(() => {
     if (!currentHouseholdId || !activeSessionId) {
+      realtimeConnectionTokenRef.current += 1;
+      resetRealtimeReconnectTimer();
       realtimeClientRef.current?.close();
       realtimeClientRef.current = null;
       setRealtimeReady(false);
+      setRealtimeState('disconnected');
       return;
     }
 
-    realtimeClientRef.current?.close();
-    realtimeClientRef.current = createConversationRealtimeClient({
-      householdId: currentHouseholdId,
-      sessionId: activeSessionId,
-      onOpen: () => {
-        setRealtimeReady(true);
-        resetPendingSyncTimer();
-      },
-      onClose: () => {
-        setRealtimeReady(false);
-        if (sendingRef.current) {
+    let disposed = false;
+    reconnectAttemptRef.current = 0;
+    setRealtimeState('connecting');
+
+    const scheduleRealtimeReconnect = () => {
+      if (disposed || reconnectTimerRef.current !== null) return;
+      const delay = Math.min(1000 * 2 ** reconnectAttemptRef.current, REALTIME_RECONNECT_MAX_DELAY_MS);
+      setRealtimeState('reconnecting');
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        reconnectAttemptRef.current += 1;
+        connectRealtime();
+      }, delay);
+    };
+
+    const handleRealtimeDisconnected = (token: number) => {
+      if (disposed || token !== realtimeConnectionTokenRef.current) return;
+      setRealtimeReady(false);
+      if (sendingRef.current) {
+        void syncActiveSessionDetail(activeSessionId);
+        setSending(false);
+      }
+      scheduleRealtimeReconnect();
+    };
+
+    const connectRealtime = () => {
+      if (disposed) return;
+      const token = realtimeConnectionTokenRef.current + 1;
+      realtimeConnectionTokenRef.current = token;
+      realtimeClientRef.current?.close();
+      realtimeClientRef.current = null;
+      setRealtimeReady(false);
+      setRealtimeState(reconnectAttemptRef.current > 0 ? 'reconnecting' : 'connecting');
+      let disconnectHandled = false;
+
+      realtimeClientRef.current = createConversationRealtimeClient({
+        householdId: currentHouseholdId,
+        sessionId: activeSessionId,
+        onOpen: () => {
+          if (disposed || token !== realtimeConnectionTokenRef.current) return;
+          resetRealtimeReconnectTimer();
+          resetPendingSyncTimer();
+          reconnectAttemptRef.current = 0;
+          setRealtimeReady(true);
+          setRealtimeState('connected');
           void syncActiveSessionDetail(activeSessionId);
-          setSending(false);
-          setError(t('assistant.error.connectionClosed'));
-        }
-      },
-      onError: () => {
-        setRealtimeReady(false);
-        if (sendingRef.current) {
-          void syncActiveSessionDetail(activeSessionId);
-          setSending(false);
-        }
-        setError(t('assistant.error.connectionFailed'));
-      },
-      onEvent: event => {
-        if (event.type === 'session.snapshot') {
-          const nextSession = (event.payload as { snapshot: ConversationSessionDetail }).snapshot;
-          applyIncomingSessionDetail(nextSession);
-          if (nextSession.messages.some(message => message.status === 'completed' || message.status === 'failed')) {
+        },
+        onClose: () => {
+          if (disconnectHandled) return;
+          disconnectHandled = true;
+          handleRealtimeDisconnected(token);
+        },
+        onError: () => {
+          if (disconnectHandled) return;
+          disconnectHandled = true;
+          handleRealtimeDisconnected(token);
+        },
+        onEvent: event => {
+          if (disposed || token !== realtimeConnectionTokenRef.current) return;
+          if (event.type === 'session.snapshot') {
+            const nextSession = (event.payload as { snapshot: ConversationSessionDetail }).snapshot;
+            applyIncomingSessionDetail(nextSession);
+            if (nextSession.messages.some(message => message.status === 'completed' || message.status === 'failed')) {
+              resetPendingSyncTimer();
+            }
+            const mutationKey = getLatestConfigMutationKey(nextSession);
+            if (mutationKey && mutationKey !== latestConfigMutationRef.current) {
+              latestConfigMutationRef.current = mutationKey;
+              void refreshConversationAgents(nextSession.active_agent_id ?? undefined);
+            }
+            return;
+          }
+
+          if (event.type === 'agent.chunk') {
+            const chunkText = 'text' in event.payload ? event.payload.text : '';
+            setActiveSessionDetail(current => {
+              if (!current) return current;
+              const requestId = event.request_id ?? null;
+              return {
+                ...current,
+                messages: current.messages.map(message => (
+                  message.request_id === requestId && message.role === 'assistant'
+                    ? {
+                      ...message,
+                      status: 'streaming',
+                      content: message.content + chunkText,
+                      updated_at: new Date().toISOString(),
+                    }
+                    : message
+                )),
+              };
+            });
+            return;
+          }
+
+          if (event.type === 'agent.done') {
             resetPendingSyncTimer();
+            setActiveSessionDetail(current => {
+              if (!current) return current;
+              const requestId = event.request_id ?? null;
+              return {
+                ...current,
+                messages: current.messages.map(message => (
+                  message.request_id === requestId && message.role === 'assistant'
+                    ? {
+                      ...message,
+                      status: message.status === 'failed' ? 'failed' : 'completed',
+                      updated_at: new Date().toISOString(),
+                    }
+                    : message
+                )),
+              };
+            });
+            schedulePendingSync(activeSessionId, STREAM_DONE_SYNC_DELAY_MS);
+            setSending(false);
+            return;
           }
-          const mutationKey = getLatestConfigMutationKey(nextSession);
-          if (mutationKey && mutationKey !== latestConfigMutationRef.current) {
-            latestConfigMutationRef.current = mutationKey;
-            void refreshConversationAgents(nextSession.active_agent_id ?? undefined);
+
+          if (event.type === 'agent.error') {
+            resetPendingSyncTimer();
+            const payload = event.payload as { detail: string };
+            setError(payload.detail);
+            setSending(false);
           }
-          return;
-        }
+        },
+      });
+    };
 
-        if (event.type === 'agent.chunk') {
-          const chunkText = 'text' in event.payload ? event.payload.text : '';
-          setActiveSessionDetail(current => {
-            if (!current) return current;
-            const requestId = event.request_id ?? null;
-            return {
-              ...current,
-              messages: current.messages.map(message => (
-                message.request_id === requestId && message.role === 'assistant'
-                  ? {
-                    ...message,
-                    status: 'streaming',
-                    content: message.content + chunkText,
-                    updated_at: new Date().toISOString(),
-                  }
-                  : message
-              )),
-            };
-          });
-          return;
-        }
-
-        if (event.type === 'agent.done') {
-          resetPendingSyncTimer();
-          setActiveSessionDetail(current => {
-            if (!current) return current;
-            const requestId = event.request_id ?? null;
-            return {
-              ...current,
-              messages: current.messages.map(message => (
-                message.request_id === requestId && message.role === 'assistant'
-                  ? {
-                    ...message,
-                    status: message.status === 'failed' ? 'failed' : 'completed',
-                    updated_at: new Date().toISOString(),
-                  }
-                  : message
-              )),
-            };
-          });
-          schedulePendingSync(activeSessionId, STREAM_DONE_SYNC_DELAY_MS);
-          setSending(false);
-          return;
-        }
-
-        if (event.type === 'agent.error') {
-          resetPendingSyncTimer();
-          const payload = event.payload as { detail: string };
-          setError(payload.detail);
-          setSending(false);
-        }
-      },
-    });
+    connectRealtime();
 
     return () => {
+      disposed = true;
+      realtimeConnectionTokenRef.current += 1;
+      resetRealtimeReconnectTimer();
       resetPendingSyncTimer();
       realtimeClientRef.current?.close();
       realtimeClientRef.current = null;
       setRealtimeReady(false);
+      setRealtimeState('disconnected');
     };
-  }, [activeSessionId, currentHouseholdId]);
+  }, [activeSessionId, currentHouseholdId, realtimeReconnectNonce]);
 
   useEffect(() => {
     const nextSessionAgent = agents.find(agent => agent.id === activeSessionDetail?.active_agent_id);
@@ -928,6 +1042,43 @@ function AssistantPageContent() {
     if (preferredSessionId) {
       setActiveSessionId(preferredSessionId);
     }
+  }
+
+  function handleSessionSelect(session: ConversationSession) {
+    if (!session.id || session.id === activeSessionId) {
+      setIsSidebarOpen(false);
+      return;
+    }
+    shouldStickToBottomRef.current = true;
+    setError('');
+    setStatus('');
+    setSuggestions([]);
+    setActiveSessionId(session.id);
+    setActiveSessionDetail(null);
+    setIsSidebarOpen(false);
+    void syncActiveSessionDetail(session.id);
+  }
+
+  function handleRealtimeIndicatorClick() {
+    setIsSidebarOpen(false);
+    setIsRealtimePopoverOpen(current => !current);
+  }
+
+  function handleManualRealtimeReconnect() {
+    if (!currentHouseholdId || !activeSessionId || realtimeReconnectBusy) {
+      return;
+    }
+    setError('');
+    setStatus('');
+    setIsRealtimePopoverOpen(true);
+    resetRealtimeReconnectTimer();
+    reconnectAttemptRef.current = 0;
+    realtimeConnectionTokenRef.current += 1;
+    realtimeClientRef.current?.close();
+    realtimeClientRef.current = null;
+    setRealtimeReady(false);
+    setRealtimeState('connecting');
+    setRealtimeReconnectNonce(current => current + 1);
   }
 
   async function ensureSession() {
@@ -1291,6 +1442,78 @@ function AssistantPageContent() {
     return renderMarkdown(message.content || (message.status === 'pending' ? t('assistant.message.preparingReply') : ''));
   }
 
+  function renderSessionHistoryPopover(extraClassName = '') {
+    return (
+      <div className={`assistant-popover ${extraClassName}`.trim()} onClick={event => event.stopPropagation()}>
+        <div className="assistant-popover__header">
+          <span>{t('nav.assistant')}</span>
+          <button className="btn btn--icon btn--ghost p-xs" onClick={() => void handleNewChat()} title={t('assistant.newChat')}>
+            <MessageSquarePlus size={16} />
+          </button>
+        </div>
+        <div className="assistant-popover__content">
+          {loading ? (
+            <div className="context-memory-item">
+              <span>!</span> {t('assistant.error.loadConversations')}
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="context-memory-item">
+              <span>[ ]</span> {t('assistant.noSessions')}
+            </div>
+          ) : (
+            sessions.map(session => (
+              <button
+                key={session.id}
+                type="button"
+                className={`session-item session-item--compact ${activeSessionId === session.id ? 'session-item--active' : ''}`.trim()}
+                onClick={event => {
+                  event.stopPropagation();
+                  handleSessionSelect(session);
+                }}
+              >
+                <div className="session-item__content">
+                  <span className="session-item__title">{session.title}</span>
+                  <span className="session-item__preview">{session.latest_message_preview ?? t('assistant.welcomeHint')}</span>
+                </div>
+                <span className="session-item__time">{formatRelativeTime(session.last_message_at, locale)}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function renderRealtimeStatusPopover(extraClassName = '') {
+    return (
+      <div className={`assistant-popover assistant-popover--signal ${extraClassName}`.trim()} onClick={event => event.stopPropagation()}>
+        <div className="assistant-popover__header">
+          <span>{t('assistant.realtime.title')}</span>
+        </div>
+        <div className="assistant-popover__content assistant-realtime-popover">
+          <div className={`assistant-realtime-popover__status ${realtimeStatusClassName}`.trim()}>
+            {realtimeStatusIcon}
+            <span>{realtimeStatusLabel}</span>
+          </div>
+          <div className="assistant-realtime-popover__description">{realtimeStatusDescription}</div>
+          <div className="assistant-realtime-popover__hint">
+            {realtimeReconnectAvailable
+              ? t('assistant.realtime.autoReconnectHint')
+              : t('assistant.realtime.manualReconnectUnavailable')}
+          </div>
+          <button
+            type="button"
+            className="btn btn--primary assistant-realtime-popover__reconnect-btn"
+            onClick={() => handleManualRealtimeReconnect()}
+            disabled={!realtimeReconnectAvailable || realtimeReconnectBusy}
+          >
+            {realtimeReconnectBusy ? t('assistant.realtime.manualReconnectBusy') : t('assistant.realtime.manualReconnect')}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentHouseholdId && !loading) {
     return (
       <div className="page page--assistant">
@@ -1318,7 +1541,6 @@ function AssistantPageContent() {
 
   const chatTabs = [
     { key: 'personal' as const, labelKey: 'assistant.tab.personal', available: true },
-    { key: 'public' as const, labelKey: 'assistant.tab.public', available: false },
     { key: 'moments' as const, labelKey: 'assistant.tab.moments', available: false },
   ];
 
@@ -1341,12 +1563,19 @@ function AssistantPageContent() {
       data-layout-touch={layoutMode.isTouchLayout ? 'true' : 'false'}
       data-layout-panel={layoutMode.panelBehavior}
     >
-      <PageHeader
-        title={t('nav.assistant')}
-        align="end"
-        actionsClassName="page-header__actions--tabs"
-        actions={(
-          <div className="memory-main-tabs" role="tablist" aria-label={t('nav.assistant')}>
+      {!layoutMode.isTouchLayout && isSidebarOpen ? <div className="assistant-popover-overlay" onClick={() => setIsSidebarOpen(false)} /> : null}
+
+      <div className="assistant-desktop-header">
+        <UiText
+          className="assistant-desktop-header__page-title page-header__title"
+          variant="title"
+          style={{ fontSize: userAppComponentTokens.pageHeader.titleFontSize }}
+        >
+          {t('nav.assistant')}
+        </UiText>
+
+        <div className="assistant-desktop-header__body">
+          <div className="memory-main-tabs assistant-desktop-header__tabs" role="tablist" aria-label={t('nav.assistant')}>
             {chatTabs.map(tab => (
               <button
                 key={tab.key}
@@ -1358,8 +1587,54 @@ function AssistantPageContent() {
               </button>
             ))}
           </div>
-        )}
-      />
+
+          <div className="assistant-page-header__session-anchor">
+            <button
+              type="button"
+              className="memory-main-tab assistant-page-header__session-title"
+              onClick={() => setIsSidebarOpen(prev => !prev)}
+              title={t('assistant.sessionList')}
+            >
+              <span className="assistant-page-header__title-text">{activeSessionDetail?.title || t('assistant.newChat')}</span>
+              <ChevronDown size={16} className={`assistant-page-header__chevron ${isSidebarOpen ? 'assistant-page-header__chevron--open' : ''}`} />
+            </button>
+
+            {!layoutMode.isTouchLayout && isSidebarOpen ? renderSessionHistoryPopover('assistant-popover--desktop') : null}
+          </div>
+
+          <div className="assistant-page-header__actions">
+            <div className="assistant-page-header__signal-anchor" ref={realtimeSignalAnchorRef}>
+              <button
+                className={`memory-main-tab assistant-page-header__btn assistant-page-header__btn--signal ${realtimeStatusClassName}`.trim()}
+                type="button"
+                title={realtimeStatusLabel}
+                aria-label={realtimeStatusLabel}
+                onClick={handleRealtimeIndicatorClick}
+                aria-expanded={isRealtimePopoverOpen ? 'true' : 'false'}
+              >
+                {realtimeStatusIcon}
+              </button>
+              {isRealtimePopoverOpen ? renderRealtimeStatusPopover() : null}
+            </div>
+            <button
+              className="memory-main-tab assistant-page-header__btn"
+              onClick={() => void handleNewChat()}
+              title={t('assistant.newChat')}
+              aria-label={t('assistant.newChat')}
+            >
+              <MessageSquarePlus size={18} />
+            </button>
+            <button
+              className="memory-main-tab assistant-page-header__btn"
+              onClick={() => setContextPanelOpen(true)}
+              title={t('assistant.panel.details')}
+              aria-label={t('assistant.panel.details')}
+            >
+              <Info size={18} />
+            </button>
+          </div>
+        </div>
+      </div>
 
       {activeChatTab !== 'personal' ? renderComingSoonTab() : (
         <>
@@ -1446,48 +1721,6 @@ function AssistantPageContent() {
       </div>
 
       <div className="assistant-main">
-        {/* PC 绔悎骞跺悗鐨勬爣棰樻爮锛氬乏杈规槸鍔╂墜淇℃伅锛屼腑闂存槸浼氳瘽鏍囬锛屽彸杈规槸鎿嶄綔鎸夐挳銆?*/}
-        <div className="assistant-toolbar">
-          <div className="assistant-toolbar__agent">
-            <button
-              type="button"
-              className={`assistant-toolbar__avatar ${canSwitchAgent ? 'assistant-toolbar__avatar--switchable' : ''}`.trim()}
-              onClick={handleAgentAvatarClick}
-              disabled={!canSwitchAgent}
-              title={canSwitchAgent
-                ? t('assistant.agent.switchTitle')
-                : (selectedAgent?.display_name ?? t('assistant.agent.currentTitle'))}
-            >
-              {selectedAgent ? getAgentTypeEmoji(selectedAgent.agent_type) : <Bot size={18} />}
-            </button>
-            <div className="assistant-toolbar__agent-info">
-              <span className="assistant-toolbar__agent-name">{selectedAgent?.display_name ?? t('assistant.agent.defaultName')}</span>
-              {selectedAgent ? <span className="ai-pill ai-pill--outline">{getAgentTypeLabel(selectedAgent.agent_type, locale)}</span> : null}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="assistant-toolbar__session-title"
-            onClick={() => setIsSidebarOpen(prev => !prev)}
-            title={t('assistant.sessionList')}
-          >
-            <span className="assistant-toolbar__title-text">{activeSessionDetail?.title || t('nav.assistant')}</span>
-            <ChevronDown size={16} className={`assistant-toolbar__chevron ${isSidebarOpen ? 'assistant-toolbar__chevron--open' : ''}`} />
-          </button>
-
-          <div className="assistant-toolbar__actions">
-            <button className="assistant-toolbar__btn" onClick={() => void handleNewChat()} title={t('assistant.newChat')}>
-              <MessageSquarePlus size={18} />
-              <span>{t('assistant.newChat')}</span>
-            </button>
-            <button className="assistant-toolbar__btn" onClick={() => setContextPanelOpen(true)} title={t('assistant.panel.details')}>
-              <Info size={18} />
-              <span>{t('assistant.panel.details')}</span>
-            </button>
-          </div>
-        </div>
-
         {/* 绉诲姩绔悎骞跺悗鐨勬爣棰樻爮銆?*/}
         <div className="assistant-mobile-header">
           <div className="assistant-mobile-header__agent">
@@ -1521,45 +1754,10 @@ function AssistantPageContent() {
           </div>
         </div>
 
-        {isSidebarOpen ? (
+        {layoutMode.isTouchLayout && isSidebarOpen ? (
           <>
             <div className="assistant-popover-overlay" onClick={() => setIsSidebarOpen(false)} />
-            <div className="assistant-popover">
-              <div className="assistant-popover__header">
-                <span>{t('nav.assistant')}</span>
-                <button className="btn btn--icon btn--ghost p-xs" onClick={() => void handleNewChat()} title={t('assistant.newChat')}>
-                  <MessageSquarePlus size={16} />
-                </button>
-              </div>
-              <div className="assistant-popover__content">
-                {loading ? (
-                  <div className="context-memory-item">
-                    <span>!</span> {t('assistant.error.loadConversations')}
-                  </div>
-                ) : sessions.length === 0 ? (
-                  <div className="context-memory-item">
-                    <span>[ ]</span> {t('assistant.noSessions')}
-                  </div>
-                ) : (
-                  sessions.map(session => (
-                    <div
-                      key={session.id}
-                      className={`session-item session-item--compact ${activeSessionId === session.id ? 'session-item--active' : ''}`.trim()}
-                      onClick={() => {
-                        setActiveSessionId(session.id);
-                        setIsSidebarOpen(false);
-                      }}
-                    >
-                      <div className="session-item__content">
-                        <span className="session-item__title">{session.title}</span>
-                        <span className="session-item__preview">{session.latest_message_preview ?? t('assistant.welcomeHint')}</span>
-                      </div>
-                      <span className="session-item__time">{formatRelativeTime(session.last_message_at, locale)}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+            {renderSessionHistoryPopover()}
           </>
         ) : null}
 
@@ -1611,11 +1809,14 @@ function AssistantPageContent() {
                   </div>
                 ))
               ) : (
-                <EmptyState
-            icon="CHAT"
-                  title={t('assistant.welcome')}
-                  description={t('assistant.welcomeHint')}
-                />
+                <div className="assistant-main__empty">
+                  <EmptyState
+                    icon="CHAT"
+                    title={t('assistant.welcome')}
+                    description={t('assistant.welcomeHint')}
+                    className="assistant-main__empty-card"
+                  />
+                </div>
               )}
             </div>
 
@@ -1649,11 +1850,6 @@ function AssistantPageContent() {
               </form>
             </div>
 
-            {error || status ? (
-              <div className="text-text-secondary" style={{ marginTop: userAppFoundationTokens.spacing.sm }}>
-                {error || status}
-              </div>
-            ) : null}
           </>
         ) : (
           <EmptyState

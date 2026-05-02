@@ -125,7 +125,6 @@ const SHELL_MESSAGES = {
     'dashboard.tab.add': '添加标签页',
     // 聊天页面标签页
     'assistant.tab.personal': '个人聊天',
-    'assistant.tab.public': '公共聊天',
     'assistant.tab.moments': '家人圈',
     'assistant.tab.comingSoonTitle': '功能开发中',
     'assistant.tab.comingSoonDesc': '该功能正在紧张开发中，敬请期待！',
@@ -300,7 +299,6 @@ const SHELL_MESSAGES = {
     'dashboard.tab.add': 'Add Tab',
     // Assistant tabs
     'assistant.tab.personal': 'Personal Chat',
-    'assistant.tab.public': 'Public Chat',
     'assistant.tab.moments': 'Moments',
     'assistant.tab.comingSoonTitle': 'Coming Soon',
     'assistant.tab.comingSoonDesc': 'This feature is under development. Stay tuned!',
