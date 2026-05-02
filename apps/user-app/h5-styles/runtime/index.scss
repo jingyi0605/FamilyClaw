@@ -4133,6 +4133,64 @@ input, select, textarea {
   white-space: nowrap;
 }
 
+.page--settings .page-header--settings {
+  flex-wrap: nowrap !important;
+  align-items: flex-end !important;
+  gap: clamp(0.5rem, 0.9vw, 1rem) !important;
+}
+
+.page--settings .page-header--settings .page-header__content {
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+
+.page--settings .page-header--settings .page-header__title {
+  display: block;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.page--settings .settings-nav-tabs {
+  gap: clamp(0.05rem, 0.2vw, 0.18rem);
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+
+.page--settings .settings-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.2rem, 0.3vw, 0.28rem);
+  flex: 0 0 auto;
+  min-width: max-content;
+  padding: calc(var(--spacing-sm) - 2px) clamp(0.42rem, 0.55vw, 0.62rem);
+  white-space: nowrap;
+  line-height: 1.1;
+  flex-wrap: nowrap;
+}
+
+.page--settings .settings-nav-tab .settings-tab__icon {
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.page--settings .settings-nav-tab .settings-tab__label {
+  display: block;
+  flex: 0 0 auto;
+  line-height: 1;
+  word-break: keep-all;
+}
+
+.page--settings .page-header--settings .page-header__actions--tabs {
+  flex: 1 1 auto;
+  align-self: flex-end;
+  min-width: 0;
+}
+
+.page--settings .page-header--settings .settings-nav-tabs {
+  margin-left: 0;
+}
+
 .settings-nav {
   display: flex;
   flex-direction: column;

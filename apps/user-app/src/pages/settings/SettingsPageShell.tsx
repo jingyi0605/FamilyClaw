@@ -18,9 +18,15 @@ export function SettingsPageShell(props: {
       data-layout-nav={layoutMode.navVariant}
     >
       <PageHeader
+        className="page-header page-header--settings"
         title={t('settings.title')}
         align="end"
         actionsClassName="page-header__actions--tabs"
+        style={layoutMode.isTouchLayout ? undefined : {
+          flexWrap: 'nowrap',
+          alignItems: 'flex-end',
+          gap: 'clamp(0.75rem, 1.2vw, 1.5rem)',
+        }}
         actions={<SettingsNav activeKey={props.activeKey} />}
       />
       <div className="settings-content">{props.children}</div>

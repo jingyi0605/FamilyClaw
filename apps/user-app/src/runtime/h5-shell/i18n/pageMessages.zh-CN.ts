@@ -1931,7 +1931,7 @@
   'settings.integrations.deviceDetail.loadingDetail': '正在加载设备详情标签页...',
   'settings.integrations.deviceDetail.emptyTabTitle': '这个标签页暂时不可用',
   'settings.integrations.deviceDetail.emptyTabDesc': '先检查设备能力和插件声明是否完整，再回来查看这里。',
-  'settings.nav.versionManagement.label': '版本与更新',
+  'settings.nav.versionManagement.label': '更新',
   'settings.nav.versionManagement.desc': '查看版本和更新内容。',
   'settings.versionManagement.title': '版本与更新',
   'settings.versionManagement.loadFailed': '暂时无法检查更新',
@@ -1972,7 +1972,7 @@
   'settings.appearance.desc': '选择一个最适合你的视觉风格',
 
   // ── 账号管理 ──
-  'settings.nav.accounts.label': '账号管理',
+  'settings.nav.accounts.label': '用户',
   'settings.nav.accounts.desc': '管理家庭账号与登录凭证',
   'settings.accounts.title': '账号管理',
   'settings.accounts.adminOnly': '仅管理员可以管理账号',

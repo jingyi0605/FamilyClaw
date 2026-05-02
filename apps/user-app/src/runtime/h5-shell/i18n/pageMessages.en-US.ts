@@ -1965,7 +1965,7 @@
   'settings.appearance.desc': 'Pick the visual style that suits you best',
 
   // ── Account Management ──
-  'settings.nav.accounts.label': 'Account Management',
+  'settings.nav.accounts.label': 'Users',
   'settings.nav.accounts.desc': 'Manage family accounts and credentials',
   'settings.accounts.title': 'Account Management',
   'settings.accounts.adminOnly': 'Only administrators can manage accounts',

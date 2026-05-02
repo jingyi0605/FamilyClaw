@@ -2,7 +2,6 @@ import {
   Bell,
   Bot,
   Globe,
-  HeartHandshake,
   KeyRound,
   Link as LinkIcon,
   MessageCircle,
@@ -22,7 +21,6 @@ type SettingsNavKey =
   | 'accounts'
   | 'language'
   | 'notifications'
-  | 'accessibility'
   | 'version-management'
   | 'integrations'
   | 'channel-access'
@@ -58,13 +56,6 @@ const settingsItems: SettingsNavItem[] = [
     descKey: 'settings.nav.notifications.desc',
     url: '/pages/settings/index?section=notifications',
     icon: <Bell size={20} />,
-  },
-  {
-    key: 'accessibility',
-    labelKey: 'settings.nav.accessibility.label',
-    descKey: 'settings.nav.accessibility.desc',
-    url: '/pages/settings/index?section=accessibility',
-    icon: <HeartHandshake size={20} />,
   },
   {
     key: 'ai',
@@ -145,14 +136,14 @@ export function SettingsNav(props: { activeKey: SettingsNavKey }) {
   }, [isAdmin]);
 
   return (
-    <nav className="memory-main-tabs" role="tablist" aria-label={t('settings.title')}>
+    <nav className="memory-main-tabs settings-nav-tabs" role="tablist" aria-label={t('settings.title')}>
       {visibleItems.map((item) => {
         const isActive = props.activeKey === item.key;
         return (
           <button
             key={item.key}
             type="button"
-            className={`memory-main-tab ${isActive ? 'memory-main-tab--active' : ''}`}
+            className={`memory-main-tab settings-nav-tab ${isActive ? 'memory-main-tab--active' : ''}`}
             onClick={() => void openPage(item.url)}
           >
             <span className="settings-tab__icon">{item.icon}</span>
