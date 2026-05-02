@@ -708,6 +708,37 @@ class ConversationFoundationTests(unittest.TestCase):
         self.assertEqual("error", result.session.messages[1].message_type)
         self.assertEqual("provider failed", result.session.messages[1].content)
 
+    @patch("app.modules.conversation.service._run_orchestrated_turn")
+    def test_create_conversation_turn_surfaces_provider_auth_failure(self, run_orchestrated_turn_mock) -> None:
+        from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
+
+        run_orchestrated_turn_mock.side_effect = ProviderRuntimeError(
+            "auth_failed",
+            '{"error":{"message":"Authentication Fails, Your api key is invalid"}}',
+        )
+        session = create_conversation_session(
+            self.db,
+            payload=ConversationSessionCreate(
+                household_id=self.household.id,
+                active_agent_id=self.agent.id,
+            ),
+            actor=self.actor,
+        )
+
+        result = create_conversation_turn(
+            self.db,
+            session_id=session.id,
+            payload=ConversationTurnCreate(message="你知道我喜欢吃什么吗"),
+            actor=self.actor,
+        )
+        self.db.commit()
+
+        self.assertEqual("failed", result.outcome)
+        self.assertEqual("AI 服务认证失败，请检查 API Key 是否正确。", result.error_message)
+        self.assertEqual("failed", result.session.messages[1].status)
+        self.assertEqual("auth_failed", result.session.messages[1].error_code)
+        self.assertEqual("AI 服务认证失败，请检查 API Key 是否正确。", result.session.messages[1].content)
+
     @patch("app.modules.conversation.service._generate_memory_candidates_for_turn")
     @patch("app.modules.conversation.service.run_orchestrated_turn")
     def test_create_conversation_turn_passes_previous_history_into_query_context(self, run_orchestrated_turn_mock, generate_memory_candidates_mock) -> None:
@@ -2778,4 +2809,3 @@ class ConversationFoundationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

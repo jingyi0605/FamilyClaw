@@ -409,6 +409,37 @@ class RealtimeWsTests(unittest.TestCase):
         self.assertEqual("failed", final_snapshot["messages"][1]["status"])
         self.assertIn("很久很久以前", final_snapshot["messages"][1]["content"])
 
+    def test_conversation_stream_auth_failure_surfaces_provider_error(self) -> None:
+        websocket = _FakeWebSocket(
+            household_id=self.household_id,
+            session_id=self.conversation_session_id,
+            cookie=self.cookie_header,
+            inbound_messages=[{"type": "user.message", "session_id": self.conversation_session_id, "request_id": "conversation-request-auth-failed", "payload": {"text": "你知道我喜欢吃什么吗"}}],
+        )
+
+        from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
+        from app.modules.conversation import service as conversation_service_module
+
+        async def _fake_stream_orchestrated_turn(_db, **kwargs):
+            _ = kwargs
+            raise ProviderRuntimeError(
+                "auth_failed",
+                '{"error":{"message":"Authentication Fails, Your api key is invalid"}}',
+            )
+            yield
+
+        with patch.object(conversation_service_module, "stream_orchestrated_turn", side_effect=_fake_stream_orchestrated_turn):
+            asyncio.run(self._realtime_endpoint_module.realtime_conversation_websocket(cast(Any, websocket)))
+
+        agent_error_event = next(item for item in websocket.sent_messages if item["type"] == "agent.error")
+        self.assertEqual("auth_failed", agent_error_event["payload"]["error_code"])
+        self.assertEqual("AI 服务认证失败，请检查 API Key 是否正确。", agent_error_event["payload"]["detail"])
+
+        final_snapshot = websocket.sent_messages[-1]["payload"]["snapshot"]
+        self.assertEqual("failed", final_snapshot["messages"][1]["status"])
+        self.assertEqual("auth_failed", final_snapshot["messages"][1]["error_code"])
+        self.assertEqual("AI 服务认证失败，请检查 API Key 是否正确。", final_snapshot["messages"][1]["content"])
+
     def test_conversation_postprocess_failure_does_not_mark_reply_failed(self) -> None:
         websocket = _FakeWebSocket(
             household_id=self.household_id,

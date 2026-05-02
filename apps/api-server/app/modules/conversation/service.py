@@ -15,6 +15,7 @@ from app.modules.agent.schemas import AgentAutonomousActionPolicy, AgentSoulProf
 from app.modules.agent.service import AgentNotFoundError, resolve_effective_agent, update_agent, upsert_agent_soul
 from app.modules.account.service import AuthenticatedActor
 from app.modules.audit.service import write_audit_log
+from app.modules.ai_gateway.provider_runtime import ProviderRuntimeError
 from app.modules.conversation import repository
 from app.modules.conversation.device_context_summary import (
     ConversationDeviceContextSummary,
@@ -3727,6 +3728,19 @@ def _render_turn_error(exc: Exception) -> str:
     if isinstance(exc, HTTPException):
         detail = exc.detail
         return str(detail) if detail else "当前消息处理失败，请稍后重试。"
+    if isinstance(exc, ProviderRuntimeError):
+        message = str(exc).strip()
+        lowered = message.lower()
+        if exc.error_code == "auth_failed" or "invalid token" in lowered or "unauthorized" in lowered:
+            return "AI 服务认证失败，请检查 API Key 是否正确。"
+        if exc.error_code == "timeout":
+            return "AI 服务响应超时，请稍后重试。"
+        if exc.error_code == "rate_limited":
+            return "AI 服务请求过于频繁，请稍后再试。"
+        if exc.error_code == "stream_not_supported":
+            return "当前 AI 服务不支持流式对话，请更换模型或供应商。"
+        if message:
+            return message
     return "当前消息处理失败，请稍后重试。"
 
 
@@ -3739,6 +3753,8 @@ def _resolve_turn_error_code(exc: Exception) -> str:
         if exc.status_code == status.HTTP_404_NOT_FOUND:
             return "session_not_found"
         return "turn_http_error"
+    if isinstance(exc, ProviderRuntimeError):
+        return exc.error_code
     return "turn_failed"
 
 
@@ -4185,7 +4201,7 @@ async def arun_conversation_realtime_turn(
             )
     except Exception as exc:
         logger.exception(
-            "瀹炴椂浼氳瘽澶勭悊澶辫触 session_id=%s request_id=%s household_id=%s requester_member_id=%s error_code=%s partial_chunks=%s",
+            "实时会话处理失败 session_id=%s request_id=%s household_id=%s requester_member_id=%s error_code=%s partial_chunks=%s",
             turn_setup.session_id,
             request_id,
             turn_setup.household_id,
