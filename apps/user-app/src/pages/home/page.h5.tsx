@@ -1191,29 +1191,34 @@ export default function HomePage() {
       data-layout-touch={layoutMode.isTouchLayout ? 'true' : 'false'}
       data-layout-columns={String(layoutMode.columns)}
     >
-      <PageHeader title={t('dashboard.title')} />
-
-      <div className="memory-main-tabs">
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`memory-main-tab ${activeTab === tab.id ? 'memory-main-tab--active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-        {desktopEditMode && (
-          <button
-            type="button"
-            className="memory-main-tab memory-main-tab--add"
-            title={t('dashboard.tab.add')}
-          >
-            <Plus size={16} />
-          </button>
+      <PageHeader
+        title={t('dashboard.title')}
+        align="end"
+        actionsClassName="page-header__actions--tabs"
+        actions={(
+          <div className="memory-main-tabs" role="tablist" aria-label={t('dashboard.title')}>
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`memory-main-tab ${activeTab === tab.id ? 'memory-main-tab--active' : ''}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+            {desktopEditMode && (
+              <button
+                type="button"
+                className="memory-main-tab memory-main-tab--add"
+                title={t('dashboard.tab.add')}
+              >
+                <Plus size={16} />
+              </button>
+            )}
+          </div>
         )}
-      </div>
+      />
 
       <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.homeOverview}>
         <div className="dashboard-header-bar">

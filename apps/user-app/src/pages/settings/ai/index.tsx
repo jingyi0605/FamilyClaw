@@ -76,7 +76,32 @@ function SettingsAiContent() {
   return (
     <SettingsPageShell activeKey="ai">
       <div className="settings-page settings-page--ai">
-        <PageSection title={t('settings.ai.title')} contentStyle={{ marginTop: 0 }}>
+        <PageSection
+          title={t('settings.ai.title')}
+          contentStyle={{ marginTop: 0 }}
+          actions={(
+            <div className="memory-main-tabs settings-ai-tabs" role="tablist" aria-label={t('settings.ai.tabs')}>
+              <button
+                className={`memory-main-tab ${activeTab === 'provider' ? 'memory-main-tab--active' : ''}`}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'provider'}
+                onClick={() => handleTabChange('provider')}
+              >
+                {t('settings.ai.tab.provider')}
+              </button>
+              <button
+                className={`memory-main-tab ${activeTab === 'agent' ? 'memory-main-tab--active' : ''}`}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'agent'}
+                onClick={() => handleTabChange('agent')}
+              >
+                {t('settings.ai.tab.agent')}
+              </button>
+            </div>
+          )}
+        >
           {setupHints.length > 0 ? (
             <UiCard className="setup-resume-card">
               <div className="setup-resume-card__header">
@@ -93,27 +118,6 @@ function SettingsAiContent() {
               </div>
             </UiCard>
           ) : null}
-
-          <div className="memory-main-tabs settings-ai-tabs" role="tablist" aria-label={t('settings.ai.tabs')}>
-            <button
-              className={`memory-main-tab ${activeTab === 'provider' ? 'memory-main-tab--active' : ''}`}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'provider'}
-              onClick={() => handleTabChange('provider')}
-            >
-              {t('settings.ai.tab.provider')}
-            </button>
-            <button
-              className={`memory-main-tab ${activeTab === 'agent' ? 'memory-main-tab--active' : ''}`}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'agent'}
-              onClick={() => handleTabChange('agent')}
-            >
-              {t('settings.ai.tab.agent')}
-            </button>
-          </div>
 
           <div className="settings-ai-tab-panel">
             {activeTab === 'provider' ? (

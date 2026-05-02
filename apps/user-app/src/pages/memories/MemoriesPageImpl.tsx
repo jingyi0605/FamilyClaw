@@ -545,24 +545,27 @@ export function MemoriesPageImpl() {
       <PageHeader
         title={t('nav.memories')}
         description={error ? getPageMessage(locale, 'memory.partialLoadFailed') : actionStatus || undefined}
+        align="end"
+        actionsClassName="page-header__actions--tabs"
+        actions={(
+          <div className="memory-main-tabs" role="tablist" aria-label={t('nav.memories')}>
+            <button
+              className={`memory-main-tab ${mainTab === 'memories' ? 'memory-main-tab--active' : ''}`}
+              type="button"
+              onClick={() => setMainTab('memories')}
+            >
+              {t('memory.all')}
+            </button>
+            <button
+              className={`memory-main-tab ${mainTab === 'scheduledTasks' ? 'memory-main-tab--active' : ''}`}
+              type="button"
+              onClick={() => setMainTab('scheduledTasks')}
+            >
+              {t('scheduledTasks.tab')}
+            </button>
+          </div>
+        )}
       />
-
-      <div className="memory-main-tabs">
-        <button
-          className={`memory-main-tab ${mainTab === 'memories' ? 'memory-main-tab--active' : ''}`}
-          type="button"
-          onClick={() => setMainTab('memories')}
-        >
-          {t('memory.all')}
-        </button>
-        <button
-          className={`memory-main-tab ${mainTab === 'scheduledTasks' ? 'memory-main-tab--active' : ''}`}
-          type="button"
-          onClick={() => setMainTab('scheduledTasks')}
-        >
-          {t('scheduledTasks.tab')}
-        </button>
-      </div>
 
       {mainTab === 'scheduledTasks' ? (
         <ScheduledTasksTab />

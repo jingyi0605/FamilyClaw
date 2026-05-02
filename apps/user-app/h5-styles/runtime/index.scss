@@ -876,11 +876,49 @@ input, select, textarea {
   margin-bottom: var(--spacing-xl);
 }
 
+.page-header__content {
+  min-width: 0;
+}
+
+.page-header__actions {
+  min-width: 0;
+}
+
+.page-header__actions--tabs {
+  flex: 0 1 auto;
+  justify-content: flex-start;
+  max-width: 100%;
+  margin-left: 0;
+}
+
+.page-header__actions--tabs .memory-main-tabs {
+  margin-bottom: 0;
+  width: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.page-header__actions--tabs .memory-main-tabs::-webkit-scrollbar {
+  display: none;
+}
+
 @media (max-width: 768px) {
   .page-header {
     flex-direction: column;
     gap: var(--spacing-sm);
     margin-bottom: var(--spacing-md);
+  }
+  .page-header__actions,
+  .page-header__actions--tabs {
+    width: 100%;
+  }
+  .page-header__actions--tabs {
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+  .page-header__actions--tabs .memory-main-tabs {
+    width: auto;
   }
   .page-header__title {
     font-size: var(--font-size-xl);
@@ -1653,33 +1691,6 @@ input, select, textarea {
   --section-gap: var(--spacing-md);
 }
 
-.family-tabs {
-  display: flex;
-  gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-xl);
-  border-bottom: 1px solid var(--divider);
-  padding-bottom: 1px;
-}
-
-.family-tab {
-  padding: var(--spacing-sm) var(--spacing-lg);
-  font-size: var(--font-size-md);
-  font-weight: 500;
-  color: var(--text-secondary);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition: all var(--transition);
-}
-
-.family-tab:hover {
-  color: var(--text-primary);
-}
-
-.family-tab--active {
-  color: var(--brand-primary);
-  border-bottom-color: var(--brand-primary);
-}
-
 .family-overview {
   display: flex;
   flex-direction: column;
@@ -1781,15 +1792,6 @@ input, select, textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--spacing-xs);
   }
-  .family-tabs {
-    flex-wrap: wrap;
-    gap: var(--spacing-xs);
-  }
-  .family-tab {
-    padding: var(--spacing-xs) var(--spacing-sm);
-    font-size: var(--font-size-sm);
-  }
-
   .family-overview .overview-card {
     min-height: var(--card-min-height-compact);
     padding: var(--spacing-xs) var(--spacing-sm);
@@ -3785,6 +3787,7 @@ input, select, textarea {
   gap: var(--spacing-xs);
   margin-bottom: var(--spacing-lg);
   border-bottom: 1px solid var(--border-light);
+  min-width: 0;
 }
 
 .memory-main-tab {
@@ -4114,92 +4117,6 @@ input, select, textarea {
   grid-template-columns: var(--settings-nav-width, clamp(220px, 16vw, 280px)) minmax(0, 1fr);
   gap: clamp(1rem, 1.8vw, 2rem);
   align-items: start;
-}
-
-/* 设置页横向标签样式 */
-.settings-tabs {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  margin-bottom: var(--spacing-lg);
-}
-
-.settings-tabs__scroll {
-  display: flex;
-  gap: var(--spacing-xs);
-  flex-shrink: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  &::-webkit-scrollbar { display: none; }
-}
-
-.settings-tabs__scroll-hint {
-  display: none;
-  height: 3px;
-  margin-top: 8px;
-  background: var(--border-light);
-  border-radius: 2px;
-  overflow: hidden;
-  position: relative;
-}
-
-.settings-tabs__scroll-hint::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 0;
-  width: 0;
-  height: 100%;
-  background: var(--brand-primary);
-  border-radius: 2px;
-  transform: translateX(-50%);
-  animation: scrollHintPulse 1.8s ease-in-out infinite;
-}
-
-@keyframes scrollHintPulse {
-  0%, 100% {
-    width: 0;
-    opacity: 0.3;
-  }
-  50% {
-    width: 60%;
-    opacity: 1;
-  }
-}
-
-@media (max-width: 1000px) {
-  .settings-tabs__scroll-hint {
-    display: block;
-  }
-}
-
-.settings-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-sm) var(--spacing-md);
-  font-size: var(--font-size-md);
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  white-space: nowrap;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: all var(--transition);
-}
-
-.settings-tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-card-hover);
-}
-
-.settings-tab--active {
-  color: var(--brand-primary);
-  border-bottom-color: var(--brand-primary);
 }
 
 .settings-tab__icon {

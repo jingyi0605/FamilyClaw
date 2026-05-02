@@ -519,23 +519,30 @@ export function FamilyLayout() {
     <FamilyWorkspaceContext.Provider value={value}>
       <GuideAnchor anchorId={USER_GUIDE_ANCHOR_IDS.familyOverview}>
         <div className="page page--family">
-          <PageHeader title={t('nav.family')} description={workspace.errors.length > 0 ? getFamilyMessage(locale, 'family.partialLoadFailed') : undefined} />
-          <nav className="family-tabs">
-            {familyTabs.map(tab => (
-              <a
-                key={tab.key}
-                href={tab.hash}
-                className={`family-tab ${activeTab === tab.key ? 'family-tab--active' : ''}`}
-                onClick={event => {
-                  event.preventDefault();
-                  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${tab.hash}`);
-                  setActiveTab(tab.key);
-                }}
-              >
-                {t(tab.labelKey)}
-              </a>
-            ))}
-          </nav>
+          <PageHeader
+            title={t('nav.family')}
+            description={workspace.errors.length > 0 ? getFamilyMessage(locale, 'family.partialLoadFailed') : undefined}
+            align="end"
+            actionsClassName="page-header__actions--tabs"
+            actions={(
+              <nav className="memory-main-tabs" role="tablist" aria-label={t('nav.family')}>
+                {familyTabs.map(tab => (
+                  <a
+                    key={tab.key}
+                    href={tab.hash}
+                    className={`memory-main-tab ${activeTab === tab.key ? 'memory-main-tab--active' : ''}`}
+                    onClick={event => {
+                      event.preventDefault();
+                      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${tab.hash}`);
+                      setActiveTab(tab.key);
+                    }}
+                  >
+                    {t(tab.labelKey)}
+                  </a>
+                ))}
+              </nav>
+            )}
+          />
           <div className="family-content">
             {activeTab === 'overview' ? <FamilyOverview /> : null}
             {activeTab === 'rooms' ? <FamilyRooms /> : null}
@@ -3434,4 +3441,3 @@ export function FamilyRelationships() {
     </div>
   );
 }
-

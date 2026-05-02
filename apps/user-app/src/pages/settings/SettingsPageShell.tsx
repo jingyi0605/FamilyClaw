@@ -17,8 +17,12 @@ export function SettingsPageShell(props: {
       data-layout-touch={layoutMode.isTouchLayout ? 'true' : 'false'}
       data-layout-nav={layoutMode.navVariant}
     >
-      <PageHeader title={t('settings.title')} />
-      <SettingsNav activeKey={props.activeKey} />
+      <PageHeader
+        title={t('settings.title')}
+        align="end"
+        actionsClassName="page-header__actions--tabs"
+        actions={<SettingsNav activeKey={props.activeKey} />}
+      />
       <div className="settings-content">{props.children}</div>
     </div>
   );

@@ -16,12 +16,25 @@ export function PageHeader({
   title,
   description,
   actions,
+  actionsClassName,
+  align,
 }: {
   title: string;
   description?: string;
   actions?: ReactNode;
+  actionsClassName?: string;
+  align?: 'start' | 'end';
 }) {
-  return <SharedPageHeader title={title} description={description} actions={actions} className="page-header" />;
+  return (
+    <SharedPageHeader
+      title={title}
+      description={description}
+      actions={actions}
+      actionsClassName={actionsClassName}
+      align={align}
+      className="page-header"
+    />
+  );
 }
 
 /* ---- Card ---- */

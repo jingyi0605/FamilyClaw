@@ -1341,20 +1341,25 @@ function AssistantPageContent() {
       data-layout-touch={layoutMode.isTouchLayout ? 'true' : 'false'}
       data-layout-panel={layoutMode.panelBehavior}
     >
-      <PageHeader title={t('nav.assistant')} />
-
-      <div className="memory-main-tabs">
-        {chatTabs.map(tab => (
-          <button
-            key={tab.key}
-            type="button"
-            className={`memory-main-tab ${activeChatTab === tab.key ? 'memory-main-tab--active' : ''}`}
-            onClick={() => setActiveChatTab(tab.key)}
-          >
-            {t(tab.labelKey)}
-          </button>
-        ))}
-      </div>
+      <PageHeader
+        title={t('nav.assistant')}
+        align="end"
+        actionsClassName="page-header__actions--tabs"
+        actions={(
+          <div className="memory-main-tabs" role="tablist" aria-label={t('nav.assistant')}>
+            {chatTabs.map(tab => (
+              <button
+                key={tab.key}
+                type="button"
+                className={`memory-main-tab ${activeChatTab === tab.key ? 'memory-main-tab--active' : ''}`}
+                onClick={() => setActiveChatTab(tab.key)}
+              >
+                {t(tab.labelKey)}
+              </button>
+            ))}
+          </div>
+        )}
+      />
 
       {activeChatTab !== 'personal' ? renderComingSoonTab() : (
         <>

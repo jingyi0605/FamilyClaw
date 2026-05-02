@@ -8,11 +8,23 @@ type PageHeaderProps = {
   description?: string;
   actions?: ReactNode;
   className?: string;
+  actionsClassName?: string;
   style?: CSSProperties;
+  align?: 'start' | 'end';
 };
 
-export function PageHeader({ title, description, actions, className, style }: PageHeaderProps) {
+export function PageHeader({
+  title,
+  description,
+  actions,
+  className,
+  actionsClassName,
+  style,
+  align = 'start',
+}: PageHeaderProps) {
   const tokens = userAppComponentTokens.pageHeader;
+  const hasTabActions = actionsClassName?.includes('page-header__actions--tabs') ?? false;
+  const containerGap = hasTabActions ? `calc(${tokens.gap} * 2)` : tokens.gap;
 
   return (
     <View
@@ -21,25 +33,28 @@ export function PageHeader({ title, description, actions, className, style }: Pa
         display: 'flex',
         flexDirection: 'row',
         flexWrap: 'wrap',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        gap: tokens.gap,
+        alignItems: align === 'end' ? 'flex-end' : 'flex-start',
+        justifyContent: 'flex-start',
+        gap: containerGap,
         marginBottom: tokens.marginBottom,
         ...style,
       }}
     >
-      <View style={{ display: 'flex', flexDirection: 'column', gap: tokens.titleGap, flex: 1 }}>
-        <UiText variant="title" style={{ fontSize: tokens.titleFontSize }}>
+      <View className="page-header__content" style={{ display: 'flex', flexDirection: 'column', gap: tokens.titleGap, minWidth: 0 }}>
+        <UiText className="page-header__title" variant="title" style={{ fontSize: tokens.titleFontSize }}>
           {title}
         </UiText>
         {description ? (
-          <UiText tone="secondary" style={{ color: tokens.descriptionColor, fontSize: tokens.descriptionFontSize }}>
+          <UiText className="page-header__desc" tone="secondary" style={{ color: tokens.descriptionColor, fontSize: tokens.descriptionFontSize }}>
             {description}
           </UiText>
         ) : null}
       </View>
       {actions ? (
-        <View style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: tokens.actionGap }}>
+        <View
+          className={`page-header__actions ${actionsClassName ?? ''}`.trim()}
+          style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: tokens.actionGap, minWidth: 0 }}
+        >
           {actions}
         </View>
       ) : null}

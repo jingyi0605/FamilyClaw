@@ -145,24 +145,21 @@ export function SettingsNav(props: { activeKey: SettingsNavKey }) {
   }, [isAdmin]);
 
   return (
-    <nav className="settings-tabs" role="tablist">
-      <div className="settings-tabs__scroll">
-        {visibleItems.map((item) => {
-          const isActive = props.activeKey === item.key;
-          return (
-            <button
-              key={item.key}
-              type="button"
-              className={`settings-tab ${isActive ? 'settings-tab--active' : ''}`}
-              onClick={() => void openPage(item.url)}
-            >
-              <span className="settings-tab__icon">{item.icon}</span>
-              <span className="settings-tab__label">{t(item.labelKey)}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="settings-tabs__scroll-hint" />
+    <nav className="memory-main-tabs" role="tablist" aria-label={t('settings.title')}>
+      {visibleItems.map((item) => {
+        const isActive = props.activeKey === item.key;
+        return (
+          <button
+            key={item.key}
+            type="button"
+            className={`memory-main-tab ${isActive ? 'memory-main-tab--active' : ''}`}
+            onClick={() => void openPage(item.url)}
+          >
+            <span className="settings-tab__icon">{item.icon}</span>
+            <span className="settings-tab__label">{t(item.labelKey)}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }
