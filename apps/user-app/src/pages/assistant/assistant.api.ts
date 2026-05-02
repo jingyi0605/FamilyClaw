@@ -1,4 +1,4 @@
-import { createRequestClient } from '@familyclaw/user-core';
+import { ApiError, createRequestClient } from '@familyclaw/user-core';
 import type {
   AgentListResponse,
   ConversationActionExecutionResponse,
@@ -13,6 +13,8 @@ const request = createRequestClient({
   timeoutMs: 8000,
   credentials: 'include',
 });
+
+export { ApiError };
 
 export const assistantApi = {
   listAgents(householdId: string) {
@@ -60,6 +62,11 @@ export const assistantApi = {
       undefined,
       20000,
     );
+  },
+  deleteConversationSession(sessionId: string) {
+    return request<void>(`/conversations/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    });
   },
   confirmConversationAction(actionId: string) {
     return request<ConversationActionExecutionResponse>(

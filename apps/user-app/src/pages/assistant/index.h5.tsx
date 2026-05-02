@@ -2,12 +2,13 @@ import { isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } 
 import Taro from '@tarojs/taro';
 import { createBrowserRealtimeClient, newRealtimeRequestId, type BootstrapRealtimeEvent } from '@familyclaw/user-platform/web';
 import { EmptyStateCard, UiText, userAppComponentTokens } from '@familyclaw/user-ui';
-import { Bot, ChevronDown, Construction, Info, LoaderCircle, MessageSquarePlus, Wifi, WifiOff } from 'lucide-react';
+import { Bot, ChevronDown, Construction, Info, LoaderCircle, MessageSquarePlus, Trash2, Wifi, WifiOff } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
-import { assistantApi } from './assistant.api';
+import { ApiError, assistantApi } from './assistant.api';
 import { getAgentStatusLabel, getAgentTypeEmoji, isConversationAgent, pickDefaultConversationAgent } from './assistant.agents';
+import { SettingsDialog, SettingsNotice } from '../settings/components/SettingsSharedBlocks';
 import { getPageMessage } from '../../runtime/h5-shell/i18n/pageMessageUtils';
 import type {
   AgentSummary,
@@ -183,25 +184,33 @@ const markdownComponents: Components = {
   },
 };
 
-function normalizeContent(content: string): string {
+function normalizeMarkdownContent(content: string, trim = true): string {
   if (!content) return '';
-  return content
-    .replace(/\r\n/g, '\n')
-    .trim();
+  const normalized = content.replace(/\r\n/g, '\n');
+  return trim ? normalized.trim() : normalized;
+}
+
+function normalizeContent(content: string): string {
+  return normalizeMarkdownContent(content, true);
 }
 
 function normalizeStreamingContent(content: string): string {
-  if (!content) return '';
-  return content.replace(/\r\n/g, '\n');
+  return normalizeMarkdownContent(content, false);
 }
 
-function renderMarkdown(content: string) {
-  const normalized = normalizeContent(content);
+function appendStreamingChunk(currentContent: string, chunkText: string): string {
+  return normalizeStreamingContent(currentContent) + normalizeStreamingContent(chunkText);
+}
+
+function renderMarkdown(content: string, options?: { trim?: boolean; className?: string }) {
+  const normalized = normalizeMarkdownContent(content, options?.trim ?? true);
   if (!normalized) return null;
   return (
-    <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm, remarkBreaks]}>
-      {normalized}
-    </ReactMarkdown>
+    <div className={joinClassNames('message__markdown', options?.className)}>
+      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm, remarkBreaks]}>
+        {normalized}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -319,6 +328,25 @@ function buildFactIdentity(item: ConversationMessage['facts'][number]) {
 
 function upsertSession(sessions: ConversationSession[], next: ConversationSession) {
   return [next, ...sessions.filter(item => item.id !== next.id)];
+}
+
+function pickNextSessionIdAfterDeletion(
+  sessions: ConversationSession[],
+  deletedSessionId: string,
+  activeSessionId: string,
+) {
+  if (deletedSessionId !== activeSessionId) {
+    return activeSessionId;
+  }
+  const deletedIndex = sessions.findIndex(item => item.id === deletedSessionId);
+  const remainingSessions = sessions.filter(item => item.id !== deletedSessionId);
+  if (remainingSessions.length === 0) {
+    return '';
+  }
+  return remainingSessions[deletedIndex]?.id
+    ?? remainingSessions[Math.max(0, deletedIndex - 1)]?.id
+    ?? remainingSessions[0]?.id
+    ?? '';
 }
 
 function buildPendingMessages(
@@ -511,6 +539,8 @@ function AssistantPageContent() {
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [deletingSessionId, setDeletingSessionId] = useState('');
+  const [pendingDeleteSession, setPendingDeleteSession] = useState<ConversationSession | null>(null);
   const [realtimeReady, setRealtimeReady] = useState(false);
   const [realtimeState, setRealtimeState] = useState<RealtimeIndicatorState>('connecting');
   const [realtimeReconnectNonce, setRealtimeReconnectNonce] = useState(0);
@@ -528,6 +558,7 @@ function AssistantPageContent() {
   const scrollFrameRef = useRef<number | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const sendingRef = useRef(false);
+  const sessionsRef = useRef<ConversationSession[]>([]);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const realtimeSignalAnchorRef = useRef<HTMLDivElement | null>(null);
   const listBullet = '-';
@@ -690,6 +721,10 @@ function AssistantPageContent() {
   useEffect(() => {
     sendingRef.current = sending;
   }, [sending]);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   useEffect(() => {
     setIsSidebarOpen(false);
@@ -953,7 +988,7 @@ function AssistantPageContent() {
                     ? {
                       ...message,
                       status: 'streaming',
-                      content: message.content + chunkText,
+                      content: appendStreamingChunk(message.content, chunkText),
                       updated_at: new Date().toISOString(),
                     }
                     : message
@@ -1105,6 +1140,59 @@ function AssistantPageContent() {
     setSessions(current => upsertSession(current, created));
     setActiveSessionId(created.id);
     setActiveSessionDetail(created);
+  }
+
+  function handleSessionDeleteRequest(session: ConversationSession) {
+    const isDeletingActiveSession = session.id === activeSessionId;
+    if (isDeletingActiveSession && sending) {
+      setError(t('assistant.error.deleteSessionBusy'));
+      setStatus('');
+      return;
+    }
+    setPendingDeleteSession(session);
+  }
+
+  async function handleSessionDelete(session: ConversationSession) {
+    const isDeletingActiveSession = session.id === activeSessionId;
+    setDeletingSessionId(session.id);
+    setError('');
+    setStatus('');
+    try {
+      await assistantApi.deleteConversationSession(session.id);
+      const currentSessions = sessionsRef.current;
+      const remainingSessions = currentSessions.filter(item => item.id !== session.id);
+      const nextActiveSessionId = pickNextSessionIdAfterDeletion(currentSessions, session.id, activeSessionId);
+      sessionsRef.current = remainingSessions;
+      setSessions(remainingSessions);
+
+      if (isDeletingActiveSession) {
+        // 当前会话被删掉后，必须立刻清空旧详情，避免残留消息短暂回闪。
+        shouldStickToBottomRef.current = true;
+        setSending(false);
+        setSuggestions([]);
+        setExpandedAutoMessageId('');
+        setActiveSessionDetail(null);
+        setActiveSessionId(nextActiveSessionId);
+      }
+
+      setPendingDeleteSession(null);
+      setStatus(t('assistant.deleteSessionSuccess'));
+      setError('');
+    } catch (deleteError) {
+      if (deleteError instanceof ApiError) {
+        if (deleteError.status === 409) {
+          setError(t('assistant.error.deleteSessionBusy'));
+        } else {
+          setError(deleteError.message || t('assistant.error.deleteSessionFailed'));
+        }
+      } else {
+        setError(t('assistant.error.deleteSessionFailed'));
+      }
+      setPendingDeleteSession(null);
+      setStatus('');
+    } finally {
+      setDeletingSessionId('');
+    }
   }
 
   async function handleAgentSwitch(agentId: string) {
@@ -1432,10 +1520,9 @@ function AssistantPageContent() {
 
   function renderMessageBody(message: ConversationMessage) {
     if (message.role === 'assistant' && message.status === 'streaming') {
-      return (
-        <div className="message__streaming-text">
-          {normalizeStreamingContent(message.content || t('assistant.message.preparingReply'))}
-        </div>
+      return renderMarkdown(
+        message.content || t('assistant.message.preparingReply'),
+        { trim: false, className: 'message__markdown--streaming' },
       );
     }
 
@@ -1443,6 +1530,7 @@ function AssistantPageContent() {
   }
 
   function renderSessionHistoryPopover(extraClassName = '') {
+    const isDeletingAnySession = Boolean(deletingSessionId);
     return (
       <div className={`assistant-popover ${extraClassName}`.trim()} onClick={event => event.stopPropagation()}>
         <div className="assistant-popover__header">
@@ -1462,21 +1550,39 @@ function AssistantPageContent() {
             </div>
           ) : (
             sessions.map(session => (
-              <button
+              <div
                 key={session.id}
-                type="button"
-                className={`session-item session-item--compact ${activeSessionId === session.id ? 'session-item--active' : ''}`.trim()}
-                onClick={event => {
-                  event.stopPropagation();
-                  handleSessionSelect(session);
-                }}
+                className={`session-item session-item--compact ${activeSessionId === session.id ? 'session-item--active' : ''} ${deletingSessionId === session.id ? 'session-item--busy' : ''}`.trim()}
               >
-                <div className="session-item__content">
-                  <span className="session-item__title">{session.title}</span>
-                  <span className="session-item__preview">{session.latest_message_preview ?? t('assistant.welcomeHint')}</span>
-                </div>
-                <span className="session-item__time">{formatRelativeTime(session.last_message_at, locale)}</span>
-              </button>
+                <button
+                  type="button"
+                  className="session-item__main"
+                  disabled={isDeletingAnySession}
+                  onClick={event => {
+                    event.stopPropagation();
+                    handleSessionSelect(session);
+                  }}
+                >
+                  <div className="session-item__content">
+                    <span className="session-item__title">{session.title}</span>
+                    <span className="session-item__preview">{session.latest_message_preview ?? t('assistant.welcomeHint')}</span>
+                  </div>
+                  <span className="session-item__time">{formatRelativeTime(session.last_message_at, locale)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="session-item__delete btn btn--icon btn--ghost p-xs"
+                  title={t('assistant.deleteSession')}
+                  aria-label={t('assistant.deleteSession')}
+                  disabled={isDeletingAnySession || (session.id === activeSessionId && sending)}
+                  onClick={event => {
+                    event.stopPropagation();
+                    handleSessionDeleteRequest(session);
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -1636,91 +1742,102 @@ function AssistantPageContent() {
         </div>
       </div>
 
+      {error ? (
+        <div className="assistant-feedback assistant-feedback--error" role="alert">
+          {error}
+        </div>
+      ) : null}
+      {!error && status ? (
+        <div className="assistant-feedback assistant-feedback--success" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
+
       {activeChatTab !== 'personal' ? renderComingSoonTab() : (
         <>
-      {contextPanelOpen ? <div className="assistant-panel-overlay" onClick={() => setContextPanelOpen(false)} /> : null}
-      <div className={`assistant-panel assistant-panel--right ${contextPanelOpen ? 'is-open' : ''}`.trim()}>
-        <div className="assistant-panel__header">
-          <h3>{t('assistant.panel.details')}</h3>
-          <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(false)}>
-            x
-          </button>
-        </div>
-        <div className="assistant-panel__content">
-          <div className="context-section">
-            <h4 className="context-section__title">{t('assistant.context')}</h4>
-            <div className="context-item">
-              <span className="context-item__label">{t('assistant.currentFamily')}</span>
-              <span className="context-item__value">{currentHousehold?.name ?? t('assistant.unavailable')}</span>
+          {contextPanelOpen ? <div className="assistant-panel-overlay" onClick={() => setContextPanelOpen(false)} /> : null}
+          <div className={`assistant-panel assistant-panel--right ${contextPanelOpen ? 'is-open' : ''}`.trim()}>
+            <div className="assistant-panel__header">
+              <h3>{t('assistant.panel.details')}</h3>
+              <button className="btn btn--icon btn--ghost p-sm" onClick={() => setContextPanelOpen(false)}>
+                x
+              </button>
             </div>
-            <div className="context-item">
-              <span className="context-item__label">{t('assistant.currentAgent')}</span>
-              <span className="context-item__value">
-                {selectedAgent
-                  ? t('assistant.panel.currentAgentValue', {
-                    name: selectedAgent.display_name,
-                    status: getAgentStatusLabel(selectedAgent.status, locale),
-                  })
-                  : t('assistant.unavailable')}
-              </span>
-            </div>
-            <div className="context-item">
-              <span className="context-item__label">{t('assistant.panel.pendingActions')}</span>
-              <span className="context-item__value">{t('assistant.panel.pendingActionsCount', { count: pendingActionCount })}</span>
-            </div>
-          </div>
-
-          <div className="context-section">
-            <h4 className="context-section__title">{t('assistant.recentMemories')}</h4>
-            <div className="context-memory-list">
-              {recentFacts.length > 0 ? (
-                recentFacts.map(item => (
-                  <div key={buildFactIdentity(item)} className="context-memory-item">
-                    <span>{listBullet}</span> {item.label}
-                  </div>
-                ))
-              ) : (
-                suggestions.slice(0, 3).map(question => (
-                  <div key={question} className="context-memory-item">
-                    <span>{listBullet}</span> {question}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="context-section">
-            <h4 className="context-section__title">{t('assistant.panel.recentActions')}</h4>
-            <div className="context-memory-list">
-              {recentActionRecords.length > 0 ? (
-                recentActionRecords.map(action => (
-                  <div key={action.id} className="context-memory-item context-memory-item--block">
-                    <div><span>{getActionIcon(action)}</span> {action.title}</div>
-                    <div className="context-memory-item__sub">{buildActionResultText(action, locale)}</div>
-                  </div>
-                ))
-              ) : (
-                <div className="context-memory-item">
-                  <span>{listBullet}</span> {t('assistant.panel.noActions')}
+            <div className="assistant-panel__content">
+              <div className="context-section">
+                <h4 className="context-section__title">{t('assistant.context')}</h4>
+                <div className="context-item">
+                  <span className="context-item__label">{t('assistant.currentFamily')}</span>
+                  <span className="context-item__value">{currentHousehold?.name ?? t('assistant.unavailable')}</span>
                 </div>
-              )}
+                <div className="context-item">
+                  <span className="context-item__label">{t('assistant.currentAgent')}</span>
+                  <span className="context-item__value">
+                    {selectedAgent
+                      ? t('assistant.panel.currentAgentValue', {
+                        name: selectedAgent.display_name,
+                        status: getAgentStatusLabel(selectedAgent.status, locale),
+                      })
+                      : t('assistant.unavailable')}
+                  </span>
+                </div>
+                <div className="context-item">
+                  <span className="context-item__label">{t('assistant.panel.pendingActions')}</span>
+                  <span className="context-item__value">{t('assistant.panel.pendingActionsCount', { count: pendingActionCount })}</span>
+                </div>
+              </div>
+
+              <div className="context-section">
+                <h4 className="context-section__title">{t('assistant.recentMemories')}</h4>
+                <div className="context-memory-list">
+                  {recentFacts.length > 0 ? (
+                    recentFacts.map(item => (
+                      <div key={buildFactIdentity(item)} className="context-memory-item">
+                        <span>{listBullet}</span> {item.label}
+                      </div>
+                    ))
+                  ) : (
+                    suggestions.slice(0, 3).map(question => (
+                      <div key={question} className="context-memory-item">
+                        <span>{listBullet}</span> {question}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="context-section">
+                <h4 className="context-section__title">{t('assistant.panel.recentActions')}</h4>
+                <div className="context-memory-list">
+                  {recentActionRecords.length > 0 ? (
+                    recentActionRecords.map(action => (
+                      <div key={action.id} className="context-memory-item context-memory-item--block">
+                        <div><span>{getActionIcon(action)}</span> {action.title}</div>
+                        <div className="context-memory-item__sub">{buildActionResultText(action, locale)}</div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="context-memory-item">
+                      <span>{listBullet}</span> {t('assistant.panel.noActions')}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="context-section">
+                <h4 className="context-section__title">{t('assistant.quickActions')}</h4>
+                <div className="context-actions">
+                  {suggestions.slice(0, 3).map(question => (
+                    <button key={question} className="context-action-btn" onClick={() => { setContextPanelOpen(false); void submitQuestion(question); }}>
+                      {question}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="context-section">
-            <h4 className="context-section__title">{t('assistant.quickActions')}</h4>
-            <div className="context-actions">
-              {suggestions.slice(0, 3).map(question => (
-                <button key={question} className="context-action-btn" onClick={() => { setContextPanelOpen(false); void submitQuestion(question); }}>
-                  {question}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="assistant-main">
+          <div className="assistant-main">
         {/* 绉诲姩绔悎骞跺悗鐨勬爣棰樻爮銆?*/}
         <div className="assistant-mobile-header">
           <div className="assistant-mobile-header__agent">
@@ -1859,9 +1976,50 @@ function AssistantPageContent() {
             action={<button className="btn btn--primary" onClick={() => void handleNewChat()}>{t('assistant.newChat')}</button>}
           />
         )}
-      </div>
+          </div>
         </>
       )}
+
+      {pendingDeleteSession ? (
+        <SettingsDialog
+          open
+          title={t('assistant.deleteSession')}
+          description={t('assistant.deleteSessionDialogDesc')}
+          className="assistant-delete-session-modal"
+          closeDisabled={Boolean(deletingSessionId)}
+          onClose={() => setPendingDeleteSession(null)}
+          actions={(
+            <>
+              <button
+                type="button"
+                className="btn btn--outline btn--sm"
+                onClick={() => setPendingDeleteSession(null)}
+                disabled={Boolean(deletingSessionId)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--danger btn--sm"
+                onClick={() => void handleSessionDelete(pendingDeleteSession)}
+                disabled={Boolean(deletingSessionId)}
+              >
+                {deletingSessionId === pendingDeleteSession.id
+                  ? t('assistant.deleteSessionDeleting')
+                  : t('assistant.deleteSessionConfirmAction')}
+              </button>
+            </>
+          )}
+        >
+          <div className="settings-form__body">
+            <SettingsNotice tone="error" icon={<Trash2 size={18} />}>
+              {t('assistant.deleteSessionConfirm', {
+                title: pendingDeleteSession.title?.trim() || t('assistant.newChat'),
+              })}
+            </SettingsNotice>
+          </div>
+        </SettingsDialog>
+      ) : null}
     </div>
   );
 }

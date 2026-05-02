@@ -159,7 +159,7 @@
     top: calc(100% + 10px);
     left: 50%;
     transform: translateX(-50%);
-    width: min(360px, calc(100vw - 2 * var(--spacing-xl)));
+    width: min(468px, calc(100vw - 2 * var(--spacing-xl)));
     max-height: min(50vh, 560px);
   }
 
@@ -386,6 +386,26 @@
   align-self: auto !important;
 }
 
+.assistant-feedback {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.assistant-feedback--error {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--color-danger) 24%, transparent);
+}
+
+.assistant-feedback--success {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 10%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--color-success) 24%, transparent);
+}
+
 .message {
   gap: var(--spacing-sm);
 }
@@ -395,6 +415,40 @@
   background: transparent;
   border: none;
   text-align: left;
+}
+
+.session-item__main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  text-align: left;
+}
+
+.session-item__main:disabled {
+  cursor: default;
+}
+
+.session-item__delete {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--text-tertiary);
+}
+
+.session-item__delete:hover:not(:disabled) {
+  color: var(--color-danger);
+}
+
+.session-item__delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.session-item--busy {
+  opacity: 0.68;
 }
 
 .message__avatar {
@@ -421,8 +475,15 @@
 }
 
 .message__content {
+  // Markdown 最终态交给 HTML 自己排版，不能再把源码空白渲染成可见空行。
+  white-space: normal;
   word-break: break-word;
+  overflow-wrap: anywhere;
   line-height: 1.6;
+}
+
+.message__markdown {
+  white-space: normal;
 
   > :first-child {
     margin-top: 0;
@@ -431,13 +492,6 @@
   > :last-child {
     margin-bottom: 0;
   }
-}
-
-.message__streaming-text {
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  line-height: 1.6;
 }
 
 .message__time {
@@ -788,4 +842,15 @@
     font-size: 16px;
     line-height: 22px;
   }
+}
+
+.assistant-delete-session-modal .settings-note {
+  margin-top: var(--spacing-lg);
+  margin-bottom: var(--spacing-xl);
+  padding-top: var(--spacing-lg);
+  padding-bottom: var(--spacing-lg);
+}
+
+.assistant-delete-session-modal .member-modal__actions {
+  margin-top: var(--spacing-lg);
 }

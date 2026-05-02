@@ -3104,8 +3104,13 @@ input, select, textarea {
 .message__content {
   font-size: var(--font-size-md);
   margin: 0;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.message__markdown {
+  white-space: normal;
 }
 
 .message--user .message__content {
