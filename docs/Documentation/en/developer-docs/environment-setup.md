@@ -14,7 +14,7 @@ This page solves one specific problem: when a developer touches this repository 
 ## Local requirements
 
 - Operating system: macOS, Linux, and Windows are all supported.
-- Python: `3.11`. Both the backend and the gateway run on this version.
+- Python: `3.11+`. The backend requires at least `3.11`, and the startup script will pick an available `3.11+` interpreter on the machine.
 - Node.js: `20+`. The root docs site and `apps/user-app` both depend on it.
 - PostgreSQL: `15+`. Development and testing both use PostgreSQL. There is no SQLite fallback.
 - Git plus Bash: the backend and gateway startup scripts in the repository are Bash scripts. On Windows, Git Bash is the recommended option.
@@ -124,6 +124,8 @@ The repository already provides the official development script. Do not improvis
 ```bash
 bash apps/start-api-server.sh
 ```
+
+If multiple Python interpreters exist on the machine, the script will automatically pick an available `3.11+` interpreter. Only set `PYTHON_BIN=<python-path>` when you need to force a specific one.
 
 This script will:
 

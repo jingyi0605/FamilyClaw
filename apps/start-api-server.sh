@@ -12,6 +12,7 @@ RELOAD_DIR="${RELOAD_DIR:-app}"
 DEPS_HASH_FILE="${VENV_DIR}/.deps.sha256"
 PYTHON_CMD=()
 PYTHON_CMD_DESC=""
+PYTHON_CANDIDATE_VERSION=""
 
 # Windows 使用 Scripts 目录，Unix 使用 bin 目录。
 if [[ "${OSTYPE}" == "msys" || "${OSTYPE}" == "win32" ]]; then
@@ -29,44 +30,122 @@ fail() {
   exit 1
 }
 
+python_supports_project() {
+  local candidate="$1"
+  if ! command -v "${candidate}" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  "${candidate}" - <<'PY' >/dev/null 2>&1
+import sys
+
+major, minor = sys.version_info[:2]
+raise SystemExit(0 if (major, minor) >= (3, 11) else 1)
+PY
+}
+
+resolve_python_executable() {
+  local candidate="$1"
+  local resolved=""
+
+  if ! resolved="$(command -v "${candidate}" 2>/dev/null)"; then
+    return 1
+  fi
+
+  if [[ -L "${resolved}" ]]; then
+    resolved="$(realpath "${resolved}")"
+  fi
+
+  if [[ -n "${resolved}" && -x "${resolved}" ]]; then
+    printf '%s\n' "${resolved}"
+    return 0
+  fi
+
+  return 1
+}
+
+select_python_candidate() {
+  local candidate="$1"
+  local desc="${2:-$1}"
+  local resolved_candidate=""
+
+  if ! python_supports_project "${candidate}"; then
+    return 1
+  fi
+
+  if ! resolved_candidate="$(resolve_python_executable "${candidate}")"; then
+    return 1
+  fi
+
+  PYTHON_CMD=("${resolved_candidate}")
+  PYTHON_CMD_DESC="${desc} -> ${resolved_candidate}"
+  PYTHON_CANDIDATE_VERSION="$("${resolved_candidate}" - <<'PY'
+import sys
+
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
+  return 0
+}
+
 resolve_python() {
   if [[ -n "${PYTHON_BIN:-}" ]]; then
     if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-      fail "未找到 ${PYTHON_BIN}，请先安装 Python 3.11，或通过 PYTHON_BIN 指定可执行文件路径。"
+      fail "未找到 ${PYTHON_BIN}，请先安装 Python 3.11 及以上版本，或通过 PYTHON_BIN 指定可执行文件路径。"
     fi
 
-    PYTHON_CMD=("${PYTHON_BIN}")
-    PYTHON_CMD_DESC="${PYTHON_BIN}"
-    return
-  fi
-
-  if command -v python3.11 >/dev/null 2>&1; then
-    PYTHON_CMD=("python3.11")
-    PYTHON_CMD_DESC="python3.11"
-    return
-  fi
-
-  if command -v python >/dev/null 2>&1; then
-    PYTHON_CMD=("python")
-    PYTHON_CMD_DESC="python"
-    return
-  fi
-
-  # Windows Git Bash 经常只有 py，没有 python/python3.11。
-  if command -v py >/dev/null 2>&1; then
-    if py -3.11 -c "import sys" >/dev/null 2>&1; then
-      PYTHON_CMD=("py" "-3.11")
-      PYTHON_CMD_DESC="py -3.11"
+    if select_python_candidate "${PYTHON_BIN}" "${PYTHON_BIN}"; then
       return
     fi
 
-    PYTHON_CMD=("py")
-    PYTHON_CMD_DESC="py"
-    return
+    fail "${PYTHON_BIN} 不是可用的 Python 3.11+ 解释器。"
+  fi
+
+  local preferred_paths=(
+    "/opt/homebrew/opt/python@3.13/bin/python3.13"
+    "/opt/homebrew/opt/python@3.12/bin/python3.12"
+    "/opt/homebrew/opt/python@3.11/bin/python3.11"
+  )
+
+  local preferred_path=""
+  for preferred_path in "${preferred_paths[@]}"; do
+    if [[ -x "${preferred_path}" ]] && select_python_candidate "${preferred_path}" "${preferred_path}"; then
+      return
+    fi
+  done
+
+  local candidates=(
+    "python3.13"
+    "python3.12"
+    "python3.11"
+    "python3"
+    "python"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if select_python_candidate "${candidate}" "${candidate}"; then
+      return
+    fi
+  done
+
+  # Windows Git Bash 经常只有 py，没有 python/python3.11。
+  if command -v py >/dev/null 2>&1; then
+    local py_candidates=("-3.13" "-3.12" "-3.11")
+    local py_candidate=""
+    for py_candidate in "${py_candidates[@]}"; do
+      if py "${py_candidate}" -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 11) else 1)" >/dev/null 2>&1; then
+        PYTHON_CMD=("py" "${py_candidate}")
+        PYTHON_CMD_DESC="py ${py_candidate}"
+        PYTHON_CANDIDATE_VERSION="${py_candidate#-}"
+        return
+      fi
+    done
   fi
 
   PYTHON_CMD=()
   PYTHON_CMD_DESC=""
+  PYTHON_CANDIDATE_VERSION=""
 }
 
 run_python() {
@@ -76,7 +155,7 @@ run_python() {
 ensure_python() {
   resolve_python
   if [[ ${#PYTHON_CMD[@]} -eq 0 ]]; then
-    fail "未找到 Python 解释器，请先安装 Python 3.11，或通过 PYTHON_BIN 指定可执行文件路径。"
+    fail "未找到 Python 3.11 及以上解释器，请先安装，或通过 PYTHON_BIN 指定可执行文件路径。"
   fi
 
   log "使用 Python 解释器: ${PYTHON_CMD_DESC}"
