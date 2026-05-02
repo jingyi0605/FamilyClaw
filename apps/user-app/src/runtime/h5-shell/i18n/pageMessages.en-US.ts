@@ -176,6 +176,7 @@
   'memory.preferences': 'Preferences',
   'memory.relations': 'Relations',
   'memory.all': 'All',
+  'memory.mainTab.memories': 'Memories',
   'memory.source': 'Source',
   'memory.visibility': 'Visibility',
   'memory.status': 'Status',

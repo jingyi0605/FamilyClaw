@@ -3865,28 +3865,7 @@ input, select, textarea {
 
 /* 视图切换条 */
 .scheduled-tasks-view-tabs {
-  display: flex;
-  gap: var(--spacing-xs);
   margin-bottom: var(--spacing-md);
-}
-
-.scheduled-tasks-view-tab {
-  padding: var(--spacing-xs) var(--spacing-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-  transition: all var(--transition);
-}
-
-.scheduled-tasks-view-tab:hover {
-  background: var(--bg-card-hover);
-  color: var(--text-primary);
-}
-
-.scheduled-tasks-view-tab--active {
-  background: var(--brand-primary-light);
-  color: var(--brand-primary);
 }
 
 /* 工具栏 */
@@ -11106,11 +11085,9 @@ body::before {
 
 .page--memories .btn,
 .page--memories .close-btn,
-.page--memories .memory-main-tab,
 .page--memories .memory-cat-btn,
 .scheduled-tasks-tab .btn,
 .scheduled-tasks-tab .close-btn,
-.scheduled-tasks-tab .scheduled-tasks-view-tab,
 .scheduled-tasks-tab .filter-btn {
   appearance: none;
   -webkit-appearance: none;
@@ -11145,11 +11122,9 @@ body::before {
 
 .page--memories .btn::after,
 .page--memories .close-btn::after,
-.page--memories .memory-main-tab::after,
 .page--memories .memory-cat-btn::after,
 .scheduled-tasks-tab .btn::after,
 .scheduled-tasks-tab .close-btn::after,
-.scheduled-tasks-tab .scheduled-tasks-view-tab::after,
 .scheduled-tasks-tab .filter-btn::after {
   display: none;
   border: 0;
@@ -11205,13 +11180,6 @@ body::before {
   border: 1px solid var(--border);
   border-radius: var(--card-radius);
   background: var(--bg-card);
-}
-
-.page--memories .memory-main-tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: auto;
 }
 
 .page--memories .memory-cat-btn {

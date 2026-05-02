@@ -176,6 +176,7 @@
   'memory.preferences': '偏好',
   'memory.relations': '关系',
   'memory.all': '全部',
+  'memory.mainTab.memories': '记忆列表',
   'memory.source': '来源',
   'memory.visibility': '可见范围',
   'memory.status': '状态',

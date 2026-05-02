@@ -266,10 +266,24 @@ export function ScheduledTasksTab() {
         {stats.needsAttentionCount > 0 ? <div className="scheduled-tasks-stat scheduled-tasks-stat--warning"><span className="scheduled-tasks-stat__value">{stats.needsAttentionCount}</span><span className="scheduled-tasks-stat__label">{t('scheduledTasks.filter.needsAttention')}</span></div> : null}
       </div>
 
-      <div className="scheduled-tasks-view-tabs">
-        <button className={`scheduled-tasks-view-tab ${viewScope === 'my' ? 'scheduled-tasks-view-tab--active' : ''}`} type="button" onClick={() => setViewScope('my')}>{t('scheduledTasks.myTasks')}</button>
-        <button className={`scheduled-tasks-view-tab ${viewScope === 'family' ? 'scheduled-tasks-view-tab--active' : ''}`} type="button" onClick={() => setViewScope('family')}>{t('scheduledTasks.familyTasks')}</button>
-      </div>
+      <nav className="memory-main-tabs scheduled-tasks-view-tabs" role="tablist" aria-label={t('scheduledTasks.tab')}>
+        <button
+          className={`memory-main-tab scheduled-tasks-view-tab ${viewScope === 'my' ? 'memory-main-tab--active' : ''}`}
+          type="button"
+          aria-selected={viewScope === 'my'}
+          onClick={() => setViewScope('my')}
+        >
+          {t('scheduledTasks.myTasks')}
+        </button>
+        <button
+          className={`memory-main-tab scheduled-tasks-view-tab ${viewScope === 'family' ? 'memory-main-tab--active' : ''}`}
+          type="button"
+          aria-selected={viewScope === 'family'}
+          onClick={() => setViewScope('family')}
+        >
+          {t('scheduledTasks.familyTasks')}
+        </button>
+      </nav>
 
       <div className="scheduled-tasks-toolbar">
         <input type="text" placeholder={t('scheduledTasks.search')} value={searchQuery} onChange={event => setSearchQuery(event.target.value)} className="search-input" />

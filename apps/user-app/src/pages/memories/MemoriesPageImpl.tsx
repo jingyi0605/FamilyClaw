@@ -548,22 +548,24 @@ export function MemoriesPageImpl() {
         align="end"
         actionsClassName="page-header__actions--tabs"
         actions={(
-          <div className="memory-main-tabs" role="tablist" aria-label={t('nav.memories')}>
+          <nav className="memory-main-tabs" role="tablist" aria-label={t('nav.memories')}>
             <button
               className={`memory-main-tab ${mainTab === 'memories' ? 'memory-main-tab--active' : ''}`}
               type="button"
+              aria-selected={mainTab === 'memories'}
               onClick={() => setMainTab('memories')}
             >
-              {t('memory.all')}
+              {t('memory.mainTab.memories')}
             </button>
             <button
               className={`memory-main-tab ${mainTab === 'scheduledTasks' ? 'memory-main-tab--active' : ''}`}
               type="button"
+              aria-selected={mainTab === 'scheduledTasks'}
               onClick={() => setMainTab('scheduledTasks')}
             >
               {t('scheduledTasks.tab')}
             </button>
-          </div>
+          </nav>
         )}
       />
 
