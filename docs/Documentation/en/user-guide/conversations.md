@@ -46,8 +46,11 @@ Current support includes:
 - expanding the session list from the session title area
 - reviewing the title, latest message preview, and recent activity time for each session
 - opening an earlier session and continuing from that context
+- deleting an old session directly from the history list when you no longer need it
 
 If this is your first time here and you do not have any sessions yet, the page gives you a direct entry to create one. You do not need extra setup first.
+
+If a session is still generating a reply, the delete action stays blocked for that moment. Wait until the current reply finishes so the page does not cut through an in-progress turn.
 
 ![fc-doc-20260320T000759.webp](../../使用指南/assets/fc-doc-20260320T000759.webp)
 
@@ -84,7 +87,7 @@ The page uses a real-time connection for replies, so the usual behavior is:
 - the assistant message enters a generating state
 - content streams in and then finishes
 
-To reduce visible flicker during long replies, the page keeps the in-progress message in a stable plain-text view while content is still streaming. After that reply is actually finished, the page renders the final Markdown version once.
+During long replies, the page updates the assistant message incrementally while it is still streaming. Markdown formatting is applied during that process too, so lists, emphasis, and paragraph spacing do not wait until the very end to appear.
 
 ### 4. Use suggested questions to move faster
 
@@ -219,6 +222,10 @@ That usually does not mean the conversation page is missing. It usually means th
 ### Why is the send button sometimes disabled?
 
 The page depends on a real-time connection for sending and receiving. If the connection is not ready yet, if you just switched sessions, or if the network is unstable, the send button may stay disabled for a while.
+
+### Why can I not delete the current session sometimes?
+
+If that session is still generating a reply, deletion is blocked on purpose. The backend is still processing the current turn, and forcing deletion in the middle would leave the conversation state inconsistent. Wait until the reply finishes and try again.
 
 ### Why do I see "AI service authentication failed, please check whether the API key is correct"?
 
