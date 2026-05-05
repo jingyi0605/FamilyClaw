@@ -333,6 +333,10 @@ register(
 - If a family member is mentioned and can be matched from the member directory, output `payload.subject_member_id`
 - Optional helpful fields: `subject_name`, `milestone`, `event_name`, `effective_at`, `occurred_at_text`, `related_members`, `note`
 - Only fill `effective_at` when you can confidently convert it to ISO8601; otherwise use `occurred_at_text`
+- If the user explicitly says “记下来 / 记住 / 帮我记 / 帮我记下来 / 以后记得 / 以后都按这个来”, and the content is about a durable family fact, preference, habit, relationship, or recent observed change, you should output a `memory_items` entry whenever the meaning is clear
+- If the user expresses a stable or recent preference/aversion in natural language, such as “最近喜欢… / 现在更喜欢… / 不爱… / 不喜欢… / 习惯… / 偏爱…”, prefer outputting a `memory_items` entry with `payload.memory_type = "preference"` instead of dropping it
+- If the sentence is about another family member, preserve that member in `payload.subject_member_id` or `payload.subject_name`; do not silently rewrite the memory as the requester’s own preference
+- For clear preference changes, include concise `summary` and keep the original preference phrase inside `payload.note` or `payload.preference`
 
 ## reminder_items rules
 - If the user is expressing a future arrangement, prefer `reminder_items`

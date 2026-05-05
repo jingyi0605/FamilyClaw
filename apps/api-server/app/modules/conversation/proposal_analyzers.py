@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 from typing import TYPE_CHECKING, Protocol
 
 from app.db.utils import load_json
@@ -141,6 +142,7 @@ class MemoryProposalAnalyzer:
                     payload=payload,
                 )
             )
+        drafts.extend(_build_rule_based_memory_drafts(turn_context, existing_drafts=drafts))
         return drafts
 
 
@@ -427,6 +429,43 @@ def _build_dedupe_key(proposal_kind: str, evidence_message_ids: list[str], title
     return f"{proposal_kind}:{source_part}:{title[:50]}"
 
 
+def _build_rule_based_memory_drafts(
+    turn_context: "TurnProposalContext",
+    *,
+    existing_drafts: list[ProposalDraft],
+) -> list[ProposalDraft]:
+    latest_user_evidence = turn_context.latest_user_evidence()
+    if latest_user_evidence is None:
+        return []
+
+    text = latest_user_evidence.content.strip()
+    if not text:
+        return []
+
+    drafts: list[ProposalDraft] = []
+    if _looks_like_explicit_memory_request(text):
+        explicit_draft = _build_explicit_memory_request_draft(turn_context, latest_user_evidence, text)
+        if explicit_draft is not None:
+            drafts.append(explicit_draft)
+
+    preference_draft = _build_preference_memory_draft(turn_context, latest_user_evidence, text)
+    if preference_draft is not None:
+        drafts.append(preference_draft)
+
+    if not drafts:
+        return []
+
+    existing_signatures = {_build_memory_draft_signature(item) for item in existing_drafts}
+    filtered: list[ProposalDraft] = []
+    for draft in drafts:
+        signature = _build_memory_draft_signature(draft)
+        if signature in existing_signatures:
+            continue
+        existing_signatures.add(signature)
+        filtered.append(draft)
+    return filtered
+
+
 def _normalize_memory_payload(payload: dict) -> dict:
     normalized = dict(payload)
     memory_type = _normalize_memory_type_alias(normalized.get("memory_type") or normalized.get("type"))
@@ -460,6 +499,189 @@ def _normalize_memory_payload(payload: dict) -> dict:
     if occurred_at_text and "occurred_at_text" not in normalized:
         normalized["occurred_at_text"] = occurred_at_text
     return normalized
+
+
+def _build_memory_draft_signature(draft: ProposalDraft) -> str:
+    payload = dict(draft.payload)
+    return "|".join(
+        [
+            draft.proposal_kind,
+            str(payload.get("memory_type") or payload.get("type") or "").strip(),
+            str(payload.get("subject_member_id") or payload.get("subject_name") or "").strip(),
+            _normalize_match_text(draft.summary),
+        ]
+    )
+
+
+def _looks_like_explicit_memory_request(text: str) -> bool:
+    keywords = ("记下来", "记住", "帮我记", "帮我记下来", "请记住", "以后记得", "给我记一下")
+    return any(keyword in text for keyword in keywords)
+
+
+def _build_explicit_memory_request_draft(
+    turn_context: "TurnProposalContext",
+    latest_user_evidence,
+    text: str,
+) -> ProposalDraft | None:
+    stripped_text = text.strip("。！!？? ")
+    summary = _strip_explicit_memory_request_prefix(stripped_text)
+    if not summary or len(summary) < 2:
+        return None
+
+    subject_name = _extract_subject_name_from_text(summary)
+    subject_member_id = _match_subject_member_id_from_text(turn_context, subject_name=subject_name)
+    payload: dict[str, object] = {
+        "memory_type": "fact",
+        "summary": summary,
+        "title": _build_title_from_summary(summary, prefix="记忆提案"),
+    }
+    if subject_name:
+        payload["subject_name"] = subject_name
+    if subject_member_id:
+        payload["subject_member_id"] = subject_member_id
+
+    inferred_type = _infer_memory_type_from_text(summary)
+    if inferred_type:
+        payload["memory_type"] = inferred_type
+    if payload["memory_type"] == "preference":
+        payload["preference"] = summary
+        payload["note"] = summary
+
+    title = str(payload["title"]).strip()
+    return ProposalDraft(
+        proposal_kind="memory_write",
+        policy_category="ask",
+        title=title[:200],
+        summary=summary,
+        evidence_message_ids=[latest_user_evidence.message_id],
+        evidence_roles=[latest_user_evidence.role],
+        dedupe_key=_build_dedupe_key("memory_write", [latest_user_evidence.message_id], title),
+        confidence=0.92,
+        payload=payload,
+    )
+
+
+def _build_preference_memory_draft(
+    turn_context: "TurnProposalContext",
+    latest_user_evidence,
+    text: str,
+) -> ProposalDraft | None:
+    summary = _extract_preference_summary(text)
+    if not summary:
+        return None
+
+    subject_name = _extract_subject_name_from_text(summary)
+    subject_member_id = _match_subject_member_id_from_text(turn_context, subject_name=subject_name)
+    title_subject = subject_name or "成员"
+    payload: dict[str, object] = {
+        "memory_type": "preference",
+        "summary": summary,
+        "title": f"{title_subject}偏好变化",
+        "preference": summary,
+        "note": text.strip(),
+    }
+    if subject_name:
+        payload["subject_name"] = subject_name
+    if subject_member_id:
+        payload["subject_member_id"] = subject_member_id
+
+    return ProposalDraft(
+        proposal_kind="memory_write",
+        policy_category="ask",
+        title=str(payload["title"])[:200],
+        summary=summary,
+        evidence_message_ids=[latest_user_evidence.message_id],
+        evidence_roles=[latest_user_evidence.role],
+        dedupe_key=_build_dedupe_key("memory_write", [latest_user_evidence.message_id], str(payload["title"])),
+        confidence=0.88,
+        payload=payload,
+    )
+
+
+def _strip_explicit_memory_request_prefix(text: str) -> str:
+    patterns = [
+        r"^(帮我|请|麻烦你)?记下来[，,：:\s]*",
+        r"^(帮我|请|麻烦你)?记住[，,：:\s]*",
+        r"^(帮我|请|麻烦你)?记一下[，,：:\s]*",
+        r"^(帮我|请|麻烦你)?把.*?记下来[，,：:\s]*",
+        r"^(以后)?记得[，,：:\s]*",
+    ]
+    normalized = text.strip()
+    for pattern in patterns:
+        updated = re.sub(pattern, "", normalized)
+        if updated != normalized:
+            normalized = updated.strip("，,：: ")
+            break
+    return normalized.strip()
+
+
+def _extract_preference_summary(text: str) -> str:
+    normalized = text.strip("。！!？? ")
+    patterns = [
+        r"^(?P<subject>[^，。,：:]{1,12})(最近|现在|这阵子)?(喜欢|更喜欢|爱吃|爱喝|偏爱)(?P<value>.+)$",
+        r"^(?P<subject>[^，。,：:]{1,12})(最近|现在|这阵子)?(不爱|不喜欢|不爱吃|不爱喝)(?P<value>.+)$",
+        r"^(?P<subject>我)(最近|现在|这阵子)?(喜欢|更喜欢|爱吃|爱喝|偏爱)(?P<value>.+)$",
+        r"^(?P<subject>我)(最近|现在|这阵子)?(不爱|不喜欢|不爱吃|不爱喝)(?P<value>.+)$",
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, normalized)
+        if not match:
+            continue
+        subject = str(match.group("subject") or "").strip()
+        value = str(match.group("value") or "").strip("。！!？? ")
+        if not value:
+            continue
+        if any(keyword in value for keyword in ("推荐", "吗", "么", "怎么样", "哪家")):
+            return ""
+        if subject == "我":
+            return f"我最近偏好 {value}"
+        return f"{subject}最近偏好 {value}"
+    return ""
+
+
+def _extract_subject_name_from_text(text: str) -> str:
+    normalized = text.strip()
+    for splitter in ("最近", "现在", "不爱", "不喜欢", "喜欢", "偏好", "习惯"):
+        if splitter not in normalized:
+            continue
+        subject = normalized.split(splitter, 1)[0].strip("，,：: ")
+        if 0 < len(subject) <= 12:
+            return subject
+    return ""
+
+
+def _match_subject_member_id_from_text(
+    turn_context: "TurnProposalContext",
+    *,
+    subject_name: str,
+) -> str | None:
+    if not subject_name or turn_context.db is None:
+        return None
+    from app.modules.member.prompt_context_service import list_member_prompt_profiles
+
+    profiles = list_member_prompt_profiles(
+        turn_context.db,
+        household_id=turn_context.household_id,
+        status_value="active",
+    )
+    normalized_subject = _normalize_member_alias(subject_name)
+    if not normalized_subject:
+        return None
+    for profile in profiles:
+        aliases = {_normalize_member_alias(alias) for alias in profile.aliases}
+        if normalized_subject in aliases:
+            return profile.member_id
+    return None
+
+
+def _infer_memory_type_from_text(text: str) -> str:
+    if any(keyword in text for keyword in ("喜欢", "不喜欢", "不爱", "偏爱", "习惯")):
+        return "preference"
+    if any(keyword in text for keyword in ("爸爸", "妈妈", "爷爷", "奶奶", "朵朵", "多多")) and any(
+        keyword in text for keyword in ("最近", "现在", "不爱", "喜欢", "习惯")
+    ):
+        return "preference"
+    return "fact"
 
 
 def _build_memory_summary_from_payload(payload: dict) -> str:
