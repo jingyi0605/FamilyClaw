@@ -44,7 +44,7 @@ RUN pip install --upgrade pip \
 # 运行时镜像
 FROM python:3.11-slim-bookworm AS runtime
 
-ARG APP_VERSION=0.1.3
+ARG APP_VERSION=0.1.4
 ARG BUILD_CHANNEL=development
 ARG BUILD_TIME=unknown
 ARG GIT_SHA=local
